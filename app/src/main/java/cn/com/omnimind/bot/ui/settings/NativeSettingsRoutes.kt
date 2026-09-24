@@ -19,12 +19,17 @@ import cn.com.omnimind.nativeui.settings.PermissionsScreen
 import cn.com.omnimind.nativeui.settings.MiscSettingsScreen
 import cn.com.omnimind.nativeui.settings.BackgroundSettingsScreen
 import cn.com.omnimind.nativeui.settings.PetSettingsScreen
+import cn.com.omnimind.nativeui.settings.StorageUsageScreen
+import cn.com.omnimind.nativeui.settings.RequestLogsScreen
+import cn.com.omnimind.nativeui.settings.RuntimeLogsScreen
 
 @Composable
 internal fun NativeAboutRoute(
     viewModel: NativeAboutViewModel,
     host: Context,
     openLegacy: (LegacyDestination) -> Unit,
+    openRequestLogs: () -> Unit,
+    openRuntimeLogs: () -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -46,10 +51,34 @@ internal fun NativeAboutRoute(
         },
         setBeta = viewModel::setBeta,
         setDownloadSource = viewModel::setSource,
-        openRequestLogs = { openLegacy(LegacyDestination.Page.RequestLogs) },
-        openRuntimeLogs = { openLegacy(LegacyDestination.Page.RuntimeLogs) },
+        openRequestLogs = openRequestLogs,
+        openRuntimeLogs = openRuntimeLogs,
         openUserGuide = { openLegacy(LegacyDestination.Page.UserGuide) },
     ), onBack)
+}
+
+@Composable
+internal fun NativeStorageUsageRoute(viewModel: NativeStorageUsageViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.refresh() }
+    StorageUsageScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeRequestLogsRoute(viewModel: NativeLogsViewModel,
+    copy: (String) -> Unit, onBack: () -> Unit) {
+    val state by viewModel.requests.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.refreshRequests() }
+    RequestLogsScreen(state, viewModel::refreshRequests, copy, onBack)
+}
+
+@Composable
+internal fun NativeRuntimeLogsRoute(viewModel: NativeLogsViewModel,
+    copy: (String) -> Unit, onBack: () -> Unit) {
+    val state by viewModel.runtime.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.refreshRuntime() }
+    RuntimeLogsScreen(state, viewModel::refreshRuntime, viewModel::clearRuntime,
+        { copy(viewModel.runtimeExportText()) }, copy, onBack)
 }
 
 @Composable

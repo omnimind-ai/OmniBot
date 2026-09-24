@@ -1,8 +1,12 @@
 package cn.com.omnimind.bot.activity
 
 import android.content.Context
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.os.Build
 import android.content.res.Configuration
 import android.os.Bundle
+import android.os.PersistableBundle
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -37,6 +41,11 @@ import cn.com.omnimind.bot.ui.settings.NativeBackgroundViewModel
 import cn.com.omnimind.bot.ui.settings.NativeBackgroundSettingsRoute
 import cn.com.omnimind.bot.ui.settings.NativePetSettingsRoute
 import cn.com.omnimind.bot.ui.settings.NativePetSettingsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeStorageUsageViewModel
+import cn.com.omnimind.bot.ui.settings.NativeStorageUsageRoute
+import cn.com.omnimind.bot.ui.settings.NativeLogsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeRequestLogsRoute
+import cn.com.omnimind.bot.ui.settings.NativeRuntimeLogsRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -73,6 +82,8 @@ class NativeHomeActivity : ComponentActivity() {
         val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
         val preferences = ViewModelProvider(this, NativePreferencesViewModel.Factory(this))[NativePreferencesViewModel::class.java]
         val miscSettings = ViewModelProvider(this, NativeMiscSettingsViewModel.Factory(this))[NativeMiscSettingsViewModel::class.java]
+        val storage = ViewModelProvider(this, NativeStorageUsageViewModel.Factory(this))[NativeStorageUsageViewModel::class.java]
+        val logs = ViewModelProvider(this)[NativeLogsViewModel::class.java]
         backgroundViewModel = ViewModelProvider(this, NativeBackgroundViewModel.Factory(this))[NativeBackgroundViewModel::class.java]
         val permissionAccess = AppPermissionAccess(applicationContext)
         val navigator = LegacyHomeNavigator(this)
@@ -126,7 +137,11 @@ class NativeHomeActivity : ComponentActivity() {
                 state = state.copy(theme = theme),
                 backgroundState = backgroundState,
                 actions = actions,
-                about = { onBack -> NativeAboutRoute(about, this@NativeHomeActivity, navigator::open, onBack) },
+                about = { onBack, onRequestLogs, onRuntimeLogs -> NativeAboutRoute(
+                    about, this@NativeHomeActivity, navigator::open, onRequestLogs, onRuntimeLogs, onBack) },
+                storage = { onBack -> NativeStorageUsageRoute(storage, onBack) },
+                requestLogs = { onBack -> NativeRequestLogsRoute(logs, ::copyLogText, onBack) },
+                runtimeLogs = { onBack -> NativeRuntimeLogsRoute(logs, ::copyLogText, onBack) },
                 appearance = { onBack, onBackground -> AppearanceScreen(savedPreferences, preferences.actions,
                     onBackground = onBackground, onBack = onBack) },
                 background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,
@@ -173,4 +188,16 @@ class NativeHomeActivity : ComponentActivity() {
 
     private fun readLanguage(context: Context): String =
         cn.com.omnimind.baselib.i18n.AppLocaleManager.readStoredLanguageMode(context).storageValue
+
+    private fun copyLogText(value: String) {
+        if (value.isBlank()) return
+        val clip = ClipData.newPlainText("Omnibot log", value)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean(android.content.ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+        }
+        getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
+        Toast.makeText(this, cn.com.omnimind.nativeui.R.string.omni_log_copied, Toast.LENGTH_SHORT).show()
+    }
 }

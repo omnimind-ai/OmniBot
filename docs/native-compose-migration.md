@@ -42,8 +42,10 @@ LauncherActivity
       ├─ NativeMiscSettingsViewModel → MiscPreferencesRepository → existing keys / platform owners
       ├─ NativeBackgroundViewModel → AppBackgroundRepository + BackgroundPreviewLoader
       ├─ NativePetSettingsViewModel → PetAppearanceRepository → PetPackageInstaller + PetPreviewRenderer
+      ├─ NativeStorageUsageViewModel → StorageUsageRepository ← Flutter StorageUsageChannel
+      ├─ NativeLogsViewModel → existing AiRequestLogStore / RuntimeLogStore
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -127,8 +129,9 @@ random greeting selection out of pixel comparisons.
   message-content search, image previews, rename/delete/copy menus and remaining
   visual differences still need migration/acceptance.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
-  permissions, theme/language, home preferences, miscellaneous and background
-  image settings and pet appearance are native. Alarm, open-with, quick-start
+  permissions, theme/language, home preferences, miscellaneous, background
+  image settings, pet appearance, storage management and the two log pages are native.
+  Alarm, open-with, quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
@@ -151,17 +154,50 @@ The order below follows the actual owners in this repository, not page size alon
 | Order | Scope | Existing owner / prerequisite | Completion boundary |
 | --- | --- | --- | --- |
 | 1 | Core Home → Drawer → Settings and local-service sheet — source implemented | `ConversationDomainService`, scheduler storage, `OmniPluginHost`, `McpServerManager` | See the batch 1 checkpoint; runtime/visual acceptance remains manual. |
-| 2 | About/update and permission pages — source implemented | `AppUpdateManager`, `AppPermissionAccess` and existing platform helpers | See batch 2 below; logs and the guide remain explicit compatibility destinations. |
+| 2 | About/update and permission pages — source implemented | `AppUpdateManager`, `AppPermissionAccess` and existing platform helpers | See batch 2 below; the guide remains a compatibility destination and logs moved in batch 4a. |
 | 3a | Theme/language and home preferences — source implemented | `UiPreferencesStore`, existing `AppLocaleManager` and Flutter controllers/cache | One writer for the existing three keys, native controls, compatibility refresh; see batch 3a. |
 | 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
 | 3b-2a | Background image settings — source implemented | `AppBackgroundRepository`, the existing `app_background_config_v1` key and `filesDir/backgrounds` | One writer for native and Flutter settings; see batch 3b-2a. |
 | 3b-2b | Pet appearance — source implemented | `PetAppearanceRepository`, existing overlay runtime, workspace pet roots, ZIP validator and preview renderer | Native selection/import/discovery and Flutter compatibility share one owner; see batch 3b-2b. |
-| 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
+| 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Provider/model resolution and plugin runtime already have native owners. | Storage and logs are the first bounded slice below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a and 3b-2b. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first slice of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4a checkpoint: storage and logs (source complete; device acceptance pending)
+
+- Settings → Storage and About → Request logs / Runtime logs now enter the same
+  native `miuix-nav` back stack. Existing Flutter routes remain available when
+  the default Flutter launcher is used.
+- `StorageUsageRepository` contains the unchanged analysis, category cleanup,
+  strategy and metrics-history logic formerly embedded in `StorageUsageChannel`.
+  The channel retains its names and payload shape. The native ViewModel adapts
+  the same summary/result maps; Compose owns only presentation and confirmation.
+- Request logs use `AiRequestLogStore.listRecent(10)` and expose per-entry
+  request/response copy. Runtime logs use `RuntimeLogStore.listRecent(200)`,
+  per-entry stack copy, full-text clipboard export, and confirmed clear. These
+  operations do not add a log store, ACP state, or automatic clipboard transfer.
+- Static source/resource/route checks are the validation boundary for this
+  batch. No Gradle build, test suite, emulator or device verification was run
+  at the user's request. Visual 1:1 acceptance remains a manual device task.
+
+Manual acceptance checklist:
+
+1. In both themes and Chinese/English, compare native Storage against Flutter
+   at the same density and font scale: title, overview, trend, distribution,
+   strategy rows, category details, dialog dimensions and system insets.
+2. Refresh Storage and compare totals, category order/breakdown, metrics source,
+   history and trend with Flutter. Confirm a safe category with all/7/30-day
+   scopes and verify released bytes and retained recent files. Check a
+   dangerous category's confirmation and a strategy before using real data.
+3. Populate a successful and failed AI request and a runtime crash. Compare
+   order, totals, expanded content and copy behavior; check that clipboard
+   contents change only after tapping Copy or Copy all. Confirm runtime Clear
+   can be canceled, then verify both native and Flutter see the cleared store.
+4. Verify system back and predictive gesture from each page and its dialogs,
+   then rotate/relaunch. Check the default Flutter entry still opens its pages.
 
 Before expanding the home surface, correct its provisional action wiring:
 `HomeScreen` currently opens a new chat for the pet button, opens Agent settings

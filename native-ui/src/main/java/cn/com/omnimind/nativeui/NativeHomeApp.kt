@@ -42,6 +42,9 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object Background : HomeRoute
     @Serializable data object Pet : HomeRoute
     @Serializable data object Permissions : HomeRoute
+    @Serializable data object Storage : HomeRoute
+    @Serializable data object RequestLogs : HomeRoute
+    @Serializable data object RuntimeLogs : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -50,7 +53,10 @@ fun NativeHomeApp(
     state: NativeHomeState,
     actions: NativeHomeActions,
     backgroundState: BackgroundSettingsState = BackgroundSettingsState(),
-    about: @Composable (onBack: () -> Unit) -> Unit,
+    about: @Composable (onBack: () -> Unit, onRequestLogs: () -> Unit, onRuntimeLogs: () -> Unit) -> Unit,
+    storage: @Composable (onBack: () -> Unit) -> Unit,
+    requestLogs: @Composable (onBack: () -> Unit) -> Unit,
+    runtimeLogs: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -90,6 +96,7 @@ fun NativeHomeApp(
                     onAppearance = { backStack.add(HomeRoute.Appearance) },
                     onHomePreferences = { backStack.add(HomeRoute.HomePreferences) },
                     onMiscellaneous = { backStack.add(HomeRoute.Miscellaneous) },
+                    onStorage = { backStack.add(HomeRoute.Storage) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance(
@@ -103,7 +110,14 @@ fun NativeHomeApp(
             entry<HomeRoute.Miscellaneous> { miscellaneous(
                 { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.HomePreferences) },
             ) }
-            entry<HomeRoute.About> { about { backStack.removeLastOrNull() } }
+            entry<HomeRoute.About> { about(
+                { backStack.removeLastOrNull() },
+                { backStack.add(HomeRoute.RequestLogs) },
+                { backStack.add(HomeRoute.RuntimeLogs) },
+            ) }
+            entry<HomeRoute.Storage> { storage { backStack.removeLastOrNull() } }
+            entry<HomeRoute.RequestLogs> { requestLogs { backStack.removeLastOrNull() } }
+            entry<HomeRoute.RuntimeLogs> { runtimeLogs { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }
