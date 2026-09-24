@@ -49,6 +49,51 @@ class AppStateService {
     return snapshot;
   }
 
+  static Future<Map<dynamic, dynamic>> getBackgroundConfig() async {
+    final config = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'getBackgroundConfig',
+    );
+    if (config == null) throw StateError('Missing background config');
+    return config;
+  }
+
+  static Future<Map<dynamic, dynamic>> saveBackgroundConfig(
+    Map<String, dynamic> config,
+  ) async {
+    final saved = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'saveBackgroundConfig',
+      {'config': config},
+    );
+    if (saved == null) throw StateError('Missing saved background config');
+    return saved;
+  }
+
+  static Future<String> importBackgroundImage(String sourcePath) async {
+    final path = await _channel.invokeMethod<String>('importBackgroundImage', {
+      'sourcePath': sourcePath,
+    });
+    if (path == null || path.isEmpty) {
+      throw StateError('Missing imported background image');
+    }
+    return path;
+  }
+
+  static Future<bool> deleteManagedBackgroundImage(String path) async {
+    final deleted = await _channel.invokeMethod<bool>(
+      'deleteManagedBackgroundImage',
+      {'path': path},
+    );
+    return deleted == true;
+  }
+
+  static Future<Map<dynamic, dynamic>> resetBackgroundConfig() async {
+    final config = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'resetBackgroundConfig',
+    );
+    if (config == null) throw StateError('Missing reset background config');
+    return config;
+  }
+
   static Future<Map<dynamic, dynamic>?> getPendingShareDraft() async {
     try {
       return await _channel.invokeMethod<Map<dynamic, dynamic>>(

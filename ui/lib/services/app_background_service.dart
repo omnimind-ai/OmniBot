@@ -5,8 +5,8 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:path_provider/path_provider.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:ui/services/app_state_service.dart';
 import 'package:ui/services/storage_service.dart';
 
 enum AppBackgroundSourceType { none, local, remote }
@@ -363,59 +363,81 @@ class AppBackgroundService {
         AppBackgroundVisualProfile.defaultProfile,
       );
   static int _visualProfileGeneration = 0;
+  static int _configGeneration = 0;
+  static Future<void> _writeTail = Future<void>.value();
 
   static AppBackgroundConfig get current => notifier.value;
   static AppBackgroundVisualProfile get currentVisualProfile =>
       visualProfileNotifier.value;
 
   static Future<void> load() async {
-    final raw = StorageService.getString(_storageKey);
-    if (raw == null || raw.trim().isEmpty) {
-      notifier.value = AppBackgroundConfig.defaults;
-      visualProfileNotifier.value = AppBackgroundVisualProfile.defaultProfile;
-      return;
+    await _writeTail;
+    final generation = ++_configGeneration;
+    try {
+      await StorageService.reload();
+    } catch (error) {
+      debugPrint('Background preference cache refresh failed: $error');
     }
     try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        final config = AppBackgroundConfig.fromJson(decoded);
-        notifier.value = config;
-        _seedVisualProfile(config);
-        unawaited(_refineVisualProfile(config));
-        return;
-      }
-      if (decoded is Map) {
-        final config = AppBackgroundConfig.fromJson(
-          decoded.map((key, value) => MapEntry(key.toString(), value)),
-        );
-        notifier.value = config;
-        _seedVisualProfile(config);
-        unawaited(_refineVisualProfile(config));
-        return;
-      }
+      final config = _fromChannelMap(
+        await AppStateService.getBackgroundConfig(),
+      );
+      if (generation == _configGeneration) _publish(config);
+      return;
     } catch (_) {
-      // Fall through to defaults.
+      // Flutter can start before its Android channel is attached. The shared
+      // preferences value is a read-only first-frame fallback in that case.
     }
-    notifier.value = AppBackgroundConfig.defaults;
-    visualProfileNotifier.value = AppBackgroundVisualProfile.defaultProfile;
+    String? raw;
+    try {
+      raw = StorageService.getString(_storageKey);
+    } catch (_) {
+      // Storage may also be unavailable during the first Flutter frame.
+    }
+    AppBackgroundConfig config = AppBackgroundConfig.defaults;
+    if (raw != null && raw.trim().isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map) {
+          config = AppBackgroundConfig.fromJson(
+            decoded.map((key, value) => MapEntry(key.toString(), value)),
+          );
+        }
+      } catch (_) {
+        // Malformed legacy data resolves to the same defaults as native.
+      }
+    }
+    if (generation == _configGeneration) _publish(config);
   }
 
   static Future<void> save(AppBackgroundConfig config) async {
-    await StorageService.setString(_storageKey, jsonEncode(config.toJson()));
-    notifier.value = config;
-    _seedVisualProfile(config);
-    unawaited(_refineVisualProfile(config));
+    await _orderedWrite(() async {
+      final generation = ++_configGeneration;
+      final normalized = _fromChannelMap(
+        await AppStateService.saveBackgroundConfig(config.toJson()),
+      );
+      if (generation == _configGeneration) _publish(normalized);
+      try {
+        await StorageService.reload();
+      } catch (error) {
+        debugPrint('Background preference cache refresh failed: $error');
+      }
+    });
   }
 
   static Future<void> reset() async {
-    final previous = notifier.value;
-    if (previous.sourceType == AppBackgroundSourceType.local &&
-        previous.localImagePath.trim().isNotEmpty) {
-      await deleteManagedLocalImage(previous.localImagePath);
-    }
-    await StorageService.remove(_storageKey);
-    notifier.value = AppBackgroundConfig.defaults;
-    visualProfileNotifier.value = AppBackgroundVisualProfile.defaultProfile;
+    await _orderedWrite(() async {
+      final generation = ++_configGeneration;
+      final config = _fromChannelMap(
+        await AppStateService.resetBackgroundConfig(),
+      );
+      if (generation == _configGeneration) _publish(config);
+      try {
+        await StorageService.reload();
+      } catch (error) {
+        debugPrint('Background preference cache refresh failed: $error');
+      }
+    });
   }
 
   static Future<AppBackgroundVisualProfile> analyzeVisualProfile(
@@ -429,54 +451,33 @@ class AppBackgroundService {
   }
 
   static Future<String> importLocalImage(String sourcePath) async {
-    final sourceFile = File(sourcePath);
-    if (!await sourceFile.exists()) {
-      throw Exception(
-        LegacyTextLocalizer.isEnglish
-            ? 'Selected image does not exist'
-            : '所选图片不存在',
-      );
-    }
-    final directory = await _backgroundDirectory();
-    final extension = _normalizedExtension(sourcePath);
-    final fileName =
-        'background_${DateTime.now().millisecondsSinceEpoch}$extension';
-    final targetFile = File('${directory.path}/$fileName');
-    await sourceFile.copy(targetFile.path);
-    return targetFile.path;
+    return AppStateService.importBackgroundImage(sourcePath);
   }
 
   static Future<void> deleteManagedLocalImage(String path) async {
-    final trimmed = path.trim();
-    if (trimmed.isEmpty) {
-      return;
-    }
-    final file = File(trimmed);
-    if (await file.exists()) {
-      await file.delete();
-    }
+    if (path.trim().isEmpty) return;
+    await AppStateService.deleteManagedBackgroundImage(path);
   }
 
-  static Future<Directory> _backgroundDirectory() async {
-    final baseDirectory = await getApplicationSupportDirectory();
-    final directory = Directory('${baseDirectory.path}/backgrounds');
-    if (!await directory.exists()) {
-      await directory.create(recursive: true);
-    }
-    return directory;
+  static AppBackgroundConfig _fromChannelMap(Map<dynamic, dynamic> value) {
+    return AppBackgroundConfig.fromJson(
+      value.map((key, entry) => MapEntry(key.toString(), entry)),
+    );
   }
 
-  static String _normalizedExtension(String path) {
-    final lower = path.toLowerCase();
-    final dotIndex = lower.lastIndexOf('.');
-    if (dotIndex < 0) {
-      return '.jpg';
-    }
-    final extension = lower.substring(dotIndex);
-    return switch (extension) {
-      '.png' || '.jpg' || '.jpeg' || '.webp' => extension,
-      _ => '.jpg',
-    };
+  static Future<T> _orderedWrite<T>(Future<T> Function() action) {
+    final result = _writeTail.then((_) => action());
+    _writeTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace __) {},
+    );
+    return result;
+  }
+
+  static void _publish(AppBackgroundConfig config) {
+    notifier.value = config;
+    _seedVisualProfile(config);
+    unawaited(_refineVisualProfile(config));
   }
 
   static void _seedVisualProfile(AppBackgroundConfig config) {
@@ -567,9 +568,8 @@ class AppBackgroundService {
           if (response.statusCode < 200 || response.statusCode >= 300) {
             return null;
           }
-          return await consolidateHttpClientResponseBytes(
-            response,
-          ).timeout(const Duration(seconds: 4));
+          return await consolidateHttpClientResponseBytes(response)
+              .timeout(const Duration(seconds: 4));
         } catch (_) {
           return null;
         } finally {

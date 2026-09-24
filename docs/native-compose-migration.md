@@ -40,8 +40,9 @@ LauncherActivity
       ├─ NativePermissionsViewModel → NativePermissionsRepository → AppPermissionAccess
       ├─ NativePreferencesViewModel → UiPreferencesStore → existing FlutterSharedPreferences
       ├─ NativeMiscSettingsViewModel → MiscPreferencesRepository → existing keys / platform owners
+      ├─ NativeBackgroundViewModel → AppBackgroundRepository + BackgroundPreviewLoader
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / HomePreferences / Miscellaneous
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / HomePreferences / Miscellaneous
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -116,7 +117,8 @@ random greeting selection out of pixel comparisons.
 
 - Home currently has a navigation entry into the existing composer, not a migrated
   chat input. Full input/voice/attachments, agent selection, workspace switching,
-  pet actions, backgrounds, greeting placement/rotation and prompt icons still need
+  pet actions, greeting placement/rotation, prompt icons and background pixel
+  comparison still need
   their owning feature migrated and compared.
 - Drawer supports the live list, scheduled-parent/child groups, pinned/date/mode
   sections, persisted expansion, title/last-message search, selection with the
@@ -124,9 +126,9 @@ random greeting selection out of pixel comparisons.
   message-content search, image previews, rename/delete/copy menus and remaining
   visual differences still need migration/acceptance.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
-  permissions, theme/language, home preferences and the miscellaneous overview
-  are native. Background/pet, alarm, open-with, quick-start and other detail pages
-  still use the existing feature pages. Workspace-memory
+  permissions, theme/language, home preferences, miscellaneous and background
+  image settings are native. Pet appearance, alarm, open-with, quick-start and
+  other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (terminal auto-start, account refresh and app update checks)
@@ -151,12 +153,13 @@ The order below follows the actual owners in this repository, not page size alon
 | 2 | About/update and permission pages — source implemented | `AppUpdateManager`, `AppPermissionAccess` and existing platform helpers | See batch 2 below; logs and the guide remain explicit compatibility destinations. |
 | 3a | Theme/language and home preferences — source implemented | `UiPreferencesStore`, existing `AppLocaleManager` and Flutter controllers/cache | One writer for the existing three keys, native controls, compatibility refresh; see batch 3a. |
 | 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
-| 3b-2 | Background/pet appearance | `AppBackgroundService`, overlay/pet package operations and previews | Migrate this separate resource-heavy feature in a later bounded Goal. |
+| 3b-2a | Background image settings — source implemented | `AppBackgroundRepository`, the existing `app_background_config_v1` key and `filesDir/backgrounds` | One writer for native and Flutter settings; see batch 3b-2a. |
+| 3b-2b | Pet appearance | Overlay selection, pet package import, resource scanning and generated previews | Migrate this separate resource-heavy feature in a later bounded Goal. |
 | 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a and 3b-1. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1 and 3b-2a. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
 Before expanding the home surface, correct its provisional action wiring:
@@ -449,8 +452,77 @@ Source-only checks cover Dart formatter parsing, XML/resource names, route and
 key ownership, and `git diff --check`. The Flutter cache regression and native
 navigation tests were updated in source but **not run**. No build, emulator/device
 interaction, real task/notification/Recents setting change, commit or push was
-performed for this Goal. Stop after this bounded page; background/pet belongs to
-batch 3b-2, and storage, model and chat work belongs to later Goals.
+performed for this Goal. Stop after this bounded page; background belongs to
+batch 3b-2a and pet appearance to 3b-2b. Storage, model and chat work belongs
+to later Goals.
+
+## Batch 3b-2a checkpoint: background image settings
+
+Appearance → Background Image is now a saved Miuix page. It handles the old
+`AppBackgroundConfig` fields: enable/source, local image or HTTP(S) URL,
+chat/workspace preview, focal point and scale, blur, overlay strength/brightness,
+chat text size and automatic/custom color. Miuix owns switches, source buttons,
+tabs, sliders, text fields, the color picker and dialogs. Compose's
+`transformable` handles preview pan/zoom; page navigation and predictive back
+remain owned by miuix-nav. The native Home uses the same saved background image
+and mask. The preview chrome follows the Flutter geometry and mask/luminance
+formulas, pending side-by-side device comparison.
+
+`AppBackgroundRepository` is the only writer to the existing
+`flutter.app_background_config_v1` key. It accepts the same 13 JSON fields as
+Flutter's `AppBackgroundConfig.toJson`; no database or preference namespace is
+added. Flutter `AppBackgroundService` keeps its notifier and luminance analysis,
+but its saves, resets, imports and managed-file deletion call the existing
+`app_state` channel. Startup may read the same key locally when the channel has
+not attached yet. Entering or resuming a Flutter compatibility page reloads the
+stored config; an older pending Flutter draft is cancelled when a newer native
+value arrives. The default Flutter appearance route remains complete, while
+`section=pet` opens only the existing pet controls from native Background Image.
+
+The image picker uses Android's photo picker. Imports copy into the same
+`filesDir/backgrounds` folder used by Flutter's Android path provider; the
+source implementation was checked locally. The repository caps imports at
+50 MB, checks PNG/JPEG/WebP/GIF content, stages and atomically moves the file,
+and only deletes a direct managed child after a successful config commit or
+when an unreferenced import is discarded. Old paths outside that directory
+remain untouched. Preview loading is downsampled and runs on IO, with bounded
+HTTP(S) redirects, response size and timeouts. Native GIF preview uses its
+first frame; Flutter's existing image renderer remains the final display owner
+for the compatibility chat/workspace pages. EXIF orientation and any pixel
+differences require device review.
+
+Manual acceptance for this batch:
+
+1. Start with each existing Flutter background state: none, local and remote.
+   Open native Appearance → Background Image, confirm field values, preview and
+   saved route restoration in Chinese/English and light/dark themes.
+2. Enable/disable the background, choose a local image with the system picker,
+   cancel a picker, replace a selected image, and restart. Verify the new file
+   loads in native Home and Flutter Chat/Workspace. Test PNG, JPEG, WebP and GIF;
+   observe orientation for portrait camera images.
+3. Try an invalid URL, an HTTP URL, an HTTPS URL, a failed response and an image
+   exceeding the preview loader's limit. Invalid drafts must not replace the
+   committed background; valid saves must appear in both implementations.
+4. Drag/pinch both preview tabs and adjust blur, strength, brightness and text
+   size. Compare mask, focal point, zoom and text contrast with the same Flutter
+   fixture at equal density/font scale. Check swatches, custom hex and the Miuix
+   color picker, including invalid hex input.
+5. Navigate away during a pending auto-save or import; return and restart.
+   Verify the newest committed config persists, failed imports leave no partial
+   image, old managed images are cleaned only after replacement, and outside
+   files are never deleted.
+6. Open the cached Flutter appearance page after editing natively. Its controls
+   and chat/workspace visuals must show the latest value, and its older draft
+   must not write itself back. Edit there, return to native, and repeat.
+7. Open Pet Appearance from native Background Image. Confirm it shows only pet
+   controls and returns to the native page; the default Flutter Appearance
+   route still contains its full existing controls.
+
+Source-only checks cover the 13-field JSON mapping, XML and bilingual resources,
+channel method names, compatibility routes, Dart formatting/parsing and
+`git diff --check`. No build, test, emulator/device interaction, real settings
+change, commit or push was run for this Goal. Stop after this source batch;
+pet packages and scanning remain batch 3b-2b.
 
 ## Verification
 

@@ -1,4 +1,7 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
@@ -7,15 +10,46 @@ import 'package:ui/services/storage_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  const channel = MethodChannel('cn.com.omnimind.bot/app_state');
+  late Map<String, dynamic> storedConfig;
+  var failSave = false;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();
     LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
+    storedConfig = AppBackgroundConfig.defaults.toJson();
+    failSave = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          final prefs = await SharedPreferences.getInstance();
+          switch (call.method) {
+            case 'getBackgroundConfig':
+              return storedConfig;
+            case 'saveBackgroundConfig':
+              if (failSave) throw PlatformException(code: 'save_failed');
+              final arguments = call.arguments as Map<dynamic, dynamic>;
+              storedConfig = AppBackgroundConfig.fromJson(
+                Map<String, dynamic>.from(arguments['config'] as Map),
+              ).toJson();
+              await prefs.setString(
+                'flutter.app_background_config_v1',
+                jsonEncode(storedConfig),
+              );
+              return storedConfig;
+            case 'resetBackgroundConfig':
+              storedConfig = AppBackgroundConfig.defaults.toJson();
+              await prefs.remove('flutter.app_background_config_v1');
+              return storedConfig;
+          }
+          throw MissingPluginException(call.method);
+        });
   });
 
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, null);
     LegacyTextLocalizer.clearResolvedLocale();
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
   });
@@ -108,6 +142,72 @@ void main() {
     );
     expect(AppBackgroundService.current.remoteImageUrl, isEmpty);
   });
+
+  test(
+    'failed native save leaves the visible config and storage unchanged',
+    () async {
+      failSave = true;
+      final next = AppBackgroundConfig.defaults.copyWith(
+        sourceType: AppBackgroundSourceType.remote,
+        remoteImageUrl: 'https://example.com/background.jpg',
+        enabled: true,
+      );
+
+      await expectLater(
+        AppBackgroundService.save(next),
+        throwsA(isA<PlatformException>()),
+      );
+
+      expect(AppBackgroundService.current, AppBackgroundConfig.defaults);
+      expect(StorageService.getString('app_background_config_v1'), isNull);
+    },
+  );
+
+  test(
+    'load refreshes a native edit while Flutter preferences are cached',
+    () async {
+      storedConfig = AppBackgroundConfig.defaults
+          .copyWith(
+            sourceType: AppBackgroundSourceType.remote,
+            remoteImageUrl: 'https://example.com/new.jpg',
+            enabled: true,
+          )
+          .toJson();
+
+      await AppBackgroundService.load();
+
+      expect(
+        AppBackgroundService.current.remoteImageUrl,
+        'https://example.com/new.jpg',
+      );
+      expect(AppBackgroundService.current.isActive, isTrue);
+    },
+  );
+
+  test(
+    'startup reads the shared key while the native channel is unavailable',
+    () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+      final cached = AppBackgroundConfig.defaults.copyWith(
+        sourceType: AppBackgroundSourceType.remote,
+        remoteImageUrl: 'https://example.com/cached.jpg',
+        enabled: true,
+      );
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        'flutter.app_background_config_v1',
+        jsonEncode(cached.toJson()),
+      );
+
+      await AppBackgroundService.load();
+
+      expect(
+        AppBackgroundService.current.remoteImageUrl,
+        'https://example.com/cached.jpg',
+      );
+    },
+  );
 
   test('derive chooses readable text tone from whole-background luminance', () {
     const config = AppBackgroundConfig(

@@ -35,14 +35,50 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  const appStateChannel = MethodChannel('cn.com.omnimind.bot/app_state');
+  late Map<String, dynamic> storedBackground;
+  var backgroundSaveCount = 0;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
+    storedBackground = AppBackgroundConfig.defaults.toJson();
+    backgroundSaveCount = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(appStateChannel, (call) async {
+          final prefs = await SharedPreferences.getInstance();
+          switch (call.method) {
+            case 'getBackgroundConfig':
+              return storedBackground;
+            case 'saveBackgroundConfig':
+              backgroundSaveCount++;
+              final arguments = call.arguments as Map<dynamic, dynamic>;
+              storedBackground = AppBackgroundConfig.fromJson(
+                Map<String, dynamic>.from(arguments['config'] as Map),
+              ).toJson();
+              await prefs.setString(
+                'flutter.app_background_config_v1',
+                jsonEncode(storedBackground),
+              );
+              return storedBackground;
+            case 'updateUiPreferences':
+              final arguments = call.arguments as Map<dynamic, dynamic>;
+              if (arguments['operation'] == 'theme') {
+                await prefs.setString(
+                  'flutter.theme_option',
+                  arguments['value'] as String,
+                );
+              }
+              return <String, dynamic>{'theme': arguments['value'] ?? 'system'};
+          }
+          throw MissingPluginException(call.method);
+        });
   });
 
   tearDown(() async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(appStateChannel, null);
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
   });
 
@@ -175,4 +211,78 @@ void main() {
     );
     expect(AppBackgroundService.current.chatTextHexColor, '#1D3E7B');
   });
+
+  testWidgets('pet-only compatibility page hides background controls', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(
+        const BackgroundSettingPage(showBasicPreferences: false, petOnly: true),
+      ),
+    );
+
+    expect(find.byKey(const ValueKey('appearance-pet-card')), findsOneWidget);
+    expect(find.byType(AppBackgroundPreview), findsNothing);
+    expect(
+      find.byKey(const ValueKey('background-source-remote')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('theme-mode-slider')), findsNothing);
+  });
+
+  testWidgets('background-only compatibility page hides pet controls', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      buildTestApp(const BackgroundSettingPage(showBasicPreferences: false)),
+    );
+
+    expect(find.byType(AppBackgroundPreview), findsOneWidget);
+    expect(find.byKey(const ValueKey('appearance-pet-card')), findsNothing);
+    expect(find.byKey(const ValueKey('theme-mode-slider')), findsNothing);
+  });
+
+  testWidgets(
+    'native edit replaces a cached unsaved draft without writing it back',
+    (tester) async {
+      const original = AppBackgroundConfig(
+        enabled: true,
+        sourceType: AppBackgroundSourceType.remote,
+        localImagePath: '',
+        remoteImageUrl: 'https://example.com/original.png',
+        blurSigma: 8,
+        frostOpacity: 0.18,
+        brightness: 1,
+        focalX: 0,
+        focalY: 0,
+      );
+      AppBackgroundService.notifier.value = original;
+      storedBackground = original.toJson();
+      await tester.pumpWidget(buildTestApp(const BackgroundSettingPage()));
+
+      await tester.enterText(
+        find.byKey(const ValueKey('appearance-text-color-field')),
+        '#1D3E7B',
+      );
+      await tester.pump(const Duration(milliseconds: 100));
+
+      storedBackground = original
+          .copyWith(remoteImageUrl: 'https://example.com/native.png')
+          .toJson();
+      await AppBackgroundService.load();
+      await tester.pump();
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(backgroundSaveCount, 0);
+      expect(
+        AppBackgroundService.current.remoteImageUrl,
+        'https://example.com/native.png',
+      );
+      expect(
+        AppBackgroundService.current.chatTextColorMode,
+        AppBackgroundTextColorMode.auto,
+      );
+    },
+  );
 }

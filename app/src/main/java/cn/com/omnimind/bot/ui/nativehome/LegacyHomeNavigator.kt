@@ -32,7 +32,7 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.Agents -> "/home/agent_mode_setting"
                 Page.Terminal -> "/home/termux_setting"
                 Page.McpTools -> "/home/mcp_tools"
-                Page.AppearanceDetails -> "/home/background_setting?section=background"
+                Page.AppearanceDetails -> "/home/background_setting?section=pet"
                 Page.Chat -> "/home/chat"
                 Page.Alarm -> "/home/alarm_setting"
                 Page.OpenWith -> "/home/open_with_omnibot_setting"

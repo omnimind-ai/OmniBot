@@ -23,6 +23,9 @@ import cn.com.omnimind.nativeui.NativeHomeState
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
 import cn.com.omnimind.nativeui.components.OmniIconButton
+import cn.com.omnimind.nativeui.settings.BackgroundImageLayer
+import cn.com.omnimind.nativeui.settings.BackgroundSettingsState
+import cn.com.omnimind.nativeui.settings.backgroundVisualColors
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
@@ -31,53 +34,63 @@ import top.yukonga.miuix.kmp.basic.Text
 @Composable
 internal fun HomeScreen(
     state: NativeHomeState,
+    backgroundState: BackgroundSettingsState,
     onDrawer: () -> Unit,
     onOpen: (LegacyDestination) -> Unit,
 ) {
     val palette = LocalOmniPalette.current
+    val backgroundActive = backgroundState.config.isActive
+    val backgroundText = backgroundVisualColors(backgroundState.config, backgroundState.sampledLuminance)
     // An untargeted entry lets the existing chat owner apply the startup preference.
     val openChat = { onOpen(LegacyDestination.Page.Chat) }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = { HomeTopBar(onDrawer, onOpen) },
-        bottomBar = {
-            Column(Modifier.navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
-                // This is an entry point, not a second composer or send pipeline.
-                Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp)).background(palette.surface)
-                    .clickable(role = Role.Button, onClick = openChat).padding(horizontal = 16.dp, vertical = 12.dp)) {
-                    Text(stringResource(R.string.omni_composer_hint), fontSize = 15.sp, color = palette.tertiaryText,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        OmniIconButton(R.drawable.omni_plus, stringResource(R.string.omni_input_tools), openChat, size = 20.dp)
-                        OmniIconButton(R.drawable.omni_square_terminal, stringResource(R.string.omni_settings_alpine_title),
-                            { onOpen(LegacyDestination.Page.Terminal) }, size = 20.dp)
-                        Spacer(Modifier.weight(1f))
-                        OmniIconButton(R.drawable.omni_mic, stringResource(R.string.omni_voice), openChat, size = 20.dp)
+    Box(Modifier.fillMaxSize()) {
+        if (backgroundActive) BackgroundImageLayer(backgroundState, Modifier.fillMaxSize())
+        Scaffold(
+            containerColor = if (backgroundActive) Color.Transparent else palette.page,
+            topBar = { HomeTopBar(onDrawer, onOpen) },
+            bottomBar = {
+                Column(Modifier.navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
+                    // This is an entry point, not a second composer or send pipeline.
+                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
+                        .background(palette.surface.copy(alpha = if (backgroundActive) .76f else 1f))
+                        .clickable(role = Role.Button, onClick = openChat).padding(horizontal = 16.dp, vertical = 12.dp)) {
+                        Text(stringResource(R.string.omni_composer_hint), fontSize = 15.sp, color = palette.tertiaryText,
+                            modifier = Modifier.padding(top = 4.dp, bottom = 14.dp))
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            OmniIconButton(R.drawable.omni_plus, stringResource(R.string.omni_input_tools), openChat, size = 20.dp)
+                            OmniIconButton(R.drawable.omni_square_terminal, stringResource(R.string.omni_settings_alpine_title),
+                                { onOpen(LegacyDestination.Page.Terminal) }, size = 20.dp)
+                            Spacer(Modifier.weight(1f))
+                            OmniIconButton(R.drawable.omni_mic, stringResource(R.string.omni_voice), openChat, size = 20.dp)
+                        }
                     }
                 }
-            }
-        },
-    ) { insets ->
-        Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets), contentAlignment = BiasAlignment(0f, -.18f)) {
-            if (state.greetingEnabled) {
-                Column(Modifier.widthIn(max = 520.dp).padding(horizontal = 28.dp)) {
-                    Text(stringResource(R.string.omni_greeting), fontSize = 19.sp, lineHeight = 24.7.sp, color = palette.text)
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                        Text(stringResource(R.string.omni_greeting_help), fontSize = 19.sp, lineHeight = 24.7.sp, color = palette.secondaryText)
-                        Text(stringResource(R.string.omni_greeting_verb), fontSize = 19.sp, lineHeight = 24.7.sp,
-                            color = palette.accent, fontFamily = FontFamily.Serif)
-                    }
-                    if (state.quickPrompts.isNotEmpty()) {
-                        Spacer(Modifier.height(14.dp))
-                        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            state.quickPrompts.take(2).forEach { prompt ->
-                                Text(prompt.title, fontSize = 13.sp, fontWeight = FontWeight.Medium,
-                                    color = if (palette.dark) palette.accent else palette.text,
-                                    modifier = Modifier.clip(CircleShape)
-                                        .background(palette.accent.copy(alpha = if (palette.dark) .13f else .09f))
-                                        .clickable(role = Role.Button) { onOpen(LegacyDestination.NewConversation(prompt.prompt)) }
-                                        .padding(horizontal = 13.dp, vertical = 9.dp))
+            },
+        ) { insets ->
+            Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets), contentAlignment = BiasAlignment(0f, -.18f)) {
+                if (state.greetingEnabled) {
+                    Column(Modifier.widthIn(max = 520.dp).padding(horizontal = 28.dp)) {
+                        Text(stringResource(R.string.omni_greeting), fontSize = 19.sp, lineHeight = 24.7.sp,
+                            color = if (backgroundActive) backgroundText.primary else palette.text)
+                        Spacer(Modifier.height(6.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            Text(stringResource(R.string.omni_greeting_help), fontSize = 19.sp, lineHeight = 24.7.sp,
+                                color = if (backgroundActive) backgroundText.secondary else palette.secondaryText)
+                            Text(stringResource(R.string.omni_greeting_verb), fontSize = 19.sp, lineHeight = 24.7.sp,
+                                color = palette.accent, fontFamily = FontFamily.Serif)
+                        }
+                        if (state.quickPrompts.isNotEmpty()) {
+                            Spacer(Modifier.height(14.dp))
+                            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                state.quickPrompts.take(2).forEach { prompt ->
+                                    Text(prompt.title, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                                        color = if (backgroundActive) backgroundText.primary
+                                            else if (palette.dark) palette.accent else palette.text,
+                                        modifier = Modifier.clip(CircleShape)
+                                            .background(palette.accent.copy(alpha = if (palette.dark) .13f else .09f))
+                                            .clickable(role = Role.Button) { onOpen(LegacyDestination.NewConversation(prompt.prompt)) }
+                                            .padding(horizontal = 13.dp, vertical = 9.dp))
+                                }
                             }
                         }
                     }

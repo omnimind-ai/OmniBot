@@ -7,6 +7,7 @@ import 'package:ui/services/home_greeting_settings_service.dart';
 import 'package:ui/features/home/state/habitual_hand_controller.dart';
 import 'package:ui/features/home/state/predictive_back_controller.dart';
 import 'package:ui/services/conversation_service.dart';
+import 'package:ui/services/app_background_service.dart';
 
 /// Refresh existing projections when a cached Flutter host becomes visible again.
 /// This reads shared storage; it does not persist settings or repeat side effects.
@@ -25,5 +26,6 @@ abstract final class UiPreferencesSync {
     container.read(appThemeModeProvider.notifier).restoreFromStorage();
     container.read(appLanguageModeProvider.notifier).restoreFromStorage();
     await HomeGreetingSettingsService.load(force: true);
+    await AppBackgroundService.load();
   }
 }

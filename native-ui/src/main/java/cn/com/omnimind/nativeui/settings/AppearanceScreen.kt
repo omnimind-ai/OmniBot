@@ -41,7 +41,7 @@ fun AppearanceScreen(state: UiPreferencesState, actions: UiPreferencesActions, o
             }
             item {
                 PreferenceRow(stringResource(R.string.omni_pref_background), stringResource(R.string.omni_pref_background_summary),
-                    icon = R.drawable.omni_paw_print, isLast = true, onClick = onBackground) { OmniIcon(R.drawable.omni_chevron_right) }
+                    icon = R.drawable.omni_image, isLast = true, onClick = onBackground) { OmniIcon(R.drawable.omni_chevron_right) }
             }
             if (state.failed) item { PreferenceFailure(actions) }
         }

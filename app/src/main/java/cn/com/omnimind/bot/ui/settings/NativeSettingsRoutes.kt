@@ -17,6 +17,7 @@ import cn.com.omnimind.nativeui.settings.PermissionSetting
 import cn.com.omnimind.nativeui.settings.PermissionsActions
 import cn.com.omnimind.nativeui.settings.PermissionsScreen
 import cn.com.omnimind.nativeui.settings.MiscSettingsScreen
+import cn.com.omnimind.nativeui.settings.BackgroundSettingsScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -103,4 +104,15 @@ internal fun NativeMiscSettingsRoute(
         }
     })
     MiscSettingsScreen(state, actions, onHomeSettings, openLegacy, onBack)
+}
+
+@Composable
+internal fun NativeBackgroundSettingsRoute(
+    viewModel: NativeBackgroundViewModel,
+    onPickImage: () -> Unit,
+    onPet: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    BackgroundSettingsScreen(state, viewModel.actions, onPickImage, onPet, onBack)
 }

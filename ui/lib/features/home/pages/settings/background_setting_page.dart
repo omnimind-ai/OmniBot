@@ -93,15 +93,21 @@ const List<_AppearanceTextColorPreset> _kAppearanceTextColorPresets =
     ];
 
 class BackgroundSettingPage extends StatefulWidget {
-  const BackgroundSettingPage({super.key, this.showBasicPreferences = true});
+  const BackgroundSettingPage({
+    super.key,
+    this.showBasicPreferences = true,
+    this.petOnly = false,
+  });
 
   final bool showBasicPreferences;
+  final bool petOnly;
 
   @override
   State<BackgroundSettingPage> createState() => _BackgroundSettingPageState();
 }
 
-class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
+class _BackgroundSettingPageState extends State<BackgroundSettingPage>
+    with WidgetsBindingObserver {
   final TextEditingController _remoteUrlController = TextEditingController();
   final TextEditingController _textColorController = TextEditingController();
 
@@ -117,6 +123,10 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   Timer? _petRefreshTimer;
   int _previewProfileToken = 0;
   int _autoSaveRequestId = 0;
+  bool _appIsActive = true;
+  bool _heldDraftOnPause = false;
+  bool _syncingControllers = false;
+  final List<AppBackgroundConfig> _serviceSaveTargets = [];
   bool _petExpanded = false;
   bool _petBusy = false;
   String _petsDirectoryPath = '';
@@ -134,6 +144,10 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   AppBackgroundConfig get _previewConfig {
     return _draftConfig;
   }
+
+  bool get _showPetSection =>
+      _showPetAppearanceSettings &&
+      (widget.petOnly || widget.showBasicPreferences);
 
   bool _sameConfig(AppBackgroundConfig left, AppBackgroundConfig right) {
     return left.toJson().toString() == right.toJson().toString();
@@ -184,6 +198,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    AppBackgroundService.notifier.addListener(_handleCommittedConfigChanged);
     _savedConfig = AppBackgroundService.current;
     _draftConfig = _savedConfig;
     _draftVisualProfile = AppBackgroundService.currentVisualProfile;
@@ -192,7 +208,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     _remoteUrlController.addListener(_handleRemoteUrlChanged);
     _textColorController.addListener(_handleTextColorChanged);
     _scheduleDraftVisualProfileRefresh();
-    if (_showPetAppearanceSettings) {
+    if (_showPetSection) {
       unawaited(_loadPetSettings());
       _petRefreshTimer = Timer.periodic(const Duration(seconds: 4), (_) {
         if (!mounted || !_petExpanded || _petBusy) return;
@@ -203,6 +219,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    AppBackgroundService.notifier.removeListener(_handleCommittedConfigChanged);
     final pendingSnapshot = _normalizedDraft();
     final shouldFlushPendingDraft =
         !_sameConfig(_savedConfig, pendingSnapshot) ||
@@ -210,8 +228,17 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     _previewProfileDebounceTimer?.cancel();
     _autoSaveDebounceTimer?.cancel();
     _petRefreshTimer?.cancel();
-    if (shouldFlushPendingDraft) {
+    if (shouldFlushPendingDraft && _appIsActive) {
       unawaited(_flushPendingDraftOnDispose(pendingSnapshot));
+    } else if (!_appIsActive) {
+      final importedPath = _sessionImportedLocalPath;
+      if (importedPath != null &&
+          importedPath != _savedConfig.localImagePath &&
+          !_serviceSaveTargets.any(
+            (target) => target.localImagePath == importedPath,
+          )) {
+        unawaited(AppBackgroundService.deleteManagedLocalImage(importedPath));
+      }
     }
     _remoteUrlController
       ..removeListener(_handleRemoteUrlChanged)
@@ -222,7 +249,62 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     super.dispose();
   }
 
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _appIsActive = true;
+      return;
+    }
+    if (state == AppLifecycleState.inactive ||
+        state == AppLifecycleState.paused) {
+      _appIsActive = false;
+      _heldDraftOnPause = !_sameConfig(_savedConfig, _normalizedDraft());
+      _autoSaveDebounceTimer?.cancel();
+      ++_autoSaveRequestId;
+    }
+  }
+
+  void _handleCommittedConfigChanged() {
+    final committed = AppBackgroundService.current;
+    if (_serviceSaveTargets.any((target) => _sameConfig(target, committed))) {
+      return;
+    }
+    if (_sameConfig(_savedConfig, committed)) {
+      // Resume may find the same stored value. Keep the local draft and save it
+      // only after the shared settings refresh has confirmed no native edit.
+      if (_heldDraftOnPause && _appIsActive) _scheduleAutoSave();
+      _heldDraftOnPause = false;
+      return;
+    }
+
+    // Native settings changed while this Flutter route stayed mounted. Drop
+    // its older draft so the pending debounce/dispose path cannot overwrite it.
+    _autoSaveDebounceTimer?.cancel();
+    ++_autoSaveRequestId;
+    final importedPath = _sessionImportedLocalPath;
+    _sessionImportedLocalPath = null;
+    _heldDraftOnPause = false;
+    setState(() {
+      _savedConfig = committed;
+      _draftConfig = committed;
+      _draftVisualProfile = AppBackgroundService.currentVisualProfile;
+      _syncingControllers = true;
+      try {
+        _remoteUrlController.text = committed.remoteImageUrl;
+        _textColorController.text = committed.chatTextHexColor;
+      } finally {
+        _syncingControllers = false;
+      }
+      _saving = false;
+    });
+    _scheduleDraftVisualProfileRefresh();
+    if (importedPath != null && importedPath != committed.localImagePath) {
+      unawaited(AppBackgroundService.deleteManagedLocalImage(importedPath));
+    }
+  }
+
   void _handleRemoteUrlChanged() {
+    if (_syncingControllers) return;
     final nextUrl = _remoteUrlController.text.trim();
     if (_draftConfig.sourceType != AppBackgroundSourceType.remote ||
         nextUrl == _draftConfig.remoteImageUrl) {
@@ -232,6 +314,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   }
 
   void _handleTextColorChanged() {
+    if (_syncingControllers) return;
     final normalized = normalizeAppBackgroundHexColor(
       _textColorController.text.trim(),
     );
@@ -264,9 +347,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
 
   Future<void> _pickLocalImage() async {
     try {
-      final file = await FilePicker.pickFile(
-        type: FileType.image,
-      );
+      final file = await FilePicker.pickFile(type: FileType.image);
       if (file == null) {
         return;
       }
@@ -343,21 +424,22 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   }
 
   Future<String?> _validateConfig(AppBackgroundConfig config) async {
+    final l10n = context.l10n;
     if (config.sourceType == AppBackgroundSourceType.local &&
         config.localImagePath.trim().isEmpty) {
-      return context.l10n.appearancePickLocalImageFirst;
+      return l10n.appearancePickLocalImageFirst;
     }
     if (config.sourceType == AppBackgroundSourceType.local &&
         config.localImagePath.trim().isNotEmpty &&
         !await File(config.localImagePath).exists()) {
-      return context.l10n.appearanceLocalImageMissing;
+      return l10n.appearanceLocalImageMissing;
     }
     if (config.sourceType == AppBackgroundSourceType.remote) {
       final uri = Uri.tryParse(config.remoteImageUrl.trim());
       if (uri == null ||
           !(uri.scheme == 'http' || uri.scheme == 'https') ||
           (uri.host.isEmpty)) {
-        return context.l10n.appearanceInvalidHttpUrl;
+        return l10n.appearanceInvalidHttpUrl;
       }
     }
     return null;
@@ -378,6 +460,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   ) async {
     final importedPath = _sessionImportedLocalPath;
     final validationError = await _validateConfig(snapshot);
+    if (requestId != _autoSaveRequestId || !_appIsActive) return;
     if (validationError != null || _sameConfig(_savedConfig, snapshot)) {
       if (validationError == null) {
         await _cleanupUnsavedImportedImageIfNeeded(
@@ -403,6 +486,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
 
     final previousSaved = _savedConfig;
     try {
+      _serviceSaveTargets.add(snapshot);
       await AppBackgroundService.save(snapshot);
       if (requestId != _autoSaveRequestId) {
         return;
@@ -430,6 +514,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
         showToast('自动保存失败：$error', type: ToastType.error);
       }
     } finally {
+      _serviceSaveTargets.remove(snapshot);
       if (mounted && requestId == _autoSaveRequestId) {
         setState(() => _saving = false);
       } else if (!mounted) {
@@ -454,6 +539,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
 
     final previousSaved = _savedConfig;
     try {
+      _serviceSaveTargets.add(snapshot);
       await AppBackgroundService.save(snapshot);
       await _cleanupObsoleteLocalImages(
         previousSaved: previousSaved,
@@ -465,6 +551,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
       _sessionImportedLocalPath = null;
     } catch (_) {
       // Silently skip persistence failures while the page is disposing.
+    } finally {
+      _serviceSaveTargets.remove(snapshot);
     }
   }
 
@@ -515,35 +603,37 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 12),
-                child: Text(
-                  context.trLegacy(_autoSaveHint),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: palette.textSecondary,
-                    fontWeight: FontWeight.w500,
+              if (!widget.petOnly) ...[
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, bottom: 12),
+                  child: Text(
+                    context.trLegacy(_autoSaveHint),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: palette.textSecondary,
+                      fontWeight: FontWeight.w500,
+                    ),
                   ),
                 ),
-              ),
-              if (widget.showBasicPreferences) ...[
-                const ThemeModeSettingCard(),
+                if (widget.showBasicPreferences) ...[
+                  const ThemeModeSettingCard(),
+                  const SizedBox(height: 18),
+                  _buildLanguageSettingCard(),
+                  const SizedBox(height: 18),
+                ],
+                SettingsSectionTitle(
+                  label: context.l10n.appearanceBackgroundSource,
+                ),
+                _buildSourceCard(),
                 const SizedBox(height: 18),
-                _buildLanguageSettingCard(),
+                SettingsSectionTitle(label: context.l10n.appearancePreview),
+                _buildPreviewCard(),
                 const SizedBox(height: 18),
+                SettingsSectionTitle(label: context.l10n.appearanceAdjustments),
+                _buildAdjustCard(),
               ],
-              SettingsSectionTitle(
-                label: context.l10n.appearanceBackgroundSource,
-              ),
-              _buildSourceCard(),
-              const SizedBox(height: 18),
-              SettingsSectionTitle(label: context.l10n.appearancePreview),
-              _buildPreviewCard(),
-              const SizedBox(height: 18),
-              SettingsSectionTitle(label: context.l10n.appearanceAdjustments),
-              _buildAdjustCard(),
-              if (_showPetAppearanceSettings) ...[
-                const SizedBox(height: 18),
+              if (_showPetSection) ...[
+                if (!widget.petOnly) const SizedBox(height: 18),
                 SettingsSectionTitle(label: '宠物'),
                 _buildPetCard(),
               ],
@@ -635,9 +725,12 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
               ],
               onChanged: (nextMode) async {
                 try {
-                  await ref.read(appLanguageModeProvider.notifier).setLanguageMode(nextMode);
+                  await ref
+                      .read(appLanguageModeProvider.notifier)
+                      .setLanguageMode(nextMode);
                 } catch (_) {
-                  if (context.mounted) showToast(context.trLegacy('设置失败'), type: ToastType.error);
+                  if (context.mounted)
+                    showToast(context.trLegacy('设置失败'), type: ToastType.error);
                 }
               },
             ),
@@ -939,9 +1032,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     }
     final customOptions = dedupedDiscovered.values.toList()
       ..sort((left, right) {
-        final timeCompare = _petSortTimestamp(
-          left,
-        ).compareTo(_petSortTimestamp(right));
+        final timeCompare = _petSortTimestamp(left)
+            .compareTo(_petSortTimestamp(right));
         if (timeCompare != 0) {
           return timeCompare;
         }
@@ -1953,15 +2045,16 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   }
 
   String _baseNameWithoutExtension(File file) {
-    return _displayFileNameForPetImage(
-      file,
-    ).replaceAll(RegExp(r'\.[^.]+$'), '').trim();
+    return _displayFileNameForPetImage(file)
+        .replaceAll(RegExp(r'\.[^.]+$'), '')
+        .trim();
   }
 
   String _pathBaseName(String path) {
-    final segments = _normalizePath(
-      path,
-    ).split('/').where((segment) => segment.isNotEmpty).toList();
+    final segments = _normalizePath(path)
+        .split('/')
+        .where((segment) => segment.isNotEmpty)
+        .toList();
     return segments.isEmpty ? '' : segments.last;
   }
 

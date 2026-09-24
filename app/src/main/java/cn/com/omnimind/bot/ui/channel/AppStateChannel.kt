@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.ui.channel
 import cn.com.omnimind.bot.preferences.UiPreferencesStore
 import cn.com.omnimind.bot.preferences.MiscPreferencesRepository
 import cn.com.omnimind.bot.preferences.MiscPreferenceKey
+import cn.com.omnimind.bot.preferences.AppBackgroundRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -45,6 +46,37 @@ class AppStateChannel {
 
     private fun handleMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
+            "getBackgroundConfig", "saveBackgroundConfig", "importBackgroundImage",
+            "deleteManagedBackgroundImage", "resetBackgroundConfig" -> {
+                val appContext = context?.applicationContext
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                scope.launch {
+                    try {
+                        val repository = AppBackgroundRepository.get(appContext)
+                        when (call.method) {
+                            "getBackgroundConfig" -> result.success(withContext(Dispatchers.IO) { repository.read() })
+                            "saveBackgroundConfig" -> result.success(repository.save(
+                                requireNotNull(call.argument<Map<String, Any?>>("config")),
+                            ))
+                            "importBackgroundImage" -> result.success(repository.importFromPath(
+                                requireNotNull(call.argument<String>("sourcePath")),
+                            ))
+                            "deleteManagedBackgroundImage" -> {
+                                repository.deleteManagedImage(requireNotNull(call.argument<String>("path")))
+                                result.success(true)
+                            }
+                            "resetBackgroundConfig" -> result.success(repository.reset())
+                        }
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        result.error("BACKGROUND_FAILED", "Unable to read or save background settings", null)
+                    }
+                }
+            }
             "getMiscPreferences", "updateMiscPreferences" -> {
                 val appContext = context?.applicationContext
                 if (appContext == null) {

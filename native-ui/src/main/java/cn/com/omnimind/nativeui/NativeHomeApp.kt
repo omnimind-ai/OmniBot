@@ -18,6 +18,7 @@ import cn.com.omnimind.nativeui.home.ConversationArchiveScreen
 import cn.com.omnimind.nativeui.home.HomeDrawer
 import cn.com.omnimind.nativeui.home.HomeScreen
 import cn.com.omnimind.nativeui.settings.SettingsScreen
+import cn.com.omnimind.nativeui.settings.BackgroundSettingsState
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import cn.com.omnimind.nativeui.theme.OmniTheme
 import kotlinx.coroutines.launch
@@ -38,6 +39,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object Appearance : HomeRoute
     @Serializable data object HomePreferences : HomeRoute
     @Serializable data object Miscellaneous : HomeRoute
+    @Serializable data object Background : HomeRoute
     @Serializable data object Permissions : HomeRoute
 }
 
@@ -46,11 +48,13 @@ internal sealed interface HomeRoute : NavKey {
 fun NativeHomeApp(
     state: NativeHomeState,
     actions: NativeHomeActions,
+    backgroundState: BackgroundSettingsState = BackgroundSettingsState(),
     about: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
-    appearance: @Composable (onBack: () -> Unit) -> Unit,
+    appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
     miscellaneous: @Composable (onBack: () -> Unit, onHomeSettings: () -> Unit) -> Unit,
+    background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -66,6 +70,7 @@ fun NativeHomeApp(
             entry<HomeRoute.Home> {
                 HomeWithDrawer(
                     state = state,
+                    backgroundState = backgroundState,
                     onSettings = { backStack.add(HomeRoute.Settings) },
                     onArchive = { backStack.add(HomeRoute.Archive) },
                     actions = actions,
@@ -84,7 +89,12 @@ fun NativeHomeApp(
                     onMiscellaneous = { backStack.add(HomeRoute.Miscellaneous) },
                 )
             }
-            entry<HomeRoute.Appearance> { appearance { backStack.removeLastOrNull() } }
+            entry<HomeRoute.Appearance> { appearance(
+                { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.Background) },
+            ) }
+            entry<HomeRoute.Background> { background(
+                { backStack.removeLastOrNull() }, { actions.open(LegacyDestination.Page.AppearanceDetails) },
+            ) }
             entry<HomeRoute.HomePreferences> { homePreferences { backStack.removeLastOrNull() } }
             entry<HomeRoute.Miscellaneous> { miscellaneous(
                 { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.HomePreferences) },
@@ -98,6 +108,7 @@ fun NativeHomeApp(
 @Composable
 private fun HomeWithDrawer(
     state: NativeHomeState,
+    backgroundState: BackgroundSettingsState,
     onSettings: () -> Unit,
     onArchive: () -> Unit,
     actions: NativeHomeActions,
@@ -135,7 +146,7 @@ private fun HomeWithDrawer(
                     }
                 },
             ) {
-                HomeScreen(state, { actions.refresh(); scope.launch { drawer.open() } }, actions.open)
+                HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } }, actions.open)
             }
         }
     }

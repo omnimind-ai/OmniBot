@@ -8,6 +8,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -30,6 +33,8 @@ import cn.com.omnimind.bot.ui.settings.NativePermissionsRoute
 import cn.com.omnimind.bot.ui.settings.NativePermissionsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeMiscSettingsRoute
 import cn.com.omnimind.bot.ui.settings.NativeMiscSettingsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeBackgroundViewModel
+import cn.com.omnimind.bot.ui.settings.NativeBackgroundSettingsRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -37,6 +42,7 @@ import cn.com.omnimind.nativeui.ThemePreference
 /** Opt-in host for the first native slice. MainActivity still owns the Flutter compatibility pages. */
 class NativeHomeActivity : ComponentActivity() {
     private lateinit var viewModel: NativeHomeViewModel
+    private lateinit var backgroundViewModel: NativeBackgroundViewModel
     private var languageOption: String? = null
     private var localeTag: String? = null
 
@@ -62,6 +68,7 @@ class NativeHomeActivity : ComponentActivity() {
         val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
         val preferences = ViewModelProvider(this, NativePreferencesViewModel.Factory(this))[NativePreferencesViewModel::class.java]
         val miscSettings = ViewModelProvider(this, NativeMiscSettingsViewModel.Factory(this))[NativeMiscSettingsViewModel::class.java]
+        backgroundViewModel = ViewModelProvider(this, NativeBackgroundViewModel.Factory(this))[NativeBackgroundViewModel::class.java]
         val permissionAccess = AppPermissionAccess(applicationContext)
         val navigator = LegacyHomeNavigator(this)
         val actions = NativeHomeActions(
@@ -76,6 +83,10 @@ class NativeHomeActivity : ComponentActivity() {
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
             val savedPreferences by preferences.state.collectAsStateWithLifecycle()
+            val backgroundState by backgroundViewModel.state.collectAsStateWithLifecycle()
+            val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+                uri?.let(backgroundViewModel.actions.importImage)
+            }
             LaunchedEffect(savedPreferences.loaded, savedPreferences.theme, savedPreferences.language) {
                 if (savedPreferences.loaded) {
                     if (languageOption != savedPreferences.language.storageValue) recreate()
@@ -105,10 +116,14 @@ class NativeHomeActivity : ComponentActivity() {
             }
             NativeHomeApp(
                 state = state.copy(theme = theme),
+                backgroundState = backgroundState,
                 actions = actions,
                 about = { onBack -> NativeAboutRoute(about, this@NativeHomeActivity, navigator::open, onBack) },
-                appearance = { onBack -> AppearanceScreen(savedPreferences, preferences.actions,
-                    onBackground = { navigator.open(LegacyDestination.Page.AppearanceDetails) }, onBack = onBack) },
+                appearance = { onBack, onBackground -> AppearanceScreen(savedPreferences, preferences.actions,
+                    onBackground = onBackground, onBack = onBack) },
+                background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,
+                    onPickImage = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onPet = onPet, onBack = onBack) },
                 homePreferences = { onBack -> HomePreferencesScreen(savedPreferences, preferences.actions, onBack) },
                 miscellaneous = { onBack, onHomeSettings -> NativeMiscSettingsRoute(
                     miscSettings, permissionAccess, navigator::open, onHomeSettings, onBack,
@@ -126,9 +141,14 @@ class NativeHomeActivity : ComponentActivity() {
             return
         }
         viewModel.refresh()
+        backgroundViewModel.refresh()
     }
 
     override fun onPause() {
+        if (::backgroundViewModel.isInitialized) {
+            // Keep the latest slider/text draft when the Activity moves behind a compatibility page.
+            backgroundViewModel.flush()
+        }
         TaskRuntimeSettings.onActivityPaused(this)
         super.onPause()
     }
