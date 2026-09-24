@@ -153,6 +153,52 @@ Counts must be computed as `sum(_sample_interval)` (the admin console does this)
 
 ## Deploy
 
+### Updating an existing deployment
+
+For a hotfix, push the tested commit to GitHub first and deploy that exact
+commit to the existing Worker. Record the active Cloudflare deployment/version
+ID before deploying so it can be rolled back. Keep its existing R2 binding,
+Analytics binding, routes, variables and secrets; the setup below is for new
+deployments, not a reason to replace production configuration.
+
+Run `npm test` in this directory before deploying. After deployment, check
+`/updates?currentVersion=0.6.3&includeBeta=false&edition=standard&source=worker`
+from a network that exhibited the timeout. Verify HTTP 200, the expected
+`cloudServicePolicy`, current release/download information, and
+`releaseCheckStatus: "ok"`. Record the response time and CF-Ray. Check `/` and
+`/community/wechat-qr` as well. Roll back to the recorded Worker version if the
+policy, release, or existing routes regress. This patch requires no R2 data
+migration and no new app install.
+
+### Update query performance and failure isolation
+
+Public update checks request R2 listing custom metadata, then read only the
+newest eligible release body (skipping drafts or deleted entries). Existing
+release writes already attach version, track and publication time, so no
+separate index rebuild or stale cache is needed. Listings follow `truncated`
+and `cursor`, including pages shortened by metadata size limits; see the
+[R2 listing contract](https://developers.cloudflare.com/r2/api/workers/workers-api-reference/#r2listoptions).
+Legacy objects lacking this metadata are read with at most six concurrent
+requests. The authenticated full release listing retains its existing behavior.
+
+Release discovery has an 8-second budget, below the existing Android client's
+20-second read timeout. If discovery fails or exceeds this budget, `/updates`
+still returns an independently fetched, validated cloud-service policy with
+`releaseCheckStatus: "unavailable"`, `hasUpdate: false`, and no download asset.
+No new release reads are scheduled after the deadline; already-issued R2 calls
+cannot be cancelled. A warning event `update_release_check_unavailable` records
+`timeout` or `storage_error` without credentials or storage error details.
+This status means release discovery failed, not that no newer release exists.
+
+The policy is neither cached nor replaced with an allow decision. Policy
+storage/validation errors still fail the request, and a valid minimum version
+still blocks older clients even when release discovery fails. Policy retrieval
+itself is not covered by the release deadline. Existing apps can consume the
+unchanged policy fields without an APK update; apps below an enforced minimum
+may temporarily lack an upgrade link during release-storage failures.
+
+### New deployment setup
+
 Create an R2 bucket, bind it and the Analytics Engine dataset to the Worker, then configure the tokens.
 
 ```bash

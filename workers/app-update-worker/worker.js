@@ -22,6 +22,8 @@ const COMMUNITY_QR_IMAGES = [
   },
 ];
 const CLOUD_SERVICE_POLICY_OBJECT_KEY = "metadata/config/cloud-service-policy.json";
+const RELEASE_CHECK_TIMEOUT_MS = 8_000;
+const LEGACY_RELEASE_READ_CONCURRENCY = 6;
 const DOWNLOAD_ROUTE_PREFIX = "/downloads/";
 const ADMIN_RELEASE_ROUTE_PREFIX = "/admin/releases/";
 const ADMIN_ANALYTICS_ROUTE_PREFIX = "/admin/analytics/";
@@ -485,12 +487,12 @@ async function handleUpdateCheck(request, url, env) {
   const source = normalizeSource(url.searchParams.get("source") || env.DEFAULT_SOURCE || "worker");
   const checkedAt = Date.now();
   const bucket = requireBucket(env);
-  const [releases, cloudServicePolicyConfig] = await Promise.all([
-    loadReleases(bucket, env),
+  const [releaseCheck, cloudServicePolicyConfig] = await Promise.all([
+    checkLatestRelease(bucket, env, includeBeta),
     readCloudServicePolicyConfig(bucket),
   ]);
   const cloudServicePolicy = buildCloudServicePolicy(currentVersion, cloudServicePolicyConfig);
-  const selected = selectLatestRelease(releases, includeBeta);
+  const selected = releaseCheck.release;
   const asset = selected ? selectPreferredApkAsset(selected.assets, edition) : null;
   const latestVersion = selected ? selected.version : currentVersion;
   const hasUpdate = Boolean(selected && asset) && compareVersions(latestVersion, currentVersion) > 0;
@@ -512,14 +514,14 @@ async function handleUpdateCheck(request, url, env) {
   });
 
   if (!selected) {
-    return json(emptyUpdateResponse({
+    return json({ ...emptyUpdateResponse({
       currentVersion,
       checkedAt,
       edition,
       source,
       cloudServicePolicy,
       officialVlmOperation: officialVlmOperationConfig(env, url),
-    }));
+    }), releaseCheckStatus: releaseCheck.status });
   }
 
   return json({
@@ -539,6 +541,7 @@ async function handleUpdateCheck(request, url, env) {
     source,
     officialVlmOperation: officialVlmOperationConfig(env, url),
     cloudServicePolicy,
+    releaseCheckStatus: releaseCheck.status,
     assets: (selected.assets || []).map((releaseAsset) => publicAsset(releaseAsset, url, selected.tag)),
   });
 }
@@ -1249,6 +1252,100 @@ function clampInt(raw, min, max, fallback) {
   const value = Number(raw);
   if (!Number.isInteger(value)) return fallback;
   return Math.min(max, Math.max(min, value));
+}
+
+async function checkLatestRelease(bucket, env, includeBeta) {
+  // Release discovery must not hold an independently valid account policy
+  // behind the Android client's 20-second read timeout. Never manufacture a
+  // policy here: policy storage/validation errors still fail the request.
+  const budget = { stopped: false };
+  let timer;
+  try {
+    const release = await Promise.race([
+      loadLatestPublicRelease(bucket, env, includeBeta, budget),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          budget.stopped = true;
+          reject(new Error("release_check_timeout"));
+        }, RELEASE_CHECK_TIMEOUT_MS);
+      }),
+    ]);
+    return { status: "ok", release };
+  } catch (error) {
+    console.warn(JSON.stringify({
+      event: "update_release_check_unavailable",
+      reason: error?.message === "release_check_timeout" ? "timeout" : "storage_error",
+    }));
+    return { status: "unavailable", release: null };
+  } finally {
+    budget.stopped = true;
+    clearTimeout(timer);
+  }
+}
+
+async function loadLatestPublicRelease(bucket, env, includeBeta, budget) {
+  const candidates = [];
+  let cursor;
+  const prefix = `${normalizeMetadataPrefix(env.R2_METADATA_PREFIX)}/`;
+  do {
+    if (budget.stopped) return null;
+    // Existing release writes already store version/track/publishedAt on the
+    // object. Use R2's listing as the index, without a new mutable snapshot.
+    const page = await bucket.list({ prefix, cursor, include: ["customMetadata"] });
+    if (budget.stopped) return null;
+    const legacy = [];
+    for (const object of page.objects || []) {
+      const metadata = object.customMetadata || {};
+      const version = stringValue(metadata.version);
+      const track = stringValue(metadata.track);
+      if (version && ["stable", "beta", "unsupported"].includes(track)) {
+        candidates.push({
+          key: object.key,
+          version,
+          track,
+          publishedAt: normalizeTimestamp(metadata.publishedAt || metadata.publishedat),
+        });
+      } else {
+        legacy.push(object);
+      }
+    }
+    // Objects uploaded before custom metadata was introduced remain readable.
+    // Bound concurrency and stop scheduling more reads after the deadline.
+    let next = 0;
+    await Promise.all(Array.from(
+      { length: Math.min(LEGACY_RELEASE_READ_CONCURRENCY, legacy.length) },
+      async () => {
+        while (!budget.stopped && next < legacy.length) {
+          const object = legacy[next++];
+          const release = await readReleaseMetadata(bucket, object.key);
+          if (release) candidates.push({ ...release, key: object.key, release });
+        }
+      },
+    ));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+
+  const eligible = candidates
+    .filter(release => !release.draft &&
+      (release.track === "stable" || (includeBeta && release.track === "beta")))
+    .sort(compareReleaseOrder);
+  let selected = null;
+  for (const candidate of eligible) {
+    if (budget.stopped) return null;
+    if (selected && compareReleaseOrder(selected, candidate) <= 0) break;
+    const release = candidate.release || await readReleaseMetadata(bucket, candidate.key);
+    // Draft state and full download metadata always come from the object body.
+    // A draft/deleted newest entry must not hide the next published release.
+    if (release && !release.draft) {
+      selected = selectLatestRelease([selected, release].filter(Boolean), includeBeta);
+    }
+  }
+  return selected;
+}
+
+function compareReleaseOrder(left, right) {
+  return compareVersions(right.version, left.version) ||
+    (right.publishedAt || 0) - (left.publishedAt || 0);
 }
 
 async function loadReleases(bucket, env, { includeDrafts = false } = {}) {
