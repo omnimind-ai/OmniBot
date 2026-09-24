@@ -40,6 +40,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object HomePreferences : HomeRoute
     @Serializable data object Miscellaneous : HomeRoute
     @Serializable data object Background : HomeRoute
+    @Serializable data object Pet : HomeRoute
     @Serializable data object Permissions : HomeRoute
 }
 
@@ -55,6 +56,7 @@ fun NativeHomeApp(
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
     miscellaneous: @Composable (onBack: () -> Unit, onHomeSettings: () -> Unit) -> Unit,
     background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
+    pet: @Composable (onBack: () -> Unit) -> Unit,
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -73,6 +75,7 @@ fun NativeHomeApp(
                     backgroundState = backgroundState,
                     onSettings = { backStack.add(HomeRoute.Settings) },
                     onArchive = { backStack.add(HomeRoute.Archive) },
+                    onPet = { backStack.add(HomeRoute.Pet) },
                     actions = actions,
                 )
             }
@@ -93,8 +96,9 @@ fun NativeHomeApp(
                 { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.Background) },
             ) }
             entry<HomeRoute.Background> { background(
-                { backStack.removeLastOrNull() }, { actions.open(LegacyDestination.Page.AppearanceDetails) },
+                { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.Pet) },
             ) }
+            entry<HomeRoute.Pet> { pet { backStack.removeLastOrNull() } }
             entry<HomeRoute.HomePreferences> { homePreferences { backStack.removeLastOrNull() } }
             entry<HomeRoute.Miscellaneous> { miscellaneous(
                 { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.HomePreferences) },
@@ -111,6 +115,7 @@ private fun HomeWithDrawer(
     backgroundState: BackgroundSettingsState,
     onSettings: () -> Unit,
     onArchive: () -> Unit,
+    onPet: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -146,7 +151,8 @@ private fun HomeWithDrawer(
                     }
                 },
             ) {
-                HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } }, actions.open)
+                HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } },
+                    onPet, actions.open)
             }
         }
     }

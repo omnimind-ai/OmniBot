@@ -35,6 +35,8 @@ import cn.com.omnimind.bot.ui.settings.NativeMiscSettingsRoute
 import cn.com.omnimind.bot.ui.settings.NativeMiscSettingsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeBackgroundViewModel
 import cn.com.omnimind.bot.ui.settings.NativeBackgroundSettingsRoute
+import cn.com.omnimind.bot.ui.settings.NativePetSettingsRoute
+import cn.com.omnimind.bot.ui.settings.NativePetSettingsViewModel
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -43,6 +45,9 @@ import cn.com.omnimind.nativeui.ThemePreference
 class NativeHomeActivity : ComponentActivity() {
     private lateinit var viewModel: NativeHomeViewModel
     private lateinit var backgroundViewModel: NativeBackgroundViewModel
+    private val petViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativePetSettingsViewModel.Factory(this))[NativePetSettingsViewModel::class.java]
+    }
     private var languageOption: String? = null
     private var localeTag: String? = null
 
@@ -87,6 +92,9 @@ class NativeHomeActivity : ComponentActivity() {
             val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
                 uri?.let(backgroundViewModel.actions.importImage)
             }
+            val petPackagePicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+                uri?.let(petViewModel.actions.importPackage)
+            }
             LaunchedEffect(savedPreferences.loaded, savedPreferences.theme, savedPreferences.language) {
                 if (savedPreferences.loaded) {
                     if (languageOption != savedPreferences.language.storageValue) recreate()
@@ -124,6 +132,11 @@ class NativeHomeActivity : ComponentActivity() {
                 background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,
                     onPickImage = { imagePicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                     onPet = onPet, onBack = onBack) },
+                pet = { onBack -> NativePetSettingsRoute(petViewModel,
+                    onPickPackage = { petPackagePicker.launch(arrayOf(
+                        "application/zip", "application/x-zip-compressed", "application/octet-stream",
+                    )) },
+                    onBack = onBack) },
                 homePreferences = { onBack -> HomePreferencesScreen(savedPreferences, preferences.actions, onBack) },
                 miscellaneous = { onBack, onHomeSettings -> NativeMiscSettingsRoute(
                     miscSettings, permissionAccess, navigator::open, onHomeSettings, onBack,

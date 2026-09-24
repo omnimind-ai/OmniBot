@@ -300,4 +300,17 @@
     <string name="omni_background_preview_tone_custom">Custom Color</string>
     <string name="omni_background_page_title">Background Image</string>
     <string name="omni_background_confirm">OK</string>
+    <string name="omni_pet_page_title">Pet Appearance</string>
+    <string name="omni_pet_selected">Selected: %1$s</string>
+    <string name="omni_pet_refresh">Refresh</string>
+    <string name="omni_pet_import">Import Codex Pet Package</string>
+    <string name="omni_pet_import_summary">Supports .codex-pet.zip (pet.json + spritesheet.webp)</string>
+    <string name="omni_pet_select">Select</string>
+    <string name="omni_pet_selected_button">Selected</string>
+    <string name="omni_pet_builtin_desc">Default floating pet</string>
+    <string name="omni_pet_animation_label">Codex animated pet · 7 action types</string>
+    <string name="omni_pet_read_failed">Could not load pets. Try again.</string>
+    <string name="omni_pet_selection_failed">Could not select this pet. Try again.</string>
+    <string name="omni_pet_import_failed">Could not import the pet. Check the ZIP and sprite atlas.</string>
+    <string name="omni_pet_confirm">OK</string>
 </resources>

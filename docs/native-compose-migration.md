@@ -41,8 +41,9 @@ LauncherActivity
       ├─ NativePreferencesViewModel → UiPreferencesStore → existing FlutterSharedPreferences
       ├─ NativeMiscSettingsViewModel → MiscPreferencesRepository → existing keys / platform owners
       ├─ NativeBackgroundViewModel → AppBackgroundRepository + BackgroundPreviewLoader
+      ├─ NativePetSettingsViewModel → PetAppearanceRepository → PetPackageInstaller + PetPreviewRenderer
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / HomePreferences / Miscellaneous
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -117,7 +118,7 @@ random greeting selection out of pixel comparisons.
 
 - Home currently has a navigation entry into the existing composer, not a migrated
   chat input. Full input/voice/attachments, agent selection, workspace switching,
-  pet actions, greeting placement/rotation, prompt icons and background pixel
+  pet action playback controls, greeting placement/rotation, prompt icons and background pixel
   comparison still need
   their owning feature migrated and compared.
 - Drawer supports the live list, scheduled-parent/child groups, pinned/date/mode
@@ -127,8 +128,8 @@ random greeting selection out of pixel comparisons.
   visual differences still need migration/acceptance.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
   permissions, theme/language, home preferences, miscellaneous and background
-  image settings are native. Pet appearance, alarm, open-with, quick-start and
-  other detail pages still use the existing feature pages. Workspace-memory
+  image settings and pet appearance are native. Alarm, open-with, quick-start
+  and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (terminal auto-start, account refresh and app update checks)
@@ -154,12 +155,12 @@ The order below follows the actual owners in this repository, not page size alon
 | 3a | Theme/language and home preferences — source implemented | `UiPreferencesStore`, existing `AppLocaleManager` and Flutter controllers/cache | One writer for the existing three keys, native controls, compatibility refresh; see batch 3a. |
 | 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
 | 3b-2a | Background image settings — source implemented | `AppBackgroundRepository`, the existing `app_background_config_v1` key and `filesDir/backgrounds` | One writer for native and Flutter settings; see batch 3b-2a. |
-| 3b-2b | Pet appearance | Overlay selection, pet package import, resource scanning and generated previews | Migrate this separate resource-heavy feature in a later bounded Goal. |
+| 3b-2b | Pet appearance — source implemented | `PetAppearanceRepository`, existing overlay runtime, workspace pet roots, ZIP validator and preview renderer | Native selection/import/discovery and Flutter compatibility share one owner; see batch 3b-2b. |
 | 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup currently lives inside `StorageUsageChannel`; provider/model resolution and plugin runtime already have native owners. | Extract storage operations into a reusable repository/service, leaving the channel as an adapter. Reuse configured provider resolution and plugin capabilities; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1 and 3b-2a. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a and 3b-2b. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
 Before expanding the home surface, correct its provisional action wiring:
@@ -477,7 +478,8 @@ but its saves, resets, imports and managed-file deletion call the existing
 not attached yet. Entering or resuming a Flutter compatibility page reloads the
 stored config; an older pending Flutter draft is cancelled when a newer native
 value arrives. The default Flutter appearance route remains complete, while
-`section=pet` opens only the existing pet controls from native Background Image.
+`section=pet` was the temporary pet-only handoff; batch 3b-2b now opens a
+native Pet page. The default Flutter Appearance route remains complete.
 
 The image picker uses Android's photo picker. Imports copy into the same
 `filesDir/backgrounds` folder used by Flutter's Android path provider; the
@@ -514,15 +516,83 @@ Manual acceptance for this batch:
 6. Open the cached Flutter appearance page after editing natively. Its controls
    and chat/workspace visuals must show the latest value, and its older draft
    must not write itself back. Edit there, return to native, and repeat.
-7. Open Pet Appearance from native Background Image. Confirm it shows only pet
-   controls and returns to the native page; the default Flutter Appearance
-   route still contains its full existing controls.
+7. Open Pet Appearance from native Background Image. Confirm the dedicated
+   native page returns correctly; the default Flutter Appearance route still
+   contains its existing pet controls through the shared native owner.
 
 Source-only checks cover the 13-field JSON mapping, XML and bilingual resources,
 channel method names, compatibility routes, Dart formatting/parsing and
 `git diff --check`. No build, test, emulator/device interaction, real settings
 change, commit or push was run for this Goal. Stop after this source batch;
-pet packages and scanning remain batch 3b-2b.
+pet packages and scanning were assigned to batch 3b-2b below.
+
+## Batch 3b-2b checkpoint: pet appearance
+
+Native Home's pet button and Background Image → Pet Appearance now open a
+saved Miuix page. It lists the built-in pet and discovered custom pets with
+58dp previews, shows the selected pet, and provides refresh, selection and
+system document picking for `.codex-pet.zip`. Miuix owns rows, buttons,
+dialog dismissal and navigation; thumbnails load only as their rows appear.
+This moves appearance selection without adding an Agent lifecycle or a second
+pet state machine.
+
+`PetAppearanceRepository` is the single owner for discovery and selected
+appearance. It reads the existing `OmnibotSettings` keys, falls back to the
+existing Flutter keys for older installs, and mirrors a successful selection
+back to FlutterSharedPreferences. It then asks the existing
+`DraggableBallInstance` to refresh. `OverlayChannel` remains a thin adapter for
+the Flutter compatibility page and retains show/hide/action operations.
+The old Dart directory scanner and Dart ZIP installer were removed; the default
+Flutter Appearance page still renders its pet section from the native option
+snapshot. Returning to it refreshes that snapshot.
+
+Discovery covers `workspace/.omnibot/pets` and the legacy `workspace/pets`,
+package subdirectories, current images, metadata JSON/Markdown and existing
+selected images. It keeps PNG, JPEG, WebP and GIF previews, rasterizes atlas
+first frames and SVG, and can use image references or an inline SVG from HTML.
+Generated previews reuse the former `.omnibot-preview.png` suffix. Atlas pets
+still pass their source atlas to the overlay; SVG/HTML-based pets pass a
+renderable PNG, including when upgrading an old selected SVG path. Pet identity
+stays the same. Preview generation is
+bounded and confined to the workspace root. The built-in preview is copied
+from the existing Flutter asset.
+
+The native installer checks ZIP size (32 MB), extracted bytes (64 MB), entry
+count (64), safe relative paths, exactly one `pet.json`, the pet ID, PNG/WebP
+header, and the existing 1536×1872 v1 / 1536×2288 v2 atlas contract.
+It stages the selected manifest and spritesheet under the existing pets root,
+then swaps a replacement directory with rollback on failure. The option is
+selected only after installation succeeds. This is a source implementation;
+package compatibility and overlay playback require device verification.
+
+Manual acceptance for this batch:
+
+1. On the native launcher, open Pet Appearance from both Home and Background
+   Image. Check the built-in pet, selected label, list spacing, back gestures,
+   rotation, Chinese/English, light/dark and large text.
+2. Populate both workspace pet roots with supported loose files and package
+   directories. Include metadata names/descriptions, preferred `current` files,
+   atlas, SVG and HTML reference/inline SVG previews. Refresh and compare the
+   option set, order, names and 58dp previews with the existing Flutter page.
+3. Select built-in and custom pets, including a v1 and v2 sprite atlas. Check
+   that the live overlay refreshes, selection survives restart, and the Flutter
+   page returns with the same option selected. Repeat the reverse direction.
+4. Import a valid `.codex-pet.zip` with the Android picker, update the same ID,
+   cancel the picker, and test invalid ZIP, missing/duplicate manifest,
+   traversal paths, oversized entries, invalid image header and atlas/version
+   mismatch. Failures must leave the previous selection and package usable.
+5. Open the default Flutter Appearance page and import/select there. Verify
+   the same native option appears and the overlay reacts without a second
+   preference write. Check a cached Flutter page after native changes.
+6. Check an old selected path and an old package with generated previews. No
+   migration should erase files or silently switch the selected pet. Check
+   package replace/rollback and missing-file behavior on device.
+
+Source-only verification includes ZIP/metadata/preview contract inspection,
+bilingual resources, bridge methods, Dart parsing and `git diff --check`.
+No build, test, emulator/device interaction, real overlay selection/import,
+commit or push was performed for this Goal. Stop here; storage/model work and
+the chat runtime belong to later Goals.
 
 ## Verification
 

@@ -36,6 +36,7 @@ internal fun HomeScreen(
     state: NativeHomeState,
     backgroundState: BackgroundSettingsState,
     onDrawer: () -> Unit,
+    onPetSettings: () -> Unit,
     onOpen: (LegacyDestination) -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -47,7 +48,7 @@ internal fun HomeScreen(
         if (backgroundActive) BackgroundImageLayer(backgroundState, Modifier.fillMaxSize())
         Scaffold(
             containerColor = if (backgroundActive) Color.Transparent else palette.page,
-            topBar = { HomeTopBar(onDrawer, onOpen) },
+            topBar = { HomeTopBar(onDrawer, onPetSettings, onOpen) },
             bottomBar = {
                 Column(Modifier.navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // This is an entry point, not a second composer or send pipeline.
@@ -101,7 +102,8 @@ internal fun HomeScreen(
 }
 
 @Composable
-private fun HomeTopBar(onDrawer: () -> Unit, onOpen: (LegacyDestination) -> Unit) {
+private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit,
+    onOpen: (LegacyDestination) -> Unit) {
     val palette = LocalOmniPalette.current
     BoxWithConstraints(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp).height(50.dp)) {
         // Matches ChatAppBar's symmetric reservation so the island stays screen-centered.
@@ -112,7 +114,7 @@ private fun HomeTopBar(onDrawer: () -> Unit, onOpen: (LegacyDestination) -> Unit
             Modifier.align(Alignment.CenterStart).width(50.dp))
         // The pet and agent controls still belong to the chat feature during this slice.
         OmniIconButton(R.drawable.omni_paw_print, stringResource(R.string.omni_pet),
-            { onOpen(LegacyDestination.NewConversation()) }, Modifier.offset(x = accessoryLeft).align(Alignment.CenterStart).width(40.dp))
+            onPetSettings, Modifier.offset(x = accessoryLeft).align(Alignment.CenterStart).width(40.dp))
         Row(Modifier.align(Alignment.Center).width(islandWidth).height(34.dp).clip(CircleShape).background(palette.surface)) {
             val gradient = if (palette.dark) listOf(Color(0xFFAA9774), Color(0xFF8FA38A))
                 else listOf(Color(0xFF00AEFF), Color(0xFF4658FF))

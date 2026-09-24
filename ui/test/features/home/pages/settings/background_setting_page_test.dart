@@ -36,6 +36,7 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const appStateChannel = MethodChannel('cn.com.omnimind.bot/app_state');
+  const overlayChannel = MethodChannel('cn.com.omnimind.bot/overlay');
   late Map<String, dynamic> storedBackground;
   var backgroundSaveCount = 0;
 
@@ -45,6 +46,27 @@ void main() {
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
     storedBackground = AppBackgroundConfig.defaults.toJson();
     backgroundSaveCount = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(overlayChannel, (call) async {
+          if (call.method == 'listPetAppearances' ||
+              call.method == 'selectPetAppearance') {
+            return <String, dynamic>{
+              'selectedId': 'builtin:xiaowan',
+              'selectedPath': '',
+              'options': <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'id': 'builtin:xiaowan',
+                  'name': '小万',
+                  'description': '默认的桌面悬浮窗宠物',
+                  'imagePath': '',
+                  'isBuiltin': true,
+                  'animationLabel': '',
+                },
+              ],
+            };
+          }
+          throw MissingPluginException(call.method);
+        });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(appStateChannel, (call) async {
           final prefs = await SharedPreferences.getInstance();
@@ -79,6 +101,8 @@ void main() {
   tearDown(() async {
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(appStateChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(overlayChannel, null);
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
   });
 

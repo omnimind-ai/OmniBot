@@ -25,7 +25,7 @@ class NativeHomeNavigationTest {
         val state = mutableStateOf(NativeHomeState(loading = false))
         restoration.setContent {
             NativeHomeApp(state.value, actions(setService = { state.value = state.value.copy(localServiceEnabled = it) }),
-                about = {}, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {}, miscellaneous = { _, _ -> })
+                about = {}, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> })
         }
         capture("home-light")
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
@@ -47,7 +47,7 @@ class NativeHomeNavigationTest {
             NativeHomeApp(NativeHomeState(
                 loading = false,
                 conversations = listOf(ConversationSummary(42, "Saved thread", "", "agent", 1, false)),
-            ), actions(open = { opened.add(it) }), about = {}, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {},
+            ), actions(open = { opened.add(it) }), about = {}, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {},
                 miscellaneous = { _, _ -> })
         }
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
@@ -59,7 +59,7 @@ class NativeHomeNavigationTest {
     @Test fun settingsOpensNativeMiscAndReturnsToSettings() {
         compose.setContent {
             NativeHomeApp(NativeHomeState(loading = false), actions(), about = {}, permissions = {},
-                appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {}, miscellaneous = { onBack, onHomeSettings ->
+                appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { onBack, onHomeSettings ->
                     MiscSettingsScreen(MiscSettingsState(loaded = true), miscActions(), onHomeSettings, {}, onBack)
                 })
         }
@@ -75,11 +75,23 @@ class NativeHomeNavigationTest {
         val opened = mutableListOf<LegacyDestination>()
         compose.setContent {
             NativeHomeApp(NativeHomeState(loading = false), actions(open = { opened.add(it) }),
-                about = {}, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {}, miscellaneous = { _, _ -> })
+                about = {}, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> })
         }
         compose.onNodeWithText(label(R.string.omni_composer_hint)).performClick()
         compose.waitForIdle()
         assertEquals(listOf(LegacyDestination.Page.Chat), opened)
+    }
+
+    @Test fun homePetButtonOpensTheNativePetRoute() {
+        compose.setContent {
+            NativeHomeApp(NativeHomeState(loading = false), actions(), about = {}, permissions = {},
+                appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {},
+                miscellaneous = { _, _ -> }, pet = {
+                    top.yukonga.miuix.kmp.basic.Text("Native pet page")
+                })
+        }
+        compose.onNodeWithContentDescription(label(R.string.omni_pet)).performClick()
+        compose.onNodeWithText("Native pet page").assertIsDisplayed()
     }
 
     private fun miscActions() = MiscSettingsActions(

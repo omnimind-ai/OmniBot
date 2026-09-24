@@ -4,25 +4,28 @@ import android.content.Context
 import android.os.Handler
 import android.os.Looper
 import cn.com.omnimind.baselib.util.OmniLog
-import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.preferences.PetAppearanceRepository
 import cn.com.omnimind.uikit.loader.cat.DraggableBallInstance
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
-/**
- * Overlay通道 - 处理Flutter与Android Overlay之间的通信
- * !!暂不使用!!
- */
+/** Flutter adapter for the existing overlay runtime and shared pet appearance owner. */
 class OverlayChannel {
 
     private val TAG = "OverlayChannel"
     private val CHANNEL = "cn.com.omnimind.bot/overlay"
     private val PREFS_NAME = "OmnibotSettings"
-    private val KEY_PET_OVERLAY_IMAGE_PATH = "pet_overlay_image_path"
-    private val KEY_PET_OVERLAY_SELECTED_ID = "pet_overlay_selected_id"
     private val KEY_PET_OVERLAY_VISIBLE = "pet_overlay_visible"
 
+    private var scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var methodChannel: MethodChannel? = null
     private var appContext: Context? = null
 
@@ -32,6 +35,7 @@ class OverlayChannel {
     }
 
     fun setChannel(flutterEngine: FlutterEngine) {
+        if (!scope.isActive) scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         methodChannel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
         methodChannel?.setMethodCallHandler { call, result ->
             handleMethodCall(call, result)
@@ -50,16 +54,16 @@ class OverlayChannel {
                     result.error("SHOW_MESSAGE_FAILED", e.message, null)
                 }
             }
-            "setPetOverlayImagePath" -> {
-                try {
-                    val path = call.argument<String>("path")?.trim().orEmpty()
-                    val selectedId = call.argument<String>("selectedId")?.trim().orEmpty()
-                    setPetOverlayImagePath(path, selectedId)
-                    result.success(true)
-                } catch (e: Exception) {
-                    OmniLog.e(TAG, "setPetOverlayImagePath failed: ${e.message}", e)
-                    result.error("SET_PET_IMAGE_FAILED", e.message, null)
-                }
+            "selectPetAppearance" -> petOperation(result) {
+                PetAppearanceRepository.get(requireNotNull(appContext))
+                    .select(requireNotNull(call.argument<String>("id"))).toMap()
+            }
+            "importPetPackage" -> petOperation(result) {
+                PetAppearanceRepository.get(requireNotNull(appContext))
+                    .import(requireNotNull(call.argument<String>("path"))).toMap()
+            }
+            "listPetAppearances" -> petOperation(result) {
+                PetAppearanceRepository.get(requireNotNull(appContext)).state().toMap()
             }
             "playPetAction" -> {
                 val action = call.argument<String>("action")?.trim().orEmpty()
@@ -75,9 +79,6 @@ class OverlayChannel {
             "isPetOverlayShowing" -> {
                 result.success(DraggableBallInstance.isShowing())
             }
-            "getPetOverlayState" -> {
-                result.success(getPetOverlayState())
-            }
             else -> {
                 result.notImplemented()
             }
@@ -85,18 +86,22 @@ class OverlayChannel {
     }
 
     fun clear() {
+        scope.cancel()
         methodChannel?.setMethodCallHandler(null)
         methodChannel = null
     }
 
-    private fun setPetOverlayImagePath(path: String, selectedId: String) {
-        val context = appContext ?: return
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit()
-            .putString(KEY_PET_OVERLAY_IMAGE_PATH, path)
-            .putString(KEY_PET_OVERLAY_SELECTED_ID, selectedId)
-            .apply()
-        DraggableBallInstance.refreshPetAppearance()
+    private fun petOperation(result: MethodChannel.Result, action: suspend () -> Any?) {
+        scope.launch {
+            try {
+                result.success(action())
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                OmniLog.e(TAG, "Pet appearance operation failed", error)
+                result.error("PET_APPEARANCE_FAILED", error.message, null)
+            }
+        }
     }
 
     private fun showPetOverlay(result: MethodChannel.Result) {
@@ -131,26 +136,6 @@ class OverlayChannel {
                 result.error("HIDE_PET_FAILED", e.message, null)
             }
         }
-    }
-
-    private fun getPetOverlayState(): Map<String, Any?> {
-        val context = appContext ?: return mapOf(
-            "showing" to DraggableBallInstance.isShowing(),
-            "selectedPath" to "",
-            "selectedId" to "builtin:xiaowan"
-        )
-        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        val workspaceManager = AgentWorkspaceManager(context)
-        workspaceManager.ensureRuntimeDirectories()
-        return mapOf(
-            "showing" to DraggableBallInstance.isShowing(),
-            "selectedPath" to (prefs.getString(KEY_PET_OVERLAY_IMAGE_PATH, "") ?: ""),
-            "selectedId" to (prefs.getString(KEY_PET_OVERLAY_SELECTED_ID, "builtin:xiaowan") ?: "builtin:xiaowan"),
-            "visiblePreference" to prefs.getBoolean(KEY_PET_OVERLAY_VISIBLE, false),
-            "workspaceRootPath" to AgentWorkspaceManager.androidRootPath(context),
-            "shellWorkspaceRootPath" to AgentWorkspaceManager.SHELL_ROOT_PATH,
-            "petsDirectoryPath" to workspaceManager.petsRoot().absolutePath
-        )
     }
 
     /**

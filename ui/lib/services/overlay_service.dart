@@ -1,12 +1,38 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// Overlay服务，用于与原生OverlayChannel通信
-/// !!暂不使用!!
+/// Flutter adapter for the existing native overlay and pet appearance owner.
 class OverlayService {
   static const MethodChannel _channel = MethodChannel(
     'cn.com.omnimind.bot/overlay',
   );
+
+  /// The native repository owns discovery and persisted selection for both UIs.
+  static Future<Map<String, dynamic>> getPetAppearanceState() async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'listPetAppearances',
+    );
+    if (snapshot == null) throw StateError('Missing pet appearance state');
+    return snapshot.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  static Future<Map<String, dynamic>> selectPetAppearance(String id) async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'selectPetAppearance',
+      {'id': id},
+    );
+    if (snapshot == null) throw StateError('Missing selected pet state');
+    return snapshot.map((key, value) => MapEntry(key.toString(), value));
+  }
+
+  static Future<Map<String, dynamic>> importPetPackage(String path) async {
+    final snapshot = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'importPetPackage',
+      {'path': path},
+    );
+    if (snapshot == null) throw StateError('Missing installed pet state');
+    return snapshot.map((key, value) => MapEntry(key.toString(), value));
+  }
 
   /// 显示消息提示（在MessageView中显示）
   /// [message] 要显示的消息内容
@@ -19,24 +45,6 @@ class OverlayService {
     } on PlatformException catch (e) {
       if (kDebugMode) {
         print('显示消息失败: ${e.message}');
-      }
-      return false;
-    }
-  }
-
-  static Future<bool> setPetOverlayImagePath(
-    String path, {
-    String selectedId = '',
-  }) async {
-    try {
-      final result = await _channel.invokeMethod<bool>(
-        'setPetOverlayImagePath',
-        {'path': path, 'selectedId': selectedId},
-      );
-      return result == true;
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to set pet overlay image: ${e.message}');
       }
       return false;
     }
@@ -90,20 +98,6 @@ class OverlayService {
         print('Failed to query pet overlay state: ${e.message}');
       }
       return false;
-    }
-  }
-
-  static Future<Map<String, dynamic>> getPetOverlayState() async {
-    try {
-      final result = await _channel.invokeMethod<Map<dynamic, dynamic>>(
-        'getPetOverlayState',
-      );
-      return Map<String, dynamic>.from(result ?? const {});
-    } on PlatformException catch (e) {
-      if (kDebugMode) {
-        print('Failed to get pet overlay state: ${e.message}');
-      }
-      return const {};
     }
   }
 }

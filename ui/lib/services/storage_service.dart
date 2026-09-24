@@ -161,9 +161,6 @@ class StorageService {
       'prevent_screen_sleep_during_tasks';
   static const String kTaskCompletionNotificationEnabledKey =
       'task_completion_notification_enabled';
-  static const String kPetOverlayImagePathKey = 'pet_overlay_image_path';
-  static const String kPetOverlaySelectedIdKey = 'pet_overlay_selected_id';
-  static const String kPetOverlayVisibleKey = 'pet_overlay_visible';
   static const String kUseIndependentChatSendButtonKey =
       'use_independent_chat_send_button';
   static const String kChatStartupBehaviorKey = 'chat_startup_behavior';
@@ -235,34 +232,6 @@ class StorageService {
       enabled,
     );
     await reload();
-  }
-
-  static String getPetOverlayImagePath() {
-    return getString(kPetOverlayImagePathKey, defaultValue: '') ?? '';
-  }
-
-  static Future<void> setPetOverlayImagePath(String path) async {
-    await setString(kPetOverlayImagePathKey, path);
-  }
-
-  static String getPetOverlaySelectedId() {
-    return getString(
-          kPetOverlaySelectedIdKey,
-          defaultValue: 'builtin:xiaowan',
-        ) ??
-        'builtin:xiaowan';
-  }
-
-  static Future<void> setPetOverlaySelectedId(String id) async {
-    await setString(kPetOverlaySelectedIdKey, id);
-  }
-
-  static bool isPetOverlayVisible() {
-    return getBool(kPetOverlayVisibleKey, defaultValue: false) ?? false;
-  }
-
-  static Future<void> setPetOverlayVisible(bool visible) async {
-    await setBool(kPetOverlayVisibleKey, visible);
   }
 
   static bool isIndependentChatSendButtonEnabled() {
