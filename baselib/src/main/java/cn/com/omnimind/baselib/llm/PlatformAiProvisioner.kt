@@ -215,6 +215,7 @@ object PlatformAiProvisioner {
                     ttsVoiceAliases = selection.ttsVoiceAliases,
                     defaultTtsVoiceAlias = selection.defaultTtsVoiceAlias,
                 )
+                ModelProviderConfigStore.rememberOfficialModels(access, currentStatus.models)
             } catch (error: CancellationException) {
                 throw error
             } catch (_: Throwable) {
@@ -297,6 +298,7 @@ object PlatformAiProvisioner {
     }
 
     private fun deactivateLocked() {
+        ModelProviderConfigStore.clearOfficialModels()
         clearEmbeddingCatalogRefreshAttempt()
         currentStatus = PlatformAiProvisioningStatus(
             statusText = "官方 AI 账号未登录",

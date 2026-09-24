@@ -1,6 +1,8 @@
 package cn.com.omnimind.baselib.llm
 
 import android.content.Context
+import cn.com.omnimind.baselib.account.AiRequestAccess
+import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.util.ContentEndpointSecurity
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.util.CredentialEndpointSecurity
@@ -52,12 +54,17 @@ object ModelProviderConfigStore {
     @Volatile
     private var secretStore: ModelProviderSecretStore? = null
 
+    @Volatile
+    private var catalogContext: Context? = null
+    private const val OFFICIAL_CATALOG_PREFERENCES = "official_provider_launch_catalog"
+
     /**
      * Must run after MMKV initialization and before provider configuration is used.
      * Existing plaintext credentials are moved into Keystore-backed storage once.
      */
     @Synchronized
     fun initialize(context: Context) {
+        catalogContext = context.applicationContext
         if (secretStore != null) {
             return
         }
@@ -149,20 +156,61 @@ object ModelProviderConfigStore {
     }
 
     /** Read the Provider editor's existing catalog; never refresh on session startup. */
-    fun cachedModels(context: Context, profile: ModelProviderProfile): List<ProviderModelOption> = runCatching {
-        val raw = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-            .getString("flutter.cached_provider_models_with_base_v2", null)
-            ?: return@runCatching emptyList()
-        val bucket = JsonParser.parseString(raw).asJsonObject[profile.id]?.asJsonObject
-            ?: return@runCatching emptyList()
-        val base = bucket["apiBase"]?.asString.orEmpty()
-        val revision = bucket["profileRevision"]?.asLong ?: 0L
-        if (base != normalizeBaseUrl(profile.baseUrl).orEmpty() || revision != profile.revision) {
-            return@runCatching emptyList()
+    fun cachedModels(context: Context, profile: ModelProviderProfile): List<ProviderModelOption> =
+        cachedModels(
+            profile,
+            PlatformAiProvisioner.status(),
+            officialSnapshot = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+                context.getSharedPreferences(OFFICIAL_CATALOG_PREFERENCES, Context.MODE_PRIVATE)
+                    .getString("catalog", null)
+            } else null,
+            officialScope = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+                OfficialProviderModelCache.scope(OmniAccount.currentAiRequestAccess())
+            } else null,
+        ) {
+            context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                .getString("flutter.cached_provider_models_with_base_v2", null)
         }
-        bucket["models"]?.asJsonArray?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
-            ?.filter { !it.id.isNullOrBlank() }.orEmpty()
-    }.getOrDefault(emptyList())
+
+    internal fun cachedModels(
+        profile: ModelProviderProfile,
+        officialStatus: PlatformAiProvisioningStatus,
+        officialSnapshot: String? = null,
+        officialScope: String? = null,
+        persistedCatalog: () -> String?,
+    ): List<ProviderModelOption> {
+        // The official catalog is owned by PlatformAiProvisioner. Its discovery
+        // does not populate the BYOK preferences. Reading only those preferences
+        // reduced every external Harness to its single bound model at launch.
+        if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
+            return if (officialStatus.ready) officialStatus.models
+            else OfficialProviderModelCache.decode(officialSnapshot, officialScope)
+        }
+        return runCatching {
+            val raw = persistedCatalog() ?: return@runCatching emptyList()
+            val bucket = JsonParser.parseString(raw).asJsonObject[profile.id]?.asJsonObject
+                ?: return@runCatching emptyList()
+            val base = bucket["apiBase"]?.asString.orEmpty()
+            val revision = bucket["profileRevision"]?.asLong ?: 0L
+            if (base != normalizeBaseUrl(profile.baseUrl).orEmpty() || revision != profile.revision) {
+                return@runCatching emptyList()
+            }
+            bucket["models"]?.asJsonArray?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
+                ?.filter { !it.id.isNullOrBlank() }.orEmpty()
+        }.getOrDefault(emptyList())
+    }
+
+    internal fun rememberOfficialModels(access: AiRequestAccess, models: List<ProviderModelOption>) {
+        val scope = OfficialProviderModelCache.scope(access) ?: return
+        if (scope != OfficialProviderModelCache.scope(OmniAccount.currentAiRequestAccess())) return
+        catalogContext?.getSharedPreferences(OFFICIAL_CATALOG_PREFERENCES, Context.MODE_PRIVATE)
+            ?.edit()?.putString("catalog", OfficialProviderModelCache.encode(scope, models))?.apply()
+    }
+
+    internal fun clearOfficialModels() {
+        catalogContext?.getSharedPreferences(OFFICIAL_CATALOG_PREFERENCES, Context.MODE_PRIVATE)
+            ?.edit()?.remove("catalog")?.apply()
+    }
 
     /** Latest successful discovery, used only to construct offline launch config.
      * Explicit refresh always calls the Provider; this is never a network cache.

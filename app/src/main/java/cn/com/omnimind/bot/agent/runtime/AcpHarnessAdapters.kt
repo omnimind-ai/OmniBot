@@ -63,6 +63,9 @@ internal interface AcpHarnessAdapter {
     fun resolveModelValue(model: String, available: List<String>): String? =
         model.takeIf { it in available }
 
+    /** Wire identity for a configured Provider model absent from a stale ACP snapshot. */
+    fun providerModelValue(model: String): String = model
+
     /**
      * Whether this Harness may receive the host MCP declaration for the
      * selected Provider. This is a capability negotiation boundary: ACP and
@@ -139,9 +142,11 @@ internal object AcpHarnessAdapters {
 
     val openCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "open-code"
+        override fun providerModelValue(model: String): String =
+            if (model.startsWith("omnibot/")) model else "omnibot/$model"
         override fun resolveModelValue(model: String, available: List<String>): String? =
             super.resolveModelValue(model, available)
-                ?: "omnibot/$model".takeIf { it in available }
+                ?: providerModelValue(model).takeIf { it in available }
     }
 
     val deepSeekHarness: AcpHarnessAdapter = object : AcpHarnessAdapter {
