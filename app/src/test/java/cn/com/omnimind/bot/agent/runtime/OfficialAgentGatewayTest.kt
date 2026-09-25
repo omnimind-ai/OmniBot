@@ -50,13 +50,14 @@ class OfficialAgentGatewayTest {
             .post("""{"model":"test","stream":true}""".toRequestBody("application/json".toMediaType()))
             .build()).execute()
 
-    @Test fun realHttpRefreshUpdatesRepositoryAndKeepsTheSameHarnessCapability() = runBlocking {
+    @Test fun realHttpRepeatedRefreshKeepsTheSameHarnessCapabilityAndRotatesRefreshTokens() = runBlocking {
         val modelServer = MockWebServer()
         val accountServer = MockWebServer()
         modelServer.start()
         accountServer.start()
         val oldToken = token()
         val newToken = token(version = 2)
+        val nextToken = token(version = 3)
         val store = object : AccountTokenStore {
             @Volatile var tokens: AccountTokens? = AccountTokens(
                 oldToken, "2026-09-22T00:00:00Z", "test-refresh", "2026-10-22T00:00:00Z",
@@ -68,16 +69,20 @@ class OfficialAgentGatewayTest {
         val repository = AccountRepository(
             AccountApiClient(accountServer.url("/").toString(), allowInsecureLoopback = true), store,
         )
-        accountServer.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""
-            {"accessToken":"$newToken","accessExpiresAt":"2026-09-22T00:15:00Z",
-             "refreshToken":"test-refresh-rotated","refreshExpiresAt":"2026-10-22T00:00:00Z",
+        for ((accessToken, refreshToken) in listOf(
+            newToken to "test-refresh-rotated", nextToken to "test-refresh-rotated-again",
+        )) {
+            accountServer.enqueue(MockResponse().setHeader("Content-Type", "application/json").setBody("""
+            {"accessToken":"$accessToken","accessExpiresAt":"2026-09-22T00:15:00Z",
+             "refreshToken":"$refreshToken","refreshExpiresAt":"2026-10-22T00:00:00Z",
              "user":{"id":"user","email":"test@example.invalid","role":"user","status":"active",
                      "emailVerifiedAt":"2026-01-01T00:00:00Z","createdAt":"2026-01-01T00:00:00Z"}}
-        """.trimIndent()))
-        modelServer.enqueue(MockResponse().setResponseCode(401).setBody("expired"))
-        repeat(2) {
-            modelServer.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
-                .setBody("data: refreshed\n\ndata: [DONE]\n\n"))
+            """.trimIndent()))
+            modelServer.enqueue(MockResponse().setResponseCode(401).setBody("expired"))
+            repeat(2) {
+                modelServer.enqueue(MockResponse().setHeader("Content-Type", "text/event-stream")
+                    .setBody("data: refreshed\n\ndata: [DONE]\n\n"))
+            }
         }
         // Only the test DNS/destination is substituted. Request execution,
         // refresh HTTP, JSON decoding, repository writes and SSE use real code.
@@ -92,21 +97,23 @@ class OfficialAgentGatewayTest {
         )
         try {
             val local = gateway.credentials(provider)
-            repeat(2) {
+            repeat(4) {
                 call(local).use { response ->
                     assertEquals(200, response.code)
                     assertTrue(response.body.string().contains("refreshed"))
                 }
             }
-            assertEquals(newToken, store.read()!!.accessToken)
-            assertEquals("test-refresh-rotated", store.read()!!.refreshToken)
+            assertEquals(nextToken, store.read()!!.accessToken)
+            assertEquals("test-refresh-rotated-again", store.read()!!.refreshToken)
             assertEquals(local, gateway.credentials(provider))
-            assertEquals(1, accountServer.requestCount)
-            val refresh = accountServer.takeRequest(1, TimeUnit.SECONDS)!!
-            assertEquals("/v1/auth/refresh", refresh.path)
-            assertEquals("""{"refreshToken":"test-refresh"}""", refresh.body.readUtf8())
-            assertEquals(3, modelServer.requestCount)
-            assertEquals(listOf(oldToken, newToken, newToken), (1..3).map {
+            assertEquals(2, accountServer.requestCount)
+            for (expectedRefresh in listOf("test-refresh", "test-refresh-rotated")) {
+                val refresh = accountServer.takeRequest(1, TimeUnit.SECONDS)!!
+                assertEquals("/v1/auth/refresh", refresh.path)
+                assertEquals("""{"refreshToken":"$expectedRefresh"}""", refresh.body.readUtf8())
+            }
+            assertEquals(6, modelServer.requestCount)
+            assertEquals(listOf(oldToken, newToken, newToken, newToken, nextToken, nextToken), (1..6).map {
                 modelServer.takeRequest(1, TimeUnit.SECONDS)!!.getHeader("Authorization")!!.removePrefix("Bearer ")
             })
         } finally {
