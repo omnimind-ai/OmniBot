@@ -46,6 +46,8 @@ import cn.com.omnimind.bot.ui.settings.NativeStorageUsageRoute
 import cn.com.omnimind.bot.ui.settings.NativeLogsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeRequestLogsRoute
 import cn.com.omnimind.bot.ui.settings.NativeRuntimeLogsRoute
+import cn.com.omnimind.bot.ui.settings.NativeWorkspaceMemoryViewModel
+import cn.com.omnimind.bot.ui.settings.NativeWorkspaceMemoryRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -56,6 +58,9 @@ class NativeHomeActivity : ComponentActivity() {
     private lateinit var backgroundViewModel: NativeBackgroundViewModel
     private val petViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativePetSettingsViewModel.Factory(this))[NativePetSettingsViewModel::class.java]
+    }
+    private val workspaceMemoryViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeWorkspaceMemoryViewModel.Factory(this))[NativeWorkspaceMemoryViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -142,6 +147,8 @@ class NativeHomeActivity : ComponentActivity() {
                 storage = { onBack -> NativeStorageUsageRoute(storage, onBack) },
                 requestLogs = { onBack -> NativeRequestLogsRoute(logs, ::copyLogText, onBack) },
                 runtimeLogs = { onBack -> NativeRuntimeLogsRoute(logs, ::copyLogText, onBack) },
+                workspaceMemory = { onBack, onSceneModels -> NativeWorkspaceMemoryRoute(
+                    workspaceMemoryViewModel, onSceneModels, onBack) },
                 appearance = { onBack, onBackground -> AppearanceScreen(savedPreferences, preferences.actions,
                     onBackground = onBackground, onBack = onBack) },
                 background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,

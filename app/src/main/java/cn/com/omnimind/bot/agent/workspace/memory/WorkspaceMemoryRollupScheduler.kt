@@ -42,6 +42,16 @@ class WorkspaceMemoryRollupScheduler(
         return status
     }
 
+    /** Shared manual action for Flutter and native settings; scheduling failures remain warnings. */
+    fun runNow(): Map<String, Any?> {
+        val payload = memoryService.rollupDay().toMutableMap()
+        runCatching { ensureScheduledIfEnabled() }.onFailure { error ->
+            OmniLog.w("WorkspaceMemoryRollupScheduler", "run now schedule failed: ${error.message}")
+            payload["scheduleWarning"] = error.message
+        }
+        return payload
+    }
+
     fun getNextRunAtMillis(): Long? {
         return mmkv?.decodeLong(KEY_ROLLUP_NEXT_RUN_AT, 0L)?.takeIf { it > 0 }
     }

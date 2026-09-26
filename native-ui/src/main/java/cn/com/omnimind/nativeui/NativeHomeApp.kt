@@ -45,6 +45,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object Storage : HomeRoute
     @Serializable data object RequestLogs : HomeRoute
     @Serializable data object RuntimeLogs : HomeRoute
+    @Serializable data object WorkspaceMemory : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -57,6 +58,7 @@ fun NativeHomeApp(
     storage: @Composable (onBack: () -> Unit) -> Unit,
     requestLogs: @Composable (onBack: () -> Unit) -> Unit,
     runtimeLogs: @Composable (onBack: () -> Unit) -> Unit,
+    workspaceMemory: @Composable (onBack: () -> Unit, onSceneModels: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -97,6 +99,7 @@ fun NativeHomeApp(
                     onHomePreferences = { backStack.add(HomeRoute.HomePreferences) },
                     onMiscellaneous = { backStack.add(HomeRoute.Miscellaneous) },
                     onStorage = { backStack.add(HomeRoute.Storage) },
+                    onWorkspaceMemory = { backStack.add(HomeRoute.WorkspaceMemory) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance(
@@ -118,6 +121,9 @@ fun NativeHomeApp(
             entry<HomeRoute.Storage> { storage { backStack.removeLastOrNull() } }
             entry<HomeRoute.RequestLogs> { requestLogs { backStack.removeLastOrNull() } }
             entry<HomeRoute.RuntimeLogs> { runtimeLogs { backStack.removeLastOrNull() } }
+            entry<HomeRoute.WorkspaceMemory> { workspaceMemory(
+                { backStack.removeLastOrNull() }, { actions.open(LegacyDestination.Page.SceneModels) },
+            ) }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }

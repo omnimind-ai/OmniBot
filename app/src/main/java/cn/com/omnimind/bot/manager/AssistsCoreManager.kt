@@ -2368,16 +2368,7 @@ class AssistsCoreManager(private val context: Context) {
     fun runWorkspaceMemoryRollupNow(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
-                val payload = WorkspaceMemoryService(context).rollupDay().toMutableMap()
-                runCatching {
-                    WorkspaceMemoryRollupScheduler(context).ensureScheduledIfEnabled()
-                }.onFailure { throwable ->
-                    OmniLog.w(
-                        TAG,
-                        "runWorkspaceMemoryRollupNow schedule failed: ${throwable.message}"
-                    )
-                    payload["scheduleWarning"] = throwable.message
-                }
+                val payload = WorkspaceMemoryRollupScheduler(context).runNow()
                 withContext(Dispatchers.Main) {
                     result.success(payload)
                 }

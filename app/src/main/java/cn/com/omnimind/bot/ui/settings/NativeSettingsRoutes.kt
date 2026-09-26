@@ -22,6 +22,7 @@ import cn.com.omnimind.nativeui.settings.PetSettingsScreen
 import cn.com.omnimind.nativeui.settings.StorageUsageScreen
 import cn.com.omnimind.nativeui.settings.RequestLogsScreen
 import cn.com.omnimind.nativeui.settings.RuntimeLogsScreen
+import cn.com.omnimind.nativeui.settings.WorkspaceMemoryScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -79,6 +80,15 @@ internal fun NativeRuntimeLogsRoute(viewModel: NativeLogsViewModel,
     LaunchedEffect(Unit) { viewModel.refreshRuntime() }
     RuntimeLogsScreen(state, viewModel::refreshRuntime, viewModel::clearRuntime,
         { copy(viewModel.runtimeExportText()) }, copy, onBack)
+}
+
+@Composable
+internal fun NativeWorkspaceMemoryRoute(viewModel: NativeWorkspaceMemoryViewModel,
+    onSceneModels: () -> Unit, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshCapabilities() }
+    WorkspaceMemoryScreen(state, viewModel.actions, onSceneModels, onBack)
 }
 
 @Composable

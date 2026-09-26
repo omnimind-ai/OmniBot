@@ -44,8 +44,9 @@ LauncherActivity
       ├─ NativePetSettingsViewModel → PetAppearanceRepository → PetPackageInstaller + PetPreviewRenderer
       ├─ NativeStorageUsageViewModel → StorageUsageRepository ← Flutter StorageUsageChannel
       ├─ NativeLogsViewModel → existing AiRequestLogStore / RuntimeLogStore
+      ├─ NativeWorkspaceMemoryViewModel → WorkspaceMemoryService + WorkspaceMemoryRollupScheduler
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -130,7 +131,8 @@ random greeting selection out of pixel comparisons.
   visual differences still need migration/acceptance.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
   permissions, theme/language, home preferences, miscellaneous, background
-  image settings, pet appearance, storage management and the two log pages are native.
+  image settings, pet appearance, storage management, the two log pages and
+  workspace-memory settings are native.
   Alarm, open-with, quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
@@ -159,12 +161,44 @@ The order below follows the actual owners in this repository, not page size alon
 | 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
 | 3b-2a | Background image settings — source implemented | `AppBackgroundRepository`, the existing `app_background_config_v1` key and `filesDir/backgrounds` | One writer for native and Flutter settings; see batch 3b-2a. |
 | 3b-2b | Pet appearance — source implemented | `PetAppearanceRepository`, existing overlay runtime, workspace pet roots, ZIP validator and preview renderer | Native selection/import/discovery and Flutter compatibility share one owner; see batch 3b-2b. |
-| 4 | Storage management, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Provider/model resolution and plugin runtime already have native owners. | Storage and logs are the first bounded slice below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
+| 4 | Storage management, workspace memory, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Workspace memory has its own service and scheduler. Provider/model resolution and plugin runtime already have native owners. | Storage/logs and workspace memory are bounded slices below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first slice of 4. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first two slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4b checkpoint: workspace memory (source complete; device acceptance pending)
+
+- Settings → Workspace Memory now opens a native Miuix page on the saved
+  `miuix-nav` stack. Its link to scene-model configuration remains a deliberate
+  Flutter compatibility handoff until that full feature moves.
+- Soul, chat-only prompt and `MEMORY.md` retain explicit Save actions. Drafts
+  stay in the Activity-scoped ViewModel and are not persisted on keystroke or
+  back gesture. Reads/writes call the existing `WorkspaceMemoryService` methods;
+  neither long-term memory storage format nor ACP lifecycle changes.
+- Embedding status/toggle use the existing workspace service. Nightly-rollup
+  status/toggle use `WorkspaceMemoryRollupScheduler`; manual Rollup is shared by
+  Flutter's channel and the native page through its `runNow()` operation.
+- Only source, resource, route and contract inspection was performed. No build,
+  test suite, emulator or device was run at the user's request. Visual 1:1 and
+  behavior acceptance remain manual.
+
+Manual acceptance checklist:
+
+1. Compare the native and Flutter pages at matching theme, locale, density and
+   font scale: section headers, switch geometry, multiline editors, Save buttons,
+   feedback snackbar, insets and predictive back.
+2. Load nonempty Soul, chat prompt and `MEMORY.md`; edit each independently.
+   Verify back without Save leaves files unchanged, while Save updates the
+   existing Flutter page. Check read/write failure feedback without exposing
+   prompt or memory contents in logs.
+3. Toggle embedding retrieval with and without a configured embedding model.
+   Follow the scene-model link and return; confirm status refresh leaves
+   unsaved text drafts untouched.
+4. Toggle nightly rollup, compare next-run time, run a manual rollup on suitable
+   sample memory, and compare the result/last-run state in Flutter. Confirm
+   rotation and Activity recreation retain expected state.
 
 ## Batch 4a checkpoint: storage and logs (source complete; device acceptance pending)
 
