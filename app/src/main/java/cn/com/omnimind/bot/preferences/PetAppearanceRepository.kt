@@ -320,16 +320,16 @@ internal class PetAppearanceRepository private constructor(context: Context) {
         Regex("[-_](idle|working|thinking|waiting|done|sleeping)$", RegexOption.IGNORE_CASE)
             .containsMatchIn(file.nameWithoutExtension)
 
-    private companion object {
-        const val BUILTIN_ID = "builtin:xiaowan"
-        const val KEY_PATH = "pet_overlay_image_path"
-        const val KEY_ID = "pet_overlay_selected_id"
-        const val KEY_VISIBLE = "pet_overlay_visible"
-        const val FLUTTER_PATH = "flutter.pet_overlay_image_path"
-        const val FLUTTER_ID = "flutter.pet_overlay_selected_id"
-        const val MAX_SCAN_ENTRIES = 512
-        const val MAX_METADATA_BYTES = 2L * 1024 * 1024
-        val PREFERRED_NAMES = listOf("current.webp", "current.png", "current.jpg", "current.gif", "current.svg",
+    companion object {
+        private const val BUILTIN_ID = "builtin:xiaowan"
+        private const val KEY_PATH = "pet_overlay_image_path"
+        private const val KEY_ID = "pet_overlay_selected_id"
+        private const val KEY_VISIBLE = "pet_overlay_visible"
+        private const val FLUTTER_PATH = "flutter.pet_overlay_image_path"
+        private const val FLUTTER_ID = "flutter.pet_overlay_selected_id"
+        private const val MAX_SCAN_ENTRIES = 512
+        private const val MAX_METADATA_BYTES = 2L * 1024 * 1024
+        private val PREFERRED_NAMES = listOf("current.webp", "current.png", "current.jpg", "current.gif", "current.svg",
             "pet.webp", "pet.png", "pet.jpg", "pet.gif", "pet.svg")
         @Volatile private var instance: PetAppearanceRepository? = null
         fun get(context: Context): PetAppearanceRepository = instance ?: synchronized(this) {

@@ -152,7 +152,7 @@ fun BackgroundSettingsScreen(
                         config.blurSigma, 0f..24f, actions.setBlur, actions.flush, enabled)
                     AdjustmentSlider(R.string.omni_background_overlay_intensity,
                         R.string.omni_background_overlay_intensity_subtitle,
-                        config.frostOpacity, 0f...55f, actions.setFrost, actions.flush, enabled)
+                        config.frostOpacity, 0f..0.55f, actions.setFrost, actions.flush, enabled)
                     AdjustmentSlider(R.string.omni_background_overlay_brightness,
                         R.string.omni_background_overlay_brightness_subtitle,
                         config.brightness, .5f..1.5f, actions.setBrightness, actions.flush, enabled)

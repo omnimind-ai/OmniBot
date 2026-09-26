@@ -139,7 +139,7 @@ internal fun BackgroundPreview(
 }
 
 @Composable
-private fun ChatPreviewChrome(config: BackgroundConfig, visual: BackgroundVisualColors) {
+private fun ColumnScope.ChatPreviewChrome(config: BackgroundConfig, visual: BackgroundVisualColors) {
     val palette = LocalOmniPalette.current
     Box(Modifier.fillMaxWidth().height(54.dp).background(palette.surface.copy(alpha = .72f), RoundedCornerShape(99.dp)))
     Spacer(Modifier.height(18.dp))

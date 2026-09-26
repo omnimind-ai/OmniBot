@@ -98,8 +98,7 @@ internal class PetPreviewRenderer(private val workspaceRoot: File) {
         return cachedOrRender(source) { bitmap ->
             source.inputStream().use { input ->
                 val picture = SVG.getFromInputStream(input).renderToPicture(PREVIEW_SIZE, PREVIEW_SIZE)
-                try { Canvas(bitmap).drawPicture(picture) }
-                finally { picture.close() }
+                Canvas(bitmap).drawPicture(picture)
             }
             true
         }
