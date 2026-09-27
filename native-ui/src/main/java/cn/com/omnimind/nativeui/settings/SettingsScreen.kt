@@ -54,6 +54,7 @@ private sealed interface SettingDestination {
     data object Permissions : SettingDestination
     data object Storage : SettingDestination
     data object WorkspaceMemory : SettingDestination
+    data object SceneModels : SettingDestination
 }
 
 private data class SettingSection(@StringRes val title: Int, val items: List<SettingItem>)
@@ -65,7 +66,7 @@ private val sections = listOf(
     )),
     SettingSection(R.string.omni_settings_section_model_memory, listOf(
         SettingItem(R.drawable.omni_box, R.string.omni_settings_model_provider_title, R.string.omni_settings_model_provider_subtitle, SettingDestination.Legacy(Page.ModelProviders)),
-        SettingItem(R.drawable.omni_file_box, R.string.omni_settings_scene_model_title, R.string.omni_settings_scene_model_subtitle, SettingDestination.Legacy(Page.SceneModels)),
+        SettingItem(R.drawable.omni_file_box, R.string.omni_settings_scene_model_title, R.string.omni_settings_scene_model_subtitle, SettingDestination.SceneModels),
         SettingItem(R.drawable.omni_database, R.string.omni_settings_workspace_memory_title, destination = SettingDestination.WorkspaceMemory),
     )),
     SettingSection(R.string.omni_settings_section_service_environment, listOf(
@@ -98,6 +99,7 @@ internal fun SettingsScreen(
     onMiscellaneous: () -> Unit,
     onStorage: () -> Unit,
     onWorkspaceMemory: () -> Unit,
+    onSceneModels: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
     var showLocalService by rememberSaveable { mutableStateOf(false) }
@@ -116,7 +118,7 @@ internal fun SettingsScreen(
                     SectionTitle(stringResource(section.title), Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp))
                     section.items.forEachIndexed { itemIndex, item ->
                         SettingRow(item, itemIndex == section.items.lastIndex, state, actions, onAbout, onPermissions,
-                            onAppearance, onHomePreferences, onMiscellaneous, onStorage, onWorkspaceMemory) { showLocalService = true }
+                            onAppearance, onHomePreferences, onMiscellaneous, onStorage, onWorkspaceMemory, onSceneModels) { showLocalService = true }
                         if (itemIndex < section.items.lastIndex) {
                             Box(Modifier.padding(start = 30.dp).fillMaxWidth().height(1.dp)
                                 .background(palette.border.copy(alpha = if (palette.dark) .5f else .78f)))
@@ -147,6 +149,7 @@ private fun SettingRow(
     onMiscellaneous: () -> Unit,
     onStorage: () -> Unit,
     onWorkspaceMemory: () -> Unit,
+    onSceneModels: () -> Unit,
     onLocalServiceDetails: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -168,6 +171,7 @@ private fun SettingRow(
                     SettingDestination.Permissions -> onPermissions()
                     SettingDestination.Storage -> onStorage()
                     SettingDestination.WorkspaceMemory -> onWorkspaceMemory()
+                    SettingDestination.SceneModels -> onSceneModels()
                     is SettingDestination.Legacy -> actions.open(destination.page)
                 }
             } else Modifier)

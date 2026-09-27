@@ -48,6 +48,8 @@ import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.activity.MainActivity
 import cn.com.omnimind.bot.ui.scheduled.ScheduledTaskReminderLoader
 import cn.com.omnimind.assists.controller.http.HttpController
+import cn.com.omnimind.bot.model.ProviderModelCatalogService
+import cn.com.omnimind.bot.model.SceneModelSettingsRepository
 import cn.com.omnimind.baselib.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import cn.com.omnimind.bot.agent.AgentAlarmToolService
@@ -1611,55 +1613,16 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
-                if (OmniOfficialProvider.isOfficialProfile(profileId)) {
-                    val models = if (forceRefresh) {
-                        PlatformAiProvisioner.refreshAndGetModels(capability)
-                    } else {
-                        PlatformAiProvisioner.ensureReadyAndGetModels(capability)
-                    }
-                    withContext(Dispatchers.Main) {
-                        result.success(models.map { it.toMap() })
-                    }
-                    return@launch
-                }
-                val profile = profileId?.let(ModelProviderConfigStore::getProfile)
-                    ?: ModelProviderConfigStore.getEditingProfile()
-                require(expectedProfileRevision != null && expectedProfileRevision >= 0L) {
-                    "provider profile revision is required"
-                }
-                require(expectedProfileBaseUrl.isNotEmpty()) {
-                    "provider profile endpoint is required"
-                }
-                require(
-                    profile.revision == expectedProfileRevision &&
-                        ModelProviderConfigStore.sameCanonicalEndpoint(
-                            profile.baseUrl,
-                            expectedProfileBaseUrl
-                        )
-                ) { "provider profile changed" }
-                val apiBase = if (baseUrlArg.isNotEmpty()) baseUrlArg else profile.baseUrl
-                val apiKey = if (useProvidedApiKey) apiKeyArg else profile.apiKey
-                val customHeaders = if (useProvidedCustomHeaders) customHeadersArg else profile.customHeaders
-                val models = HttpController.fetchProviderModels(
-                    apiBase = apiBase,
-                    apiKey = apiKey,
-                    customHeaders = customHeaders,
-                    protocolType = profile.protocolType,
-                    wireApi = profile.wireApi
+                val models = ProviderModelCatalogService(context).fetch(
+                    profileId = profileId,
+                    capability = capability,
+                    forceRefresh = forceRefresh,
+                    expectedRevision = expectedProfileRevision,
+                    expectedBaseUrl = expectedProfileBaseUrl,
+                    apiBase = baseUrlArg,
+                    apiKey = if (useProvidedApiKey) apiKeyArg else null,
+                    customHeaders = if (useProvidedCustomHeaders) customHeadersArg else null,
                 )
-                val currentProfile = profileId?.let(ModelProviderConfigStore::getProfile)
-                require(
-                    currentProfile != null &&
-                        currentProfile.revision == expectedProfileRevision &&
-                        ModelProviderConfigStore.sameCanonicalEndpoint(
-                            currentProfile.baseUrl,
-                            expectedProfileBaseUrl
-                        )
-                ) { "provider profile changed" }
-                if (!useProvidedApiKey && !useProvidedCustomHeaders &&
-                    ModelProviderConfigStore.sameCanonicalEndpoint(apiBase, profile.baseUrl)) {
-                    ModelProviderConfigStore.rememberModels(context, profile, models)
-                }
                 withContext(Dispatchers.Main) {
                     result.success(models.map { it.toMap() })
                 }
@@ -1797,24 +1760,10 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
-                val previousProviderId = SceneModelBindingStore.getBinding(sceneId)
-                    ?.providerProfileId
-                SceneModelBindingStore.saveBinding(sceneId, providerProfileId, modelId)
-                if (sceneId == SceneOperationConfigStore.SCENE_ID) {
-                    SceneOperationConfigStore.saveConfig(
-                        SceneOperationConfig(useOfficialService = false)
-                    )
-                }
-                // A model selection is session configuration, not a change of
-                // credentials or endpoint. Preserve the live ACP session that
-                // has just accepted session/set_config_option for this model.
-                if (sceneId == "scene.dispatch.model" &&
-                    previousProviderId != providerProfileId) {
-                    AgentRuntimeManager.getIfInitialized()
-                        ?.invalidateSharedProviderRuntime()
-                }
+                val bindings = SceneModelSettingsRepository(context)
+                    .saveBinding(sceneId, providerProfileId, modelId)
                 withContext(Dispatchers.Main) {
-                    result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
+                    result.success(bindings.map { it.toMap() })
                 }
             } catch (e: Exception) {
                 OmniLog.e(TAG, "saveSceneModelBinding error: ${e.message}")
@@ -1830,13 +1779,9 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
-                SceneModelBindingStore.clearBinding(sceneId)
-                if (sceneId == "scene.dispatch.model") {
-                    AgentRuntimeManager.getIfInitialized()
-                        ?.invalidateSharedProviderRuntime()
-                }
+                val bindings = SceneModelSettingsRepository(context).clearBinding(sceneId)
                 withContext(Dispatchers.Main) {
-                    result.success(SceneModelBindingStore.getBindingEntries().map { it.toMap() })
+                    result.success(bindings.map { it.toMap() })
                 }
             } catch (e: Exception) {
                 OmniLog.e(TAG, "clearSceneModelBinding error: ${e.message}")

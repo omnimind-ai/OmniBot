@@ -76,6 +76,10 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     await _reloadConfig();
   }
 
+  Future<void> refreshConfigurationIfInitialized() async {
+    if (_initialized) await _reloadConfig();
+  }
+
   bool get isVoiceSceneBound {
     unawaited(ensureInitialized());
     return _isVoiceSceneBound;

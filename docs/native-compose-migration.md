@@ -45,8 +45,9 @@ LauncherActivity
       ├─ NativeStorageUsageViewModel → StorageUsageRepository ← Flutter StorageUsageChannel
       ├─ NativeLogsViewModel → existing AiRequestLogStore / RuntimeLogStore
       ├─ NativeWorkspaceMemoryViewModel → WorkspaceMemoryService + WorkspaceMemoryRollupScheduler
+      ├─ NativeSceneModelsViewModel → SceneModelSettingsRepository + ProviderModelCatalogService
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -132,7 +133,10 @@ random greeting selection out of pixel comparisons.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
   permissions, theme/language, home preferences, miscellaneous, background
   image settings, pet appearance, storage management, the two log pages and
-  workspace-memory settings are native.
+  workspace-memory settings and scene-model bindings/voice autoplay are native.
+  The scene page's Agent-avatar editor and Provider editor remain compatibility
+  destinations; native avatar previews read the existing preference keys and
+  packaged Flutter preset assets until the avatar feature moves.
   Alarm, open-with, quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
@@ -165,14 +169,69 @@ The order below follows the actual owners in this repository, not page size alon
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first two slices of 4. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first three slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4c checkpoint: scene-model configuration (source complete; device acceptance pending)
+
+- Settings and Workspace Memory now open Scene Models on the saved native
+  `miuix-nav` stack. The page presents the existing catalog order, saved Provider
+  bindings, default/unbound/missing-Provider labels, scene descriptions and
+  voice autoplay/status/voice/style. The Agent avatar keeps its existing read
+  keys and preview; editing hands off to the Flutter scene page's avatar picker.
+  Provider editing also remains a compatibility destination.
+- The Miuix `OverlayListPopup` owns placement, dismissal and keyboard bounds.
+  Its application content supports model-ID search, Provider expansion, selected
+  model markers, restore-default, loading/empty/failure states and retry.
+  Foundation rows retain the existing 14sp scene / 13sp selector hierarchy;
+  the shared page host and Omni palette remain the owners of insets and theme.
+- `SceneModelSettingsRepository` is shared with the existing Flutter channel for
+  binding mutations and their established GUI/Agent side effects. A same-Provider
+  model change retains the existing ACP session; changing Provider or restoring
+  the Agent default retains the existing shared-runtime invalidation rule.
+  No new prompt/session lifecycle or conversation projection is added.
+- `ProviderModelCatalogService` extracts the channel's existing model discovery
+  contract, including supplied credentials/headers, official capabilities,
+  before/after Provider revision checks and successful discovery persistence.
+  Native reads the Provider editor's existing manual-ID keys, including its
+  legacy list encoding, without adding a manual-ID writer or a network cache.
+  Saved bindings remain visible while catalogs load or fail. Explicit refresh
+  forces official discovery; obsolete page refresh jobs cannot project results.
+- Voice autoplay updates the current `SceneVoiceConfigStore` config without
+  replacing its secured custom curl command. The existing voice catalog entry
+  was missing from `SceneModelBindingStore`'s allowed IDs; `scene.voice` is now
+  accepted by that shared store for both settings surfaces. Flutter's existing
+  application resume callback refreshes an already initialized
+  `VoicePlaybackCoordinator`, so returning chat consumes native settings changes
+  without creating a second playback/configuration owner.
+- Source/API, resource, route, compatibility and diff inspection are the
+  verification boundary. No build, test suite, emulator/device interaction or
+  network calls were run. Visual parity and runtime acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and locales at matching density/font scale: scene rows,
+   selector popup, long model IDs/tooltips, search/keyboard bounds, voice settings,
+   insets, predictive back and restored navigation state.
+2. Bind and restore each catalog scene, including Voice and GUI. Compare Flutter
+   and native persisted bindings and runtime resolution. Check that same-Provider
+   model changes retain the ACP session; Provider changes use its existing owner.
+3. Check configured, unconfigured and removed Providers, manual-only models,
+   saved models absent from discovery, text/embedding official catalogs, failed
+   discovery and explicit retry. Change a Provider while a query is pending and
+   verify its older response cannot overwrite the newer Provider catalog.
+4. Toggle voice autoplay with a bound model and with a configured custom curl
+   command. Confirm voice/style/mode/secured command are unchanged; return to
+   Flutter chat and check the existing playback owner's refreshed configuration.
+5. Open Provider/avatar compatibility editors and return. Confirm native binding,
+   catalog and avatar refresh; return to Workspace Memory and verify capability
+   status refresh leaves all unsaved memory drafts intact.
 
 ## Batch 4b checkpoint: workspace memory (source complete; device acceptance pending)
 
 - Settings → Workspace Memory now opens a native Miuix page on the saved
-  `miuix-nav` stack. Its link to scene-model configuration remains a deliberate
-  Flutter compatibility handoff until that full feature moves.
+  `miuix-nav` stack. Its scene-model link now opens the native binding page
+  described in batch 4c.
 - Soul, chat-only prompt and `MEMORY.md` retain explicit Save actions. Drafts
   stay in the Activity-scoped ViewModel and are not persisted on keystroke or
   back gesture. Reads/writes call the existing `WorkspaceMemoryService` methods;

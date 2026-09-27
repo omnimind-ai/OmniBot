@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:ui/services/ui_preferences_sync.dart';
+import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/widgets/predictive_back_route.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -155,8 +156,16 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed && mounted) {
-      UiPreferencesSync.refresh(ProviderScope.containerOf(context, listen: false))
-          .catchError((Object error) { debugPrint('Unable to refresh UI preferences: $error'); });
+      VoicePlaybackCoordinator.instance
+          .refreshConfigurationIfInitialized()
+          .catchError((Object error) {
+            debugPrint('Unable to refresh voice configuration');
+          });
+      UiPreferencesSync.refresh(
+        ProviderScope.containerOf(context, listen: false),
+      ).catchError((Object error) {
+        debugPrint('Unable to refresh UI preferences: $error');
+      });
     }
   }
 
