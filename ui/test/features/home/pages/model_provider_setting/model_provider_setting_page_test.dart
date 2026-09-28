@@ -12,6 +12,8 @@ import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 
+import '../../../../helpers/mock_provider_model_ids.dart';
+
 final _discoveryModels = <String, List<ProviderModelOption>>{};
 
 const _modelsDevCatalogJson = '''
@@ -114,6 +116,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
@@ -149,6 +152,9 @@ void main() {
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (isProviderModelIdsCall(call)) {
+            return handleProviderModelIdsCall(call);
+          }
           switch (call.method) {
             case 'listModelProviderProfiles':
               return {
@@ -228,6 +234,9 @@ void main() {
     var calls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) {
+        return handleProviderModelIdsCall(call);
+      }
       if (call.method == 'listModelProviderProfiles') return profilePayload();
       if (call.method == 'fetchProviderModels') {
         calls++;
@@ -269,6 +278,9 @@ void main() {
     var fetchCalls = 0;
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (isProviderModelIdsCall(call)) {
+            return handleProviderModelIdsCall(call);
+          }
           switch (call.method) {
             case 'listModelProviderProfiles':
               return profilePayload();
@@ -353,6 +365,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
@@ -402,6 +415,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       if (call.method == 'listModelProviderProfiles') {
         final payload = profilePayload();
         (payload['profiles'] as List<Map<String, dynamic>>)
@@ -548,6 +562,9 @@ void main() {
       },
     ]) {
       messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        if (isProviderModelIdsCall(call)) {
+          return handleProviderModelIdsCall(call);
+        }
         switch (call.method) {
           case 'listModelProviderProfiles':
             return profilePayload(
@@ -596,6 +613,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
@@ -660,6 +678,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload(
@@ -698,6 +717,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload(
@@ -745,6 +765,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
@@ -798,6 +819,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
@@ -847,6 +869,7 @@ void main() {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();

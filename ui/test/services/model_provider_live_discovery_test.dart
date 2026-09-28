@@ -1,4 +1,5 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -7,6 +8,8 @@ import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/widgets/conversation_model_selector.dart';
+
+import '../helpers/mock_provider_model_ids.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -31,6 +34,7 @@ void main() {
       {'id': '$id-model'},
     ];
     messenger.setMockMethodCallHandler(channel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
       if (call.method == 'listModelProviderProfiles') {
         return {
           'profiles': [

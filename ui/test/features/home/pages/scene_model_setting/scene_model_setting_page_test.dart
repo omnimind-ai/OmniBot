@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../helpers/mock_provider_model_ids.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/agent/remote_codex_setting_page.dart';
 import 'package:ui/features/home/pages/scene_model_setting/scene_model_setting_page.dart';
@@ -135,6 +138,9 @@ void main() {
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
+          if (isProviderModelIdsCall(call)) {
+            return handleProviderModelIdsCall(call);
+          }
           switch (call.method) {
             case 'getSceneModelCatalog':
               return <Map<String, dynamic>>[

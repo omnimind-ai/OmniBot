@@ -3,6 +3,9 @@ import '../../../../support/ui_preferences_channel.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../helpers/mock_provider_model_ids.dart';
+
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/agent/agent_config_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
@@ -77,6 +80,9 @@ void main() {
         });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (isProviderModelIdsCall(call)) {
+            return handleProviderModelIdsCall(call);
+          }
           providerCalls.add(call.method);
           return null;
         });
@@ -144,6 +150,9 @@ void main() {
         });
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(assistCoreChannel, (call) async {
+          if (isProviderModelIdsCall(call)) {
+            return handleProviderModelIdsCall(call);
+          }
           switch (call.method) {
             case 'listModelProviderProfiles':
               return <String, dynamic>{

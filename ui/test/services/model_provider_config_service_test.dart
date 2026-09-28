@@ -5,6 +5,8 @@ import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
 
+import '../helpers/mock_provider_model_ids.dart';
+
 const _modelsDevCatalogJson = '''
 {
   "openai": {
@@ -38,6 +40,12 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      if (isProviderModelIdsCall(call)) return handleProviderModelIdsCall(call);
+      throw StateError('Unexpected method ${call.method}');
+    });
   });
   tearDown(ModelsDevCatalogService.resetForTesting);
 

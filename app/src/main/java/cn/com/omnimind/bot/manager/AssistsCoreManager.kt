@@ -50,6 +50,7 @@ import cn.com.omnimind.bot.ui.scheduled.ScheduledTaskReminderLoader
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.bot.model.ProviderModelCatalogService
 import cn.com.omnimind.bot.model.SceneModelSettingsRepository
+import cn.com.omnimind.bot.model.ProviderEditorRepository
 import cn.com.omnimind.baselib.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import cn.com.omnimind.bot.agent.AgentAlarmToolService
@@ -1467,18 +1468,16 @@ class AssistsCoreManager(private val context: Context) {
                     existing != null -> existing.customHeaders
                     else -> emptyMap()
                 }
-                val saved = ModelProviderConfigStore.saveProfile(
+                val saved = ProviderEditorRepository(context).save(
                     id = profileId,
                     name = name,
                     baseUrl = baseUrl,
                     apiKey = apiKey,
-                    customHeaders = customHeaders,
+                    headers = customHeaders,
                     sourceType = sourceType,
                     protocolType = protocolType,
                     wireApi = wireApi,
                 )
-                AgentRuntimeManager.getIfInitialized()
-                    ?.invalidateSharedProviderRuntime(saved.id)
                 withContext(Dispatchers.Main) {
                     result.success(saved.toMap())
                 }
@@ -1496,9 +1495,7 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
-                val profiles = ModelProviderConfigStore.deleteProfile(profileId)
-                AgentRuntimeManager.getIfInitialized()
-                    ?.invalidateSharedProviderRuntime(profileId)
+                val profiles = ProviderEditorRepository(context).delete(profileId)
                 withContext(Dispatchers.Main) {
                     result.success(
                         mapOf(
@@ -1521,7 +1518,7 @@ class AssistsCoreManager(private val context: Context) {
 
         workJob.launch {
             try {
-                val selected = ModelProviderConfigStore.setEditingProfile(profileId)
+                val selected = ProviderEditorRepository(context).select(profileId)
                 withContext(Dispatchers.Main) {
                     result.success(selected.toMap())
                 }
@@ -1530,6 +1527,26 @@ class AssistsCoreManager(private val context: Context) {
                 withContext(Dispatchers.Main) {
                     result.error("SET_EDITING_MODEL_PROVIDER_PROFILE_ERROR", e.message, null)
                 }
+            }
+        }
+    }
+
+    fun providerModelIds(call: MethodCall, result: MethodChannel.Result) {
+        val kind = call.argument<String>("kind")
+        val profileId = call.argument<String>("profileId").orEmpty()
+        val ids = call.argument<List<String>>("ids").orEmpty()
+        workJob.launch {
+            try {
+                require(kind == "manual" || kind == "hidden") { "Invalid Provider model list" }
+                val store = ProviderEditorRepository(context)
+                if (call.method == "saveProviderModelIds") {
+                    if (kind == "manual") store.saveManualIds(profileId, ids)
+                    else store.saveHiddenIds(profileId, ids)
+                }
+                val current = if (kind == "manual") store.manualIds(profileId) else store.hiddenIds(profileId)
+                withContext(Dispatchers.Main) { result.success(current) }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { result.error("PROVIDER_MODEL_IDS_ERROR", error.message, null) }
             }
         }
     }

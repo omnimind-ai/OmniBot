@@ -10,6 +10,7 @@ import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
@@ -47,6 +48,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object RuntimeLogs : HomeRoute
     @Serializable data object WorkspaceMemory : HomeRoute
     @Serializable data object SceneModels : HomeRoute
+    @Serializable data object ModelProviders : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -61,6 +63,7 @@ fun NativeHomeApp(
     runtimeLogs: @Composable (onBack: () -> Unit) -> Unit,
     workspaceMemory: @Composable (onBack: () -> Unit, onSceneModels: () -> Unit) -> Unit,
     sceneModels: @Composable (onBack: () -> Unit, onProviders: () -> Unit, onEditAvatar: () -> Unit) -> Unit,
+    modelProviders: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -71,6 +74,12 @@ fun NativeHomeApp(
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
         val backStack = rememberNavBackStack<HomeRoute>(HomeRoute.Home)
+        LaunchedEffect(state.pendingDestination) {
+            if (state.pendingDestination == LegacyDestination.Page.ModelProviders) {
+                actions.consumeDestination()
+                if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders)
+            }
+        }
         NavDisplay(
             backStack = backStack,
             modifier = Modifier.fillMaxSize().background(palette.page),
@@ -103,6 +112,7 @@ fun NativeHomeApp(
                     onStorage = { backStack.add(HomeRoute.Storage) },
                     onWorkspaceMemory = { backStack.add(HomeRoute.WorkspaceMemory) },
                     onSceneModels = { backStack.add(HomeRoute.SceneModels) },
+                    onModelProviders = { backStack.add(HomeRoute.ModelProviders) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance(
@@ -129,9 +139,10 @@ fun NativeHomeApp(
             ) }
             entry<HomeRoute.SceneModels> { sceneModels(
                 { backStack.removeLastOrNull() },
-                { actions.open(LegacyDestination.Page.ModelProviders) },
+                { backStack.add(HomeRoute.ModelProviders) },
                 { actions.open(LegacyDestination.Page.SceneModels) },
             ) }
+            entry<HomeRoute.ModelProviders> { modelProviders { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }

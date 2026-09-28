@@ -50,6 +50,8 @@ import cn.com.omnimind.bot.ui.settings.NativeWorkspaceMemoryViewModel
 import cn.com.omnimind.bot.ui.settings.NativeWorkspaceMemoryRoute
 import cn.com.omnimind.bot.ui.settings.NativeSceneModelsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeSceneModelsRoute
+import cn.com.omnimind.bot.ui.settings.NativeModelProviderViewModel
+import cn.com.omnimind.bot.ui.settings.NativeModelProviderRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -66,6 +68,9 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val sceneModelsViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeSceneModelsViewModel.Factory(this))[NativeSceneModelsViewModel::class.java]
+    }
+    private val modelProviderViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeModelProviderViewModel.Factory(this))[NativeModelProviderViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -99,6 +104,7 @@ class NativeHomeActivity : ComponentActivity() {
         val navigator = LegacyHomeNavigator(this)
         val actions = NativeHomeActions(
             open = navigator::open,
+            consumeDestination = viewModel::consumeDestination,
             setLocalServiceEnabled = viewModel::setLocalServiceEnabled,
             refreshLocalServiceToken = viewModel::refreshLocalServiceToken,
             setArchived = viewModel::setArchived,
@@ -139,8 +145,10 @@ class NativeHomeActivity : ComponentActivity() {
             }
             LaunchedEffect(state.pendingDestination) {
                 state.pendingDestination?.let {
-                    viewModel.consumeDestination()
-                    navigator.open(it)
+                    if (it != LegacyDestination.Page.ModelProviders) {
+                        viewModel.consumeDestination()
+                        navigator.open(it)
+                    }
                 }
             }
             NativeHomeApp(
@@ -156,6 +164,7 @@ class NativeHomeActivity : ComponentActivity() {
                     workspaceMemoryViewModel, onSceneModels, onBack) },
                 sceneModels = { onBack, onProviders, onEditAvatar -> NativeSceneModelsRoute(
                     sceneModelsViewModel, onProviders, onEditAvatar, onBack) },
+                modelProviders = { onBack -> NativeModelProviderRoute(modelProviderViewModel, onBack) },
                 appearance = { onBack, onBackground -> AppearanceScreen(savedPreferences, preferences.actions,
                     onBackground = onBackground, onBack = onBack) },
                 background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,

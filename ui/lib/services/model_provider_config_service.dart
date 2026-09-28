@@ -1,9 +1,6 @@
-import 'dart:convert';
-
 import 'package:flutter/services.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/models_dev_catalog_service.dart';
-import 'package:ui/services/storage_service.dart';
 
 class ModelProviderConfig {
   final String id;
@@ -372,15 +369,6 @@ class ModelProviderConfigService {
   static const String _kOfficialProfileId = 'omnibot-official-ai';
   static const String _kOfficialSourceType = 'omnibot_official';
   static const String _kOfficialProfileName = 'OmniBot 官方 AI';
-  static const String _kManualModelIdsKey = 'manual_provider_model_ids_v2';
-  static const String _kHiddenChatModelIdsKey =
-      'hidden_chat_provider_model_ids_v1';
-  static const String _kCachedFetchedModelsKey =
-      'cached_provider_models_with_base_v2';
-  static const String _kLegacyManualModelIdsKey =
-      'manual_provider_model_ids_v1';
-  static const String _kLegacyCachedFetchedModelsKey =
-      'cached_provider_models_with_base_v1';
   static const String _kDirectRequestUrlMarker = '#';
   static const Set<String> _kForbiddenCustomHeaderNames = <String>{
     'host',
@@ -689,12 +677,14 @@ class ModelProviderConfigService {
     required String profileId,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
-    await _migrateLegacyStorageIfNeeded(normalizedProfileId);
-    final current = _readJsonMap(_kManualModelIdsKey);
-    final rawIds = (current[normalizedProfileId] as List?)
-        ?.map((item) => item.toString())
-        .toList();
-    return _normalizeModelIds(rawIds ?? const []);
+    final ids = await AssistsMessageService.assistCore
+        .invokeMethod<List<dynamic>>('getProviderModelIds', {
+          'kind': 'manual',
+          'profileId': normalizedProfileId,
+        });
+    return _normalizeModelIds(
+      (ids ?? const []).map((item) => item.toString()).toList(),
+    );
   }
 
   static Future<void> saveManualModelIds({
@@ -702,22 +692,28 @@ class ModelProviderConfigService {
     required List<String> ids,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
-    await _migrateLegacyStorageIfNeeded(normalizedProfileId);
-    final current = _readJsonMap(_kManualModelIdsKey);
-    current[normalizedProfileId] = _normalizeModelIds(ids);
-    await StorageService.setString(_kManualModelIdsKey, jsonEncode(current));
+    await AssistsMessageService.assistCore.invokeMethod<List<dynamic>>(
+      'saveProviderModelIds',
+      {
+        'kind': 'manual',
+        'profileId': normalizedProfileId,
+        'ids': _normalizeModelIds(ids),
+      },
+    );
   }
 
   static Future<List<String>> getHiddenChatModelIds({
     required String profileId,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
-    await _migrateLegacyStorageIfNeeded(normalizedProfileId);
-    final current = _readJsonMap(_kHiddenChatModelIdsKey);
-    final rawIds = (current[normalizedProfileId] as List?)
-        ?.map((item) => item.toString())
-        .toList();
-    return _normalizeModelIds(rawIds ?? const []);
+    final ids = await AssistsMessageService.assistCore
+        .invokeMethod<List<dynamic>>('getProviderModelIds', {
+          'kind': 'hidden',
+          'profileId': normalizedProfileId,
+        });
+    return _normalizeModelIds(
+      (ids ?? const []).map((item) => item.toString()).toList(),
+    );
   }
 
   static Future<void> saveHiddenChatModelIds({
@@ -725,12 +721,13 @@ class ModelProviderConfigService {
     required List<String> ids,
   }) async {
     final normalizedProfileId = _canonicalProfileId(profileId);
-    await _migrateLegacyStorageIfNeeded(normalizedProfileId);
-    final current = _readJsonMap(_kHiddenChatModelIdsKey);
-    current[normalizedProfileId] = _normalizeModelIds(ids);
-    await StorageService.setString(
-      _kHiddenChatModelIdsKey,
-      jsonEncode(current),
+    await AssistsMessageService.assistCore.invokeMethod<List<dynamic>>(
+      'saveProviderModelIds',
+      {
+        'kind': 'hidden',
+        'profileId': normalizedProfileId,
+        'ids': _normalizeModelIds(ids),
+      },
     );
   }
 
@@ -935,51 +932,6 @@ class ModelProviderConfigService {
       // Ignore lookup failures; metadata enrichment can still use base URL.
     }
     return null;
-  }
-
-  static Map<String, dynamic> _readJsonMap(String key) {
-    final raw = StorageService.getString(key, defaultValue: '');
-    if (raw == null || raw.trim().isEmpty) {
-      return <String, dynamic>{};
-    }
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is Map<String, dynamic>) {
-        return Map<String, dynamic>.from(decoded);
-      }
-    } catch (_) {
-      // ignore broken cache
-    }
-    return <String, dynamic>{};
-  }
-
-  static Future<void> _migrateLegacyStorageIfNeeded(String profileId) async {
-    final targetProfileId = _canonicalProfileId(profileId);
-    if (targetProfileId.isEmpty) {
-      return;
-    }
-
-    final currentManual = _readJsonMap(_kManualModelIdsKey);
-    if (!currentManual.containsKey(targetProfileId)) {
-      final legacyManual = StorageService.getStringList(
-        _kLegacyManualModelIdsKey,
-        defaultValue: [],
-      );
-      if (legacyManual != null && legacyManual.isNotEmpty) {
-        currentManual[targetProfileId] = _normalizeModelIds(legacyManual);
-        await StorageService.setString(
-          _kManualModelIdsKey,
-          jsonEncode(currentManual),
-        );
-        await StorageService.remove(_kLegacyManualModelIdsKey);
-      }
-    }
-
-    // The current catalog is shared with native ACP launch configuration.
-    // It is not a UI/network cache: explicit discovery still fetches live.
-    // Deleting it here makes the next Harness launch advertise only the bound
-    // model and reject another model that the user just discovered.
-    await StorageService.remove(_kLegacyCachedFetchedModelsKey);
   }
 
   static List<String> _normalizeModelIds(List<String> ids) {

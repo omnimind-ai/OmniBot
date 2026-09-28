@@ -40,12 +40,11 @@ internal class NativeSceneModelsViewModel(private val context: Context) : ViewMo
         refreshJob = viewModelScope.launch refresh@{
             try {
                 val profiles = withContext(Dispatchers.IO) { repository.profiles() }
-                val firstEditable = profiles.firstOrNull { !OmniOfficialProvider.isOfficialProfile(it.id) }?.id
                 val initial = withContext(Dispatchers.IO) {
                     val capabilities = setOf("text", "embedding")
                     val groups = profiles.map { profile ->
                         val manual = if (OmniOfficialProvider.isOfficialProfile(profile.id)) emptyList()
-                            else repository.manualModelIds(profile.id, firstEditable)
+                            else repository.manualModelIds(profile.id)
                         SceneProviderGroup(profile.id, profile.name, profile.isConfigured(),
                             capabilities.associateWith { manual },
                             loadingCapabilities = if (profile.isConfigured() || OmniOfficialProvider.isOfficialProfile(profile.id))
@@ -66,7 +65,7 @@ internal class NativeSceneModelsViewModel(private val context: Context) : ViewMo
                                     val remote = catalog.fetch(profile.id, capability, forceRefresh = forceRefresh,
                                         expectedRevision = profile.revision, expectedBaseUrl = profile.baseUrl)
                                     val manual = if (OmniOfficialProvider.isOfficialProfile(profile.id)) emptyList()
-                                        else repository.manualModelIds(profile.id, firstEditable)
+                                        else repository.manualModelIds(profile.id)
                                     (remote.map { it.id } + manual).map(String::trim)
                                         .filter(SceneModelBindingStore::isValidModelName).distinct()
                                 }

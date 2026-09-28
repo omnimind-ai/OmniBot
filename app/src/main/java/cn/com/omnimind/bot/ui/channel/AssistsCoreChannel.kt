@@ -82,6 +82,9 @@ class AssistsCoreChannel {
                 "setEditingModelProviderProfile" -> {
                     assistsCoreManager!!.setEditingModelProviderProfile(call, result)
                 }
+                "getProviderModelIds", "saveProviderModelIds" -> {
+                    assistsCoreManager!!.providerModelIds(call, result)
+                }
                 "saveModelProviderConfig" -> {
                     assistsCoreManager!!.saveModelProviderConfig(call, result)
                 }

@@ -70,6 +70,7 @@ data class WebQuickAction(
 /** Actions stay with their existing host services; UI state contains no runtime owner. */
 data class NativeHomeActions(
     val open: (LegacyDestination) -> Unit,
+    val consumeDestination: () -> Unit,
     val setLocalServiceEnabled: (Boolean) -> Unit,
     val refreshLocalServiceToken: () -> Unit,
     val setArchived: (ConversationSummary, Boolean) -> Unit,

@@ -46,8 +46,9 @@ LauncherActivity
       ├─ NativeLogsViewModel → existing AiRequestLogStore / RuntimeLogStore
       ├─ NativeWorkspaceMemoryViewModel → WorkspaceMemoryService + WorkspaceMemoryRollupScheduler
       ├─ NativeSceneModelsViewModel → SceneModelSettingsRepository + ProviderModelCatalogService
+      ├─ NativeModelProviderViewModel → ProviderEditorRepository + ModelProviderConfigStore
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -133,9 +134,9 @@ random greeting selection out of pixel comparisons.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
   permissions, theme/language, home preferences, miscellaneous, background
   image settings, pet appearance, storage management, the two log pages and
-  workspace-memory settings and scene-model bindings/voice autoplay are native.
-  The scene page's Agent-avatar editor and Provider editor remain compatibility
-  destinations; native avatar previews read the existing preference keys and
+  workspace-memory settings, scene-model bindings/voice autoplay and the
+  Provider editor are native. The scene page's Agent-avatar editor remains a
+  compatibility destination; native avatar previews read the existing keys and
   packaged Flutter preset assets until the avatar feature moves.
   Alarm, open-with, quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
@@ -165,12 +166,63 @@ The order below follows the actual owners in this repository, not page size alon
 | 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
 | 3b-2a | Background image settings — source implemented | `AppBackgroundRepository`, the existing `app_background_config_v1` key and `filesDir/backgrounds` | One writer for native and Flutter settings; see batch 3b-2a. |
 | 3b-2b | Pet appearance — source implemented | `PetAppearanceRepository`, existing overlay runtime, workspace pet roots, ZIP validator and preview renderer | Native selection/import/discovery and Flutter compatibility share one owner; see batch 3b-2b. |
-| 4 | Storage management, workspace memory, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Workspace memory has its own service and scheduler. Provider/model resolution and plugin runtime already have native owners. | Storage/logs and workspace memory are bounded slices below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
+| 4 | Storage management, workspace memory, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Workspace memory has its own service and scheduler. Provider/model resolution and plugin runtime already have native owners. | Storage/logs, workspace memory, scene bindings and Provider editor are bounded slices below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first three slices of 4. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first four slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4d checkpoint: Provider editor (source complete; device acceptance pending)
+
+- Settings → Model Providers and Scene Models → configure Provider now use one
+  saved native route. The home Agent Web action's Provider-required result also
+  opens that route; the existing Flutter route remains for the default Flutter
+  launcher and compatibility entry points.
+- The native page edits and switches existing Provider profiles, offers the
+  same built-in endpoints/protocols and OpenAI wire formats, masks/reveals the
+  current API key, edits custom headers, and supports add/delete with
+  confirmation. Draft fields save after focus leaves or when explicitly saved;
+  switching profiles first saves a valid draft. Invalid URLs/headers and a
+  profile revision changed elsewhere leave the draft intact and report failure.
+- `ProviderEditorRepository` calls `ModelProviderConfigStore` for credentials,
+  endpoint normalization, revisions and existing Agent runtime invalidation.
+  It also owns manual model IDs and chat visibility in the existing Flutter
+  preference keys. Flutter's service now reaches those lists through one native
+  channel, while its Provider editor stays available during coexistence.
+  Existing Flutter test channel fixtures were updated to match the contract.
+- Native model discovery uses the shared `ProviderModelCatalogService` and its
+  before/after revision check. The page can show a persisted catalog, refresh
+  against the Provider, add/remove manual IDs, hide/show chat models and hide
+  all fetched models. As in Flutter, removing a fetched-only model affects the
+  current list; an explicit fresh fetch can return it. Saving a changed Provider
+  revision clears the editor's old fetched list while retaining manual IDs.
+  Metadata supplied by
+  the Provider is shown when available; the Flutter-only models.dev visual
+  enrichment and exact model-group visuals still need device comparison.
+- Source/API, XML, route, focused Dart analysis and diff inspection are the
+  verification boundary. No build, test suite, emulator/device interaction or
+  app Provider requests were run at the user's request. Visual parity and runtime
+  acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare native and Flutter at the same theme, locale, density and font scale:
+   header actions, fields, focus/keyboard, dialogs, model list and metadata,
+   insets and predictive back. Test narrow, landscape and large windows.
+2. Edit URL, API key and custom headers; check a valid save and a failed save.
+   Confirm the secure secret store and Flutter editor see the same values;
+   inspect logs and saved navigation state for absent credentials/header values.
+3. Switch, add and delete Providers; verify the selected ID, revision, Agent
+   runtime invalidation, built-in endpoint preset and OpenAI Responses choice.
+   Change a Provider concurrently in Flutter and check stale native drafts do
+   not overwrite it without an explicit refresh.
+4. Fetch a model list, add/remove manual IDs and toggle chat visibility,
+   including hide-all and a refresh that returns a removed remote model.
+   Compare with Flutter chat selection and scene binding; repeat offline,
+   with an empty result and after process recreation.
+5. Follow the scene page's Provider link and the home Agent Web prerequisite
+   action; return to the previous native page and confirm refreshed settings.
 
 ## Batch 4c checkpoint: scene-model configuration (source complete; device acceptance pending)
 
@@ -179,7 +231,7 @@ roadmap, not authorization to continue after a Goal's stopping condition.
   bindings, default/unbound/missing-Provider labels, scene descriptions and
   voice autoplay/status/voice/style. The Agent avatar keeps its existing read
   keys and preview; editing hands off to the Flutter scene page's avatar picker.
-  Provider editing also remains a compatibility destination.
+  Provider editing moved to the native route in batch 4d.
 - The Miuix `OverlayListPopup` owns placement, dismissal and keyboard bounds.
   Its application content supports model-ID search, Provider expansion, selected
   model markers, restore-default, loading/empty/failure states and retry.
