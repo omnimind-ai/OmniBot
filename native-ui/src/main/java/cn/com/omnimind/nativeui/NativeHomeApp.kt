@@ -49,6 +49,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object WorkspaceMemory : HomeRoute
     @Serializable data object SceneModels : HomeRoute
     @Serializable data object ModelProviders : HomeRoute
+    @Serializable data object McpTools : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -64,6 +65,7 @@ fun NativeHomeApp(
     workspaceMemory: @Composable (onBack: () -> Unit, onSceneModels: () -> Unit) -> Unit,
     sceneModels: @Composable (onBack: () -> Unit, onProviders: () -> Unit, onEditAvatar: () -> Unit) -> Unit,
     modelProviders: @Composable (onBack: () -> Unit) -> Unit,
+    mcpTools: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -113,6 +115,7 @@ fun NativeHomeApp(
                     onWorkspaceMemory = { backStack.add(HomeRoute.WorkspaceMemory) },
                     onSceneModels = { backStack.add(HomeRoute.SceneModels) },
                     onModelProviders = { backStack.add(HomeRoute.ModelProviders) },
+                    onMcpTools = { backStack.add(HomeRoute.McpTools) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance(
@@ -143,6 +146,7 @@ fun NativeHomeApp(
                 { actions.open(LegacyDestination.Page.SceneModels) },
             ) }
             entry<HomeRoute.ModelProviders> { modelProviders { backStack.removeLastOrNull() } }
+            entry<HomeRoute.McpTools> { mcpTools { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }

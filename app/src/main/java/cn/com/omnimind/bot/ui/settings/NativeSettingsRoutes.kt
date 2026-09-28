@@ -25,6 +25,7 @@ import cn.com.omnimind.nativeui.settings.RuntimeLogsScreen
 import cn.com.omnimind.nativeui.settings.WorkspaceMemoryScreen
 import cn.com.omnimind.nativeui.settings.SceneModelsScreen
 import cn.com.omnimind.nativeui.settings.ModelProviderScreen
+import cn.com.omnimind.nativeui.settings.RemoteMcpScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -91,6 +92,14 @@ internal fun NativeModelProviderRoute(viewModel: NativeModelProviderViewModel, o
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshIfClean() }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onLeave() }
     ModelProviderScreen(state, viewModel.actions, viewModel::onEditorBlur, onBack)
+}
+
+@Composable
+internal fun NativeRemoteMcpRoute(viewModel: NativeRemoteMcpViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.load(force = true) }
+    RemoteMcpScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

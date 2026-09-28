@@ -47,8 +47,9 @@ LauncherActivity
       ├─ NativeWorkspaceMemoryViewModel → WorkspaceMemoryService + WorkspaceMemoryRollupScheduler
       ├─ NativeSceneModelsViewModel → SceneModelSettingsRepository + ProviderModelCatalogService
       ├─ NativeModelProviderViewModel → ProviderEditorRepository + ModelProviderConfigStore
+      ├─ NativeRemoteMcpViewModel → RemoteMcpConfigService → RemoteMcpConfigStore / RemoteMcpDiscoveryRegistry
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -135,7 +136,7 @@ random greeting selection out of pixel comparisons.
   permissions, theme/language, home preferences, miscellaneous, background
   image settings, pet appearance, storage management, the two log pages and
   workspace-memory settings, scene-model bindings/voice autoplay and the
-  Provider editor are native. The scene page's Agent-avatar editor remains a
+  Provider editor and remote MCP tool settings are native. The scene page's Agent-avatar editor remains a
   compatibility destination; native avatar previews read the existing keys and
   packaged Flutter preset assets until the avatar feature moves.
   Alarm, open-with, quick-start
@@ -166,12 +167,44 @@ The order below follows the actual owners in this repository, not page size alon
 | 3b-1 | Miscellaneous settings overview — source implemented | `MiscPreferencesRepository`, `TaskRuntimeSettings`, MMKV, existing Flutter preferences and platform helpers | One native page and shared writes/refresh; see batch 3b-1. |
 | 3b-2a | Background image settings — source implemented | `AppBackgroundRepository`, the existing `app_background_config_v1` key and `filesDir/backgrounds` | One writer for native and Flutter settings; see batch 3b-2a. |
 | 3b-2b | Pet appearance — source implemented | `PetAppearanceRepository`, existing overlay runtime, workspace pet roots, ZIP validator and preview renderer | Native selection/import/discovery and Flutter compatibility share one owner; see batch 3b-2b. |
-| 4 | Storage management, workspace memory, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Workspace memory has its own service and scheduler. Provider/model resolution and plugin runtime already have native owners. | Storage/logs, workspace memory, scene bindings and Provider editor are bounded slices below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
+| 4 | Storage management, workspace memory, providers, scene models, MCP/plugin settings, Agent configuration | Storage analysis/cleanup now lives in `StorageUsageRepository`; the channel is a Flutter adapter. Workspace memory has its own service and scheduler. Provider/model resolution and plugin runtime already have native owners. | Storage/logs, workspace memory, scene bindings, Provider editor and remote MCP tools are bounded slices below. Reuse configured provider resolution and plugin capabilities in later slices; do not duplicate them in page ViewModels. |
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first four slices of 4. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first five slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4e checkpoint: remote MCP tools (source complete; device acceptance pending)
+
+- Settings → MCP Tools now opens a saved native route. The native page lists
+  remote services, their enabled and discovery state, tool count and last error;
+  it supports add/edit/delete, enable/disable, manual list refresh and forced
+  tool discovery. The existing Flutter page remains for compatibility entry
+  points under the default launcher.
+- `RemoteMcpConfigService` is the shared mutation boundary for the native page
+  and Flutter channel. It retains the existing MMKV store, discovery registry
+  and `AgentRuntimeManager.invalidateMcpConfiguration()` side effect. The
+  native ViewModel keeps credentials out of list state, masks the editor token
+  and checks the saved configuration before overwriting a draft changed
+  elsewhere. A failed save leaves the editor open.
+- Source/route/resource inspection and diff checks are the verification
+  boundary. No build, test suite, emulator/device interaction or MCP network
+  request was run at the user's request. Visual parity and runtime acceptance
+  remain pending.
+
+Manual acceptance checklist:
+
+1. Compare Flutter and native pages in both themes and languages, including
+   empty/loading/error states, narrow and large windows, keyboard insets,
+   delete confirmation and predictive back.
+2. Add, edit, enable, disable and delete a service. Confirm both UIs see the
+   same store values, the token is masked in the native editor and absent from
+   incidental logs/navigation state, and Agent MCP sessions use the existing
+   invalidation path.
+3. Refresh tools on healthy and failing endpoints. Check persisted health,
+   tool count, last error and forced discovery; repeat after process recreation.
+4. Change the same service in Flutter while the native editor is open. Confirm
+   the native save reports a conflict and leaves the unsaved draft available.
 
 ## Batch 4d checkpoint: Provider editor (source complete; device acceptance pending)
 

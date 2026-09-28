@@ -3,9 +3,7 @@ package cn.com.omnimind.bot.ui.channel
 import android.content.Context
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
-import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
-import cn.com.omnimind.bot.mcp.RemoteMcpConfigStore
-import cn.com.omnimind.bot.mcp.RemoteMcpDiscoveryRegistry
+import cn.com.omnimind.bot.mcp.RemoteMcpConfigService
 import cn.com.omnimind.bot.mcp.RemoteMcpServerConfig
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -31,35 +29,27 @@ class RemoteMcpConfigChannel {
                 try {
                     when (call.method) {
                         "listServers" -> {
-                            respondSuccess(result, RemoteMcpConfigStore.listServers().map { it.toMap() })
+                            respondSuccess(result, service().listServers().map { it.toMap() })
                         }
                         "upsertServer" -> {
                             val raw = call.arguments<Map<String, Any?>>() ?: emptyMap()
-                            val saved = RemoteMcpConfigStore.upsertServer(RemoteMcpServerConfig.fromMap(raw))
-                            RemoteMcpDiscoveryRegistry.invalidate(saved.id)
-                            invalidateAcpMcpSessions()
+                            val saved = service().upsertServer(RemoteMcpServerConfig.fromMap(raw))
                             respondSuccess(result, saved.toMap())
                         }
                         "deleteServer" -> {
                             val serverId = call.argument<String>("id").orEmpty()
-                            RemoteMcpConfigStore.deleteServer(serverId)
-                            RemoteMcpDiscoveryRegistry.invalidate(serverId)
-                            invalidateAcpMcpSessions()
+                            service().deleteServer(serverId)
                             respondSuccess(result, true)
                         }
                         "setServerEnabled" -> {
                             val serverId = call.argument<String>("id").orEmpty()
                             val enabled = call.argument<Boolean>("enabled") == true
-                            val updated = RemoteMcpConfigStore.setServerEnabled(serverId, enabled)
-                            RemoteMcpDiscoveryRegistry.invalidate(serverId)
-                            invalidateAcpMcpSessions()
+                            val updated = service().setServerEnabled(serverId, enabled)
                             respondSuccess(result, updated?.toMap())
                         }
                         "refreshServerTools" -> {
                             val serverId = call.argument<String>("id").orEmpty()
-                            val config = RemoteMcpConfigStore.getServer(serverId)
-                                ?: throw IllegalArgumentException("Server not found")
-                            val discovered = RemoteMcpDiscoveryRegistry.discoverServer(config, forceRefresh = true)
+                            val discovered = service().refreshServerTools(serverId)
                             respondSuccess(
                                 result,
                                 mapOf(
@@ -92,8 +82,5 @@ class RemoteMcpConfigChannel {
         }
     }
 
-    private suspend fun invalidateAcpMcpSessions() {
-        val context = appContext ?: App.instance.applicationContext
-        AgentRuntimeManager.getInstance(context).invalidateMcpConfiguration()
-    }
+    private fun service() = RemoteMcpConfigService(appContext ?: App.instance.applicationContext)
 }
