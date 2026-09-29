@@ -17,7 +17,7 @@ internal class ProviderEditorRepository(context: Context) {
     fun editingId(): String = ModelProviderConfigStore.getEditingProfileId()
     fun select(id: String): ModelProviderProfile = ModelProviderConfigStore.setEditingProfile(id)
 
-    fun save(
+    suspend fun save(
         id: String?, name: String, baseUrl: String, apiKey: String?,
         headers: Map<String, String>?, sourceType: String?, protocolType: String, wireApi: String,
     ): ModelProviderProfile {
@@ -33,7 +33,7 @@ internal class ProviderEditorRepository(context: Context) {
         return saved
     }
 
-    fun delete(id: String): List<ModelProviderProfile> {
+    suspend fun delete(id: String): List<ModelProviderProfile> {
         val profiles = ModelProviderConfigStore.deleteProfile(id)
         AgentRuntimeManager.getIfInitialized()?.invalidateSharedProviderRuntime(id)
         return profiles

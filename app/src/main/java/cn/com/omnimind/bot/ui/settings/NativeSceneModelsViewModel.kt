@@ -116,7 +116,7 @@ internal class NativeSceneModelsViewModel(private val context: Context) : ViewMo
         mutateBinding(sceneId) { repository.clearBinding(sceneId) }
     }
 
-    private fun mutateBinding(sceneId: String, mutation: () -> Unit) {
+    private fun mutateBinding(sceneId: String, mutation: suspend () -> Unit) {
         if (!state.value.loaded || state.value.savingSceneId != null || state.value.voiceBusy || state.value.loading) return
         mutableState.update { it.copy(savingSceneId = sceneId, notice = null) }
         viewModelScope.launch {

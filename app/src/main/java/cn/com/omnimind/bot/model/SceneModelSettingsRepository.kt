@@ -10,7 +10,7 @@ internal class SceneModelSettingsRepository(private val context: Context) {
         .filterNot { OmniOfficialProvider.isOfficialProfile(it.id) } +
         listOfNotNull(PlatformAiProvisioner.officialProfileOrNull())
 
-    fun saveBinding(sceneId: String, providerProfileId: String, modelId: String): List<SceneModelBindingEntry> {
+    suspend fun saveBinding(sceneId: String, providerProfileId: String, modelId: String): List<SceneModelBindingEntry> {
         val previousProviderId = SceneModelBindingStore.getBinding(sceneId)?.providerProfileId
         SceneModelBindingStore.saveBinding(sceneId, providerProfileId, modelId)
         if (sceneId == SceneOperationConfigStore.SCENE_ID) {
@@ -23,7 +23,7 @@ internal class SceneModelSettingsRepository(private val context: Context) {
         return SceneModelBindingStore.getBindingEntries()
     }
 
-    fun clearBinding(sceneId: String): List<SceneModelBindingEntry> {
+    suspend fun clearBinding(sceneId: String): List<SceneModelBindingEntry> {
         SceneModelBindingStore.clearBinding(sceneId)
         if (sceneId == "scene.dispatch.model") {
             AgentRuntimeManager.getIfInitialized()?.invalidateSharedProviderRuntime()

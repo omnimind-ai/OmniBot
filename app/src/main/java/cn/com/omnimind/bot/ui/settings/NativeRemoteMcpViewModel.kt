@@ -141,7 +141,7 @@ internal class NativeRemoteMcpViewModel(context: Context) : ViewModel() {
         if (state.value.savingEditor || state.value.busyIds.isNotEmpty()) return
         val name = draft.name.trim()
         val endpoint = draft.endpointUrl.trim()
-        if (name.isEmpty || endpoint.isEmpty) {
+        if (name.isEmpty() || endpoint.isEmpty()) {
             mutableState.update { it.copy(notice = R.string.omni_mcp_required) }
             return
         }

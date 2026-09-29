@@ -254,7 +254,7 @@ internal class NativeModelProviderViewModel(private val context: Context) : View
         }
     }
 
-    private fun mutateProfile(action: () -> Pair<ModelProviderProfile, List<ModelProviderProfile>>) {
+    private fun mutateProfile(action: suspend () -> Pair<ModelProviderProfile, List<ModelProviderProfile>>) {
         mutableState.update { it.copy(busy = true, notice = null) }
         viewModelScope.launch {
             try {
