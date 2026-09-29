@@ -27,8 +27,9 @@ internal class NativeAgentsRepository(context: Context) {
             "agent/save",
             mapOf(
                 "agent" to mapOf(
-                    "id" to "",
+                    "id" to draft.id,
                     "name" to draft.name,
+                    "description" to draft.description,
                     "command" to draft.command,
                     "arguments" to draft.arguments,
                     "environment" to draft.environment,
@@ -93,6 +94,13 @@ internal class NativeAgentsRepository(context: Context) {
                 ?.mapNotNull { (it as? String)?.trim() }
                 ?.filter(String::isNotEmpty)
                 .orEmpty(),
+            environment = (raw["environment"] as? Map<*, *>)?.entries
+                ?.mapNotNull { (key, value) ->
+                    (key as? String)?.trim()?.takeIf(String::isNotEmpty)
+                        ?.let { it to value?.toString().orEmpty() }
+                }
+                ?.toMap()
+                .orEmpty(),
             enabled = raw["enabled"] != false,
             builtIn = raw["builtIn"] == true,
             installed = raw["installed"] as? Boolean,
@@ -115,6 +123,56 @@ internal class NativeAgentsRepository(context: Context) {
         )
     }
 
+    /** Cached catalog read for one profile, including its launch environment for the editor. */
+    suspend fun readProfile(agentId: String): NativeAgentProfile =
+        listAgents(refresh = false).agents.firstOrNull { it.id == agentId }
+            ?: throw IllegalArgumentException("Unknown ACP agent: $agentId")
+
+    suspend fun readAgentConfig(agentId: String): NativeAgentConfig = parseConfig(
+        runtime().handleMethod("agent/config/read", mapOf("agentId" to agentId.trim()))
+    )
+
+    /**
+     * `agent/config/write` with the runtime's expectedRevision optimistic lock.
+     * Null fields are omitted so the adapter keeps the stored value.
+     */
+    suspend fun writeAgentConfig(
+        agentId: String,
+        content: String? = null,
+        reasoningEffort: String? = null,
+        permissionMode: String? = null,
+        expectedRevision: Long? = null,
+    ): NativeAgentConfig {
+        val args = buildMap<String, Any?> {
+            put("agentId", agentId.trim())
+            if (content != null) put("content", content)
+            if (reasoningEffort != null) put("reasoningEffort", reasoningEffort)
+            if (permissionMode != null) put("permissionMode", permissionMode)
+            if (expectedRevision != null && expectedRevision > 0) {
+                put("expectedRevision", expectedRevision)
+            }
+        }
+        return parseConfig(runtime().handleMethod("agent/config/write", args))
+    }
+
+    /** Existing runtime teardown owner; the next ACP start reconnects from the saved binding. */
+    suspend fun disconnectRuntime() {
+        runtime().disconnect()
+    }
+
+    private fun parseConfig(payload: Any?): NativeAgentConfig {
+        val root = payload as? Map<*, *> ?: emptyMap<String, Any?>()
+        return NativeAgentConfig(
+            kind = (root["kind"] as? String).orEmpty(),
+            revision = (root["revision"] as? Number)?.toLong() ?: 0L,
+            configPath = (root["configPath"] as? String) ?: (root["path"] as? String).orEmpty(),
+            authPath = (root["authPath"] as? String).orEmpty(),
+            content = (root["content"] as? String).orEmpty(),
+            reasoningEffort = (root["reasoningEffort"] as? String)?.trim()?.takeIf(String::isNotEmpty),
+            permissionMode = (root["permissionMode"] as? String)?.trim()?.takeIf(String::isNotEmpty),
+        )
+    }
+
     private companion object {
         const val STATUS_UNCHECKED = "unchecked"
 
@@ -129,6 +187,7 @@ internal data class NativeAgentProfile(
     val description: String,
     val command: String,
     val arguments: List<String>,
+    val environment: Map<String, String>,
     val enabled: Boolean,
     val builtIn: Boolean,
     val installed: Boolean?,
@@ -158,9 +217,34 @@ internal data class NativeCustomAgentDraft(
     val arguments: List<String>,
     val environment: Map<String, String>,
     val enabled: Boolean,
+    val id: String = "",
+    val description: String = "",
 ) {
     override fun toString(): String = "NativeCustomAgentDraft(name=$name, enabled=$enabled)"
 }
+
+/**
+ * The adapter-owned config surface. `content` may embed provider credentials
+ * written by the user, so it stays out of the string form. apiKey/baseUrl/model
+ * from the read payload are dropped here because no native editor shows them.
+ */
+internal data class NativeAgentConfig(
+    val kind: String,
+    val revision: Long,
+    val configPath: String,
+    val authPath: String,
+    val content: String,
+    val reasoningEffort: String?,
+    val permissionMode: String?,
+) {
+    override fun toString(): String = "NativeAgentConfig(kind=$kind, revision=$revision)"
+}
+
+/** The runtime's optimistic-lock rejection from `agent/config/write`. */
+internal fun isAgentConfigRevisionConflict(error: Throwable): Boolean =
+    generateSequence(error) { it.cause }.any {
+        it.message?.contains("Agent config changed concurrently") == true
+    }
 
 /** Reuses the runtime's failure classification; raw payload text is never rendered. */
 internal fun classifyAgentErrorText(raw: String): String? =

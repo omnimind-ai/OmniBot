@@ -49,8 +49,9 @@ LauncherActivity
       ├─ NativeModelProviderViewModel → ProviderEditorRepository + ModelProviderConfigStore
       ├─ NativeRemoteMcpViewModel → RemoteMcpConfigService → RemoteMcpConfigStore / RemoteMcpDiscoveryRegistry
       ├─ NativeAgentsViewModel → NativeAgentsRepository → AgentRuntimeManager method boundary
+      ├─ NativeAgentConfigViewModel → NativeAgentsRepository + SceneModelSettingsRepository
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId)
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -138,10 +139,11 @@ random greeting selection out of pixel comparisons.
   image settings, pet appearance, storage management, the two log pages and
   workspace-memory settings, scene-model bindings/voice autoplay, the
   Provider editor, remote MCP tool settings and the Agent mode list are native.
-  The per-Agent configuration editor and the remote PC Bridge detail page remain
-  compatibility destinations; the scene page's Agent-avatar editor remains a
-  compatibility destination; native avatar previews read the existing keys and
-  packaged Flutter preset assets until the avatar feature moves.
+  The per-Agent configuration editors (Codex, Claude Code, OpenCode, DeepSeek
+  Harness and custom launch profiles) are native as well; the remote PC Bridge
+  detail page remains a compatibility destination; the scene page's Agent-avatar
+  editor remains a compatibility destination; native avatar previews read the
+  existing keys and packaged Flutter preset assets until the avatar feature moves.
   Alarm, open-with, quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
@@ -178,6 +180,75 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first six slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4f-2 checkpoint: agent config editors (source complete; device acceptance pending)
+
+- The Agents page's `配置 >` entry now opens the saved native
+  `AgentConfig(agentId)` route instead of the Flutter compatibility page. The
+  editor keeps the five adapter-owned kinds: `codex` (shared Provider/model
+  selector + official config/auth path note), `json` (Claude settings.json with
+  a pre-save JSON-object check), `jsonc` (OpenCode, no JSON check),
+  `deepseek-harness` (selector + reasoning-effort and permission-mode
+  selection dialogs), and `profile` (command / per-line arguments / per-line
+  `KEY=VALUE` environment / enable switch), plus the custom-Agent delete
+  confirmation. Xiaowan and Kimi Code resolve to the `profile` kind through
+  the existing adapter fallback, exactly as on the Flutter page.
+- `NativeAgentsRepository` now also adapts `agent/config/read` and
+  `agent/config/write`. The runtime's `expectedRevision` optimistic lock is
+  passed through unchanged; its "Agent config changed concurrently" rejection
+  is recognized by message and surfaces a conflict notice while keeping the
+  draft. The read payload's `apiKey`/`baseUrl`/`model` are dropped at the
+  repository boundary because no native editor renders them; `content` and
+  launch environment stay out of state/log string forms.
+- The shared Provider/model selector reads `scene.dispatch.model` through
+  `SceneModelSettingsRepository` (new read-only `dispatchBinding()` plus the
+  existing `saveBinding`, which retains its provider-change invalidation side
+  effect). Like the Flutter page, a successful binding save then calls the
+  runtime's existing `AgentRuntimeManager.disconnect()` — no new teardown
+  path. Page load reads persisted catalogs only; opening the picker refreshes
+  configured Providers live with the catalog service's revision check, and a
+  failed fetch keeps the persisted/manual list with a retry row, mirroring
+  the Flutter selector's per-provider fallback.
+- List refresh after native config edits relies on the navigation entry
+  lifecycle: returning to Agents re-fires `ON_RESUME`, which re-reads the
+  cached catalog. The Flutter page's `PopScope` changed-flag exists only for
+  the compatibility route and is not replicated.
+- `LegacyDestination.AgentConfig` and its `/home/agent_config/{id}` mapping
+  had no remaining callers and were removed. The default Flutter launcher and
+  its Dart pages are unchanged; `remote_codex_setting` stays a compatibility
+  destination.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`) and `git diff --check` are the verification
+  boundary. No emulator/device interaction or network request was run. The
+  Codex kind's save button intentionally keeps the Flutter behavior of calling
+  `agent/config/write` with only `expectedRevision`; whether that write is
+  meaningful is owned by the runtime adapter, not by either page.
+
+Manual acceptance checklist:
+
+1. Open each built-in editor (Codex, Claude Code, OpenCode, DeepSeek Harness)
+   and a custom Agent in both themes and languages. Compare titles, subtitles,
+   selector, fields, dropdowns, save button, insets and predictive back;
+   repeat after rotation and process recreation (drafts restore from the
+   saved state, not from a stale snapshot).
+2. Edit and save the Claude settings.json (valid and invalid JSON), the
+   OpenCode JSONC and the DSH reasoning/permission options. Confirm the saved
+   values reappear on the Flutter page and vice versa, and that a failed save
+   keeps the draft.
+3. Change the same Agent's config in Flutter while the native editor is open,
+   then save natively: the revision conflict notice must appear and the draft
+   must survive; reopening the page must show the newer content.
+4. Change the shared Provider/model from the native editor, confirm the
+   Agents page summary and the Flutter scene/chat owners see the new binding,
+   and the running ACP process is torn down through the existing disconnect.
+   Repeat with a failing Provider catalog fetch (persisted list + retry).
+5. Edit a custom Agent's command/arguments/environment and enable switch;
+   verify the Agents list reflects them on return. Delete a custom Agent with
+   confirmation and confirm the list no longer shows it; cancel the dialog
+   and confirm nothing changes. Environment values must not appear in logs.
+6. Verify the Codex save behavior matches the Flutter page exactly (same
+   outcome for the same runtime state), and that xiaowan/Kimi Code open the
+   launch-profile editor with the delete action hidden.
 
 ## Batch 4f-1 checkpoint: agent list (source complete; device acceptance pending)
 
@@ -220,11 +291,10 @@ roadmap, not authorization to continue after a Goal's stopping condition.
   description); its `invoke` re-resolution accepts both known placements.
   Provider/model/runtime-missing results keep the existing owner: a notice plus
   the native Model Providers route or the terminal settings compatibility page.
-- The `配置 >` row and the remote Bridge row remain typed compatibility
-  destinations (`LegacyDestination.AgentConfig` → `/home/agent_config/{id}`,
-  `Page.RemoteBridge` → `/home/remote_codex_setting`); the per-Agent config
-  editor is batch 4f-2. `Page.Agents` had no remaining callers, so its legacy
-  mapping and enum entry were removed.
+- The remote Bridge row remains a typed compatibility destination
+  (`Page.RemoteBridge` → `/home/remote_codex_setting`). The `配置 >` row moved to
+  the native `AgentConfig` route in batch 4f-2; `LegacyDestination.AgentConfig`
+  and `Page.Agents` had no remaining callers and were removed.
 - Compilation (`:app:compileDevelopStandardDebugKotlin`,
   `:native-ui:testDebugUnitTest`) and `git diff --check` are the verification
   boundary for this batch. No emulator/device interaction, network request or

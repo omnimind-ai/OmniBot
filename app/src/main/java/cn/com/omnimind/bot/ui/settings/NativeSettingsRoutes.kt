@@ -27,6 +27,7 @@ import cn.com.omnimind.nativeui.settings.SceneModelsScreen
 import cn.com.omnimind.nativeui.settings.ModelProviderScreen
 import cn.com.omnimind.nativeui.settings.RemoteMcpScreen
 import cn.com.omnimind.nativeui.settings.AgentsScreen
+import cn.com.omnimind.nativeui.settings.AgentConfigScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -100,6 +101,7 @@ internal fun NativeAgentsRoute(
     viewModel: NativeAgentsViewModel,
     openLegacy: (LegacyDestination) -> Unit,
     onModelProviders: () -> Unit,
+    onAgentConfig: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -111,7 +113,19 @@ internal fun NativeAgentsRoute(
         if (destination == LegacyDestination.Page.ModelProviders) onModelProviders()
         else openLegacy(destination)
     }
-    AgentsScreen(state, viewModel.actions, openLegacy, onBack)
+    AgentsScreen(state, viewModel.actions, openLegacy, onAgentConfig, onBack)
+}
+
+@Composable
+internal fun NativeAgentConfigRoute(
+    viewModel: NativeAgentConfigViewModel,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    // A confirmed delete returns to the Agents list, which refreshes on resume.
+    LaunchedEffect(state.deleted) { if (state.deleted) onBack() }
+    AgentConfigScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

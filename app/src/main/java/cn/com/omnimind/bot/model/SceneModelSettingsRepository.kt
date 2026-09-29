@@ -36,6 +36,10 @@ internal class SceneModelSettingsRepository(private val context: Context) {
         replaceCustomCurlCommand = false,
     )
 
+    /** Read-only binding snapshot for editors that bind the shared dispatch scene. */
+    fun dispatchBinding(): SceneModelBindingEntry? =
+        SceneModelBindingStore.getBinding("scene.dispatch.model")
+
     /** Read-only projection for surfaces that summarize the shared dispatch binding. */
     fun dispatchModelSummary(): SceneDispatchSummary {
         val item = SceneModelCatalogResolver.listCatalogItems()

@@ -71,6 +71,7 @@ fun AgentsScreen(
     state: AgentsState,
     actions: AgentsActions,
     openLegacy: (LegacyDestination) -> Unit,
+    onConfigure: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -118,7 +119,7 @@ fun AgentsScreen(
                     Button(actions.retry) { Text(stringResource(R.string.omni_retry)) }
                 }
             }
-            else -> AgentsList(state, actions, openLegacy,
+            else -> AgentsList(state, actions, openLegacy, onConfigure,
                 Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets))
         }
         val result = state.actionResult
@@ -152,6 +153,7 @@ private fun AgentsList(
     state: AgentsState,
     actions: AgentsActions,
     openLegacy: (LegacyDestination) -> Unit,
+    onConfigure: (String) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalOmniPalette.current
@@ -189,7 +191,7 @@ private fun AgentsList(
                     Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp))
             }
             items(managed.size, key = { "managed:${managed[it].id}" }) { index ->
-                AgentRow(managed[index], state, actions, openLegacy)
+                AgentRow(managed[index], state, actions, onConfigure)
                 if (index < managed.lastIndex) PreferenceDivider()
             }
         }
@@ -200,7 +202,7 @@ private fun AgentsList(
                     Modifier.padding(start = 4.dp, end = 4.dp, bottom = 10.dp))
             }
             items(custom.size, key = { "custom:${custom[it].id}" }) { index ->
-                AgentRow(custom[index], state, actions, openLegacy)
+                AgentRow(custom[index], state, actions, onConfigure)
                 if (index < custom.lastIndex) PreferenceDivider()
             }
         }
@@ -322,7 +324,7 @@ private fun AgentRow(
     agent: AgentItem,
     state: AgentsState,
     actions: AgentsActions,
-    openLegacy: (LegacyDestination) -> Unit,
+    onConfigure: (String) -> Unit,
 ) {
     val preparing = agent.id in state.preparingAgentIds
     val busy = state.busyAgentId == agent.id || preparing
@@ -355,7 +357,7 @@ private fun AgentRow(
             R.string.omni_agent_reinstall else R.string.omni_agent_install)
         else -> stringResource(R.string.omni_agent_recheck)
     }
-    val openConfig = { openLegacy(LegacyDestination.AgentConfig(agent.id)) }
+    val openConfig = { onConfigure(agent.id) }
     FlatTile(
         leading = { AgentBrandIcon(agent.id, state.xiaowanAvatar) },
         title = agent.name,

@@ -90,7 +90,6 @@ sealed interface LegacyDestination {
     data class Conversation(val id: Long, val mode: String, val agentId: String? = null) : LegacyDestination
     data class NewConversation(val draft: String = "") : LegacyDestination
     data class TerminalPackage(val packageId: String) : LegacyDestination
-    data class AgentConfig(val agentId: String) : LegacyDestination
 
     enum class Page : LegacyDestination {
         Account, ModelProviders, SceneModels, WorkspaceMemory, Terminal, RemoteBridge,

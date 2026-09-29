@@ -51,6 +51,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object ModelProviders : HomeRoute
     @Serializable data object McpTools : HomeRoute
     @Serializable data object Agents : HomeRoute
+    @Serializable data class AgentConfig(val agentId: String) : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -67,7 +68,8 @@ fun NativeHomeApp(
     sceneModels: @Composable (onBack: () -> Unit, onProviders: () -> Unit, onEditAvatar: () -> Unit) -> Unit,
     modelProviders: @Composable (onBack: () -> Unit) -> Unit,
     mcpTools: @Composable (onBack: () -> Unit) -> Unit,
-    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit) -> Unit,
+    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit, onAgentConfig: (String) -> Unit) -> Unit,
+    agentConfig: @Composable (agentId: String, onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -155,7 +157,11 @@ fun NativeHomeApp(
                 agents(
                     { backStack.removeLastOrNull() },
                     { if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders) },
+                    { agentId -> backStack.add(HomeRoute.AgentConfig(agentId)) },
                 )
+            }
+            entry<HomeRoute.AgentConfig> { key ->
+                agentConfig(key.agentId) { backStack.removeLastOrNull() }
             }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }

@@ -18,6 +18,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
@@ -56,6 +57,8 @@ import cn.com.omnimind.bot.ui.settings.NativeRemoteMcpViewModel
 import cn.com.omnimind.bot.ui.settings.NativeRemoteMcpRoute
 import cn.com.omnimind.bot.ui.settings.NativeAgentsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeAgentsRoute
+import cn.com.omnimind.bot.ui.settings.NativeAgentConfigViewModel
+import cn.com.omnimind.bot.ui.settings.NativeAgentConfigRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -176,8 +179,16 @@ class NativeHomeActivity : ComponentActivity() {
                     sceneModelsViewModel, onProviders, onEditAvatar, onBack) },
                 modelProviders = { onBack -> NativeModelProviderRoute(modelProviderViewModel, onBack) },
                 mcpTools = { onBack -> NativeRemoteMcpRoute(remoteMcpViewModel, onBack) },
-                agents = { onBack, onModelProviders -> NativeAgentsRoute(
-                    agentsViewModel, navigator::open, onModelProviders, onBack) },
+                agents = { onBack, onModelProviders, onAgentConfig -> NativeAgentsRoute(
+                    agentsViewModel, navigator::open, onModelProviders, onAgentConfig, onBack) },
+                agentConfig = { agentId, onBack ->
+                    val configViewModel = remember(agentId) {
+                        ViewModelProvider(this@NativeHomeActivity,
+                            NativeAgentConfigViewModel.Factory(this@NativeHomeActivity, agentId))[
+                                "agentConfig:$agentId", NativeAgentConfigViewModel::class.java]
+                    }
+                    NativeAgentConfigRoute(configViewModel, onBack)
+                },
                 appearance = { onBack, onBackground -> AppearanceScreen(savedPreferences, preferences.actions,
                     onBackground = onBackground, onBack = onBack) },
                 background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,

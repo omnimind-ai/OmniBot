@@ -8,6 +8,7 @@ import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
 import cn.com.omnimind.nativeui.settings.AgentsActions
+import cn.com.omnimind.nativeui.settings.AgentItem
 import cn.com.omnimind.nativeui.settings.AgentsScreen
 import cn.com.omnimind.nativeui.settings.AgentsState
 import cn.com.omnimind.nativeui.settings.MiscSettingsActions
@@ -29,7 +30,7 @@ class NativeHomeNavigationTest {
         restoration.setContent {
             NativeHomeApp(state.value, actions(setService = { state.value = state.value.copy(localServiceEnabled = it) }),
                 about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {},
-                mcpTools = {}, agents = { _, _ -> }, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> })
+                mcpTools = {}, agents = { _, _, _ -> }, agentConfig = { _, _ -> }, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> })
         }
         capture("home-light")
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
@@ -52,7 +53,7 @@ class NativeHomeNavigationTest {
                 loading = false,
                 conversations = listOf(ConversationSummary(42, "Saved thread", "", "agent", 1, false)),
             ), actions(open = { opened.add(it) }), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {},
-                mcpTools = {}, agents = { _, _ -> }, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {},
+                mcpTools = {}, agents = { _, _, _ -> }, agentConfig = { _, _ -> }, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {},
                 miscellaneous = { _, _ -> })
         }
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
@@ -63,7 +64,7 @@ class NativeHomeNavigationTest {
 
     @Test fun settingsOpensNativeMiscAndReturnsToSettings() {
         compose.setContent {
-            NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, agents = { _, _ -> }, permissions = {},
+            NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, agents = { _, _, _ -> }, agentConfig = { _, _ -> }, permissions = {},
                 appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { onBack, onHomeSettings ->
                     MiscSettingsScreen(MiscSettingsState(loaded = true), miscActions(), onHomeSettings, {}, onBack)
                 })
@@ -80,9 +81,9 @@ class NativeHomeNavigationTest {
         compose.setContent {
             NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, permissions = {},
                 appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> },
-                agents = { onBack, _ ->
-                    AgentsScreen(AgentsState(loaded = true), agentsActions(), {}, onBack)
-                })
+                agents = { onBack, _, _ ->
+                    AgentsScreen(AgentsState(loaded = true), agentsActions(), {}, {}, onBack)
+                }, agentConfig = { _, _ -> })
         }
         compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
         compose.onNodeWithContentDescription(label(R.string.omni_settings_title)).performClick()
@@ -92,13 +93,39 @@ class NativeHomeNavigationTest {
         compose.onNodeWithText(label(R.string.omni_settings_title)).assertIsDisplayed()
     }
 
+    @Test fun agentsOpenTheNativeAgentConfigRoute() {
+        compose.setContent {
+            NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, permissions = {},
+                appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> },
+                agents = { onBack, _, onAgentConfig ->
+                    AgentsScreen(
+                        AgentsState(loaded = true, agents = listOf(AgentItem(
+                            id = "custom-1", name = "My Agent", builtIn = false, enabled = true,
+                            status = "online", installed = null, managedAdapter = false,
+                        ))),
+                        agentsActions(), {}, onAgentConfig, onBack,
+                    )
+                },
+                agentConfig = { agentId, _ ->
+                    top.yukonga.miuix.kmp.basic.Text("Native agent config $agentId")
+                })
+        }
+        compose.onNodeWithContentDescription(label(R.string.omni_open_drawer)).performClick()
+        compose.onNodeWithContentDescription(label(R.string.omni_settings_title)).performClick()
+        compose.onNodeWithText(label(R.string.omni_agents_title)).performClick()
+        compose.onNodeWithText(label(R.string.omni_agent_configure)).performClick()
+        compose.onNodeWithText("Native agent config custom-1").assertIsDisplayed()
+        compose.onNodeWithContentDescription(label(R.string.omni_back)).performClick()
+        compose.onNodeWithText(label(R.string.omni_agents_managed_section)).assertIsDisplayed()
+    }
+
     @Test fun homeAgentButtonOpensTheNativeAgentsRoute() {
         compose.setContent {
             NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, permissions = {},
                 appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {}, miscellaneous = { _, _ -> }, pet = {},
-                agents = { _, _ ->
+                agents = { _, _, _ ->
                     top.yukonga.miuix.kmp.basic.Text("Native agents page")
-                })
+                }, agentConfig = { _, _ -> })
         }
         compose.onNodeWithContentDescription(label(R.string.omni_agent_select)).performClick()
         compose.onNodeWithText("Native agents page").assertIsDisplayed()
@@ -109,7 +136,7 @@ class NativeHomeNavigationTest {
         compose.setContent {
             NativeHomeApp(NativeHomeState(loading = false), actions(open = { opened.add(it) }),
                 about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {},
-                mcpTools = {}, agents = { _, _ -> }, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> })
+                mcpTools = {}, agents = { _, _, _ -> }, agentConfig = { _, _ -> }, permissions = {}, appearance = { _, _ -> }, background = { _, _ -> }, pet = {}, homePreferences = {}, miscellaneous = { _, _ -> })
         }
         compose.onNodeWithText(label(R.string.omni_composer_hint)).performClick()
         compose.waitForIdle()
@@ -118,7 +145,7 @@ class NativeHomeNavigationTest {
 
     @Test fun homePetButtonOpensTheNativePetRoute() {
         compose.setContent {
-            NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, agents = { _, _ -> }, permissions = {},
+            NativeHomeApp(NativeHomeState(loading = false), actions(), about = { _, _, _ -> }, storage = {}, requestLogs = {}, runtimeLogs = {}, workspaceMemory = { _, _ -> }, sceneModels = { _, _, _ -> }, modelProviders = {}, mcpTools = {}, agents = { _, _, _ -> }, agentConfig = { _, _ -> }, permissions = {},
                 appearance = { _, _ -> }, background = { _, _ -> }, homePreferences = {},
                 miscellaneous = { _, _ -> }, pet = {
                     top.yukonga.miuix.kmp.basic.Text("Native pet page")
