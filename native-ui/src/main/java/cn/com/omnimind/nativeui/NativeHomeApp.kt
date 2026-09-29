@@ -52,6 +52,8 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object McpTools : HomeRoute
     @Serializable data object Agents : HomeRoute
     @Serializable data class AgentConfig(val agentId: String) : HomeRoute
+    @Serializable data object AlarmSettings : HomeRoute
+    @Serializable data object OpenWith : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -73,7 +75,9 @@ fun NativeHomeApp(
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
-    miscellaneous: @Composable (onBack: () -> Unit, onHomeSettings: () -> Unit) -> Unit,
+    miscellaneous: @Composable (onBack: () -> Unit, onHomeSettings: () -> Unit, onAlarmSettings: () -> Unit, onOpenWith: () -> Unit) -> Unit,
+    alarmSettings: @Composable (onBack: () -> Unit) -> Unit,
+    openWith: @Composable (onBack: () -> Unit) -> Unit,
     background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
     pet: @Composable (onBack: () -> Unit) -> Unit,
 ) {
@@ -133,7 +137,10 @@ fun NativeHomeApp(
             entry<HomeRoute.Pet> { pet { backStack.removeLastOrNull() } }
             entry<HomeRoute.HomePreferences> { homePreferences { backStack.removeLastOrNull() } }
             entry<HomeRoute.Miscellaneous> { miscellaneous(
-                { backStack.removeLastOrNull() }, { backStack.add(HomeRoute.HomePreferences) },
+                { backStack.removeLastOrNull() },
+                { backStack.add(HomeRoute.HomePreferences) },
+                { backStack.add(HomeRoute.AlarmSettings) },
+                { backStack.add(HomeRoute.OpenWith) },
             ) }
             entry<HomeRoute.About> { about(
                 { backStack.removeLastOrNull() },
@@ -163,6 +170,8 @@ fun NativeHomeApp(
             entry<HomeRoute.AgentConfig> { key ->
                 agentConfig(key.agentId) { backStack.removeLastOrNull() }
             }
+            entry<HomeRoute.AlarmSettings> { alarmSettings { backStack.removeLastOrNull() } }
+            entry<HomeRoute.OpenWith> { openWith { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }

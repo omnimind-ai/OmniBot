@@ -50,8 +50,10 @@ LauncherActivity
       ├─ NativeRemoteMcpViewModel → RemoteMcpConfigService → RemoteMcpConfigStore / RemoteMcpDiscoveryRegistry
       ├─ NativeAgentsViewModel → NativeAgentsRepository → AgentRuntimeManager method boundary
       ├─ NativeAgentConfigViewModel → NativeAgentsRepository + SceneModelSettingsRepository
+      ├─ NativeAlarmSettingsViewModel → NativeAlarmSettingsRepository → AgentAlarmToolService (MMKV)
+      ├─ NativeOpenWithViewModel → SharedOpenPreferenceStore
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId)
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId)
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -144,7 +146,7 @@ random greeting selection out of pixel comparisons.
   detail page remains a compatibility destination; the scene page's Agent-avatar
   editor remains a compatibility destination; native avatar previews read the
   existing keys and packaged Flutter preset assets until the avatar feature moves.
-  Alarm, open-with, quick-start
+  Alarm and open-with are native; quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
   The chat header's inline Agent quick-switcher still belongs to the chat
@@ -180,6 +182,71 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first six slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4g checkpoint: alarm and open-with settings (source complete; device acceptance pending)
+
+- Miscellaneous → Alarm Settings and Miscellaneous → Open with Omnibot now open
+  saved native routes. `Page.Alarm`/`Page.OpenWith` had no remaining callers, so
+  both enum entries and their legacy mappings were removed; Quick Start stays a
+  compatibility destination.
+- **Alarm page ownership**: the MMKV record (`agent_alarm_sound_settings_v1`)
+  and its validation stay in `AgentAlarmToolService`; the page's repository only
+  adapts it. **URI decision**: the consumer (`AgentAlarmRingingService`) plays
+  the selection through `MediaPlayer.setDataSource(context, uri)`, which accepts
+  content URIs and falls back to the default alarm sound on failure. The native
+  picker therefore stores the SAF document's `content://` URI with
+  `takePersistableUriPermission` instead of copying bytes (the Flutter page's
+  file_picker path was already an app-cache copy, and a path copy would add a
+  second storage owner). A provider that rejects the persistable grant still
+  leaves the pick usable for the process lifetime; playback then falls back to
+  the default ringtone. The row displays the document's display name for
+  content URIs and the raw stored value for legacy file paths written by the
+  Flutter page. The READ_MEDIA_AUDIO/READ_EXTERNAL_STORAGE request before
+  picking matches the Flutter flow and is centralized in
+  `AppPermissionAccess.requestAudioReadPermission`, even though SAF itself
+  needs no permission.
+- **Open-with ownership**: `SharedOpenPreferenceStore` remains the single
+  owner; the page calls it directly (no channel). Selection is optimistic, the
+  store's normalized return value is authoritative, and a rejected mode rolls
+  back with the save-failed notice, as on the Flutter page. The mode dropdown
+  uses the Miuix `OverlayDialog` choice pattern from Miscellaneous/batch 4f-2;
+  the loading placeholder matches the Flutter spinner position.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`, `:native-ui:compileDebugAndroidTestKotlin`)
+  and `git diff --check` are the verification boundary. No emulator/device
+  interaction, no real file pick and no permission request was run. Visual
+  parity and runtime acceptance remain pending.
+
+Manual acceptance checklist (alarm):
+
+1. Compare both themes and languages: three source rows with radio + selected
+   check, dividers, local file section (display name, 3-line ellipsis, outlined
+   pick button), remote URL field, save button, insets and predictive back.
+2. Pick an MP3 with the system picker after granting and after denying the
+   audio permission; cancel the picker; confirm the local section shows the
+   document name and the source switches to Local MP3.
+3. Save each source; trigger an exact alarm (or let one fire) and confirm the
+   chosen sound plays — including after process restart and reboot (persisted
+   grant), with fallback to the default alarm sound when the document becomes
+   unavailable.
+4. Save with no local file selected and with a non-HTTP(S) URL: validation
+   notice, no write. Save a valid remote URL and confirm playback streams.
+5. Set a local path from the Flutter page (default launcher), then open the
+   native page: the stored path displays and remains intact through a native
+   save. Rotate and recreate the process with an unsaved draft.
+
+Manual acceptance checklist (open-with):
+
+1. Compare both themes and languages: section header, image/file rows, dropdown
+   labels per target, subtitles per mode, loading spinner position, insets and
+   predictive back.
+2. Switch each target between default and workspace; confirm the store value
+   changes, the subtitle follows, and the Flutter share-in flow (chat input
+   attach vs LAN link vs workspace path) behaves accordingly.
+3. Alternate edits with the Flutter page under the default launcher and confirm
+   both surfaces show the same mode.
+4. Rotate and recreate the process while the choice dialog is open; confirm the
+   dialog dismisses or restores without a stray write.
 
 ## Batch 4f-2 checkpoint: agent config editors (source complete; device acceptance pending)
 
@@ -779,9 +846,10 @@ entry opens the existing Flutter chat route without a conversation target, so
 specific conversation or quick prompt remains explicit and bypasses that choice.
 The native label explains that the preference takes effect when entering chat.
 
-Miscellaneous → Home Settings now opens the native page. Alarm Settings, Open
-with Omnibot and Quick Start are explicit typed compatibility destinations;
-their existing implementations remain responsible for those workflows. The
+Miscellaneous → Home Settings now opens the native page. Alarm Settings and
+Open with Omnibot moved to native routes in batch 4g. Quick Start remains an
+explicit typed compatibility destination; its existing implementation stays
+responsible for that workflow. The
 Flutter Miscellaneous page is still used by the default Flutter launcher and
 refreshes its local values when the app resumes.
 

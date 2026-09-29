@@ -59,6 +59,10 @@ import cn.com.omnimind.bot.ui.settings.NativeAgentsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeAgentsRoute
 import cn.com.omnimind.bot.ui.settings.NativeAgentConfigViewModel
 import cn.com.omnimind.bot.ui.settings.NativeAgentConfigRoute
+import cn.com.omnimind.bot.ui.settings.NativeAlarmSettingsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeAlarmSettingsRoute
+import cn.com.omnimind.bot.ui.settings.NativeOpenWithViewModel
+import cn.com.omnimind.bot.ui.settings.NativeOpenWithRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -84,6 +88,12 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val agentsViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeAgentsViewModel.Factory(this))[NativeAgentsViewModel::class.java]
+    }
+    private val alarmSettingsViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeAlarmSettingsViewModel.Factory(this))[NativeAlarmSettingsViewModel::class.java]
+    }
+    private val openWithViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeOpenWithViewModel.Factory(this))[NativeOpenWithViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -200,9 +210,11 @@ class NativeHomeActivity : ComponentActivity() {
                     )) },
                     onBack = onBack) },
                 homePreferences = { onBack -> HomePreferencesScreen(savedPreferences, preferences.actions, onBack) },
-                miscellaneous = { onBack, onHomeSettings -> NativeMiscSettingsRoute(
-                    miscSettings, permissionAccess, navigator::open, onHomeSettings, onBack,
+                miscellaneous = { onBack, onHomeSettings, onAlarmSettings, onOpenWith -> NativeMiscSettingsRoute(
+                    miscSettings, permissionAccess, navigator::open, onHomeSettings, onAlarmSettings, onOpenWith, onBack,
                 ) },
+                alarmSettings = { onBack -> NativeAlarmSettingsRoute(alarmSettingsViewModel, permissionAccess, onBack) },
+                openWith = { onBack -> NativeOpenWithRoute(openWithViewModel, onBack) },
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }

@@ -3,6 +3,8 @@ package cn.com.omnimind.bot.ui.settings
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -28,6 +30,8 @@ import cn.com.omnimind.nativeui.settings.ModelProviderScreen
 import cn.com.omnimind.nativeui.settings.RemoteMcpScreen
 import cn.com.omnimind.nativeui.settings.AgentsScreen
 import cn.com.omnimind.nativeui.settings.AgentConfigScreen
+import cn.com.omnimind.nativeui.settings.AlarmSettingsScreen
+import cn.com.omnimind.nativeui.settings.OpenWithSettingsScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -191,6 +195,8 @@ internal fun NativeMiscSettingsRoute(
     access: AppPermissionAccess,
     openLegacy: (LegacyDestination) -> Unit,
     onHomeSettings: () -> Unit,
+    onAlarmSettings: () -> Unit,
+    onOpenWith: () -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -205,7 +211,34 @@ internal fun NativeMiscSettingsRoute(
             }
         }
     })
-    MiscSettingsScreen(state, actions, onHomeSettings, openLegacy, onBack)
+    MiscSettingsScreen(state, actions, onHomeSettings, onAlarmSettings, onOpenWith, openLegacy, onBack)
+}
+
+@Composable
+internal fun NativeAlarmSettingsRoute(
+    viewModel: NativeAlarmSettingsViewModel,
+    access: AppPermissionAccess,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) viewModel.onLocalPicked(uri)
+    }
+    AlarmSettingsScreen(state, viewModel.actions, onPickMp3 = {
+        // SAF grants read without storage permission; the request matches the
+        // Flutter page's flow for devices and providers that still check it.
+        access.requestAudioReadPermission { granted ->
+            if (granted) picker.launch(arrayOf("audio/mpeg")) else viewModel.permissionDenied()
+        }
+    }, onBack)
+}
+
+@Composable
+internal fun NativeOpenWithRoute(viewModel: NativeOpenWithViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    OpenWithSettingsScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

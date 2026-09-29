@@ -33,8 +33,6 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.RemoteBridge -> "/home/remote_codex_setting"
                 Page.McpTools -> "/home/mcp_tools"
                 Page.Chat -> "/home/chat"
-                Page.Alarm -> "/home/alarm_setting"
-                Page.OpenWith -> "/home/open_with_omnibot_setting"
                 Page.QuickStart -> "/home/first_use_tutorial/setup"
                 Page.Storage -> "/home/storage_usage"
                 Page.RequestLogs -> "/my/about/request-logs"

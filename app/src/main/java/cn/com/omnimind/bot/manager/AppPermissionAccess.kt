@@ -65,4 +65,27 @@ class AppPermissionAccess(context: Context) {
             onResult(it[Manifest.permission.POST_NOTIFICATIONS] == true)
         }
     }
+
+    /** Read access for a user-picked alarm MP3: scoped media on 33+, legacy storage below. */
+    fun isAudioReadGranted(): Boolean =
+        ContextCompat.checkSelfPermission(application, audioReadPermission()) ==
+            PackageManager.PERMISSION_GRANTED
+
+    fun requestAudioReadPermission(onResult: (Boolean) -> Unit) {
+        if (isAudioReadGranted()) {
+            onResult(true)
+            return
+        }
+        val permission = audioReadPermission()
+        PermissionRequest.requestPermissions(application, arrayOf(permission)) {
+            onResult(it[permission] == true)
+        }
+    }
+
+    private fun audioReadPermission(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_AUDIO
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
 }

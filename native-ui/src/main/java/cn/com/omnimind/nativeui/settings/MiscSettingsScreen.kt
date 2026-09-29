@@ -67,6 +67,8 @@ fun MiscSettingsScreen(
     state: MiscSettingsState,
     actions: MiscSettingsActions,
     onHomeSettings: () -> Unit,
+    onAlarmSettings: () -> Unit,
+    onOpenWith: () -> Unit,
     openLegacy: (LegacyDestination.Page) -> Unit,
     onBack: () -> Unit,
 ) {
@@ -85,10 +87,10 @@ fun MiscSettingsScreen(
                         val toggle = toggleFor(item, state, actions)
                         val click: () -> Unit = {
                             when (item) {
-                                MiscItem.Alarm -> openLegacy(LegacyDestination.Page.Alarm)
+                                MiscItem.Alarm -> onAlarmSettings()
                                 MiscItem.Home -> onHomeSettings()
                                 MiscItem.Startup -> choice = Choice.Startup
-                                MiscItem.OpenWith -> openLegacy(LegacyDestination.Page.OpenWith)
+                                MiscItem.OpenWith -> onOpenWith()
                                 MiscItem.HabitualHand -> choice = Choice.HabitualHand
                                 MiscItem.QuickStart -> openLegacy(LegacyDestination.Page.QuickStart)
                                 else -> toggle?.let { it.onChange(!it.checked) }
