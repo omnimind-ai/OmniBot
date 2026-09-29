@@ -32,6 +32,7 @@ import cn.com.omnimind.nativeui.settings.AgentsScreen
 import cn.com.omnimind.nativeui.settings.AgentConfigScreen
 import cn.com.omnimind.nativeui.settings.AlarmSettingsScreen
 import cn.com.omnimind.nativeui.settings.OpenWithSettingsScreen
+import cn.com.omnimind.nativeui.settings.RemoteBridgeScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -106,6 +107,7 @@ internal fun NativeAgentsRoute(
     openLegacy: (LegacyDestination) -> Unit,
     onModelProviders: () -> Unit,
     onAgentConfig: (String) -> Unit,
+    onRemoteBridge: () -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -117,7 +119,7 @@ internal fun NativeAgentsRoute(
         if (destination == LegacyDestination.Page.ModelProviders) onModelProviders()
         else openLegacy(destination)
     }
-    AgentsScreen(state, viewModel.actions, openLegacy, onAgentConfig, onBack)
+    AgentsScreen(state, viewModel.actions, onAgentConfig, onRemoteBridge, onBack)
 }
 
 @Composable
@@ -239,6 +241,21 @@ internal fun NativeOpenWithRoute(viewModel: NativeOpenWithViewModel, onBack: () 
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
     OpenWithSettingsScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeRemoteBridgeRoute(
+    viewModel: NativeRemoteBridgeViewModel,
+    openLegacy: (LegacyDestination) -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    // The QR scan hand-off lives on the Flutter page until batch 4h-2; returning
+    // from it re-reads the stored config.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    RemoteBridgeScreen(state, viewModel.actions,
+        onScanQr = { openLegacy(LegacyDestination.Page.RemoteBridge) }, onBack)
 }
 
 @Composable

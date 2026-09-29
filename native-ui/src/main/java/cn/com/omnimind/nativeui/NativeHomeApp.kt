@@ -54,6 +54,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data class AgentConfig(val agentId: String) : HomeRoute
     @Serializable data object AlarmSettings : HomeRoute
     @Serializable data object OpenWith : HomeRoute
+    @Serializable data object RemoteBridge : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -70,8 +71,9 @@ fun NativeHomeApp(
     sceneModels: @Composable (onBack: () -> Unit, onProviders: () -> Unit, onEditAvatar: () -> Unit) -> Unit,
     modelProviders: @Composable (onBack: () -> Unit) -> Unit,
     mcpTools: @Composable (onBack: () -> Unit) -> Unit,
-    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit, onAgentConfig: (String) -> Unit) -> Unit,
+    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit, onAgentConfig: (String) -> Unit, onRemoteBridge: () -> Unit) -> Unit,
     agentConfig: @Composable (agentId: String, onBack: () -> Unit) -> Unit,
+    remoteBridge: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -165,6 +167,7 @@ fun NativeHomeApp(
                     { backStack.removeLastOrNull() },
                     { if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders) },
                     { agentId -> backStack.add(HomeRoute.AgentConfig(agentId)) },
+                    { backStack.add(HomeRoute.RemoteBridge) },
                 )
             }
             entry<HomeRoute.AgentConfig> { key ->
@@ -172,6 +175,7 @@ fun NativeHomeApp(
             }
             entry<HomeRoute.AlarmSettings> { alarmSettings { backStack.removeLastOrNull() } }
             entry<HomeRoute.OpenWith> { openWith { backStack.removeLastOrNull() } }
+            entry<HomeRoute.RemoteBridge> { remoteBridge { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }

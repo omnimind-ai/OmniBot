@@ -34,7 +34,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import cn.com.omnimind.nativeui.LegacyDestination
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.WebProcessStatus
 import cn.com.omnimind.nativeui.WebQuickAction
@@ -70,8 +69,8 @@ private val StatusYellow = Color(0xFFE3A52B)
 fun AgentsScreen(
     state: AgentsState,
     actions: AgentsActions,
-    openLegacy: (LegacyDestination) -> Unit,
     onConfigure: (String) -> Unit,
+    onRemoteBridge: () -> Unit,
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -119,7 +118,7 @@ fun AgentsScreen(
                     Button(actions.retry) { Text(stringResource(R.string.omni_retry)) }
                 }
             }
-            else -> AgentsList(state, actions, openLegacy, onConfigure,
+            else -> AgentsList(state, actions, onConfigure, onRemoteBridge,
                 Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets))
         }
         val result = state.actionResult
@@ -152,8 +151,8 @@ fun AgentsScreen(
 private fun AgentsList(
     state: AgentsState,
     actions: AgentsActions,
-    openLegacy: (LegacyDestination) -> Unit,
     onConfigure: (String) -> Unit,
+    onRemoteBridge: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val palette = LocalOmniPalette.current
@@ -243,7 +242,7 @@ private fun AgentsList(
                     R.string.omni_agents_remote_enabled else R.string.omni_agents_remote_disabled),
                 subtitle = stringResource(if (state.remoteBridgeEnabled)
                     R.string.omni_agents_remote_enabled_summary else R.string.omni_agents_remote_disabled_summary),
-                onTap = { openLegacy(LegacyDestination.Page.RemoteBridge) },
+                onTap = onRemoteBridge,
             )
         }
     }

@@ -30,6 +30,8 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.SceneModels -> "/home/scene_model_setting"
                 Page.WorkspaceMemory -> "/home/workspace_memory_setting"
                 Page.Terminal -> "/home/termux_setting"
+                // Temporary hand-off: the native Bridge page's QR scan entry opens the
+                // Flutter page, whose scanner autosaves through the same store (batch 4h-2).
                 Page.RemoteBridge -> "/home/remote_codex_setting"
                 Page.McpTools -> "/home/mcp_tools"
                 Page.Chat -> "/home/chat"

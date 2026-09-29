@@ -63,6 +63,8 @@ import cn.com.omnimind.bot.ui.settings.NativeAlarmSettingsViewModel
 import cn.com.omnimind.bot.ui.settings.NativeAlarmSettingsRoute
 import cn.com.omnimind.bot.ui.settings.NativeOpenWithViewModel
 import cn.com.omnimind.bot.ui.settings.NativeOpenWithRoute
+import cn.com.omnimind.bot.ui.settings.NativeRemoteBridgeViewModel
+import cn.com.omnimind.bot.ui.settings.NativeRemoteBridgeRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -94,6 +96,9 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val openWithViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeOpenWithViewModel.Factory(this))[NativeOpenWithViewModel::class.java]
+    }
+    private val remoteBridgeViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeRemoteBridgeViewModel.Factory(this))[NativeRemoteBridgeViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -189,8 +194,8 @@ class NativeHomeActivity : ComponentActivity() {
                     sceneModelsViewModel, onProviders, onEditAvatar, onBack) },
                 modelProviders = { onBack -> NativeModelProviderRoute(modelProviderViewModel, onBack) },
                 mcpTools = { onBack -> NativeRemoteMcpRoute(remoteMcpViewModel, onBack) },
-                agents = { onBack, onModelProviders, onAgentConfig -> NativeAgentsRoute(
-                    agentsViewModel, navigator::open, onModelProviders, onAgentConfig, onBack) },
+                agents = { onBack, onModelProviders, onAgentConfig, onRemoteBridge -> NativeAgentsRoute(
+                    agentsViewModel, navigator::open, onModelProviders, onAgentConfig, onRemoteBridge, onBack) },
                 agentConfig = { agentId, onBack ->
                     val configViewModel = remember(agentId) {
                         ViewModelProvider(this@NativeHomeActivity,
@@ -215,6 +220,7 @@ class NativeHomeActivity : ComponentActivity() {
                 ) },
                 alarmSettings = { onBack -> NativeAlarmSettingsRoute(alarmSettingsViewModel, permissionAccess, onBack) },
                 openWith = { onBack -> NativeOpenWithRoute(openWithViewModel, onBack) },
+                remoteBridge = { onBack -> NativeRemoteBridgeRoute(remoteBridgeViewModel, navigator::open, onBack) },
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }

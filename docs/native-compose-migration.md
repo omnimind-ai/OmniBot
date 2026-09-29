@@ -52,8 +52,9 @@ LauncherActivity
       ├─ NativeAgentConfigViewModel → NativeAgentsRepository + SceneModelSettingsRepository
       ├─ NativeAlarmSettingsViewModel → NativeAlarmSettingsRepository → AgentAlarmToolService (MMKV)
       ├─ NativeOpenWithViewModel → SharedOpenPreferenceStore
+      ├─ NativeRemoteBridgeViewModel → NativeRemoteBridgeRepository → AgentRuntimeManager config/remote/*
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId)
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -143,9 +144,10 @@ random greeting selection out of pixel comparisons.
   Provider editor, remote MCP tool settings and the Agent mode list are native.
   The per-Agent configuration editors (Codex, Claude Code, OpenCode, DeepSeek
   Harness and custom launch profiles) are native as well; the remote PC Bridge
-  detail page remains a compatibility destination; the scene page's Agent-avatar
-  editor remains a compatibility destination; native avatar previews read the
-  existing keys and packaged Flutter preset assets until the avatar feature moves.
+  settings page is native (its QR scan entry temporarily hands off to the
+  Flutter page, see batch 4h-1); the scene page's Agent-avatar editor remains a
+  compatibility destination; native avatar previews read the existing keys and
+  packaged Flutter preset assets until the avatar feature moves.
   Alarm and open-with are native; quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
@@ -182,6 +184,62 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first six slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4h-1 checkpoint: remote PC Bridge settings (source complete; device acceptance pending)
+
+- The Agents page's remote PC Bridge row now opens the saved native
+  `RemoteBridge` route. The page keeps the enable switch, Bridge URL, masked
+  Token with reveal toggle, remote cwd, the four-state autosave status line
+  (required-fields / pending / saving / saved), the test-connection action and
+  the remote directory picker as an `OverlayBottomSheet` with home/parent/
+  reload navigation, per-directory rows, error retry and empty state.
+- **Autosave semantics**: edits cancel only the 700 ms debounce job; the
+  in-flight write job is never cancelled by further edits and re-arms a
+  trailing debounce when the form changed during the write (the Flutter page
+  could leave such an edit pending until the next keystroke). The saved
+  signature is the server's trimmed response; programmatic refills never pass
+  through the edit actions, so no `_syncing` guard is needed. The ViewModel is
+  Activity-scoped, so leaving the page cannot discard a committed write; a
+  process death drops the pending debounce like the Flutter page's dispose.
+- **Ownership**: `NativeRemoteBridgeRepository` adapts `config/remote/read`,
+  `config/remote/write`, `config/remote/test` and `config/remote/fs/list`; the
+  store and the runtime's remote-session teardown after a config write are
+  unchanged. A successful write also refreshes the existing
+  `flutter.remote_bridge_enabled` first-frame cache read by the Agents page.
+  The token is masked by default and stays out of state/log string forms.
+- **QR scan temporary wiring**: the native page's Scan QR button opens the
+  Flutter compatibility page (`Page.RemoteBridge`, retained for exactly this
+  hand-off), whose scanner autosaves through the same store; returning re-reads
+  `config/remote/read` on resume, unless the native form holds an unsaved draft
+  (the draft then wins). A native scanner waits for the camera/scan dependency
+  decision (CameraX+ML Kit or ZXing, targeting non-GMS devices) in batch 4h-2.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`, `:native-ui:compileDebugAndroidTestKotlin`)
+  and `git diff --check` are the verification boundary. No device interaction,
+  bridge connection or real network request was run. Visual parity and runtime
+  acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and languages: enable row, three fields, token mask
+   toggle, outlined scan/test buttons, status line colors, insets and
+   predictive back. Repeat on narrow windows and with large text.
+2. Type into URL/token/cwd and toggle the switch: confirm the status moves
+   pending → saving → saved roughly 700 ms after the last keystroke, and that
+   typing during a write still results in one final save (no lost trailing
+   edit). Toggle enable with missing URL/cwd and check the incomplete hint.
+3. Test connection with valid and invalid bridges, with the form saved and
+   unsaved (the probe uses the current form values).
+4. Open the directory picker with and without a stored cwd; navigate into
+   child directories, home and parent; reload; select the current directory
+   and confirm the cwd field adopts it and autosaves. Cover bridge offline,
+   HTTP error and empty directory with retry.
+5. Scan a QR code through the Flutter hand-off page and return: the native
+   form must show the scanned values and autosave state. Repeat with an
+   unsaved draft open on the native page and confirm the draft is kept.
+6. Alternate edits with the Flutter page under the default launcher and
+   confirm the Agents row's enabled state and both editors agree. Rotate and
+   recreate the process with an unsaved draft and with the picker open.
 
 ## Batch 4g checkpoint: alarm and open-with settings (source complete; device acceptance pending)
 
