@@ -24,13 +24,17 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
             is LegacyDestination.TerminalPackage -> Uri.Builder().path("/home/termux_setting")
                 .apply { if (destination.packageId.isNotBlank()) appendQueryParameter("focus", destination.packageId) }
                 .build().toString()
+            // The editor itself is still a Flutter page; only the Agent list moved.
+            is LegacyDestination.AgentConfig -> Uri.Builder()
+                .encodedPath("/home/agent_config/${Uri.encode(destination.agentId)}")
+                .build().toString()
             is Page -> when (destination) {
                 Page.Account -> "/my/account"
                 Page.ModelProviders -> "/home/model_provider_setting"
                 Page.SceneModels -> "/home/scene_model_setting"
                 Page.WorkspaceMemory -> "/home/workspace_memory_setting"
-                Page.Agents -> "/home/agent_mode_setting"
                 Page.Terminal -> "/home/termux_setting"
+                Page.RemoteBridge -> "/home/remote_codex_setting"
                 Page.McpTools -> "/home/mcp_tools"
                 Page.Chat -> "/home/chat"
                 Page.Alarm -> "/home/alarm_setting"

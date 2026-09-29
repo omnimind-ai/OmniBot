@@ -1,9 +1,7 @@
 package cn.com.omnimind.bot.ui.settings
 
 import android.content.Context
-import android.graphics.BitmapFactory
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
@@ -170,23 +168,7 @@ internal class NativeSceneModelsViewModel(private val context: Context) : ViewMo
         voiceId = other.voiceId, stylePreset = other.stylePreset,
     )
 
-    private fun loadAvatar(): ImageBitmap? = runCatching {
-        val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-        val path = preferences.getString("flutter.agentAvatarCustomImagePath", "").orEmpty()
-        if (path.isNotBlank()) {
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(path, bounds)
-            val options = BitmapFactory.Options().apply {
-                while (bounds.outWidth / inSampleSize > 128 || bounds.outHeight / inSampleSize > 128) inSampleSize *= 2
-            }
-            BitmapFactory.decodeFile(path, options)?.asImageBitmap()?.let { return@runCatching it }
-        }
-        val stored = preferences.getLong("flutter.agentAvatarIndex", 0L)
-        val index = if (stored in 0L..5L) stored.toInt() else 0
-        context.assets.open("flutter_assets/assets/avatar/default_avatar${index + 1}.png").use {
-            BitmapFactory.decodeStream(it)?.asImageBitmap()
-        }
-    }.getOrNull()
+    private fun loadAvatar(): ImageBitmap? = loadAgentAvatarPreview(context)
 
     class Factory(context: Context) : ViewModelProvider.Factory {
         private val application = context.applicationContext

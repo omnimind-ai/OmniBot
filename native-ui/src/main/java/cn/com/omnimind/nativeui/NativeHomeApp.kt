@@ -50,6 +50,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object SceneModels : HomeRoute
     @Serializable data object ModelProviders : HomeRoute
     @Serializable data object McpTools : HomeRoute
+    @Serializable data object Agents : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -66,6 +67,7 @@ fun NativeHomeApp(
     sceneModels: @Composable (onBack: () -> Unit, onProviders: () -> Unit, onEditAvatar: () -> Unit) -> Unit,
     modelProviders: @Composable (onBack: () -> Unit) -> Unit,
     mcpTools: @Composable (onBack: () -> Unit) -> Unit,
+    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -97,6 +99,7 @@ fun NativeHomeApp(
                     onSettings = { backStack.add(HomeRoute.Settings) },
                     onArchive = { backStack.add(HomeRoute.Archive) },
                     onPet = { backStack.add(HomeRoute.Pet) },
+                    onAgents = { backStack.add(HomeRoute.Agents) },
                     actions = actions,
                 )
             }
@@ -116,6 +119,7 @@ fun NativeHomeApp(
                     onSceneModels = { backStack.add(HomeRoute.SceneModels) },
                     onModelProviders = { backStack.add(HomeRoute.ModelProviders) },
                     onMcpTools = { backStack.add(HomeRoute.McpTools) },
+                    onAgents = { backStack.add(HomeRoute.Agents) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance(
@@ -147,6 +151,12 @@ fun NativeHomeApp(
             ) }
             entry<HomeRoute.ModelProviders> { modelProviders { backStack.removeLastOrNull() } }
             entry<HomeRoute.McpTools> { mcpTools { backStack.removeLastOrNull() } }
+            entry<HomeRoute.Agents> {
+                agents(
+                    { backStack.removeLastOrNull() },
+                    { if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders) },
+                )
+            }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }
@@ -159,6 +169,7 @@ private fun HomeWithDrawer(
     onSettings: () -> Unit,
     onArchive: () -> Unit,
     onPet: () -> Unit,
+    onAgents: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -195,7 +206,7 @@ private fun HomeWithDrawer(
                 },
             ) {
                 HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } },
-                    onPet, actions.open)
+                    onPet, onAgents, actions.open)
             }
         }
     }

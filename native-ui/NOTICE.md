@@ -20,6 +20,8 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 The brand vectors preserve the existing `ui/assets/provider_icons/moonshot.svg` and `deepseek.svg` paths, attributed to Lobe Icons in `ui/lib/widgets/agent_brand_icon.dart` (https://github.com/lobehub/lobe-icons). They use the same blue tint as the Flutter widget.
 
+The Agent brand vectors `omni_brand_codex.xml`, `omni_brand_claude.xml` and `omni_brand_opencode.xml` preserve the existing `ui/assets/agents/codex.svg`, `claude_code.svg` and `opencode.svg` geometry from the same Lobe Icons attribution, with the same tint rules as the Flutter widget.
+
 `omni_default_pet.png` is copied from this repository's existing `ui/assets/avatar/default_avatar1.png` so the native pet picker shows the same built-in preview.
 
 `omni_about_logo.png` is an unchanged copy of OmniBot's existing `ui/assets/my/about_icon.png`.

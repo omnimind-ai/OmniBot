@@ -37,6 +37,7 @@ internal fun HomeScreen(
     backgroundState: BackgroundSettingsState,
     onDrawer: () -> Unit,
     onPetSettings: () -> Unit,
+    onAgents: () -> Unit,
     onOpen: (LegacyDestination) -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -48,7 +49,7 @@ internal fun HomeScreen(
         if (backgroundActive) BackgroundImageLayer(backgroundState, Modifier.fillMaxSize())
         Scaffold(
             containerColor = if (backgroundActive) Color.Transparent else palette.page,
-            topBar = { HomeTopBar(onDrawer, onPetSettings, onOpen) },
+            topBar = { HomeTopBar(onDrawer, onPetSettings, onAgents, onOpen) },
             bottomBar = {
                 Column(Modifier.navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // This is an entry point, not a second composer or send pipeline.
@@ -102,7 +103,7 @@ internal fun HomeScreen(
 }
 
 @Composable
-private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit,
+private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit, onAgents: () -> Unit,
     onOpen: (LegacyDestination) -> Unit) {
     val palette = LocalOmniPalette.current
     BoxWithConstraints(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp).height(50.dp)) {
@@ -127,7 +128,8 @@ private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit,
                 OmniIcon(R.drawable.omni_folders, stringResource(R.string.omni_workspace), tint = palette.tertiaryText, size = 19.dp)
             }
         }
+        // The chat-owned quick switcher is a later slice; this opens the native Agents page.
         OmniIconButton(R.drawable.omni_circle_chevron_down, stringResource(R.string.omni_agent_select),
-            { onOpen(LegacyDestination.Page.Agents) }, Modifier.align(Alignment.CenterEnd).width(50.dp))
+            onAgents, Modifier.align(Alignment.CenterEnd).width(50.dp))
     }
 }

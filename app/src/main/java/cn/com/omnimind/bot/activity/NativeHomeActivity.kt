@@ -54,6 +54,8 @@ import cn.com.omnimind.bot.ui.settings.NativeModelProviderViewModel
 import cn.com.omnimind.bot.ui.settings.NativeModelProviderRoute
 import cn.com.omnimind.bot.ui.settings.NativeRemoteMcpViewModel
 import cn.com.omnimind.bot.ui.settings.NativeRemoteMcpRoute
+import cn.com.omnimind.bot.ui.settings.NativeAgentsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeAgentsRoute
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -76,6 +78,9 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val remoteMcpViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeRemoteMcpViewModel.Factory(this))[NativeRemoteMcpViewModel::class.java]
+    }
+    private val agentsViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeAgentsViewModel.Factory(this))[NativeAgentsViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -171,6 +176,8 @@ class NativeHomeActivity : ComponentActivity() {
                     sceneModelsViewModel, onProviders, onEditAvatar, onBack) },
                 modelProviders = { onBack -> NativeModelProviderRoute(modelProviderViewModel, onBack) },
                 mcpTools = { onBack -> NativeRemoteMcpRoute(remoteMcpViewModel, onBack) },
+                agents = { onBack, onModelProviders -> NativeAgentsRoute(
+                    agentsViewModel, navigator::open, onModelProviders, onBack) },
                 appearance = { onBack, onBackground -> AppearanceScreen(savedPreferences, preferences.actions,
                     onBackground = onBackground, onBack = onBack) },
                 background = { onBack, onPet -> NativeBackgroundSettingsRoute(backgroundViewModel,

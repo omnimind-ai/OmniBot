@@ -36,6 +36,18 @@ internal class SceneModelSettingsRepository(private val context: Context) {
         replaceCustomCurlCommand = false,
     )
 
+    /** Read-only projection for surfaces that summarize the shared dispatch binding. */
+    fun dispatchModelSummary(): SceneDispatchSummary {
+        val item = SceneModelCatalogResolver.listCatalogItems()
+            .firstOrNull { it.sceneId == "scene.dispatch.model" }
+        return SceneDispatchSummary(
+            providerName = item?.effectiveProviderProfileName.orEmpty(),
+            model = item?.effectiveModel.orEmpty(),
+        )
+    }
+
     /** Read compatibility data without adding a second writer for the Provider editor. */
     fun manualModelIds(profileId: String): List<String> = ProviderEditorRepository(context).manualIds(profileId)
 }
+
+internal data class SceneDispatchSummary(val providerName: String, val model: String)

@@ -57,6 +57,7 @@ private sealed interface SettingDestination {
     data object SceneModels : SettingDestination
     data object ModelProviders : SettingDestination
     data object McpTools : SettingDestination
+    data object Agents : SettingDestination
 }
 
 private data class SettingSection(@StringRes val title: Int, val items: List<SettingItem>)
@@ -72,7 +73,7 @@ private val sections = listOf(
         SettingItem(R.drawable.omni_database, R.string.omni_settings_workspace_memory_title, destination = SettingDestination.WorkspaceMemory),
     )),
     SettingSection(R.string.omni_settings_section_service_environment, listOf(
-        SettingItem(R.drawable.omni_bot, R.string.omni_agents_title, R.string.omni_agents_subtitle, SettingDestination.Legacy(Page.Agents)),
+        SettingItem(R.drawable.omni_bot, R.string.omni_agents_title, R.string.omni_agents_subtitle, SettingDestination.Agents),
         SettingItem(R.drawable.omni_square_terminal, R.string.omni_settings_alpine_title, R.string.omni_settings_alpine_subtitle, SettingDestination.Legacy(Page.Terminal)),
         SettingItem(R.drawable.omni_monitor_smartphone, R.string.omni_settings_local_service_title, R.string.omni_settings_local_service_subtitle, SettingDestination.LocalService),
         SettingItem(R.drawable.omni_hammer, R.string.omni_settings_mcp_tools_title, R.string.omni_settings_mcp_tools_subtitle, SettingDestination.McpTools),
@@ -104,6 +105,7 @@ internal fun SettingsScreen(
     onSceneModels: () -> Unit,
     onModelProviders: () -> Unit,
     onMcpTools: () -> Unit,
+    onAgents: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
     var showLocalService by rememberSaveable { mutableStateOf(false) }
@@ -123,7 +125,7 @@ internal fun SettingsScreen(
                     section.items.forEachIndexed { itemIndex, item ->
                         SettingRow(item, itemIndex == section.items.lastIndex, state, actions, onAbout, onPermissions,
                             onAppearance, onHomePreferences, onMiscellaneous, onStorage, onWorkspaceMemory,
-                            onSceneModels, onModelProviders, onMcpTools) { showLocalService = true }
+                            onSceneModels, onModelProviders, onMcpTools, onAgents) { showLocalService = true }
                         if (itemIndex < section.items.lastIndex) {
                             Box(Modifier.padding(start = 30.dp).fillMaxWidth().height(1.dp)
                                 .background(palette.border.copy(alpha = if (palette.dark) .5f else .78f)))
@@ -157,6 +159,7 @@ private fun SettingRow(
     onSceneModels: () -> Unit,
     onModelProviders: () -> Unit,
     onMcpTools: () -> Unit,
+    onAgents: () -> Unit,
     onLocalServiceDetails: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -181,6 +184,7 @@ private fun SettingRow(
                     SettingDestination.SceneModels -> onSceneModels()
                     SettingDestination.ModelProviders -> onModelProviders()
                     SettingDestination.McpTools -> onMcpTools()
+                    SettingDestination.Agents -> onAgents()
                     is SettingDestination.Legacy -> actions.open(destination.page)
                 }
             } else Modifier)

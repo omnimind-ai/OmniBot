@@ -26,6 +26,7 @@ import cn.com.omnimind.nativeui.settings.WorkspaceMemoryScreen
 import cn.com.omnimind.nativeui.settings.SceneModelsScreen
 import cn.com.omnimind.nativeui.settings.ModelProviderScreen
 import cn.com.omnimind.nativeui.settings.RemoteMcpScreen
+import cn.com.omnimind.nativeui.settings.AgentsScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -92,6 +93,25 @@ internal fun NativeModelProviderRoute(viewModel: NativeModelProviderViewModel, o
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.refreshIfClean() }
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) { viewModel.onLeave() }
     ModelProviderScreen(state, viewModel.actions, viewModel::onEditorBlur, onBack)
+}
+
+@Composable
+internal fun NativeAgentsRoute(
+    viewModel: NativeAgentsViewModel,
+    openLegacy: (LegacyDestination) -> Unit,
+    onModelProviders: () -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    LaunchedEffect(state.pendingDestination) {
+        val destination = state.pendingDestination ?: return@LaunchedEffect
+        viewModel.actions.consumeDestination()
+        if (destination == LegacyDestination.Page.ModelProviders) onModelProviders()
+        else openLegacy(destination)
+    }
+    AgentsScreen(state, viewModel.actions, openLegacy, onBack)
 }
 
 @Composable

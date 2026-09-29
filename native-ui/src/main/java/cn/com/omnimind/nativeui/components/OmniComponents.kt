@@ -47,7 +47,15 @@ internal fun OmniIconButton(
 
 /** Flutter CommonAppBar: 44dp toolbar, 56dp leading slot, centered 17sp title. */
 @Composable
-internal fun OmniTopBar(title: String, onBack: () -> Unit) {
+internal fun OmniTopBar(title: String, onBack: () -> Unit) = OmniTopBar(title, onBack) {}
+
+/** Same toolbar with trailing actions; kept as an overload so a trailing lambda stays `onBack`. */
+@Composable
+internal fun OmniTopBar(
+    title: String,
+    onBack: () -> Unit,
+    actions: @Composable RowScope.() -> Unit,
+) {
     Box(Modifier.fillMaxWidth().statusBarsPadding().height(44.dp)) {
         Box(Modifier.width(56.dp).fillMaxHeight(), contentAlignment = Alignment.Center) {
             OmniIconButton(R.drawable.omni_chevron_left, stringResource(R.string.omni_back), onBack)
@@ -57,6 +65,9 @@ internal fun OmniTopBar(title: String, onBack: () -> Unit) {
             fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
             color = LocalOmniPalette.current.text, maxLines = 1, overflow = TextOverflow.Ellipsis,
         )
+        Row(Modifier.align(Alignment.CenterEnd), verticalAlignment = Alignment.CenterVertically) {
+            actions()
+        }
     }
 }
 

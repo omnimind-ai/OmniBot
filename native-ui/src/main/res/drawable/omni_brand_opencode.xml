@@ -1,0 +1,4 @@
+<!-- Existing Lobe Icons asset geometry from ui/assets/agents/opencode.svg; see ui/lib/widgets/agent_brand_icon.dart. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:pathData="M16 6H8v12h8V6zm4 16H4V2h16v20z" android:fillColor="#FF000000" android:fillType="evenOdd" />
+</vector>

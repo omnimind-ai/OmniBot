@@ -48,8 +48,9 @@ LauncherActivity
       ├─ NativeSceneModelsViewModel → SceneModelSettingsRepository + ProviderModelCatalogService
       ├─ NativeModelProviderViewModel → ProviderEditorRepository + ModelProviderConfigStore
       ├─ NativeRemoteMcpViewModel → RemoteMcpConfigService → RemoteMcpConfigStore / RemoteMcpDiscoveryRegistry
+      ├─ NativeAgentsViewModel → NativeAgentsRepository → AgentRuntimeManager method boundary
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -135,13 +136,17 @@ random greeting selection out of pixel comparisons.
 - Settings overview, MCP toggle, local-service detail sheet, About/update and
   permissions, theme/language, home preferences, miscellaneous, background
   image settings, pet appearance, storage management, the two log pages and
-  workspace-memory settings, scene-model bindings/voice autoplay and the
-  Provider editor and remote MCP tool settings are native. The scene page's Agent-avatar editor remains a
+  workspace-memory settings, scene-model bindings/voice autoplay, the
+  Provider editor, remote MCP tool settings and the Agent mode list are native.
+  The per-Agent configuration editor and the remote PC Bridge detail page remain
+  compatibility destinations; the scene page's Agent-avatar editor remains a
   compatibility destination; native avatar previews read the existing keys and
   packaged Flutter preset assets until the avatar feature moves.
   Alarm, open-with, quick-start
   and other detail pages still use the existing feature pages. Workspace-memory
   status currently uses the same persisted initial-render cache as Flutter.
+  The chat header's inline Agent quick-switcher still belongs to the chat
+  migration; the home agent button opens the native Agents page meanwhile.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (terminal auto-start, account refresh and app update checks)
   before becoming the default. The generic native chat entry now delegates
@@ -171,8 +176,87 @@ The order below follows the actual owners in this repository, not page size alon
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first five slices of 4. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first six slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4f-1 checkpoint: agent list (source complete; device acceptance pending)
+
+- Settings → Agent Mode and the home agent button now open the saved native
+  `Agents` route. The page mirrors the Flutter Agent list: toolbar refresh probe
+  and add-custom editor (name / command / per-line arguments / per-line
+  `KEY=VALUE` environment / enable switch), the read-only shared dispatch-model
+  summary, local name/description/command search, the all/available/unavailable
+  segmented filter with counts, built-in and custom sections with status
+  dot/label, plugin-capability or description or monospace command subtitles,
+  classified error lines, install/recheck actions with Miuix bottom-sheet
+  results, `配置 >` entries, the `agent_settings` Web-action section with
+  open/stop and running/starting status, and the remote PC Bridge row.
+- `NativeAgentsRepository` only adapts `AgentRuntimeManager.handleMethod`
+  payloads (`agent/list`, `agent/refresh`, `agent/save`, `agent/delete`,
+  `agent/test`, `agent/prepare`, `config/remote/read`). No channel or runtime
+  internals changed. Commands, arguments and environment values stay out of
+  list state and logs; `config/remote/read` contributes only its enabled flag,
+  cached under the existing `flutter.remote_bridge_enabled` key for the first
+  frame, exactly as the Flutter page does.
+- **prepare in-flight ownership**: the runtime's `ManagedAcpPreparationGate`
+  already serializes managed installs and reports `harness_preparation_in_progress`.
+  The native page therefore keeps no second retry/poll/owner: the ViewModel
+  marks a per-agent busy flag in view state, triggers `agent/prepare` once, and
+  re-reads `agent/list` when it finishes. The Dart-side
+  `prepareAgentInBackground` registry remains the Flutter page's owner and is
+  untouched. A process death mid-install is recovered by the next cached
+  `agent/list` health read, not by replaying the install.
+- Error text reuses `AgentRuntimeErrorSupport.failureKind` classification (for
+  Throwables directly; for stored `lastCheckError`/result strings by wrapping
+  the raw text) and maps the kind to bilingual resources. No parallel error
+  mapping was added; unknown kinds render the same fallback text as Flutter.
+- The unified-model summary reads `scene.dispatch.model` through the migrated
+  `SceneModelSettingsRepository`/`SceneModelCatalogResolver` path; no new read
+  path was created. The Xiaowan row icon reuses the shared avatar preview
+  reader (existing Flutter keys and packaged presets), now shared with the
+  scene page.
+- `NativeWebActionRepository` gained an `agent_settings` placement listing
+  (same status/stop actions as the drawer quick actions, long label and
+  description); its `invoke` re-resolution accepts both known placements.
+  Provider/model/runtime-missing results keep the existing owner: a notice plus
+  the native Model Providers route or the terminal settings compatibility page.
+- The `配置 >` row and the remote Bridge row remain typed compatibility
+  destinations (`LegacyDestination.AgentConfig` → `/home/agent_config/{id}`,
+  `Page.RemoteBridge` → `/home/remote_codex_setting`); the per-Agent config
+  editor is batch 4f-2. `Page.Agents` had no remaining callers, so its legacy
+  mapping and enum entry were removed.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`) and `git diff --check` are the verification
+  boundary for this batch. No emulator/device interaction, network request or
+  real install/probe was run. Visual parity and runtime acceptance remain
+  pending.
+
+Manual acceptance checklist:
+
+1. Compare the Flutter and native Agent pages in both themes and both
+   languages: toolbar actions, managed-model summary, search field, filter
+   counts, brand icons, status dots/labels, subtitles, error lines, dividers,
+   insets and predictive back; repeat on narrow and large windows and after
+   process recreation.
+2. Add a custom Agent (including multiline arguments and `KEY=VALUE`
+   environment), edit the same Agent from the Flutter compatibility page, and
+   confirm both surfaces converge. Check blank name/command validation and that
+   a failed save keeps the draft. Confirm arguments/environment never appear in
+   logs or navigation state.
+3. Run Install/Reinstall on a managed Adapter and Check again on a custom
+   Agent. Confirm busy markers, the result sheet wording, the
+   `harness_preparation_in_progress` busy message when a second install is
+   requested, and that the list refreshes from `agent/list` afterwards.
+4. Open and stop a local Web interface action; check running/starting badges,
+   busy exclusivity, and the runtime-missing/provider-required destinations.
+5. Toggle the remote PC Bridge on the compatibility page and return; the native
+   row must reflect the enabled state (cached first frame, then the
+   `config/remote/read` refresh).
+6. Alternate edits between this page and the Flutter Agent page under the
+   default launcher; both must show the same catalog, health and remote state.
+7. Rotate and recreate the process with the editor open, a sheet visible and a
+   prepare in flight; verify saved route state, draft loss behavior matches the
+   other native editors, and no duplicate install starts.
 
 ## Batch 4e checkpoint: remote MCP tools (source complete; device acceptance pending)
 

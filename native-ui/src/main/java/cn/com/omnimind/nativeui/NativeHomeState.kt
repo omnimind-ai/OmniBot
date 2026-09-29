@@ -62,6 +62,7 @@ data class WebQuickAction(
     val agentId: String,
     val status: WebProcessStatus = WebProcessStatus.Unknown,
     val canStop: Boolean = false,
+    val description: String = "",
 ) {
     val key: String get() = "$pluginId/$actionId"
     val active: Boolean get() = status == WebProcessStatus.Starting || status == WebProcessStatus.Running
@@ -89,9 +90,10 @@ sealed interface LegacyDestination {
     data class Conversation(val id: Long, val mode: String, val agentId: String? = null) : LegacyDestination
     data class NewConversation(val draft: String = "") : LegacyDestination
     data class TerminalPackage(val packageId: String) : LegacyDestination
+    data class AgentConfig(val agentId: String) : LegacyDestination
 
     enum class Page : LegacyDestination {
-        Account, ModelProviders, SceneModels, WorkspaceMemory, Agents, Terminal,
+        Account, ModelProviders, SceneModels, WorkspaceMemory, Terminal, RemoteBridge,
         McpTools, Chat, Alarm, OpenWith, QuickStart, Storage, RequestLogs, RuntimeLogs, UserGuide,
         Memory, Plugins, Skills, ExecutionHistory, ScheduledTasks, Workspace,
     }
