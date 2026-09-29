@@ -18,6 +18,8 @@ import cn.com.omnimind.baselib.account.PlatformGatewayNotConfiguredException
 import cn.com.omnimind.baselib.account.PlatformModelsUnavailableException
 import cn.com.omnimind.baselib.account.RegistrationCodeRequest
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
+import cn.com.omnimind.baselib.llm.OmniOfficialProvider
+import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioningStatus
 import cn.com.omnimind.baselib.util.OmniLog
 import io.flutter.embedding.engine.FlutterEngine
@@ -144,6 +146,7 @@ class AccountChannel {
                     email = call.requiredString("email"),
                     password = call.requiredString("password", trim = false),
                 )
+                invalidateOfficialAgentSession()
                 PlatformAiProvisioner.synchronize(forceRefresh = true)
                 session.user.toPayload()
             }
@@ -234,8 +237,23 @@ class AccountChannel {
     }
 
     private suspend fun bestEffortDeactivatePlatformProvider() {
+        invalidateOfficialAgentSession()
         try {
             PlatformAiProvisioner.deactivate()
+        } catch (cancellation: CancellationException) {
+            throw cancellation
+        } catch (error: Exception) {
+            NativeChannelErrorPrivacy.record(TAG, "PLATFORM_PROVIDER_DEACTIVATE_FAILED", error)
+        }
+    }
+
+    private suspend fun invalidateOfficialAgentSession() {
+        // A login/logout changes the account session, unlike ordinary access
+        // token renewal. Reuse the canonical disconnect path so a Harness
+        // cannot retain another account's local gateway capability.
+        try {
+            AgentRuntimeManager.getIfInitialized()
+                ?.invalidateSharedProviderRuntime(OmniOfficialProvider.PROFILE_ID)
         } catch (cancellation: CancellationException) {
             throw cancellation
         } catch (error: Exception) {

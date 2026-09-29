@@ -2469,13 +2469,17 @@ internal class LocalAcpRuntime(
                         requestedValue
                     )
                 } else if (option.category == SessionConfigOptionCategory.MODEL) {
-                    AcpHarnessAdapters.forProfile(activeProfile ?: profileStore.selected())
+                    val profile = activeProfile ?: profileStore.selected()
+                    val adapter = AcpHarnessAdapters.forProfile(profile)
+                    adapter
                         .resolveModelValue(requestedValue, option.flatOptions().map { it.value.value })
                         // The Agent owns validation. Its catalog can change after
                         // this client snapshot (for example after Provider refresh).
                         // Preserve known wire aliases, then let set_config_option
                         // accept or reject the requested model authoritatively.
-                        ?: requestedValue
+                        ?: if (AcpAgentProfileStore.usesSharedProvider(profile)) {
+                            adapter.providerModelValue(requestedValue)
+                        } else requestedValue
                 } else {
                     requestedValue.takeIf {
                         option.flatOptions().any { it.value.value == requestedValue }
