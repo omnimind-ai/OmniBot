@@ -55,6 +55,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object AlarmSettings : HomeRoute
     @Serializable data object OpenWith : HomeRoute
     @Serializable data object RemoteBridge : HomeRoute
+    @Serializable data object ScheduledTasks : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -74,6 +75,7 @@ fun NativeHomeApp(
     agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit, onAgentConfig: (String) -> Unit, onRemoteBridge: () -> Unit) -> Unit,
     agentConfig: @Composable (agentId: String, onBack: () -> Unit) -> Unit,
     remoteBridge: @Composable (onBack: () -> Unit) -> Unit,
+    scheduledTasks: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
     homePreferences: @Composable (onBack: () -> Unit) -> Unit,
@@ -108,6 +110,7 @@ fun NativeHomeApp(
                     onArchive = { backStack.add(HomeRoute.Archive) },
                     onPet = { backStack.add(HomeRoute.Pet) },
                     onAgents = { backStack.add(HomeRoute.Agents) },
+                    onScheduledTasks = { backStack.add(HomeRoute.ScheduledTasks) },
                     actions = actions,
                 )
             }
@@ -176,6 +179,7 @@ fun NativeHomeApp(
             entry<HomeRoute.AlarmSettings> { alarmSettings { backStack.removeLastOrNull() } }
             entry<HomeRoute.OpenWith> { openWith { backStack.removeLastOrNull() } }
             entry<HomeRoute.RemoteBridge> { remoteBridge { backStack.removeLastOrNull() } }
+            entry<HomeRoute.ScheduledTasks> { scheduledTasks { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
     }
@@ -189,6 +193,7 @@ private fun HomeWithDrawer(
     onArchive: () -> Unit,
     onPet: () -> Unit,
     onAgents: () -> Unit,
+    onScheduledTasks: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -219,6 +224,7 @@ private fun HomeWithDrawer(
                             onSettings = { navigate(onSettings) },
                             onArchive = { navigate(onArchive) },
                             onNewConversation = { scope.launch { drawer.close() } },
+                            onScheduledTasks = { navigate(onScheduledTasks) },
                             actions = actions.copy(open = { destination -> navigate { actions.open(destination) } }),
                         )
                     }

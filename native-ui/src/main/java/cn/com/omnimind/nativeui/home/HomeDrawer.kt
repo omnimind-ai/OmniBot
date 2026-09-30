@@ -31,6 +31,7 @@ internal fun HomeDrawer(
     onSettings: () -> Unit,
     onArchive: () -> Unit,
     onNewConversation: () -> Unit,
+    onScheduledTasks: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -70,7 +71,7 @@ internal fun HomeDrawer(
                 Triple(R.drawable.omni_puzzle, R.string.omni_plugin_market_title, { actions.open(LegacyDestination.Page.Plugins) }),
                 Triple(R.drawable.omni_blocks, R.string.omni_skill_store_title, { actions.open(LegacyDestination.Page.Skills) }),
                 Triple(R.drawable.omni_history, R.string.omni_history, { actions.open(LegacyDestination.Page.ExecutionHistory) }),
-                Triple(R.drawable.omni_calendar_clock, R.string.omni_home_drawer_scheduled, { actions.open(LegacyDestination.Page.ScheduledTasks) }),
+                Triple(R.drawable.omni_calendar_clock, R.string.omni_home_drawer_scheduled, onScheduledTasks),
             )
             shortcuts.forEach { (icon, label, action) ->
                 OmniIconButton(icon, stringResource(label), action, Modifier.weight(1f), size = 17.dp)

@@ -53,8 +53,9 @@ LauncherActivity
       ├─ NativeAlarmSettingsViewModel → NativeAlarmSettingsRepository → AgentAlarmToolService (MMKV)
       ├─ NativeOpenWithViewModel → SharedOpenPreferenceStore
       ├─ NativeRemoteBridgeViewModel → NativeRemoteBridgeRepository → AgentRuntimeManager config/remote/*
+      ├─ NativeScheduledTasksViewModel → NativeScheduledTasksRepository → WorkspaceScheduledTaskScheduler / AgentAlarmToolService
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -153,6 +154,9 @@ random greeting selection out of pixel comparisons.
   status currently uses the same persisted initial-render cache as Flutter.
   The chat header's inline Agent quick-switcher still belongs to the chat
   migration; the home agent button opens the native Agents page meanwhile.
+  The scheduled tasks page (list, edit sheet, exact-alarm tab) is native; its
+  drawer entry opens the native route. Execution history and the remote
+  workspace browser remain compatibility destinations.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (terminal auto-start, account refresh and app update checks)
   before becoming the default. The generic native chat entry now delegates
@@ -184,6 +188,59 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first six slices of 4. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4i-1 checkpoint: scheduled tasks (source complete; device acceptance pending)
+
+- The drawer's Scheduled entry now opens the saved native `ScheduledTasks`
+  route. The page keeps the Flutter structure: the 定时任务/闹钟列表 tab switch,
+  task rows (SubAgent badge, notifications-off badge, underlined schedule text
+  opening the editor, daily chip, relative next-run text, expired dimming,
+  delete with confirmation), the exact-alarm rows with delete confirmation, and
+  both empty states. `Page.ScheduledTasks` had no remaining callers and was
+  removed with its mapping; execution history stays a compatibility
+  destination.
+- **Ownership**: `WorkspaceScheduledTaskScheduler` remains the only
+  scheduling/storage owner. The page lists `listTasks()` and edits through
+  `upsertTask` with the same full-field payload shape as the Flutter page's
+  `task.toJson()`; the owner's own `resolveNextExecutionAt` re-validates fixed
+  times (next-day roll) and keeps fresh countdown values, and its
+  upsert/delete already mirror into the Flutter preference store, so both
+  launchers see the same list. Exact alarms read/delete through
+  `AgentAlarmToolService` (`listExactReminders`/`deleteExactReminder`). No
+  AlarmManager calls, timers, or a second store were added.
+- The edit sheet keeps its Flutter scope: it edits the schedule of an existing
+  task only (fixed time via two Miuix NumberPickers, countdown stepper with a
+  1–1440 numeric dialog, daily-repeat switch on the fixed tab); there is no
+  create-new flow because the Flutter sheet has none. The confirm payload keeps
+  every untouched field and `isEnabled = true`, exactly like the Flutter sheet.
+- Sheet draft state is sheet-local; the ViewModel computes the next execution
+  time with the Dart formula (the owner recomputes fixed times itself) and
+  shows the updated notice with the display text. Relative/day roll formatting
+  uses the app locale via the existing native-locale resolver.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`, `:native-ui:compileDebugAndroidTestKotlin`)
+  and `git diff --check` are the verification boundary. No device interaction,
+  alarm creation or scheduling change was run. Visual parity and runtime
+  acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and languages: tab switch, task rows (badges, underlined
+   schedule text, daily chip, next-run text, expired dimming), alarm rows, empty
+   states, editor sheet, insets and predictive back.
+2. Edit a fixed-time task across midnight and a timezone/DST boundary; edit a
+   countdown task; toggle daily repeat. Confirm the owner's computed
+   `nextExecutionTime` in both UIs and that the alarm still fires once (and
+   reschedules when daily).
+3. Delete a task and an alarm with confirmation; cancel both dialogs. Confirm
+   the Flutter page (default launcher) shows the same list afterwards.
+4. Let a one-shot task fire and verify it disappears from both pages; let a
+   daily task fire and verify it reschedules. Repeat after process death and
+   reboot (boot receiver reschedules).
+5. Alternate edits between the native page and the Flutter page; both lists and
+   the drawer scheduled groups must converge.
+6. Rotate and recreate the process with the editor open and mid-countdown
+   input; drafts and unsaved edits must not write themselves.
 
 ## Batch 4h-1 checkpoint: remote PC Bridge settings (source complete; device acceptance pending)
 

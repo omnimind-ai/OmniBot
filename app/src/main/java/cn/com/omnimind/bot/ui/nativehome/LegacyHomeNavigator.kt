@@ -44,7 +44,6 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.Plugins -> "/home/plugin_market"
                 Page.Skills -> "/home/skill_store"
                 Page.ExecutionHistory -> "/task/execution_history"
-                Page.ScheduledTasks -> "/task/scheduled_tasks"
                 Page.Workspace -> "/home/chat"
             }
         }

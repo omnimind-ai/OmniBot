@@ -33,6 +33,7 @@ import cn.com.omnimind.nativeui.settings.AgentConfigScreen
 import cn.com.omnimind.nativeui.settings.AlarmSettingsScreen
 import cn.com.omnimind.nativeui.settings.OpenWithSettingsScreen
 import cn.com.omnimind.nativeui.settings.RemoteBridgeScreen
+import cn.com.omnimind.nativeui.settings.ScheduledTasksScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -241,6 +242,14 @@ internal fun NativeOpenWithRoute(viewModel: NativeOpenWithViewModel, onBack: () 
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
     OpenWithSettingsScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeScheduledTasksRoute(viewModel: NativeScheduledTasksViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    ScheduledTasksScreen(state, viewModel.actions, onBack)
 }
 
 @Composable
