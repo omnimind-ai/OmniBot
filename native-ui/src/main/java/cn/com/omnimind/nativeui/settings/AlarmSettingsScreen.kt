@@ -19,18 +19,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.components.SectionTitle
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.RadioButton
 import top.yukonga.miuix.kmp.basic.RadioButtonDefaults
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import cn.com.omnimind.nativeui.components.OmniPage
 
 /**
  * Alarm ringtone settings. Presentation only; the MMKV record, validation and
@@ -44,19 +41,8 @@ fun AlarmSettingsScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_alarm_page_title), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { insets ->
+    OmniPage(stringResource(R.string.omni_alarm_page_title), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         if (!state.loaded) {
             Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()

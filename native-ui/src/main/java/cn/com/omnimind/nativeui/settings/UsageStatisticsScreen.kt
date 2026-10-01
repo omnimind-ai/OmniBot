@@ -26,20 +26,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.settings.UsageStatisticsAggregation.formatTokenCount
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import cn.com.omnimind.nativeui.theme.OmniPalette
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.PlainTooltip
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.TabRowDefaults
-import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TooltipAnchorPosition
 import top.yukonga.miuix.kmp.basic.TooltipBox
 import top.yukonga.miuix.kmp.basic.TooltipDefaults
 import top.yukonga.miuix.kmp.basic.rememberTooltipState
+import cn.com.omnimind.nativeui.components.OmniTabRow
+import cn.com.omnimind.nativeui.components.OmniPage
 
 private val CellGap = 3.dp
 private val DayLabelWidth = 20.dp
@@ -54,8 +52,7 @@ private val ModelDark = listOf(0xFF7BBCE6, 0xFF5DD6B3, 0xFFC4B5FD, 0xFFFBBF24, 0
 @Composable
 fun UsageStatisticsScreen(state: UsageStatisticsState, actions: UsageStatisticsActions, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_history), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_history), onBack) { insets ->
         Box(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).verticalScroll(rememberScrollState()),
             contentAlignment = Alignment.TopCenter) {
             Box(Modifier.widthIn(max = 720.dp).fillMaxWidth().padding(horizontal = 18.dp, vertical = 16.dp)) {
@@ -88,13 +85,8 @@ private fun UsageContent(state: UsageStatisticsState, actions: UsageStatisticsAc
         StatsRow(data, palette)
         Spacer(Modifier.height(12.dp))
         val tabs = UsageStatisticsTab.entries
-        TabRowWithContour(
-            tabs.map { stringResource(if (it == UsageStatisticsTab.Conversations) R.string.omni_usage_tab_chat else R.string.omni_usage_tab_token) },
-            tabs.indexOf(state.tab), { index -> actions.setTab(tabs[index]) },
-            colors = TabRowDefaults.tabRowColors(backgroundColor = palette.segmentTrack,
-                contentColor = palette.secondaryText, selectedBackgroundColor = palette.segmentThumb,
-                selectedContentColor = palette.accent),
-        )
+        OmniTabRow(tabs.map { stringResource(if (it == UsageStatisticsTab.Conversations) R.string.omni_usage_tab_chat else R.string.omni_usage_tab_token) },
+            tabs.indexOf(state.tab), { index -> actions.setTab(tabs[index]) })
         Spacer(Modifier.height(12.dp))
         BoxWithConstraints(Modifier.fillMaxWidth()) {
             val weeks = data.heatmap.size.coerceAtLeast(1)

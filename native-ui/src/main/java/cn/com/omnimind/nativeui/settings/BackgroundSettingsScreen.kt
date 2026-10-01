@@ -7,12 +7,9 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -27,21 +24,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.ColorPicker
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Slider
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import java.util.Locale
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniNoticeDialog
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 
 private data class ColorPreset(val label: Int, val hex: String)
 private val colorPresets = listOf(
@@ -71,7 +68,7 @@ fun BackgroundSettingsScreen(
         if (hexDraft != config.chatTextHexColor) hexDraft = config.chatTextHexColor
     }
     val enabled = state.loaded && !state.importing
-    Scaffold(containerColor = palette.page, topBar = { OmniTopBar(stringResource(R.string.omni_background_page_title), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_background_page_title), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)) {
@@ -88,11 +85,7 @@ fun BackgroundSettingsScreen(
                     PreferenceRow(title, stringResource(R.string.omni_background_enable_background_subtitle),
                         icon = R.drawable.omni_image, isLast = true,
                         enabled = enabled, onClick = { actions.setEnabled(!config.enabled) }) {
-                        Switch(config.enabled, actions.setEnabled, enabled = enabled,
-                            colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent,
-                                uncheckedTrackColor = palette.strongBorder,
-                                checkedThumbColor = Color.White, uncheckedThumbColor = Color.White),
-                            modifier = Modifier.semantics { contentDescription = title })
+                        OmniSwitch(config.enabled, actions.setEnabled, enabled = enabled, contentDescription = title)
                     }
                     Spacer(Modifier.height(8.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -181,8 +174,7 @@ fun BackgroundSettingsScreen(
                 }
             }
         }
-        OverlayBottomSheet(show = colorPickerOpen, title = stringResource(R.string.omni_background_more_colors),
-            backgroundColor = palette.page, onDismissRequest = { colorPickerOpen = false }) {
+        OverlayBottomSheet(show = colorPickerOpen, title = stringResource(R.string.omni_background_more_colors), onDismissRequest = { colorPickerOpen = false }) {
             Column {
                 val current = runCatching { Color(AndroidColor.parseColor(config.chatTextHexColor)) }
                     .getOrDefault(Color.White)
@@ -199,15 +191,16 @@ fun BackgroundSettingsScreen(
                     { colorPickerOpen = false }, modifier = Modifier.fillMaxWidth())
             }
         }
-        OverlayDialog(show = state.notice != null,
+        OmniNoticeDialog(
+            show = state.notice != null,
             title = stringResource(when (state.notice) {
                 BackgroundNotice.ImportFailed -> R.string.omni_background_import_failed
                 BackgroundNotice.ChangedElsewhere -> R.string.omni_background_changed_elsewhere
                 else -> R.string.omni_background_save_failed
-            }), backgroundColor = palette.page, onDismissRequest = actions.clearNotice) {
-            TextButton(stringResource(R.string.omni_background_confirm), actions.clearNotice,
-                modifier = Modifier.fillMaxWidth())
-        }
+            }),
+            confirmText = stringResource(R.string.omni_background_confirm),
+            onDismiss = actions.clearNotice,
+        )
     }
 }
 

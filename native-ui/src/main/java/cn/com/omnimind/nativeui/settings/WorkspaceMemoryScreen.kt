@@ -4,32 +4,24 @@ import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
 
 enum class WorkspaceEditor { Soul, ChatPrompt, LongMemory }
 
@@ -75,21 +67,12 @@ data class WorkspaceMemorySettingsActions(
 fun WorkspaceMemoryScreen(state: WorkspaceMemorySettingsState, actions: WorkspaceMemorySettingsActions,
     onSceneModels: () -> Unit, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = when (val value = state.notice) {
         is WorkspaceMemoryNotice.Message -> value.text
         is WorkspaceMemoryNotice.Resource -> stringResource(value.id)
         null -> null
     }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_workspace_title), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) }) { insets ->
+    OmniPage(stringResource(R.string.omni_workspace_title), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             if (state.loading && !state.loaded) {
@@ -159,11 +142,7 @@ private fun WorkspaceToggle(title: String, summary: String, checked: Boolean,
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(title, modifier = Modifier.weight(1f), color = palette.text,
                 fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Switch(checked, onChange, enabled = enabled,
-                colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent,
-                    uncheckedTrackColor = palette.strongBorder,
-                    checkedThumbColor = Color.White, uncheckedThumbColor = Color.White),
-                modifier = Modifier.semantics { contentDescription = title })
+            OmniSwitch(checked, onChange, enabled = enabled, contentDescription = title)
         }
         Spacer(Modifier.height(4.dp))
         Text(summary, color = palette.secondaryText, fontSize = 12.sp, lineHeight = 17.4.sp)

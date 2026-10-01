@@ -26,23 +26,19 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.NumberPicker
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
-import top.yukonga.miuix.kmp.basic.TabRowDefaults
-import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import cn.com.omnimind.nativeui.components.OmniTabRow
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniDialogActions
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
 
 private val ChipTeal = Color(0xFF009688)
 
@@ -57,31 +53,15 @@ fun ScheduledTasksScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { if (state.noticeArg != null) stringResource(it, state.noticeArg) else stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_scheduled_page_title), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { insets ->
+    OmniPage(stringResource(R.string.omni_scheduled_page_title), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         Column(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets)) {
             Spacer(Modifier.height(8.dp))
-            TabRowWithContour(
-                listOf(stringResource(R.string.omni_scheduled_tab_tasks),
+            OmniTabRow(listOf(stringResource(R.string.omni_scheduled_tab_tasks),
                     stringResource(R.string.omni_scheduled_tab_alarms)),
                 if (state.tab == ScheduledTasksTab.Tasks) 0 else 1,
                 { index -> actions.setTab(if (index == 0) ScheduledTasksTab.Tasks else ScheduledTasksTab.Alarms) },
-                colors = TabRowDefaults.tabRowColors(backgroundColor = palette.segmentTrack,
-                    contentColor = palette.secondaryText, selectedBackgroundColor = palette.segmentThumb,
-                    selectedContentColor = palette.accent),
-                modifier = Modifier.padding(horizontal = 16.dp),
-            )
+                modifier = Modifier.padding(horizontal = 16.dp))
             Spacer(Modifier.height(12.dp))
             if (!state.loaded) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
@@ -96,7 +76,6 @@ fun ScheduledTasksScreen(
         OverlayBottomSheet(
             show = editTask != null,
             title = stringResource(R.string.omni_scheduled_editor_title),
-            backgroundColor = palette.page,
             onDismissRequest = actions.closeEditor,
         ) {
             if (editTask != null) {
@@ -108,35 +87,23 @@ fun ScheduledTasksScreen(
             }
         }
         val deletingTask = state.tasks.firstOrNull { it.taskId == state.deletingTaskId }
-        OverlayDialog(
+        OmniConfirmDialog(
             show = deletingTask != null,
             title = stringResource(R.string.omni_scheduled_delete_title),
             summary = stringResource(R.string.omni_scheduled_delete_confirm, deletingTask?.title.orEmpty()),
-            backgroundColor = palette.page,
-            onDismissRequest = { actions.confirmDeleteTask(null) },
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(stringResource(R.string.omni_cancel), { actions.confirmDeleteTask(null) },
-                    modifier = Modifier.weight(1f))
-                TextButton(stringResource(R.string.omni_agent_delete), actions.deleteTaskConfirmed,
-                    modifier = Modifier.weight(1f))
-            }
-        }
+            confirmText = stringResource(R.string.omni_agent_delete),
+            onConfirm = actions.deleteTaskConfirmed,
+            onDismiss = { actions.confirmDeleteTask(null) },
+        )
         val deletingAlarm = state.alarms.firstOrNull { it.alarmId == state.deletingAlarmId }
-        OverlayDialog(
+        OmniConfirmDialog(
             show = deletingAlarm != null,
             title = stringResource(R.string.omni_scheduled_alarm_delete_title),
             summary = stringResource(R.string.omni_scheduled_alarm_delete_confirm, deletingAlarm?.title.orEmpty()),
-            backgroundColor = palette.page,
-            onDismissRequest = { actions.confirmDeleteAlarm(null) },
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(stringResource(R.string.omni_cancel), { actions.confirmDeleteAlarm(null) },
-                    modifier = Modifier.weight(1f))
-                TextButton(stringResource(R.string.omni_agent_delete), actions.deleteAlarmConfirmed,
-                    modifier = Modifier.weight(1f))
-            }
-        }
+            confirmText = stringResource(R.string.omni_agent_delete),
+            onConfirm = actions.deleteAlarmConfirmed,
+            onDismiss = { actions.confirmDeleteAlarm(null) },
+        )
     }
 }
 
@@ -327,15 +294,10 @@ private fun ScheduleEditSheet(
                 overflow = TextOverflow.Ellipsis)
         }
         Spacer(Modifier.height(16.dp))
-        TabRowWithContour(
-            listOf(stringResource(R.string.omni_scheduled_fixed_time),
+        OmniTabRow(listOf(stringResource(R.string.omni_scheduled_fixed_time),
                 stringResource(R.string.omni_scheduled_countdown)),
             if (fixedTab) 0 else 1,
-            { index -> fixedTab = index == 0 },
-            colors = TabRowDefaults.tabRowColors(backgroundColor = palette.segmentTrack,
-                contentColor = palette.secondaryText, selectedBackgroundColor = palette.segmentThumb,
-                selectedContentColor = palette.accent),
-        )
+            { index -> fixedTab = index == 0 })
         Spacer(Modifier.height(16.dp))
         Box(Modifier.fillMaxWidth().height(200.dp), contentAlignment = Alignment.Center) {
             if (fixedTab) {
@@ -375,10 +337,7 @@ private fun ScheduleEditSheet(
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(stringResource(R.string.omni_scheduled_repeat_daily_switch),
                     Modifier.weight(1f), fontSize = 14.sp, color = palette.text)
-                Switch(repeatDaily, { repeatDaily = it },
-                    colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent,
-                        uncheckedTrackColor = palette.strongBorder,
-                        checkedThumbColor = Color.White, uncheckedThumbColor = Color.White))
+                OmniSwitch(repeatDaily, { repeatDaily = it })
             }
         }
         Spacer(Modifier.height(24.dp))
@@ -440,8 +399,7 @@ private fun CountdownInputDialog(
     val palette = LocalOmniPalette.current
     var text by remember { mutableStateOf(initialMinutes.toString()) }
     var invalid by remember { mutableStateOf(false) }
-    OverlayDialog(show = true, title = stringResource(R.string.omni_scheduled_countdown_dialog_title),
-        backgroundColor = palette.page, onDismissRequest = onDismiss) {
+    OverlayDialog(show = true, title = stringResource(R.string.omni_scheduled_countdown_dialog_title), onDismissRequest = onDismiss) {
         Column {
             TextField(
                 text, { text = it; invalid = false }, singleLine = true,
@@ -456,15 +414,11 @@ private fun CountdownInputDialog(
                     color = top.yukonga.miuix.kmp.theme.MiuixTheme.colorScheme.error)
             }
             Spacer(Modifier.height(12.dp))
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(stringResource(R.string.omni_cancel), onDismiss,
-                    modifier = Modifier.weight(1f))
-                TextButton(stringResource(R.string.omni_pref_ok), {
-                    val minutes = text.trim().toIntOrNull()
-                    if (minutes == null || minutes <= 0 || minutes > 1440) invalid = true
-                    else onConfirm(minutes)
-                }, modifier = Modifier.weight(1f))
-            }
+            OmniDialogActions(onDismiss, stringResource(R.string.omni_pref_ok), {
+                val minutes = text.trim().toIntOrNull()
+                if (minutes == null || minutes <= 0 || minutes > 1440) invalid = true
+                else onConfirm(minutes)
+            })
         }
     }
 }

@@ -11,7 +11,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -22,13 +21,12 @@ import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
 import cn.com.omnimind.nativeui.components.OmniIconButton
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniNoticeDialog
 
 /** Miuix owns rows, buttons, dialogs and back. Discovery and import stay in the shared host owner. */
 @Composable
@@ -41,8 +39,7 @@ fun PetSettingsScreen(
     val palette = LocalOmniPalette.current
     val selected = state.options.firstOrNull { it.id == state.selectedId }?.name
         ?: stringResource(R.string.omni_brand_name)
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_pet_page_title), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_pet_page_title), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 24.dp)) {
             item(key = "summary") {
@@ -82,15 +79,16 @@ fun PetSettingsScreen(
                 PreferenceDivider(withIcon = false)
             }
         }
-        OverlayDialog(show = state.notice != null,
+        OmniNoticeDialog(
+            show = state.notice != null,
             title = stringResource(when (state.notice) {
                 PetNotice.SelectionFailed -> R.string.omni_pet_selection_failed
                 PetNotice.ImportFailed -> R.string.omni_pet_import_failed
                 else -> R.string.omni_pet_read_failed
-            }), backgroundColor = palette.page, onDismissRequest = actions.clearNotice) {
-            TextButton(stringResource(R.string.omni_pet_confirm), actions.clearNotice,
-                modifier = Modifier.fillMaxWidth())
-        }
+            }),
+            confirmText = stringResource(R.string.omni_pet_confirm),
+            onDismiss = actions.clearNotice,
+        )
     }
 }
 

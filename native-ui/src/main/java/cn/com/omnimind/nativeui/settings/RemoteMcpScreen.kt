@@ -1,19 +1,14 @@
 package cn.com.omnimind.nativeui.settings
 
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -24,35 +19,24 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
+import cn.com.omnimind.nativeui.components.OmniIconButton
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Switch
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TooltipBox
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
 
 @Composable
 fun RemoteMcpScreen(state: RemoteMcpSettingsState, actions: RemoteMcpSettingsActions, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_settings_mcp_tools_title), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) }) { insets ->
+    OmniPage(stringResource(R.string.omni_settings_mcp_tools_title), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             item {
@@ -87,24 +71,20 @@ fun RemoteMcpScreen(state: RemoteMcpSettingsState, actions: RemoteMcpSettingsAct
         val draft = state.editor
         OverlayBottomSheet(show = draft != null,
             title = stringResource(if (draft?.id == null) R.string.omni_mcp_add else R.string.omni_mcp_edit),
-            backgroundColor = palette.page,
             onDismissRequest = actions.dismissEditor) {
             if (draft != null) key(draft.id) {
                 RemoteMcpEditor(draft, state.savingEditor, actions)
             }
         }
         val deleting = state.servers.firstOrNull { it.id == state.deletingId }
-        OverlayDialog(show = deleting != null, title = stringResource(R.string.omni_mcp_delete),
+        OmniConfirmDialog(
+            show = deleting != null,
+            title = stringResource(R.string.omni_mcp_delete),
             summary = stringResource(R.string.omni_mcp_delete_confirm, deleting?.name.orEmpty()),
-            backgroundColor = palette.page,
-            onDismissRequest = { actions.confirmDelete(null) }) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(stringResource(R.string.omni_cancel), { actions.confirmDelete(null) },
-                    modifier = Modifier.weight(1f))
-                TextButton(stringResource(R.string.omni_mcp_delete), actions.deleteConfirmed,
-                    modifier = Modifier.weight(1f))
-            }
-        }
+            confirmText = stringResource(R.string.omni_mcp_delete),
+            onConfirm = actions.deleteConfirmed,
+            onDismiss = { actions.confirmDelete(null) },
+        )
     }
 }
 
@@ -187,11 +167,5 @@ private fun RemoteMcpEditor(draft: RemoteMcpEditorDraft, saving: Boolean, action
 
 @Composable
 private fun McpIcon(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
-    val palette = LocalOmniPalette.current
-    TooltipBox(label) {
-        Box(Modifier.size(44.dp).clip(CircleShape).clickable(enabled = enabled, role = Role.Button,
-            onClick = onClick).semantics { contentDescription = label }, contentAlignment = Alignment.Center) {
-            OmniIcon(icon, size = 18.dp, tint = palette.text.copy(alpha = if (enabled) 1f else .4f))
-        }
-    }
+    TooltipBox(label) { OmniIconButton(icon, label, onClick, size = 18.dp, enabled = enabled) }
 }

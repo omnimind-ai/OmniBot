@@ -60,6 +60,12 @@ LauncherActivity
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
+- Shared UI lives in `native-ui/.../components/` and wraps Miuix controls with
+  their default sizing and haptics: `OmniPage` (Scaffold, SmallTopAppBar,
+  one-shot snackbar notice), `OmniIconButton`, `OmniSwitch`, `OmniTabRow`,
+  `OmniChoiceRow`, `OmniConfirmDialog` / `OmniNoticeDialog` /
+  `OmniDialogActions`. New pages use these instead of hand-drawn rows,
+  per-screen color overrides or Flutter pixel replicas.
 - Composables accept immutable snapshots and callbacks. They do not locate
   services, perform I/O, own Activities, or send Agent prompts.
 - The Activity collects state with `collectAsStateWithLifecycle`; its ViewModel

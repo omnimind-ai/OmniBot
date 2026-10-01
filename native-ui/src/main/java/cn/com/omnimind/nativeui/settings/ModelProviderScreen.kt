@@ -7,7 +7,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -16,7 +15,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -28,12 +26,14 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
+import cn.com.omnimind.nativeui.components.OmniIconButton
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniDialogActions
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
 
 private data class ProviderPreset(val label: String, val source: String, val protocol: String,
     val wire: String = "chat_completions", val baseUrl: String? = null, val name: String? = null)
@@ -53,14 +53,7 @@ private val presets = listOf(
 fun ModelProviderScreen(state: ModelProviderState, actions: ModelProviderActions,
     onFieldBlur: () -> Unit, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val message = state.notice?.let { stringResource(it) }
-    LaunchedEffect(message) {
-        if (message != null) {
-            snackbar.showSnackbar(message)
-            actions.dismissNotice()
-        }
-    }
     var addProvider by rememberSaveable { mutableStateOf(false) }
     var newProviderName by rememberSaveable { mutableStateOf("") }
     var confirmDelete by rememberSaveable { mutableStateOf(false) }
@@ -70,10 +63,8 @@ fun ModelProviderScreen(state: ModelProviderState, actions: ModelProviderActions
     val available = state.loaded && !state.busy && !state.fetching
     val canManageProfiles = state.loaded && !state.busy
     val editable = available && state.current?.readOnly != true
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_settings_model_provider_title)) {
-            actions.save(); onBack()
-        } }, snackbarHost = { SnackbarHost(snackbar) }) { insets ->
+    OmniPage(stringResource(R.string.omni_settings_model_provider_title), { actions.save(); onBack() },
+        notice = message, onNoticeShown = actions.dismissNotice) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             if (!state.loaded) item {
@@ -129,8 +120,7 @@ fun ModelProviderScreen(state: ModelProviderState, actions: ModelProviderActions
                 }
             }
         }
-        OverlayBottomSheet(show = addProvider, title = stringResource(R.string.omni_provider_add),
-            backgroundColor = palette.page, onDismissRequest = { addProvider = false }) {
+        OverlayBottomSheet(show = addProvider, title = stringResource(R.string.omni_provider_add), onDismissRequest = { addProvider = false }) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 TextField(newProviderName, { newProviderName = it }, singleLine = true,
                     label = stringResource(R.string.omni_provider_name), modifier = Modifier.fillMaxWidth())
@@ -139,15 +129,16 @@ fun ModelProviderScreen(state: ModelProviderState, actions: ModelProviderActions
                 }
             }
         }
-        OverlayDialog(show = confirmDelete, title = stringResource(R.string.omni_provider_delete),
+        OmniConfirmDialog(
+            show = confirmDelete,
+            title = stringResource(R.string.omni_provider_delete),
             summary = stringResource(R.string.omni_provider_delete_summary, state.current?.name.orEmpty()),
-            backgroundColor = palette.page, onDismissRequest = { confirmDelete = false }) {
-            DialogButtons({ confirmDelete = false }, enabled = canManageProfiles) {
-                actions.deleteProfile(); confirmDelete = false
-            }
-        }
-        OverlayBottomSheet(show = addModel, title = stringResource(R.string.omni_provider_add_model),
-            backgroundColor = palette.page, onDismissRequest = { addModel = false }) {
+            confirmText = stringResource(R.string.omni_provider_confirm),
+            onConfirm = { actions.deleteProfile(); confirmDelete = false },
+            onDismiss = { confirmDelete = false },
+            confirmEnabled = canManageProfiles,
+        )
+        OverlayBottomSheet(show = addModel, title = stringResource(R.string.omni_provider_add_model), onDismissRequest = { addModel = false }) {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 TextField(newModelId, { newModelId = it }, singleLine = true,
                     label = stringResource(R.string.omni_provider_model_id), modifier = Modifier.fillMaxWidth())
@@ -156,8 +147,7 @@ fun ModelProviderScreen(state: ModelProviderState, actions: ModelProviderActions
                 }
             }
         }
-        OverlayBottomSheet(show = visibility, title = stringResource(R.string.omni_provider_chat_models),
-            backgroundColor = palette.page, onDismissRequest = { visibility = false }) {
+        OverlayBottomSheet(show = visibility, title = stringResource(R.string.omni_provider_chat_models), onDismissRequest = { visibility = false }) {
             Column(Modifier.fillMaxWidth()) {
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     TextButton(stringResource(R.string.omni_provider_hide_all), actions.hideAllRemote,
@@ -180,24 +170,12 @@ fun ModelProviderScreen(state: ModelProviderState, actions: ModelProviderActions
 }
 
 @Composable
-private fun DialogButtons(cancel: () -> Unit, enabled: Boolean, confirm: () -> Unit) {
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-        TextButton(stringResource(R.string.omni_cancel), cancel, modifier = Modifier.weight(1f))
-        TextButton(stringResource(R.string.omni_provider_confirm), confirm,
-            enabled = enabled, modifier = Modifier.weight(1f))
-    }
-}
+private fun DialogButtons(cancel: () -> Unit, enabled: Boolean, confirm: () -> Unit) =
+    OmniDialogActions(cancel, stringResource(R.string.omni_provider_confirm), confirm, confirmEnabled = enabled)
 
 @Composable
 private fun ActionIcon(icon: Int, label: String, enabled: Boolean, onClick: () -> Unit) {
-    val palette = LocalOmniPalette.current
-    TooltipBox(label) {
-        Box(Modifier.size(44.dp).clip(CircleShape).clickable(enabled = enabled,
-            role = Role.Button, onClick = onClick).semantics { contentDescription = label },
-            contentAlignment = Alignment.Center) {
-            OmniIcon(icon, size = 18.dp, tint = palette.text.copy(alpha = if (enabled) 1f else .4f))
-        }
-    }
+    TooltipBox(label) { OmniIconButton(icon, label, onClick, size = 18.dp, enabled = enabled) }
 }
 
 @Composable

@@ -8,7 +8,6 @@ import android.widget.Toast
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -44,7 +43,6 @@ internal fun LocalServiceSheet(show: Boolean, state: NativeHomeState, onDismiss:
     OverlayBottomSheet(
         show = show,
         title = stringResource(R.string.omni_settings_mcp_local_service),
-        backgroundColor = palette.page,
         onDismissRequest = onDismiss,
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {

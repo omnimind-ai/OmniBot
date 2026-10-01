@@ -39,22 +39,18 @@ import cn.com.omnimind.nativeui.WebProcessStatus
 import cn.com.omnimind.nativeui.WebQuickAction
 import cn.com.omnimind.nativeui.components.OmniIcon
 import cn.com.omnimind.nativeui.components.OmniIconButton
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.components.SectionTitle
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.TabRowDefaults
-import top.yukonga.miuix.kmp.basic.TabRowWithContour
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import cn.com.omnimind.nativeui.components.OmniTabRow
+import cn.com.omnimind.nativeui.components.OmniPage
 
 private val StatusGreen = Color(0xFF2EAF67)
 private val StatusGray = Color(0xFF98A2B3)
@@ -74,31 +70,24 @@ fun AgentsScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = {
-            OmniTopBar(stringResource(R.string.omni_agents_title), onBack) {
-                if (state.refreshing) {
-                    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(size = 18.dp, strokeWidth = 2.dp)
-                    }
-                } else {
-                    OmniIconButton(R.drawable.omni_refresh_cw, stringResource(R.string.omni_agents_refresh),
-                        actions.refresh)
+    OmniPage(
+        stringResource(R.string.omni_agents_title),
+        onBack,
+        notice = notice,
+        onNoticeShown = actions.dismissNotice,
+        actions = {
+            if (state.refreshing) {
+                Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(size = 18.dp, strokeWidth = 2.dp)
                 }
-                OmniIconButton(R.drawable.omni_plus, stringResource(R.string.omni_agents_add_custom),
-                    actions.openEditor)
+            } else {
+                OmniIconButton(R.drawable.omni_refresh_cw, stringResource(R.string.omni_agents_refresh),
+                    actions.refresh)
             }
+            OmniIconButton(R.drawable.omni_plus, stringResource(R.string.omni_agents_add_custom),
+                actions.openEditor)
         },
-        snackbarHost = { SnackbarHost(snackbar) },
     ) { insets ->
         when {
             !state.loaded && state.loadErrorRes == null -> {
@@ -125,7 +114,6 @@ fun AgentsScreen(
         OverlayBottomSheet(
             show = result != null,
             title = result?.let { stringResource(it.titleRes) },
-            backgroundColor = palette.page,
             onDismissRequest = actions.dismissActionResult,
         ) {
             if (result != null) {
@@ -139,7 +127,6 @@ fun AgentsScreen(
         OverlayBottomSheet(
             show = state.editor != null,
             title = stringResource(R.string.omni_agents_add_custom),
-            backgroundColor = palette.page,
             onDismissRequest = actions.dismissEditor,
         ) {
             state.editor?.let { draft -> AgentEditor(draft, state.savingEditor, actions) }
@@ -312,10 +299,7 @@ private fun AgentFilterTabs(state: AgentsState, onSelect: (AgentFilter) -> Unit)
     )
     val filters = AgentFilter.entries
     // Miuix owns the indicator, click semantics and horizontal layout.
-    TabRowWithContour(labels, filters.indexOf(state.filter), { onSelect(filters[it]) },
-        colors = TabRowDefaults.tabRowColors(backgroundColor = palette.segmentTrack,
-            contentColor = palette.secondaryText, selectedBackgroundColor = palette.segmentThumb,
-            selectedContentColor = palette.accent))
+    OmniTabRow(labels, filters.indexOf(state.filter), { onSelect(filters[it]) })
 }
 
 @Composable

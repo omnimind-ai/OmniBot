@@ -1,6 +1,5 @@
 package cn.com.omnimind.nativeui.settings
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -20,16 +19,12 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
-import top.yukonga.miuix.kmp.basic.RadioButton
-import top.yukonga.miuix.kmp.basic.RadioButtonDefaults
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniChoiceRow
 
 /**
  * Shared-open (Open with Omnibot) preferences. Presentation only; the
@@ -42,19 +37,8 @@ fun OpenWithSettingsScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_open_with_page_title), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { insets ->
+    OmniPage(stringResource(R.string.omni_open_with_page_title), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         LazyColumn(
             Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 28.dp),
@@ -149,32 +133,17 @@ private fun ModeDropdown(title: String, target: String, mode: String, actions: O
         OmniIcon(R.drawable.omni_chevron_right, modifier = Modifier.rotate(90f),
             size = 18.dp, tint = palette.tertiaryText)
     }
-    OverlayDialog(show = show, title = title, backgroundColor = palette.page,
+    OverlayDialog(show = show, title = title,
         onDismissRequest = { show = false }) {
         Column {
-            ModeChoiceRow(defaultLabel, selected = mode != "workspace") {
+            OmniChoiceRow(defaultLabel, selected = mode != "workspace") {
                 show = false
                 actions.setMode(target, "default")
             }
-            ModeChoiceRow(workspaceLabel, selected = mode == "workspace") {
+            OmniChoiceRow(workspaceLabel, selected = mode == "workspace") {
                 show = false
                 actions.setMode(target, "workspace")
             }
         }
-    }
-}
-
-@Composable
-private fun ModeChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    val palette = LocalOmniPalette.current
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, Modifier.weight(1f), color = palette.text, fontSize = 14.sp)
-        RadioButton(selected = selected, onClick = null,
-            colors = RadioButtonDefaults.radioButtonColors(selectedColor = palette.accent))
     }
 }

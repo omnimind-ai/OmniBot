@@ -22,7 +22,6 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -30,18 +29,15 @@ import androidx.compose.ui.unit.sp
 import androidx.core.graphics.ColorUtils
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.RadioButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
 
 @Composable
 fun AboutScreen(state: AboutState, actions: AboutActions, onBack: () -> Unit) {
@@ -50,7 +46,7 @@ fun AboutScreen(state: AboutState, actions: AboutActions, onBack: () -> Unit) {
     val tertiary = if (palette.dark) palette.tertiaryText else palette.text.copy(alpha = .5f)
     var showSource by rememberSaveable { mutableStateOf(false) }
     val busy = state.operation != null
-    Scaffold(containerColor = palette.page, topBar = { OmniTopBar(stringResource(R.string.omni_settings_about_title), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_settings_about_title), onBack) { insets ->
         BoxWithConstraints(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets), contentAlignment = Alignment.TopCenter) {
             val compact = maxHeight < 760.dp
             Column(Modifier.widthIn(max = 468.dp).fillMaxWidth().verticalScroll(rememberScrollState())
@@ -92,10 +88,7 @@ fun AboutScreen(state: AboutState, actions: AboutActions, onBack: () -> Unit) {
                 val betaLabel = stringResource(R.string.omni_about_beta_program_title)
                 PreferenceRow(betaLabel, stringResource(R.string.omni_about_beta_program_description),
                     compact = compact, enabled = !busy, summaryColor = secondary, onClick = { actions.setBeta(!state.betaEnabled) }) {
-                    Switch(state.betaEnabled, actions.setBeta, enabled = !busy,
-                        colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent, uncheckedTrackColor = palette.strongBorder,
-                            checkedThumbColor = Color.White, uncheckedThumbColor = Color.White),
-                        modifier = Modifier.semantics { contentDescription = betaLabel })
+                    OmniSwitch(state.betaEnabled, actions.setBeta, enabled = !busy, contentDescription = betaLabel)
                 }
                 PreferenceDivider(withIcon = false)
                 PreferenceRow(stringResource(R.string.omni_about_apk_source_title), stringResource(R.string.omni_about_apk_source_description),
@@ -108,8 +101,7 @@ fun AboutScreen(state: AboutState, actions: AboutActions, onBack: () -> Unit) {
                 }
             }
         }
-        OverlayBottomSheet(show = showSource, title = stringResource(R.string.omni_about_apk_source_title),
-            backgroundColor = palette.page, onDismissRequest = { showSource = false }) {
+        OverlayBottomSheet(show = showSource, title = stringResource(R.string.omni_about_apk_source_title), onDismissRequest = { showSource = false }) {
             UpdateDownloadSource.entries.forEach { source ->
                 PreferenceRow(stringResource(source.labelResource()), stringResource(source.descriptionResource()), enabled = !busy, summaryColor = secondary,
                     onClick = { showSource = false; actions.setDownloadSource(source) }) {

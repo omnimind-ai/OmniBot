@@ -16,17 +16,16 @@ import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Text
-import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import cn.com.omnimind.nativeui.components.OmniDialogActions
 
 @Composable
 internal fun UpdateConfirmation(state: AboutState, actions: AboutActions) {
     val palette = LocalOmniPalette.current
-    OverlayDialog(show = state.showUpdate && state.hasUpdate, title = stringResource(R.string.omni_update_available),
-        backgroundColor = palette.page, onDismissRequest = actions.dismissUpdate) {
+    OverlayDialog(show = state.showUpdate && state.hasUpdate, title = stringResource(R.string.omni_update_available), onDismissRequest = actions.dismissUpdate) {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             UpdateInfoRow(stringResource(R.string.omni_update_current_version), state.currentVersion.versionLabel())
             UpdateInfoRow(stringResource(R.string.omni_update_latest_version), state.latestVersion.versionLabel())
@@ -41,11 +40,10 @@ internal fun UpdateConfirmation(state: AboutState, actions: AboutActions) {
                         modifier = Modifier.verticalScroll(rememberScrollState()).padding(12.dp))
                 }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(stringResource(R.string.omni_update_later), actions.dismissUpdate, modifier = Modifier.weight(1f))
-                TextButton(stringResource(if (state.canInstall) R.string.omni_update_now else R.string.omni_update_release_page),
-                    actions.confirmUpdate, enabled = state.operation == null, modifier = Modifier.weight(1f))
-            }
+            OmniDialogActions(actions.dismissUpdate,
+                stringResource(if (state.canInstall) R.string.omni_update_now else R.string.omni_update_release_page),
+                actions.confirmUpdate, confirmEnabled = state.operation == null,
+                dismissText = stringResource(R.string.omni_update_later))
         }
     }
 }

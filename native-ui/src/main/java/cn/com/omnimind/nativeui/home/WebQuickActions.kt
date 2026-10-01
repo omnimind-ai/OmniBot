@@ -75,8 +75,7 @@ internal fun WebQuickActions(state: NativeHomeState, actions: NativeHomeActions)
             }
         }
     }
-    OverlayBottomSheet(show = selected != null, title = selected?.label,
-        backgroundColor = palette.page, onDismissRequest = { selectedKey = null }) {
+    OverlayBottomSheet(show = selected != null, title = selected?.label, onDismissRequest = { selectedKey = null }) {
         selected?.let { action ->
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(stringResource(R.string.omni_web_open), {

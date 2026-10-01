@@ -26,24 +26,22 @@ import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
 import cn.com.omnimind.nativeui.components.OmniIconButton
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.components.SectionTitle
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
 import top.yukonga.miuix.kmp.basic.RadioButton
 import top.yukonga.miuix.kmp.basic.RadioButtonDefaults
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
+import cn.com.omnimind.nativeui.components.OmniChoiceRow
 
 /**
  * Per-Agent configuration editor. Presentation only; reads, writes, revision
@@ -56,28 +54,18 @@ fun AgentConfigScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = {
-            OmniTopBar(
-                state.agentName.ifEmpty { stringResource(R.string.omni_agent_config_title_fallback) },
-                onBack,
-            ) {
-                if (!state.builtIn) {
-                    OmniIconButton(R.drawable.omni_trash_2, stringResource(R.string.omni_agent_delete_agent),
-                        { actions.showDeleteConfirm(true) })
-                }
+    OmniPage(
+        state.agentName.ifEmpty { stringResource(R.string.omni_agent_config_title_fallback) },
+        onBack,
+        notice = notice,
+        onNoticeShown = actions.dismissNotice,
+        actions = {
+            if (!state.builtIn) {
+                OmniIconButton(R.drawable.omni_trash_2, stringResource(R.string.omni_agent_delete_agent),
+                    { actions.showDeleteConfirm(true) })
             }
         },
-        snackbarHost = { SnackbarHost(snackbar) },
     ) { insets ->
         when {
             !state.loaded && state.loadErrorRes == null -> {
@@ -100,20 +88,14 @@ fun AgentConfigScreen(
             else -> AgentConfigContent(state, actions,
                 Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding())
         }
-        OverlayDialog(
+        OmniConfirmDialog(
             show = state.confirmDelete,
             title = stringResource(R.string.omni_agent_delete_title),
             summary = stringResource(R.string.omni_agent_delete_confirm, state.agentName),
-            backgroundColor = palette.page,
-            onDismissRequest = { actions.showDeleteConfirm(false) },
-        ) {
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                TextButton(stringResource(R.string.omni_cancel), { actions.showDeleteConfirm(false) },
-                    modifier = Modifier.weight(1f))
-                TextButton(stringResource(R.string.omni_agent_delete), actions.deleteAgent,
-                    modifier = Modifier.weight(1f))
-            }
-        }
+            confirmText = stringResource(R.string.omni_agent_delete),
+            onConfirm = actions.deleteAgent,
+            onDismiss = { actions.showDeleteConfirm(false) },
+        )
     }
 }
 
@@ -251,10 +233,7 @@ private fun ProfileEditor(state: AgentConfigState, actions: AgentConfigActions) 
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(stringResource(R.string.omni_agent_field_enabled), color = palette.text,
                 fontSize = 14.sp, modifier = Modifier.weight(1f))
-            Switch(state.draft.enabled, actions.editEnabled, enabled = !state.saving,
-                colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent,
-                    uncheckedTrackColor = palette.strongBorder, checkedThumbColor = Color.White,
-                    uncheckedThumbColor = Color.White))
+            OmniSwitch(state.draft.enabled, actions.editEnabled, enabled = !state.saving)
         }
     }
 }
@@ -287,31 +266,16 @@ private fun DropdownField(
                 tint = palette.tertiaryText)
         }
     }
-    OverlayDialog(show = show, title = label, backgroundColor = palette.page,
+    OverlayDialog(show = show, title = label,
         onDismissRequest = { show = false }) {
         Column {
             options.forEach { (optionValue, optionLabel) ->
-                DialogChoiceRow(optionLabel, selected = optionValue == selected) {
+                OmniChoiceRow(optionLabel, selected = optionValue == selected) {
                     show = false
                     onSelect(optionValue)
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun DialogChoiceRow(label: String, selected: Boolean, onClick: () -> Unit) {
-    val palette = LocalOmniPalette.current
-    Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp))
-            .clickable(role = Role.Button, onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 12.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(label, Modifier.weight(1f), color = palette.text, fontSize = 14.sp)
-        RadioButton(selected = selected, onClick = null,
-            colors = RadioButtonDefaults.radioButtonColors(selectedColor = palette.accent))
     }
 }
 

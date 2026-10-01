@@ -19,16 +19,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIconButton
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniDialogActions
+import cn.com.omnimind.nativeui.components.OmniNoticeDialog
+import cn.com.omnimind.nativeui.components.OmniTabRow
 
 data class StorageBreakdown(val label: String, val bytes: Long)
 data class StorageCategory(val id: String, val name: String, val description: String,
@@ -56,8 +58,7 @@ fun StorageUsageScreen(state: StorageUsageState, actions: StorageUsageActions, o
     var selectedStrategy by remember { mutableStateOf<StorageStrategy?>(null) }
     var retention by rememberSaveable { mutableIntStateOf(0) }
     val summary = state.summary
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_storage_usage_title), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_storage_usage_title), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 32.dp)) {
             item {
@@ -151,8 +152,7 @@ fun StorageUsageScreen(state: StorageUsageState, actions: StorageUsageActions, o
             }
         }
         val category = selectedCategory
-        OverlayDialog(show = category != null, title = category?.name.orEmpty(),
-            backgroundColor = palette.page, onDismissRequest = { selectedCategory = null }) {
+        OverlayDialog(show = category != null, title = category?.name.orEmpty(), onDismissRequest = { selectedCategory = null }) {
             if (category != null) {
                 Text(stringResource(R.string.omni_storage_confirm), color = palette.text, fontSize = 13.sp)
                 Text(category.description, color = palette.secondaryText, fontSize = 12.sp)
@@ -161,47 +161,44 @@ fun StorageUsageScreen(state: StorageUsageState, actions: StorageUsageActions, o
                 }
                 Text(stringResource(R.string.omni_storage_risk, category.risk), color = palette.secondaryText, fontSize = 11.sp)
                 if (category.risk != "dangerous") {
-                    Row {
-                        listOf(0, 7, 30).forEach { days ->
-                            TextButton(stringResource(when (days) {
-                                7 -> R.string.omni_storage_7_days
-                                30 -> R.string.omni_storage_30_days
-                                else -> R.string.omni_storage_all
-                            }), { retention = days })
-                        }
-                    }
+                    val retentionDays = listOf(0, 7, 30)
+                    Spacer(Modifier.height(12.dp))
+                    OmniTabRow(retentionDays.map { days ->
+                        stringResource(when (days) {
+                            7 -> R.string.omni_storage_7_days
+                            30 -> R.string.omni_storage_30_days
+                            else -> R.string.omni_storage_all
+                        })
+                    }, retentionDays.indexOf(retention).coerceAtLeast(0), { retention = retentionDays[it] })
+                    Spacer(Modifier.height(8.dp))
                     Text(stringResource(R.string.omni_storage_scope, if (retention == 0)
                         stringResource(R.string.omni_storage_all) else "$retention"),
                         color = palette.tertiaryText, fontSize = 11.sp)
                 }
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(stringResource(R.string.omni_log_cancel), { selectedCategory = null })
-                    TextButton(stringResource(R.string.omni_storage_confirm_clean), {
-                        selectedCategory = null
-                        actions.clearCategory(category.id, retention.takeIf { it > 0 && category.risk != "dangerous" })
-                    })
-                }
+                Spacer(Modifier.height(16.dp))
+                OmniDialogActions({ selectedCategory = null }, stringResource(R.string.omni_storage_confirm_clean), {
+                    selectedCategory = null
+                    actions.clearCategory(category.id, retention.takeIf { it > 0 && category.risk != "dangerous" })
+                })
             }
         }
         val strategy = selectedStrategy
-        OverlayDialog(show = strategy != null, title = strategy?.name.orEmpty(),
-            backgroundColor = palette.page, onDismissRequest = { selectedStrategy = null }) {
+        OverlayDialog(show = strategy != null, title = strategy?.name.orEmpty(), onDismissRequest = { selectedStrategy = null }) {
             if (strategy != null) {
                 Text(strategy.description, color = palette.secondaryText, fontSize = 12.sp)
                 Text(stringResource(R.string.omni_storage_risk, strategy.risk), color = palette.secondaryText, fontSize = 11.sp)
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    TextButton(stringResource(R.string.omni_log_cancel), { selectedStrategy = null })
-                    TextButton(stringResource(R.string.omni_storage_run), {
-                        selectedStrategy = null; actions.runStrategy(strategy.id)
-                    })
-                }
+                Spacer(Modifier.height(16.dp))
+                OmniDialogActions({ selectedStrategy = null }, stringResource(R.string.omni_storage_run),
+                    { selectedStrategy = null; actions.runStrategy(strategy.id) })
             }
         }
-        OverlayDialog(show = state.notice != null, title = stringResource(R.string.omni_storage_result),
-            backgroundColor = palette.page, onDismissRequest = actions.dismissNotice) {
-            Text(state.notice.orEmpty(), color = palette.secondaryText, fontSize = 12.sp)
-            TextButton(stringResource(R.string.omni_log_cancel), actions.dismissNotice)
-        }
+        OmniNoticeDialog(
+            show = state.notice != null,
+            title = stringResource(R.string.omni_storage_result),
+            summary = state.notice,
+            confirmText = stringResource(R.string.omni_pref_ok),
+            onDismiss = actions.dismissNotice,
+        )
     }
 }
 

@@ -12,9 +12,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -31,11 +29,12 @@ import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.NativeHomeState
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.components.SectionTitle
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
+import cn.com.omnimind.nativeui.components.OmniPage
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.getValue
 
 private data class SettingItem(
     @DrawableRes val icon: Int,
@@ -109,10 +108,7 @@ internal fun SettingsScreen(
 ) {
     val palette = LocalOmniPalette.current
     var showLocalService by rememberSaveable { mutableStateOf(false) }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_settings_title), onBack) },
-    ) { insets ->
+    OmniPage(stringResource(R.string.omni_settings_title), onBack) { insets ->
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 28.dp),

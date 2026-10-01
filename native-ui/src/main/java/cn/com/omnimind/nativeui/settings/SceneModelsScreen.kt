@@ -25,29 +25,21 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import androidx.compose.ui.res.stringResource
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.*
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
 
 @Composable
 fun SceneModelsScreen(state: SceneModelsState, actions: SceneModelsActions,
     onProviders: () -> Unit, onEditAvatar: () -> Unit, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
     val enabled = !state.loading && state.savingSceneId == null && !state.voiceBusy
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_settings_scene_model_title), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) }) { insets ->
+    OmniPage(stringResource(R.string.omni_settings_scene_model_title), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets).imePadding(),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             if (!state.loaded) {
@@ -283,10 +275,7 @@ private fun VoiceReplySettings(state: SceneModelsState, actions: SceneModelsActi
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(voiceLabel, Modifier.weight(1f), color = palette.text,
                 fontSize = 15.sp, fontWeight = FontWeight.SemiBold)
-            Switch(state.autoPlay, actions.setAutoPlay, enabled = enabled && state.voiceAvailable,
-                colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent,
-                    uncheckedTrackColor = palette.strongBorder, checkedThumbColor = Color.White, uncheckedThumbColor = Color.White),
-                modifier = Modifier.semantics { contentDescription = voiceLabel })
+            OmniSwitch(state.autoPlay, actions.setAutoPlay, enabled = enabled && state.voiceAvailable, contentDescription = voiceLabel)
         }
         Text(stringResource(if (state.voiceAvailable) R.string.omni_scene_voice_connected else R.string.omni_scene_voice_unavailable),
             color = palette.secondaryText, fontSize = 11.sp)

@@ -16,25 +16,23 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.IconButton
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import java.util.Locale
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniNoticeDialog
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
 
 @Composable
 fun HomePreferencesScreen(state: UiPreferencesState, actions: UiPreferencesActions, onBack: () -> Unit) {
@@ -63,17 +61,14 @@ fun HomePreferencesScreen(state: UiPreferencesState, actions: UiPreferencesActio
         actions.clearError()
         editorOpen = true
     }
-    Scaffold(containerColor = palette.page, topBar = { OmniTopBar(stringResource(R.string.omni_pref_home), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_pref_home), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 10.dp, bottom = 28.dp)) {
             item(key = "greeting") {
                 val label = stringResource(R.string.omni_pref_greeting)
                 PreferenceRow(label, stringResource(R.string.omni_pref_greeting_summary), isLast = true,
                     enabled = enabled, onClick = { actions.setGreeting(!state.greetingEnabled) }) {
-                    Switch(state.greetingEnabled, actions.setGreeting, enabled = enabled,
-                        colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent, uncheckedTrackColor = palette.strongBorder,
-                            checkedThumbColor = Color.White, uncheckedThumbColor = Color.White),
-                        modifier = Modifier.semantics { contentDescription = label })
+                    OmniSwitch(state.greetingEnabled, actions.setGreeting, enabled = enabled, contentDescription = label)
                 }
                 Spacer(Modifier.height(24.dp))
             }
@@ -102,8 +97,7 @@ fun HomePreferencesScreen(state: UiPreferencesState, actions: UiPreferencesActio
             if (state.failed) item(key = "failure") { PreferenceFailure(actions) }
         }
         OverlayBottomSheet(show = editorOpen,
-            title = stringResource(if (editingId == null) R.string.omni_pref_add else R.string.omni_pref_edit_prompt),
-            backgroundColor = palette.page, onDismissRequest = { editorOpen = false }) {
+            title = stringResource(if (editingId == null) R.string.omni_pref_add else R.string.omni_pref_edit_prompt), onDismissRequest = { editorOpen = false }) {
             Column(Modifier.fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextField(title, { title = it }, label = stringResource(R.string.omni_pref_prompt_name),
                     singleLine = true, enabled = !state.busy, modifier = Modifier.fillMaxWidth())
@@ -120,23 +114,30 @@ fun HomePreferencesScreen(state: UiPreferencesState, actions: UiPreferencesActio
                 }
             }
         }
-        OverlayDialog(show = deleteId != null, title = stringResource(R.string.omni_pref_delete_prompt),
-            summary = stringResource(R.string.omni_pref_delete_summary), backgroundColor = palette.page,
-            onDismissRequest = { deleteId = null }) {
-            ConfirmationButtons(enabled, { deleteId = null }) {
-                deleteId?.let(actions.deletePrompt)
-                deleteId = null
-            }
-        }
-        OverlayDialog(show = resetOpen, title = stringResource(R.string.omni_pref_reset),
-            summary = stringResource(R.string.omni_pref_reset_summary), backgroundColor = palette.page,
-            onDismissRequest = { resetOpen = false }) {
-            ConfirmationButtons(enabled, { resetOpen = false }) { actions.resetPrompts(); resetOpen = false }
-        }
-        OverlayDialog(show = pinLimitOpen, title = stringResource(R.string.omni_pref_pin_limit),
-            backgroundColor = palette.page, onDismissRequest = { pinLimitOpen = false }) {
-            TextButton(stringResource(R.string.omni_pref_ok), { pinLimitOpen = false }, modifier = Modifier.fillMaxWidth())
-        }
+        OmniConfirmDialog(
+            show = deleteId != null,
+            title = stringResource(R.string.omni_pref_delete_prompt),
+            summary = stringResource(R.string.omni_pref_delete_summary),
+            confirmText = stringResource(R.string.omni_pref_confirm),
+            onConfirm = { deleteId?.let(actions.deletePrompt); deleteId = null },
+            onDismiss = { deleteId = null },
+            confirmEnabled = enabled,
+        )
+        OmniConfirmDialog(
+            show = resetOpen,
+            title = stringResource(R.string.omni_pref_reset),
+            summary = stringResource(R.string.omni_pref_reset_summary),
+            confirmText = stringResource(R.string.omni_pref_confirm),
+            onConfirm = { actions.resetPrompts(); resetOpen = false },
+            onDismiss = { resetOpen = false },
+            confirmEnabled = enabled,
+        )
+        OmniNoticeDialog(
+            show = pinLimitOpen,
+            title = stringResource(R.string.omni_pref_pin_limit),
+            confirmText = stringResource(R.string.omni_pref_ok),
+            onDismiss = { pinLimitOpen = false },
+        )
     }
 }
 
@@ -186,14 +187,6 @@ private fun PromptPreferenceRow(item: EditableQuickPrompt, english: Boolean, pin
         IconButton(onDelete, enabled = enabled, minWidth = 40.dp, minHeight = 48.dp) {
             OmniIcon(R.drawable.omni_trash_2, stringResource(R.string.omni_pref_delete), tint = palette.tertiaryText)
         }
-    }
-}
-
-@Composable
-private fun ConfirmationButtons(enabled: Boolean, onCancel: () -> Unit, onConfirm: () -> Unit) {
-    Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(stringResource(R.string.omni_cancel), onCancel, modifier = Modifier.weight(1f))
-        TextButton(stringResource(R.string.omni_pref_confirm), onConfirm, enabled = enabled, modifier = Modifier.weight(1f))
     }
 }
 

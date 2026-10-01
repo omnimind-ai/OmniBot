@@ -23,23 +23,18 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniIconButton
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.components.SectionTitle
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.CircularProgressIndicator
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.SnackbarHost
-import top.yukonga.miuix.kmp.basic.SnackbarHostState
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.basic.TooltipBox
 import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 import top.yukonga.miuix.kmp.theme.MiuixTheme
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
 
 /**
  * Remote PC Bridge settings with debounced autosave. Presentation only; the
@@ -53,19 +48,8 @@ fun RemoteBridgeScreen(
     onBack: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
-    val snackbar = remember { SnackbarHostState() }
     val notice = state.notice?.let { stringResource(it) }
-    LaunchedEffect(notice) {
-        if (notice != null) {
-            snackbar.showSnackbar(notice)
-            actions.dismissNotice()
-        }
-    }
-    Scaffold(
-        containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_agents_remote_bridge), onBack) },
-        snackbarHost = { SnackbarHost(snackbar) },
-    ) { insets ->
+    OmniPage(stringResource(R.string.omni_agents_remote_bridge), onBack, notice = notice, onNoticeShown = actions.dismissNotice) { insets ->
         if (!state.loaded) {
             Box(Modifier.fillMaxSize().padding(insets), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator()
@@ -87,12 +71,8 @@ fun RemoteBridgeScreen(
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(stringResource(R.string.omni_bridge_enable), Modifier.weight(1f),
                             fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = palette.text)
-                        Switch(state.enabled, actions.setEnabled,
-                            enabled = state.status != RemoteBridgeSaveStatus.Saving,
-                            colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent,
-                                uncheckedTrackColor = palette.strongBorder,
-                                checkedThumbColor = androidx.compose.ui.graphics.Color.White,
-                                uncheckedThumbColor = androidx.compose.ui.graphics.Color.White))
+                        OmniSwitch(state.enabled, actions.setEnabled,
+                            enabled = state.status != RemoteBridgeSaveStatus.Saving)
                     }
                     Spacer(Modifier.height(4.dp))
                     Text(
@@ -165,7 +145,6 @@ fun RemoteBridgeScreen(
         OverlayBottomSheet(
             show = picker != null,
             title = stringResource(R.string.omni_bridge_picker_title),
-            backgroundColor = palette.page,
             onDismissRequest = actions.closePicker,
         ) {
             if (picker != null) DirectoryPickerContent(picker, actions)

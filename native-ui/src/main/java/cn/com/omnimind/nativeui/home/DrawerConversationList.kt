@@ -72,7 +72,6 @@ internal fun DrawerConversationList(
     OverlayBottomSheet(
         show = menuConversation != null,
         title = menuConversation?.title,
-        backgroundColor = palette.page,
         onDismissRequest = { menuKey = null },
     ) {
         menuConversation?.let { conversation ->

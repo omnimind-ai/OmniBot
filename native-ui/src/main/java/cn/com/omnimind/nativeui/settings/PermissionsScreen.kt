@@ -4,30 +4,28 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIcon
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.LinearProgressIndicator
 import top.yukonga.miuix.kmp.basic.ProgressIndicatorDefaults
-import top.yukonga.miuix.kmp.basic.Scaffold
-import top.yukonga.miuix.kmp.basic.Switch
-import top.yukonga.miuix.kmp.basic.SwitchDefaults
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.overlay.OverlayDialog
+import cn.com.omnimind.nativeui.components.OmniSwitch
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniDialogActions
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
 
 @Composable
 fun PermissionsScreen(state: PermissionsState, actions: PermissionsActions, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    Scaffold(containerColor = palette.page, topBar = { OmniTopBar(stringResource(R.string.omni_authorize_page_title), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_authorize_page_title), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp),
             verticalArrangement = Arrangement.spacedBy(24.dp)) {
@@ -59,10 +57,7 @@ fun PermissionsScreen(state: PermissionsState, actions: PermissionsActions, onBa
                     val label = stringResource(R.string.omni_authorize_receive_notifications)
                     PreferenceRow(label, stringResource(R.string.omni_authorize_notifications_desc), icon = R.drawable.omni_bell, isLast = true,
                         enabled = state.loaded && !state.busy, onClick = { actions.setNotificationsEnabled(!state.notificationsEnabled) }) {
-                        Switch(state.notificationsEnabled, actions.setNotificationsEnabled, enabled = state.loaded && !state.busy,
-                            colors = SwitchDefaults.switchColors(checkedTrackColor = palette.accent, uncheckedTrackColor = palette.strongBorder,
-                                checkedThumbColor = Color.White, uncheckedThumbColor = Color.White),
-                            modifier = Modifier.semantics { contentDescription = label })
+                        OmniSwitch(state.notificationsEnabled, actions.setNotificationsEnabled, enabled = state.loaded && !state.busy, contentDescription = label)
                     }
                 }
             }
@@ -126,29 +121,26 @@ private fun PermissionTrailing(label: String, granted: Boolean) {
 @Composable
 private fun PermissionDialogs(state: PermissionsState, actions: PermissionsActions) {
     val palette = LocalOmniPalette.current
-    OverlayDialog(show = state.prompt == PermissionPrompt.Accessibility, title = stringResource(R.string.omni_accessibility_prompt_title),
-        backgroundColor = palette.page, onDismissRequest = actions.dismissPrompt) {
+    OverlayDialog(show = state.prompt == PermissionPrompt.Accessibility, title = stringResource(R.string.omni_accessibility_prompt_title), onDismissRequest = actions.dismissPrompt) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text(stringResource(R.string.omni_accessibility_prompt_purpose), color = palette.text, fontSize = 14.sp)
             Text(stringResource(R.string.omni_accessibility_prompt_location), color = palette.text, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
             Text(stringResource(R.string.omni_accessibility_prompt_steps), color = palette.secondaryText, fontSize = 13.sp)
             if (state.refreshing) LinearProgressIndicator()
             state.notice?.let { Text(stringResource(it.messageResource()), color = palette.secondaryText, fontSize = 12.sp) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TextButton(stringResource(R.string.omni_cancel), actions.dismissPrompt, modifier = Modifier.weight(1f))
-                TextButton(stringResource(R.string.omni_accessibility_prompt_open), actions.confirmPrompt,
-                    enabled = !state.refreshing, modifier = Modifier.weight(1f))
-            }
+            OmniDialogActions(actions.dismissPrompt, stringResource(R.string.omni_accessibility_prompt_open),
+                actions.confirmPrompt, confirmEnabled = !state.refreshing)
         }
     }
-    OverlayDialog(show = state.prompt == PermissionPrompt.Shizuku, title = stringResource(R.string.omni_permission_shizuku),
-        summary = stringResource(state.shizuku.guideResource()), backgroundColor = palette.page, onDismissRequest = actions.dismissPrompt) {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            TextButton(stringResource(R.string.omni_cancel), actions.dismissPrompt, modifier = Modifier.weight(1f))
-            TextButton(stringResource(if (state.shizuku.installed) R.string.omni_shizuku_open else R.string.omni_shizuku_install),
-                actions.confirmPrompt, enabled = !state.busy, modifier = Modifier.weight(1f))
-        }
-    }
+    OmniConfirmDialog(
+        show = state.prompt == PermissionPrompt.Shizuku,
+        title = stringResource(R.string.omni_permission_shizuku),
+        summary = stringResource(state.shizuku.guideResource()),
+        confirmText = stringResource(if (state.shizuku.installed) R.string.omni_shizuku_open else R.string.omni_shizuku_install),
+        onConfirm = actions.confirmPrompt,
+        onDismiss = actions.dismissPrompt,
+        confirmEnabled = !state.busy,
+    )
 }
 
 private fun PermissionNotice.messageResource() = when (this) {

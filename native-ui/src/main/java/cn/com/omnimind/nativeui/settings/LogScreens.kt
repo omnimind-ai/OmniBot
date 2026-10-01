@@ -13,16 +13,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.components.OmniIconButton
-import cn.com.omnimind.nativeui.components.OmniTopBar
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.BasicComponent
-import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.overlay.OverlayDialog
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import cn.com.omnimind.nativeui.components.OmniPage
+import cn.com.omnimind.nativeui.components.OmniConfirmDialog
 
 data class RequestLogItem(
     val id: String, val createdAt: Long, val label: String, val model: String,
@@ -45,8 +44,7 @@ data class LogPageState<T>(
 fun RequestLogsScreen(state: LogPageState<RequestLogItem>, refresh: () -> Unit,
     copy: (String) -> Unit, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_request_logs), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_request_logs), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             item {
@@ -92,8 +90,7 @@ fun RuntimeLogsScreen(state: LogPageState<RuntimeLogItem>, refresh: () -> Unit,
     clear: () -> Unit, export: () -> Unit, copy: (String) -> Unit, onBack: () -> Unit) {
     val palette = LocalOmniPalette.current
     var confirmClear by rememberSaveable { mutableStateOf(false) }
-    Scaffold(containerColor = palette.page,
-        topBar = { OmniTopBar(stringResource(R.string.omni_runtime_logs), onBack) }) { insets ->
+    OmniPage(stringResource(R.string.omni_runtime_logs), onBack) { insets ->
         LazyColumn(Modifier.fillMaxSize().padding(insets).consumeWindowInsets(insets),
             contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 28.dp)) {
             item {
@@ -129,14 +126,14 @@ fun RuntimeLogsScreen(state: LogPageState<RuntimeLogItem>, refresh: () -> Unit,
                 PreferenceDivider(withIcon = false)
             }
         }
-        OverlayDialog(show = confirmClear, title = stringResource(R.string.omni_log_clear_confirm),
-            backgroundColor = palette.page, onDismissRequest = { confirmClear = false }) {
-            Text(stringResource(R.string.omni_log_clear_warning), color = palette.secondaryText, fontSize = 13.sp)
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                TextButton(stringResource(R.string.omni_log_cancel), { confirmClear = false })
-                TextButton(stringResource(R.string.omni_log_clear), { confirmClear = false; clear() })
-            }
-        }
+        OmniConfirmDialog(
+            show = confirmClear,
+            title = stringResource(R.string.omni_log_clear_confirm),
+            summary = stringResource(R.string.omni_log_clear_warning),
+            confirmText = stringResource(R.string.omni_log_clear),
+            onConfirm = { confirmClear = false; clear() },
+            onDismiss = { confirmClear = false },
+        )
     }
 }
 
