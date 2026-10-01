@@ -34,6 +34,7 @@ import cn.com.omnimind.nativeui.settings.AlarmSettingsScreen
 import cn.com.omnimind.nativeui.settings.OpenWithSettingsScreen
 import cn.com.omnimind.nativeui.settings.RemoteBridgeScreen
 import cn.com.omnimind.nativeui.settings.ScheduledTasksScreen
+import cn.com.omnimind.nativeui.settings.UsageStatisticsScreen
 
 @Composable
 internal fun NativeAboutRoute(
@@ -250,6 +251,14 @@ internal fun NativeScheduledTasksRoute(viewModel: NativeScheduledTasksViewModel,
     LaunchedEffect(Unit) { viewModel.load() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
     ScheduledTasksScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeUsageStatisticsRoute(viewModel: NativeUsageStatisticsViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    // ON_RESUME also fires on first entry, so this covers the initial load.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    UsageStatisticsScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

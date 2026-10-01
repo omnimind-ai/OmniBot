@@ -715,4 +715,24 @@
     <string name="omni_scheduled_display_countdown_hm">%1$d小时%2$d分钟后</string>
     <string name="omni_scheduled_display_countdown_h">%1$d小时后</string>
     <string name="omni_scheduled_display_countdown_m">%1$d分钟后</string>
+    <!-- 轨迹 -->
+    <string name="omni_usage_tab_chat">对话</string>
+    <string name="omni_usage_tab_token">Token</string>
+    <string name="omni_usage_conversations">次对话</string>
+    <string name="omni_usage_streak">天连续</string>
+    <string name="omni_usage_tokens">tokens</string>
+    <string name="omni_usage_models">个模型</string>
+    <string name="omni_usage_cached">缓存</string>
+    <string name="omni_usage_token_empty">暂无 Token 消耗数据</string>
+    <string name="omni_usage_no_usage">无消耗</string>
+    <string name="omni_usage_day_tooltip">%1$d 次对话 · %2$d/%3$d</string>
+    <string name="omni_usage_day_empty_tooltip">无对话 · %1$d/%2$d</string>
+    <string name="omni_usage_week_tooltip">%1$d/%2$d-%3$d/%4$d · %5$s tokens</string>
+    <string-array name="omni_usage_months">
+        <item>1月</item><item>2月</item><item>3月</item><item>4月</item><item>5月</item><item>6月</item>
+        <item>7月</item><item>8月</item><item>9月</item><item>10月</item><item>11月</item><item>12月</item>
+    </string-array>
+    <string-array name="omni_usage_weekdays">
+        <item>一</item><item>三</item><item>五</item><item>日</item>
+    </string-array>
 </resources>

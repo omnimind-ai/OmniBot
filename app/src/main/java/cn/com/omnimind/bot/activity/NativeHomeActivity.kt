@@ -67,6 +67,8 @@ import cn.com.omnimind.bot.ui.settings.NativeRemoteBridgeViewModel
 import cn.com.omnimind.bot.ui.settings.NativeRemoteBridgeRoute
 import cn.com.omnimind.bot.ui.settings.NativeScheduledTasksViewModel
 import cn.com.omnimind.bot.ui.settings.NativeScheduledTasksRoute
+import cn.com.omnimind.bot.ui.settings.NativeUsageStatisticsRoute
+import cn.com.omnimind.bot.ui.settings.NativeUsageStatisticsViewModel
 import cn.com.omnimind.nativeui.NativeHomeApp
 import cn.com.omnimind.nativeui.NativeHomeActions
 import cn.com.omnimind.nativeui.ThemePreference
@@ -101,6 +103,9 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val remoteBridgeViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeRemoteBridgeViewModel.Factory(this))[NativeRemoteBridgeViewModel::class.java]
+    }
+    private val usageStatisticsViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeUsageStatisticsViewModel.Factory(this))[NativeUsageStatisticsViewModel::class.java]
     }
     private val scheduledTasksViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeScheduledTasksViewModel.Factory(this))[NativeScheduledTasksViewModel::class.java]
@@ -227,6 +232,7 @@ class NativeHomeActivity : ComponentActivity() {
                 openWith = { onBack -> NativeOpenWithRoute(openWithViewModel, onBack) },
                 remoteBridge = { onBack -> NativeRemoteBridgeRoute(remoteBridgeViewModel, navigator::open, onBack) },
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
+                executionHistory = { onBack -> NativeUsageStatisticsRoute(usageStatisticsViewModel, onBack) },
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }

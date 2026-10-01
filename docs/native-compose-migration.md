@@ -54,8 +54,9 @@ LauncherActivity
       ├─ NativeOpenWithViewModel → SharedOpenPreferenceStore
       ├─ NativeRemoteBridgeViewModel → NativeRemoteBridgeRepository → AgentRuntimeManager config/remote/*
       ├─ NativeScheduledTasksViewModel → NativeScheduledTasksRepository → WorkspaceScheduledTaskScheduler / AgentAlarmToolService
+      ├─ NativeUsageStatisticsViewModel → NativeUsageStatisticsRepository → ConversationDomainService / TokenUsageRecordDao (read-only)
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -155,8 +156,10 @@ random greeting selection out of pixel comparisons.
   The chat header's inline Agent quick-switcher still belongs to the chat
   migration; the home agent button opens the native Agents page meanwhile.
   The scheduled tasks page (list, edit sheet, exact-alarm tab) is native; its
-  drawer entry opens the native route. Execution history and the remote
-  workspace browser remain compatibility destinations.
+  drawer entry opens the native route. The drawer's 轨迹 (usage statistics)
+  page is native as well (batch 4i-2). The OmniFlow execution center
+  (`/task/omniflow`, entered from tool-summary cards and manual recording) and
+  the remote workspace browser remain Flutter compatibility destinations.
 - Native home must gain the launch/foreground behaviors currently owned by
   MainActivity (terminal auto-start, account refresh and app update checks)
   before becoming the default. The generic native chat entry now delegates
@@ -186,8 +189,71 @@ The order below follows the actual owners in this repository, not page size alon
 | 5 | Chat, composer, tool/approval rendering and conversation runtime | The canonical ACP lifecycle and the single reducer/coordinator described above | Move projection ownership with history/identity/reconnect behavior intact. Do not retain a Dart reducer and add a second Kotlin reducer for the same session. |
 | 6 | Remove Flutter | All feature pages and lifecycle owners have migrated | Delete obsolete routes/channels, engine initialization and Flutter build dependencies. Enable the native entry by default only after the remaining launch behavior and visual checks are complete. |
 
-The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the first six slices of 4. Later rows are a
+The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4i-2 checkpoint: execution history (source complete; device acceptance pending)
+
+- Scope correction: the drawer's history entry (`omni_history`, 轨迹/Activity)
+  mapped to Flutter `/task/execution_history`, which renders
+  `UsageStatisticsPage` (conversation heatmap plus weekly token bars), not the
+  OmniFlow execution center. With the maintainer's confirmation this batch
+  migrates 轨迹. The OmniFlow execution center (`/task/omniflow`: Function
+  list, run logs, detail sheet, replay/enhance/delete through
+  `OmniFlowToolChannel`) has no native entry point and stays in Flutter.
+- The drawer entry now opens the saved native `ExecutionHistory` route.
+  `Page.ExecutionHistory` had no remaining callers (`grep` confirmed only the
+  drawer and `LegacyHomeNavigator`) and was removed with its mapping. The
+  Flutter route itself is unchanged and still serves the default launcher.
+- **Ownership**: read-only. Conversations come from
+  `ConversationDomainService.listConversationPayloads(includeArchived = true)`,
+  the same path as the `getConversations` channel without `archiveBefore`, so
+  opening the page never archives anything. Hidden Agent conversations are
+  filtered with the same preference keys as Flutter `ConversationService` and
+  `NativeHomeRepository`. Token usage comes from
+  `DatabaseHelper.getTokenUsageRecordsSince` (the `getTokenUsageRecords`
+  channel owner). No store, channel, polling loop or write was added; the page
+  refreshes on entry resume.
+- `UsageStatisticsAggregation` (native-ui, pure, JVM unit-tested) ports the
+  card's rules exactly: 16-week window, Monday-aligned grid, streak back from
+  today, `reasoning + text` tokens with the `completion` fallback,
+  `normalizeModelId`, model order (tokens desc, then id), per-week segment
+  order, `x.xK/x.xM` formatting, intensity buckets and the Dart code-unit hash
+  for model colors. The ViewModel runs it on `Dispatchers.IO`; state holds
+  counts and model ids only.
+- UI keeps the Flutter layout and colors (stats pills, heatmap/legend/bar
+  palettes, 11sp tooltips on `#2D3032`/`#353E53`, skeleton, 600ms fade, 300ms
+  tab cross-fade, empty-token text). The custom sliding segmented control is
+  replaced by Miuix `TabRowWithContour` (Omni segment colors), and Flutter tap
+  tooltips by Miuix `TooltipBox` shown on tap. The 18dp page margin replaces
+  the card's 20dp padding. Lucide message-circle, flame, zap, network and
+  refresh-ccw were added for the pills. Native English uses "cached" where the
+  Flutter localizer left 缓存 untranslated.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`, `:native-ui:compileDebugAndroidTestKotlin`)
+  and `git diff --check` are the verification boundary; the new aggregation
+  tests and the drawer → 轨迹 → back navigation test compile (the former also
+  ran on the JVM). No device interaction or database access was run. Visual
+  parity and runtime acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and both languages against the Flutter page with the
+   same data: skeleton, stats pills (streak color at ≥3 days, models/cached
+   pills appearing only when non-empty), tab switch, heatmap month/day labels
+   and cell colors, legend strip scrolling, stacked bars, empty-token state.
+2. Tap heatmap cells and bars: tooltip text (count/date, week range, up to six
+   models, `+N`, cached line, 无消耗/No usage) and placement near screen edges.
+3. Alternate with the Flutter page: create/archive/hide an Agent conversation
+   and run a model call, then confirm both pages show the same totals after
+   returning (resume refresh); confirm opening the native page never archives.
+4. Check a day boundary and a timezone change: today's cell, the streak and the
+   week bucket of late-night records must match Flutter.
+5. Rotate and recreate the process on the Token tab; the page must reload
+   without flicker loops, and predictive back (commit and cancel) must return
+   to Home with the drawer closed.
+6. Narrow/wide widths and large font scale: 720dp content cap, cell/bar
+   clamping (4–14dp) and the pill row wrapping.
 
 ## Batch 4i-1 checkpoint: scheduled tasks (source complete; device acceptance pending)
 
