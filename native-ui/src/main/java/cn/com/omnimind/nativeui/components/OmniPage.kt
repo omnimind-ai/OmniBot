@@ -26,6 +26,7 @@ internal fun OmniPage(
     notice: String? = null,
     onNoticeShown: () -> Unit = {},
     actions: @Composable RowScope.() -> Unit = {},
+    bottomBar: @Composable () -> Unit = {},
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val snackbar = remember { SnackbarHostState() }
@@ -40,6 +41,7 @@ internal fun OmniPage(
         modifier = modifier,
         containerColor = LocalOmniPalette.current.page,
         topBar = { OmniTopBar(title, onBack, actions) },
+        bottomBar = bottomBar,
         snackbarHost = { SnackbarHost(snackbar) },
         content = content,
     )

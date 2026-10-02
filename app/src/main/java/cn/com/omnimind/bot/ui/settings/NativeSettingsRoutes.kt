@@ -35,6 +35,8 @@ import cn.com.omnimind.nativeui.settings.OpenWithSettingsScreen
 import cn.com.omnimind.nativeui.settings.RemoteBridgeScreen
 import cn.com.omnimind.nativeui.settings.ScheduledTasksScreen
 import cn.com.omnimind.nativeui.settings.SkillStoreScreen
+import cn.com.omnimind.nativeui.settings.PluginMarketScreen
+import cn.com.omnimind.nativeui.settings.PluginDetailScreen
 import cn.com.omnimind.nativeui.settings.UsageStatisticsScreen
 
 @Composable
@@ -260,6 +262,34 @@ internal fun NativeSkillStoreRoute(viewModel: NativeSkillStoreViewModel, onBack:
     LaunchedEffect(Unit) { viewModel.load() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
     SkillStoreScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativePluginMarketRoute(
+    viewModel: NativePluginMarketViewModel,
+    onPlugin: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    PluginMarketScreen(state, viewModel.actions, onPlugin, onBack)
+}
+
+@Composable
+internal fun NativePluginDetailRoute(
+    viewModel: NativePluginDetailViewModel,
+    openLegacy: (LegacyDestination) -> Unit,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LaunchedEffect(state.pendingPluginRoute) {
+        val route = state.pendingPluginRoute ?: return@LaunchedEffect
+        viewModel.actions.consumePluginRoute()
+        openLegacy(LegacyDestination.PluginRoute(route))
+    }
+    PluginDetailScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

@@ -91,9 +91,12 @@ sealed interface LegacyDestination {
     data class NewConversation(val draft: String = "") : LegacyDestination
     data class TerminalPackage(val packageId: String) : LegacyDestination
 
+    /** Plugin-declared in-app route; validated to stay an app-internal path. */
+    data class PluginRoute(val route: String) : LegacyDestination
+
     enum class Page : LegacyDestination {
         Account, ModelProviders, SceneModels, Terminal, RemoteBridge,
         Chat, QuickStart, UserGuide,
-        Memory, Plugins, Workspace,
+        Memory, Workspace,
     }
 }

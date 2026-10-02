@@ -24,6 +24,7 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
             is LegacyDestination.TerminalPackage -> Uri.Builder().path("/home/termux_setting")
                 .apply { if (destination.packageId.isNotBlank()) appendQueryParameter("focus", destination.packageId) }
                 .build().toString()
+            is LegacyDestination.PluginRoute -> destination.route.takeIf { it.startsWith("/") } ?: "/home/chat"
             is Page -> when (destination) {
                 Page.Account -> "/my/account"
                 Page.ModelProviders -> "/home/model_provider_setting"
@@ -36,7 +37,6 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.QuickStart -> "/home/first_use_tutorial/setup"
                 Page.UserGuide -> "/my/about/user-guide"
                 Page.Memory -> "/memory/memory_center_page"
-                Page.Plugins -> "/home/plugin_market"
                 Page.Workspace -> "/home/chat"
             }
         }

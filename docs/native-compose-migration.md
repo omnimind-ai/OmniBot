@@ -55,9 +55,10 @@ LauncherActivity
       ├─ NativeRemoteBridgeViewModel → NativeRemoteBridgeRepository → AgentRuntimeManager config/remote/*
       ├─ NativeScheduledTasksViewModel → NativeScheduledTasksRepository → WorkspaceScheduledTaskScheduler / AgentAlarmToolService
       ├─ NativeSkillStoreViewModel → SkillIndexService (registry + workspace skill dirs)
+      ├─ NativePluginMarketViewModel / NativePluginDetailViewModel → NativePluginRepository → OmniPluginHost
       ├─ NativeUsageStatisticsViewModel → NativeUsageStatisticsRepository → ConversationDomainService / TokenUsageRecordDao (read-only)
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills / Plugins / PluginDetail(pluginId)
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -165,8 +166,9 @@ random greeting selection out of pixel comparisons.
   The scheduled tasks page (list, edit sheet, exact-alarm tab) is native; its
   drawer entry opens the native route. The drawer's 轨迹 (usage statistics)
   page is native as well (batch 4i-2). The skill store page is native
-  (batch 4j); of the drawer shortcut row, only the memory center still opens a
-  Flutter compatibility page. The OmniFlow execution center
+  (batch 4j); the plugin market and detail pages are native (batch 4k); of the
+  drawer shortcut row, only the memory center still opens a Flutter
+  compatibility page. The OmniFlow execution center
   (`/task/omniflow`, entered from tool-summary cards and manual recording) and
   the remote workspace browser remain Flutter compatibility destinations.
 - Native home must gain the launch/foreground behaviors currently owned by
@@ -200,6 +202,56 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4k checkpoint: plugin market (source complete; device acceptance pending)
+
+- The drawer's Plugins entry now opens the saved native `Plugins` route, and
+  rows open `PluginDetail(pluginId)`. The market keeps the search field
+  (name/description/publisher), plugin rows with icon, description,
+  publisher/kind/size line, status label and dividers, plus empty and
+  search-empty states. The detail page keeps the header, localized description,
+  capability list, usage items, the ready guide with VLM readiness messaging
+  and plugin-declared actions, the information expander, and the bottom
+  install / enable / update / uninstall actions with an uninstall
+  confirmation.
+- **Owner conclusion**: `OmniPluginHost` remains the only catalog,
+  install/update download and enable-state owner; install/update are plain
+  suspend calls with no separate download manager, and the page only triggers
+  and shows busy/result. `NativePluginRepository` adds typed access and the
+  app-locale resolution of plugin-declared `{zh, en}` texts. The GUI-scene VLM
+  readiness projection moved from `PluginPlatformChannel` into
+  `PluginVlmReadiness.kt`, shared by the channel (unchanged wire output) and
+  the native page.
+- Plugin-declared routes (`/home/chat`, `/task/omniflow`, plugin detail
+  self-links) hand off through a new `LegacyDestination.PluginRoute`, validated
+  to app-internal paths; the Flutter OmniFlow center's own detail link is
+  untouched. `Page.Plugins` had no remaining native callers and was removed
+  with its mapping.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`,
+  `:native-ui:compileDebugAndroidTestKotlin`) and `git diff --check` are the
+  verification boundary. No device interaction, real install/update/uninstall,
+  sync or network request was run. Visual parity and runtime acceptance remain
+  pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and languages: market list rows, dividers, empty and
+   search-empty states, detail header, capabilities, usage, information
+   expander, bottom bar, insets and predictive back.
+2. Install a plugin (busy indicator), toggle enable for a non-required plugin,
+   update it, and uninstall with confirmation (and cancel). Confirm the Flutter
+   pages show the same state afterwards and the Agent tool surface follows.
+3. With the GUI scene unconfigured, open the OmniFlow detail page: the ready
+   guide shows the configure message and the readiness-gated action is
+   disabled. Configure the Provider, return, and confirm the guide flips to
+   ready and the action opens chat. Repeat on a debug build (prepared message).
+4. Follow the guide's `/task/omniflow` action and the chat action; return and
+   confirm the detail state is unchanged. Open the same plugin from the
+   Flutter OmniFlow center link and confirm consistency.
+5. Rotate and recreate the process while an install is running and with the
+   uninstall dialog open; confirm no duplicate install starts and state
+   re-reads from the host.
 
 ## Batch 4j checkpoint: skill store (source complete; device acceptance pending)
 

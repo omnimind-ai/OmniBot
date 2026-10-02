@@ -1,14 +1,9 @@
 package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
-import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
-import cn.com.omnimind.baselib.llm.OfficialVlmOperationConfigStore
-import cn.com.omnimind.baselib.llm.OfficialVlmOperationRouteResolver
-import cn.com.omnimind.baselib.llm.SceneModelBindingStore
-import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
-import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.plugin.OmniPluginHost
 import cn.com.omnimind.bot.plugin.OmniPluginState
+import cn.com.omnimind.bot.plugin.readPluginVlmReadiness
 import cn.com.omnimind.bot.plugin.sandbox.SandboxPluginBridgeRuntime
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -150,26 +145,12 @@ class PluginPlatformChannel {
     }
 
     private fun vlmReadiness(): Map<String, Any?> {
-        val binding = SceneModelBindingStore.getBinding(SceneOperationConfigStore.SCENE_ID)
-        val boundProfile = binding
-            ?.providerProfileId
-            ?.let(ModelProviderConfigStore::getProfile)
-            ?.takeIf { it.isConfigured() }
-        val officialConfig = OfficialVlmOperationConfigStore.getConfig()
-        val configured = boundProfile != null || officialConfig.isConfigured()
+        val readiness = readPluginVlmReadiness()
         return mapOf(
-            "debugBuild" to BuildConfig.DEBUG,
-            "providerConfigured" to configured,
-            "providerName" to when {
-                boundProfile != null -> boundProfile.name
-                officialConfig.isConfigured() -> OfficialVlmOperationRouteResolver.PROFILE_NAME
-                else -> ""
-            },
-            "model" to when {
-                boundProfile != null -> binding.modelId
-                officialConfig.isConfigured() -> officialConfig.model
-                else -> ""
-            },
+            "debugBuild" to readiness.debugBuild,
+            "providerConfigured" to readiness.providerConfigured,
+            "providerName" to readiness.providerName,
+            "model" to readiness.model,
         )
     }
 
