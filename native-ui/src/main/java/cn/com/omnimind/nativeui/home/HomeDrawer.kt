@@ -33,6 +33,7 @@ internal fun HomeDrawer(
     onNewConversation: () -> Unit,
     onScheduledTasks: () -> Unit,
     onExecutionHistory: () -> Unit,
+    onSkills: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -70,7 +71,7 @@ internal fun HomeDrawer(
                 Triple(R.drawable.omni_settings, R.string.omni_settings_title, onSettings),
                 Triple(R.drawable.omni_brain, R.string.omni_memory_center_title, { actions.open(LegacyDestination.Page.Memory) }),
                 Triple(R.drawable.omni_puzzle, R.string.omni_plugin_market_title, { actions.open(LegacyDestination.Page.Plugins) }),
-                Triple(R.drawable.omni_blocks, R.string.omni_skill_store_title, { actions.open(LegacyDestination.Page.Skills) }),
+                Triple(R.drawable.omni_blocks, R.string.omni_skill_store_title, onSkills),
                 Triple(R.drawable.omni_history, R.string.omni_history, onExecutionHistory),
                 Triple(R.drawable.omni_calendar_clock, R.string.omni_home_drawer_scheduled, onScheduledTasks),
             )

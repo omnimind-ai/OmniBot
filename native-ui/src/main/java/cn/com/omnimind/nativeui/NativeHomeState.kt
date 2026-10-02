@@ -92,8 +92,8 @@ sealed interface LegacyDestination {
     data class TerminalPackage(val packageId: String) : LegacyDestination
 
     enum class Page : LegacyDestination {
-        Account, ModelProviders, SceneModels, WorkspaceMemory, Terminal, RemoteBridge,
-        McpTools, Chat, QuickStart, Storage, RequestLogs, RuntimeLogs, UserGuide,
-        Memory, Plugins, Skills, Workspace,
+        Account, ModelProviders, SceneModels, Terminal, RemoteBridge,
+        Chat, QuickStart, UserGuide,
+        Memory, Plugins, Workspace,
     }
 }

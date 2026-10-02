@@ -67,6 +67,8 @@ import cn.com.omnimind.bot.ui.settings.NativeRemoteBridgeViewModel
 import cn.com.omnimind.bot.ui.settings.NativeRemoteBridgeRoute
 import cn.com.omnimind.bot.ui.settings.NativeScheduledTasksViewModel
 import cn.com.omnimind.bot.ui.settings.NativeScheduledTasksRoute
+import cn.com.omnimind.bot.ui.settings.NativeSkillStoreViewModel
+import cn.com.omnimind.bot.ui.settings.NativeSkillStoreRoute
 import cn.com.omnimind.bot.ui.settings.NativeUsageStatisticsRoute
 import cn.com.omnimind.bot.ui.settings.NativeUsageStatisticsViewModel
 import cn.com.omnimind.nativeui.NativeHomeApp
@@ -109,6 +111,9 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val scheduledTasksViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativeScheduledTasksViewModel.Factory(this))[NativeScheduledTasksViewModel::class.java]
+    }
+    private val skillStoreViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeSkillStoreViewModel.Factory(this))[NativeSkillStoreViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -232,6 +237,7 @@ class NativeHomeActivity : ComponentActivity() {
                 openWith = { onBack -> NativeOpenWithRoute(openWithViewModel, onBack) },
                 remoteBridge = { onBack -> NativeRemoteBridgeRoute(remoteBridgeViewModel, navigator::open, onBack) },
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
+                skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 executionHistory = { onBack -> NativeUsageStatisticsRoute(usageStatisticsViewModel, onBack) },
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )

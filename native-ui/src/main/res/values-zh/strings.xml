@@ -735,4 +735,29 @@
     <string-array name="omni_usage_weekdays">
         <item>一</item><item>三</item><item>五</item><item>日</item>
     </string-array>
+    <string name="omni_skill_search_hint">搜索技能名称或描述</string>
+    <string name="omni_skill_load_failed">加载技能仓库失败</string>
+    <string name="omni_skill_toggle_failed">切换失败</string>
+    <string name="omni_skill_install_failed">安装失败</string>
+    <string name="omni_skill_sync_failed">同步官方 Skills 失败</string>
+    <string name="omni_skill_sync_success">官方 Skills 已同步（%1$d 个）</string>
+    <string name="omni_skill_delete_title">删除技能</string>
+    <string name="omni_skill_delete">删除</string>
+    <string name="omni_skill_delete_confirm">确认删除“%1$s”？</string>
+    <string name="omni_skill_delete_failed">删除失败</string>
+    <string name="omni_skill_deleted">已删除</string>
+    <string name="omni_skill_empty">暂无已接入的技能</string>
+    <string name="omni_skill_search_empty">未找到匹配的技能</string>
+    <string name="omni_skill_no_description">暂无描述</string>
+    <string name="omni_skill_builtin_removed_desc">该内置技能已从工作区移除，可随时重新安装。</string>
+    <string name="omni_skill_builtin">内置</string>
+    <string name="omni_skill_official">官方</string>
+    <string name="omni_skill_installed">已安装</string>
+    <string name="omni_skill_enabled">启用中</string>
+    <string name="omni_skill_disabled">已禁用</string>
+    <string name="omni_skill_install">安装</string>
+    <string name="omni_skill_sync_tooltip">安装/更新官方 Skills</string>
+    <string name="omni_skill_enabled_msg">已启用 %1$s</string>
+    <string name="omni_skill_disabled_msg">已禁用 %1$s</string>
+    <string name="omni_skill_installed_msg">已安装 %1$s</string>
 </resources>

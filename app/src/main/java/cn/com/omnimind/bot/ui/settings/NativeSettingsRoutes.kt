@@ -34,6 +34,7 @@ import cn.com.omnimind.nativeui.settings.AlarmSettingsScreen
 import cn.com.omnimind.nativeui.settings.OpenWithSettingsScreen
 import cn.com.omnimind.nativeui.settings.RemoteBridgeScreen
 import cn.com.omnimind.nativeui.settings.ScheduledTasksScreen
+import cn.com.omnimind.nativeui.settings.SkillStoreScreen
 import cn.com.omnimind.nativeui.settings.UsageStatisticsScreen
 
 @Composable
@@ -251,6 +252,14 @@ internal fun NativeScheduledTasksRoute(viewModel: NativeScheduledTasksViewModel,
     LaunchedEffect(Unit) { viewModel.load() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
     ScheduledTasksScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeSkillStoreRoute(viewModel: NativeSkillStoreViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    SkillStoreScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

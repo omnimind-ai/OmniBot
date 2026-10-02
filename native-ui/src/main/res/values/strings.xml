@@ -735,4 +735,29 @@
     <string-array name="omni_usage_weekdays">
         <item>Mon</item><item>Wed</item><item>Fri</item><item>Sun</item>
     </string-array>
+    <string name="omni_skill_search_hint">Search skill name or description</string>
+    <string name="omni_skill_load_failed">Failed to load skills</string>
+    <string name="omni_skill_toggle_failed">Failed to toggle</string>
+    <string name="omni_skill_install_failed">Failed to install</string>
+    <string name="omni_skill_sync_failed">Failed to sync official skills</string>
+    <string name="omni_skill_sync_success">Official skills synced (%1$d)</string>
+    <string name="omni_skill_delete_title">Delete Skill</string>
+    <string name="omni_skill_delete">Delete</string>
+    <string name="omni_skill_delete_confirm">Delete "%1$s"?</string>
+    <string name="omni_skill_delete_failed">Failed to delete</string>
+    <string name="omni_skill_deleted">Deleted</string>
+    <string name="omni_skill_empty">No skills available</string>
+    <string name="omni_skill_search_empty">No matching skills found</string>
+    <string name="omni_skill_no_description">No description</string>
+    <string name="omni_skill_builtin_removed_desc">This built-in skill has been removed from the workspace. You can reinstall it anytime.</string>
+    <string name="omni_skill_builtin">Built-in</string>
+    <string name="omni_skill_official">Official</string>
+    <string name="omni_skill_installed">Installed</string>
+    <string name="omni_skill_enabled">Enabled</string>
+    <string name="omni_skill_disabled">Disabled</string>
+    <string name="omni_skill_install">Install</string>
+    <string name="omni_skill_sync_tooltip">Install/update official skills</string>
+    <string name="omni_skill_enabled_msg">Enabled %1$s</string>
+    <string name="omni_skill_disabled_msg">Disabled %1$s</string>
+    <string name="omni_skill_installed_msg">Installed %1$s</string>
 </resources>

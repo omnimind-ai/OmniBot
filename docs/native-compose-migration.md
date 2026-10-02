@@ -54,9 +54,10 @@ LauncherActivity
       ├─ NativeOpenWithViewModel → SharedOpenPreferenceStore
       ├─ NativeRemoteBridgeViewModel → NativeRemoteBridgeRepository → AgentRuntimeManager config/remote/*
       ├─ NativeScheduledTasksViewModel → NativeScheduledTasksRepository → WorkspaceScheduledTaskScheduler / AgentAlarmToolService
+      ├─ NativeSkillStoreViewModel → SkillIndexService (registry + workspace skill dirs)
       ├─ NativeUsageStatisticsViewModel → NativeUsageStatisticsRepository → ConversationDomainService / TokenUsageRecordDao (read-only)
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -163,7 +164,9 @@ random greeting selection out of pixel comparisons.
   migration; the home agent button opens the native Agents page meanwhile.
   The scheduled tasks page (list, edit sheet, exact-alarm tab) is native; its
   drawer entry opens the native route. The drawer's 轨迹 (usage statistics)
-  page is native as well (batch 4i-2). The OmniFlow execution center
+  page is native as well (batch 4i-2). The skill store page is native
+  (batch 4j); of the drawer shortcut row, only the memory center still opens a
+  Flutter compatibility page. The OmniFlow execution center
   (`/task/omniflow`, entered from tool-summary cards and manual recording) and
   the remote workspace browser remain Flutter compatibility destinations.
 - Native home must gain the launch/foreground behaviors currently owned by
@@ -197,6 +200,60 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4j checkpoint: skill store (source complete; device acceptance pending)
+
+- The drawer's Skills entry now opens the saved native `Skills` route. The page
+  keeps the Flutter structure: search field (name/description), skill rows with
+  the built-in/official badge, status summary labels, removed-built-in note,
+  installed path + delete action, enable switch / install action with busy
+  indicators, the official-repository sync button in the toolbar with a busy
+  spinner, and the empty/search-empty states.
+- **Owner conclusion**: the `agentSkill*` channel handlers in
+  `AssistsCoreManager` construct `SkillIndexService(context,
+  AgentWorkspaceManager(context))` per call. That service owns the
+  `.skill_registry.json` registry and the workspace skill directories
+  (including the built-in seed/prune and the official repository git sync via
+  the embedded terminal runtime). The native ViewModel calls the same owner
+  directly with the same constructor shape — no second store, no channel
+  change. `WorkspaceStorageAccess.isGranted` is currently always true; the
+  permission-error branch of the handlers is preserved for the Flutter page.
+- Sorting matches the owner's `listSkillsForManagement` and the Flutter page:
+  installed first, then built-in/official/other, then name. Toggle replaces
+  the row in place; install replaces and re-sorts; delete reloads; sync
+  replaces the list with the sorted result and shows the count. The
+  `agentSkillInstall` (sourcePath) method has no caller in this page and was
+  not needed.
+- `Page.Skills`, `Page.Storage`, `Page.RequestLogs`, `Page.RuntimeLogs`,
+  `Page.WorkspaceMemory` and `Page.McpTools` had no remaining callers (grep
+  verified) and were removed with their `LegacyHomeNavigator` mappings.
+  `Page.ModelProviders` (pendingDestination) and `Page.SceneModels` (avatar
+  hand-off) stay. The drawer shortcut row now leaves only the memory center on
+  a compatibility page.
+- The page uses the shared Omni components (`OmniPage`, `OmniSwitch`,
+  `OmniConfirmDialog`). Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`,
+  `:native-ui:compileDebugAndroidTestKotlin`) and `git diff --check` are the
+  verification boundary. No device interaction, install, delete or sync was
+  run. Visual parity and runtime acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and languages: toolbar sync button, search field, row
+   typography, badges, status labels, switch/install trailing, dividers, empty
+   and search-empty states, insets and predictive back.
+2. Toggle a skill off/on; install a removed built-in skill; delete a
+   user-installed skill with confirmation (and cancel). Confirm the Flutter
+   page (default launcher) shows the same states afterwards, and the Agent
+   runtime's enabled-skill list matches.
+3. Sync the official repository against a healthy and a failing network/bridge
+   (or with the terminal runtime missing); confirm the busy spinner, the count
+   toast and the failure notice, and that the list updates or stays intact
+   accordingly.
+4. Alternate toggle/delete/install operations between the native and Flutter
+   pages; both lists and sort order must converge.
+5. Rotate and recreate the process while a sync is running and with a delete
+   dialog open; no duplicate sync starts and no phantom deletion.
 
 ## Batch 4i-2 checkpoint: execution history (source complete; device acceptance pending)
 

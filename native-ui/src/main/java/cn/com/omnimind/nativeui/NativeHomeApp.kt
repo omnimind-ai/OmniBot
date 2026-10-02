@@ -57,6 +57,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object RemoteBridge : HomeRoute
     @Serializable data object ScheduledTasks : HomeRoute
     @Serializable data object ExecutionHistory : HomeRoute
+    @Serializable data object Skills : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -77,6 +78,7 @@ fun NativeHomeApp(
     agentConfig: @Composable (agentId: String, onBack: () -> Unit) -> Unit,
     remoteBridge: @Composable (onBack: () -> Unit) -> Unit,
     scheduledTasks: @Composable (onBack: () -> Unit) -> Unit,
+    skills: @Composable (onBack: () -> Unit) -> Unit,
     executionHistory: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
@@ -114,6 +116,7 @@ fun NativeHomeApp(
                     onAgents = { backStack.add(HomeRoute.Agents) },
                     onScheduledTasks = { backStack.add(HomeRoute.ScheduledTasks) },
                     onExecutionHistory = { backStack.add(HomeRoute.ExecutionHistory) },
+                    onSkills = { backStack.add(HomeRoute.Skills) },
                     actions = actions,
                 )
             }
@@ -183,6 +186,7 @@ fun NativeHomeApp(
             entry<HomeRoute.OpenWith> { openWith { backStack.removeLastOrNull() } }
             entry<HomeRoute.RemoteBridge> { remoteBridge { backStack.removeLastOrNull() } }
             entry<HomeRoute.ScheduledTasks> { scheduledTasks { backStack.removeLastOrNull() } }
+            entry<HomeRoute.Skills> { skills { backStack.removeLastOrNull() } }
             entry<HomeRoute.ExecutionHistory> { executionHistory { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
@@ -199,6 +203,7 @@ private fun HomeWithDrawer(
     onAgents: () -> Unit,
     onScheduledTasks: () -> Unit,
     onExecutionHistory: () -> Unit,
+    onSkills: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -231,6 +236,7 @@ private fun HomeWithDrawer(
                             onNewConversation = { scope.launch { drawer.close() } },
                             onScheduledTasks = { navigate(onScheduledTasks) },
                             onExecutionHistory = { navigate(onExecutionHistory) },
+                            onSkills = { navigate(onSkills) },
                             actions = actions.copy(open = { destination -> navigate { actions.open(destination) } }),
                         )
                     }
