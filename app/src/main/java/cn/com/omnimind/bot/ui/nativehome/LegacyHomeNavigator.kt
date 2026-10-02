@@ -36,7 +36,6 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.Chat -> "/home/chat"
                 Page.QuickStart -> "/home/first_use_tutorial/setup"
                 Page.UserGuide -> "/my/about/user-guide"
-                Page.Memory -> "/memory/memory_center_page"
                 Page.Workspace -> "/home/chat"
             }
         }

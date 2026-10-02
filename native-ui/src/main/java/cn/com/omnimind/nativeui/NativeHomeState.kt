@@ -97,6 +97,6 @@ sealed interface LegacyDestination {
     enum class Page : LegacyDestination {
         Account, ModelProviders, SceneModels, Terminal, RemoteBridge,
         Chat, QuickStart, UserGuide,
-        Memory, Workspace,
+        Workspace,
     }
 }

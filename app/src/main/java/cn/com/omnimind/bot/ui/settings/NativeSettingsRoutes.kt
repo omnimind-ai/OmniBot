@@ -37,6 +37,7 @@ import cn.com.omnimind.nativeui.settings.ScheduledTasksScreen
 import cn.com.omnimind.nativeui.settings.SkillStoreScreen
 import cn.com.omnimind.nativeui.settings.PluginMarketScreen
 import cn.com.omnimind.nativeui.settings.PluginDetailScreen
+import cn.com.omnimind.nativeui.settings.MemoryCenterScreen
 import cn.com.omnimind.nativeui.settings.UsageStatisticsScreen
 
 @Composable
@@ -262,6 +263,14 @@ internal fun NativeSkillStoreRoute(viewModel: NativeSkillStoreViewModel, onBack:
     LaunchedEffect(Unit) { viewModel.load() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
     SkillStoreScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeMemoryCenterRoute(viewModel: NativeMemoryCenterViewModel, onBack: () -> Unit) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    MemoryCenterScreen(state, viewModel.actions, onBack)
 }
 
 @Composable

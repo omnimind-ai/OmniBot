@@ -60,6 +60,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object Skills : HomeRoute
     @Serializable data object Plugins : HomeRoute
     @Serializable data class PluginDetail(val pluginId: String) : HomeRoute
+    @Serializable data object Memory : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -83,6 +84,7 @@ fun NativeHomeApp(
     skills: @Composable (onBack: () -> Unit) -> Unit,
     plugins: @Composable (onBack: () -> Unit, onPlugin: (String) -> Unit) -> Unit,
     pluginDetail: @Composable (pluginId: String, onBack: () -> Unit) -> Unit,
+    memory: @Composable (onBack: () -> Unit) -> Unit,
     executionHistory: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
@@ -122,6 +124,7 @@ fun NativeHomeApp(
                     onExecutionHistory = { backStack.add(HomeRoute.ExecutionHistory) },
                     onSkills = { backStack.add(HomeRoute.Skills) },
                     onPlugins = { backStack.add(HomeRoute.Plugins) },
+                    onMemory = { backStack.add(HomeRoute.Memory) },
                     actions = actions,
                 )
             }
@@ -198,6 +201,7 @@ fun NativeHomeApp(
             entry<HomeRoute.PluginDetail> { key ->
                 pluginDetail(key.pluginId) { backStack.removeLastOrNull() }
             }
+            entry<HomeRoute.Memory> { memory { backStack.removeLastOrNull() } }
             entry<HomeRoute.ExecutionHistory> { executionHistory { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
@@ -216,6 +220,7 @@ private fun HomeWithDrawer(
     onExecutionHistory: () -> Unit,
     onSkills: () -> Unit,
     onPlugins: () -> Unit,
+    onMemory: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -250,6 +255,7 @@ private fun HomeWithDrawer(
                             onExecutionHistory = { navigate(onExecutionHistory) },
                             onSkills = { navigate(onSkills) },
                             onPlugins = { navigate(onPlugins) },
+                            onMemory = { navigate(onMemory) },
                             actions = actions.copy(open = { destination -> navigate { actions.open(destination) } }),
                         )
                     }

@@ -69,6 +69,8 @@ import cn.com.omnimind.bot.ui.settings.NativeScheduledTasksViewModel
 import cn.com.omnimind.bot.ui.settings.NativeScheduledTasksRoute
 import cn.com.omnimind.bot.ui.settings.NativeSkillStoreViewModel
 import cn.com.omnimind.bot.ui.settings.NativeSkillStoreRoute
+import cn.com.omnimind.bot.ui.settings.NativeMemoryCenterViewModel
+import cn.com.omnimind.bot.ui.settings.NativeMemoryCenterRoute
 import cn.com.omnimind.bot.ui.settings.NativePluginMarketViewModel
 import cn.com.omnimind.bot.ui.settings.NativePluginMarketRoute
 import cn.com.omnimind.bot.ui.settings.NativePluginDetailViewModel
@@ -121,6 +123,9 @@ class NativeHomeActivity : ComponentActivity() {
     }
     private val pluginMarketViewModel by lazy(LazyThreadSafetyMode.NONE) {
         ViewModelProvider(this, NativePluginMarketViewModel.Factory(this))[NativePluginMarketViewModel::class.java]
+    }
+    private val memoryCenterViewModel by lazy(LazyThreadSafetyMode.NONE) {
+        ViewModelProvider(this, NativeMemoryCenterViewModel.Factory(this))[NativeMemoryCenterViewModel::class.java]
     }
     private var languageOption: String? = null
     private var localeTag: String? = null
@@ -245,6 +250,7 @@ class NativeHomeActivity : ComponentActivity() {
                 remoteBridge = { onBack -> NativeRemoteBridgeRoute(remoteBridgeViewModel, navigator::open, onBack) },
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
+                memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
                 plugins = { onBack, onPlugin -> NativePluginMarketRoute(pluginMarketViewModel, onPlugin, onBack) },
                 pluginDetail = { pluginId, onBack ->
                     val detailViewModel = remember(pluginId) {

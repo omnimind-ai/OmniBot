@@ -56,9 +56,10 @@ LauncherActivity
       ├─ NativeScheduledTasksViewModel → NativeScheduledTasksRepository → WorkspaceScheduledTaskScheduler / AgentAlarmToolService
       ├─ NativeSkillStoreViewModel → SkillIndexService (registry + workspace skill dirs)
       ├─ NativePluginMarketViewModel / NativePluginDetailViewModel → NativePluginRepository → OmniPluginHost
+      ├─ NativeMemoryCenterViewModel → NativeMemoryCenterRepository → WorkspaceMemoryService
       ├─ NativeUsageStatisticsViewModel → NativeUsageStatisticsRepository → ConversationDomainService / TokenUsageRecordDao (read-only)
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills / Plugins / PluginDetail(pluginId)
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills / Plugins / PluginDetail(pluginId) / Memory
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -166,9 +167,9 @@ random greeting selection out of pixel comparisons.
   The scheduled tasks page (list, edit sheet, exact-alarm tab) is native; its
   drawer entry opens the native route. The drawer's 轨迹 (usage statistics)
   page is native as well (batch 4i-2). The skill store page is native
-  (batch 4j); the plugin market and detail pages are native (batch 4k); of the
-  drawer shortcut row, only the memory center still opens a Flutter
-  compatibility page. The OmniFlow execution center
+  (batch 4j); the plugin market and detail pages are native (batch 4k); the
+  memory center is native (batch 4l-1); the drawer shortcut row no longer opens
+  any Flutter compatibility page. The OmniFlow execution center
   (`/task/omniflow`, entered from tool-summary cards and manual recording) and
   the remote workspace browser remain Flutter compatibility destinations.
 - Native home must gain the launch/foreground behaviors currently owned by
@@ -202,6 +203,64 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4l-1 checkpoint: memory center (source complete; device acceptance pending)
+
+- The drawer's Memory entry now opens the saved native `Memory` route; the
+  drawer shortcut row no longer opens any Flutter compatibility page.
+  `Page.Memory` had no remaining callers and was removed with its mapping. The
+  page keeps the static gradient greeting, the local/long-term tab switch, the
+  short-memory cards (26-grapheme title truncation, full text below when
+  truncated, icon + localized time label), long-press selection mode with
+  select-all/count/cancel and the bottom delete bar, content blur while
+  selecting, the MEMORY.md long-term list with add/refresh actions, the detail
+  sheet, and the editor sheet. Both tab empty states, the full-page empty state
+  and the loading skeleton remain.
+- **Owner conclusion**: short-memory entries and the MEMORY.md file stay with
+  `WorkspaceMemoryService` (`listShortMemoryEntries` /
+  `deleteShortMemoryEntries` with its unchanged-snapshot validation /
+  `readLongTermMemory` / `writeLongTermMemory`). `NativeMemoryCenterRepository`
+  only adds the page's bullet-line projection, including the Flutter
+  `base64url(index|memory)` id scheme and the append/replace/delete line
+  edits, so both UIs read and write the same file format. A stale selection
+  re-reads instead of deleting against a shifted snapshot, as on the Flutter
+  page.
+- **Dead code conclusion**: `ConversationHeatmap` and `memory_detail/` have no
+  Flutter-side references and were not migrated. The tag section renders only
+  the single「全部」chip upstream (the tag list is reset to that one entry on
+  every load), so no tag filter UI was migrated. The LLM greeting flow is
+  disabled upstream (the Flutter `_loadMemorySuggestion` clears the cached
+  keys and returns before generating), so the native page renders the static
+  greeting and never calls `generateMemoryGreeting`.
+- **mem0 boundary**: the "cloud" tab is the workspace MEMORY.md bullet list,
+  not a network service. The editor (add/edit with the 300-grapheme counter and
+  the optional tags field, whose values the bullet format does not persist) and
+  delete confirmation are included in this batch, merging the planned 4l-2.
+  Long-term time pills show the load-time "just now", matching the Flutter
+  parse-time timestamps.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`,
+  `:native-ui:compileDebugAndroidTestKotlin`) and `git diff --check` are the
+  verification boundary. No device interaction or memory write was run. Visual
+  parity and runtime acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and languages: greeting (gradient in light, plain in
+   dark), tabs, short-memory cards (truncation, quick-log prefix normalization
+   in Chinese only), selection mode (count title, select-all, blur, bottom
+   delete bar), long-term list/header/skeleton/empty states, insets and
+   predictive back.
+2. Long-press a card, toggle selection, select all, delete with confirmation
+   and cancel. Confirm the workspace files and the Flutter page converge, and
+   a stale selection refreshes instead of deleting the wrong entries.
+3. Add a long-term memory (empty and over-300-grapheme validation), edit one,
+   delete one with confirmation; confirm MEMORY.md stays bullet-formatted and
+   the Flutter page shows the same content.
+4. Rotate and recreate the process in selection mode and with the editor open;
+   confirm no phantom delete and the editor draft does not self-save.
+5. Alternate short-memory deletes between the native page and the Flutter page;
+   both lists must converge.
 
 ## Batch 4k checkpoint: plugin market (source complete; device acceptance pending)
 
