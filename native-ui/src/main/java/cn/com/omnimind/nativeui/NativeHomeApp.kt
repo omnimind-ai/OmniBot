@@ -61,6 +61,7 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data object Plugins : HomeRoute
     @Serializable data class PluginDetail(val pluginId: String) : HomeRoute
     @Serializable data object Memory : HomeRoute
+    @Serializable data class Terminal(val focusPackageId: String? = null) : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -77,7 +78,7 @@ fun NativeHomeApp(
     sceneModels: @Composable (onBack: () -> Unit, onProviders: () -> Unit, onEditAvatar: () -> Unit) -> Unit,
     modelProviders: @Composable (onBack: () -> Unit) -> Unit,
     mcpTools: @Composable (onBack: () -> Unit) -> Unit,
-    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit, onAgentConfig: (String) -> Unit, onRemoteBridge: () -> Unit) -> Unit,
+    agents: @Composable (onBack: () -> Unit, onModelProviders: () -> Unit, onAgentConfig: (String) -> Unit, onRemoteBridge: () -> Unit, onTerminalFocus: (String) -> Unit) -> Unit,
     agentConfig: @Composable (agentId: String, onBack: () -> Unit) -> Unit,
     remoteBridge: @Composable (onBack: () -> Unit) -> Unit,
     scheduledTasks: @Composable (onBack: () -> Unit) -> Unit,
@@ -85,6 +86,7 @@ fun NativeHomeApp(
     plugins: @Composable (onBack: () -> Unit, onPlugin: (String) -> Unit) -> Unit,
     pluginDetail: @Composable (pluginId: String, onBack: () -> Unit) -> Unit,
     memory: @Composable (onBack: () -> Unit) -> Unit,
+    terminal: @Composable (focusPackageId: String?, onBack: () -> Unit) -> Unit,
     executionHistory: @Composable (onBack: () -> Unit) -> Unit,
     permissions: @Composable (onBack: () -> Unit) -> Unit,
     appearance: @Composable (onBack: () -> Unit, onBackground: () -> Unit) -> Unit,
@@ -99,9 +101,17 @@ fun NativeHomeApp(
         val palette = LocalOmniPalette.current
         val backStack = rememberNavBackStack<HomeRoute>(HomeRoute.Home)
         LaunchedEffect(state.pendingDestination) {
-            if (state.pendingDestination == LegacyDestination.Page.ModelProviders) {
-                actions.consumeDestination()
-                if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders)
+            when (val destination = state.pendingDestination) {
+                LegacyDestination.Page.ModelProviders -> {
+                    actions.consumeDestination()
+                    if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders)
+                }
+                is LegacyDestination.TerminalPackage -> {
+                    actions.consumeDestination()
+                    backStack.add(HomeRoute.Terminal(
+                        destination.packageId.ifBlank { null }))
+                }
+                else -> Unit
             }
         }
         NavDisplay(
@@ -120,6 +130,7 @@ fun NativeHomeApp(
                     onArchive = { backStack.add(HomeRoute.Archive) },
                     onPet = { backStack.add(HomeRoute.Pet) },
                     onAgents = { backStack.add(HomeRoute.Agents) },
+                    onTerminal = { backStack.add(HomeRoute.Terminal()) },
                     onScheduledTasks = { backStack.add(HomeRoute.ScheduledTasks) },
                     onExecutionHistory = { backStack.add(HomeRoute.ExecutionHistory) },
                     onSkills = { backStack.add(HomeRoute.Skills) },
@@ -145,6 +156,7 @@ fun NativeHomeApp(
                     onModelProviders = { backStack.add(HomeRoute.ModelProviders) },
                     onMcpTools = { backStack.add(HomeRoute.McpTools) },
                     onAgents = { backStack.add(HomeRoute.Agents) },
+                    onTerminal = { backStack.add(HomeRoute.Terminal()) },
                 )
             }
             entry<HomeRoute.Appearance> { appearance(
@@ -185,6 +197,7 @@ fun NativeHomeApp(
                     { if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders) },
                     { agentId -> backStack.add(HomeRoute.AgentConfig(agentId)) },
                     { backStack.add(HomeRoute.RemoteBridge) },
+                    { packageId -> backStack.add(HomeRoute.Terminal(packageId.ifBlank { null })) },
                 )
             }
             entry<HomeRoute.AgentConfig> { key ->
@@ -202,6 +215,9 @@ fun NativeHomeApp(
                 pluginDetail(key.pluginId) { backStack.removeLastOrNull() }
             }
             entry<HomeRoute.Memory> { memory { backStack.removeLastOrNull() } }
+            entry<HomeRoute.Terminal> { key ->
+                terminal(key.focusPackageId) { backStack.removeLastOrNull() }
+            }
             entry<HomeRoute.ExecutionHistory> { executionHistory { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
         }
@@ -216,6 +232,7 @@ private fun HomeWithDrawer(
     onArchive: () -> Unit,
     onPet: () -> Unit,
     onAgents: () -> Unit,
+    onTerminal: () -> Unit,
     onScheduledTasks: () -> Unit,
     onExecutionHistory: () -> Unit,
     onSkills: () -> Unit,
@@ -262,7 +279,7 @@ private fun HomeWithDrawer(
                 },
             ) {
                 HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } },
-                    onPet, onAgents, actions.open)
+                    onPet, onAgents, onTerminal, actions.open)
             }
         }
     }

@@ -57,6 +57,7 @@ private sealed interface SettingDestination {
     data object ModelProviders : SettingDestination
     data object McpTools : SettingDestination
     data object Agents : SettingDestination
+    data object Terminal : SettingDestination
 }
 
 private data class SettingSection(@StringRes val title: Int, val items: List<SettingItem>)
@@ -73,7 +74,7 @@ private val sections = listOf(
     )),
     SettingSection(R.string.omni_settings_section_service_environment, listOf(
         SettingItem(R.drawable.omni_bot, R.string.omni_agents_title, R.string.omni_agents_subtitle, SettingDestination.Agents),
-        SettingItem(R.drawable.omni_square_terminal, R.string.omni_settings_alpine_title, R.string.omni_settings_alpine_subtitle, SettingDestination.Legacy(Page.Terminal)),
+        SettingItem(R.drawable.omni_square_terminal, R.string.omni_settings_alpine_title, R.string.omni_settings_alpine_subtitle, SettingDestination.Terminal),
         SettingItem(R.drawable.omni_monitor_smartphone, R.string.omni_settings_local_service_title, R.string.omni_settings_local_service_subtitle, SettingDestination.LocalService),
         SettingItem(R.drawable.omni_hammer, R.string.omni_settings_mcp_tools_title, R.string.omni_settings_mcp_tools_subtitle, SettingDestination.McpTools),
     )),
@@ -105,6 +106,7 @@ internal fun SettingsScreen(
     onModelProviders: () -> Unit,
     onMcpTools: () -> Unit,
     onAgents: () -> Unit,
+    onTerminal: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
     var showLocalService by rememberSaveable { mutableStateOf(false) }
@@ -121,7 +123,7 @@ internal fun SettingsScreen(
                     section.items.forEachIndexed { itemIndex, item ->
                         SettingRow(item, itemIndex == section.items.lastIndex, state, actions, onAbout, onPermissions,
                             onAppearance, onHomePreferences, onMiscellaneous, onStorage, onWorkspaceMemory,
-                            onSceneModels, onModelProviders, onMcpTools, onAgents) { showLocalService = true }
+                            onSceneModels, onModelProviders, onMcpTools, onAgents, onTerminal) { showLocalService = true }
                         if (itemIndex < section.items.lastIndex) {
                             Box(Modifier.padding(start = 30.dp).fillMaxWidth().height(1.dp)
                                 .background(palette.border.copy(alpha = if (palette.dark) .5f else .78f)))
@@ -156,6 +158,7 @@ private fun SettingRow(
     onModelProviders: () -> Unit,
     onMcpTools: () -> Unit,
     onAgents: () -> Unit,
+    onTerminal: () -> Unit,
     onLocalServiceDetails: () -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -181,13 +184,14 @@ private fun SettingRow(
                     SettingDestination.ModelProviders -> onModelProviders()
                     SettingDestination.McpTools -> onMcpTools()
                     SettingDestination.Agents -> onAgents()
+                    SettingDestination.Terminal -> onTerminal()
                     is SettingDestination.Legacy -> actions.open(destination.page)
                 }
             } else Modifier)
             .padding(start = 4.dp, top = 14.dp, end = 2.dp, bottom = if (isLast) 14.dp else 13.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        OmniIcon(item.icon, tint = if (item.destination == SettingDestination.Legacy(Page.Terminal)) Color(0xFF2C7FEB) else palette.text)
+        OmniIcon(item.icon, tint = if (item.destination == SettingDestination.Terminal) Color(0xFF2C7FEB) else palette.text)
         Spacer(Modifier.width(10.dp))
         Column(Modifier.weight(1f)) {
             Text(title, fontSize = 14.sp, lineHeight = 21.sp, fontWeight = FontWeight.Medium, color = palette.text)

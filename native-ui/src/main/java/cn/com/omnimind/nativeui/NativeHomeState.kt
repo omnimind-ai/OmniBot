@@ -95,7 +95,7 @@ sealed interface LegacyDestination {
     data class PluginRoute(val route: String) : LegacyDestination
 
     enum class Page : LegacyDestination {
-        Account, ModelProviders, SceneModels, Terminal, RemoteBridge,
+        Account, ModelProviders, SceneModels, RemoteBridge,
         Chat, QuickStart, UserGuide,
         Workspace,
     }

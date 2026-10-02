@@ -38,6 +38,7 @@ internal fun HomeScreen(
     onDrawer: () -> Unit,
     onPetSettings: () -> Unit,
     onAgents: () -> Unit,
+    onTerminal: () -> Unit,
     onOpen: (LegacyDestination) -> Unit,
 ) {
     val palette = LocalOmniPalette.current
@@ -49,7 +50,7 @@ internal fun HomeScreen(
         if (backgroundActive) BackgroundImageLayer(backgroundState, Modifier.fillMaxSize())
         Scaffold(
             containerColor = if (backgroundActive) Color.Transparent else palette.page,
-            topBar = { HomeTopBar(onDrawer, onPetSettings, onAgents, onOpen) },
+            topBar = { HomeTopBar(onDrawer, onPetSettings, onAgents, onTerminal, onOpen) },
             bottomBar = {
                 Column(Modifier.navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // This is an entry point, not a second composer or send pipeline.
@@ -61,7 +62,7 @@ internal fun HomeScreen(
                         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                             OmniIconButton(R.drawable.omni_plus, stringResource(R.string.omni_input_tools), openChat, size = 20.dp)
                             OmniIconButton(R.drawable.omni_square_terminal, stringResource(R.string.omni_settings_alpine_title),
-                                { onOpen(LegacyDestination.Page.Terminal) }, size = 20.dp)
+                                onTerminal, size = 20.dp)
                             Spacer(Modifier.weight(1f))
                             OmniIconButton(R.drawable.omni_mic, stringResource(R.string.omni_voice), openChat, size = 20.dp)
                         }
@@ -104,7 +105,7 @@ internal fun HomeScreen(
 
 @Composable
 private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit, onAgents: () -> Unit,
-    onOpen: (LegacyDestination) -> Unit) {
+    onTerminal: () -> Unit, onOpen: (LegacyDestination) -> Unit) {
     val palette = LocalOmniPalette.current
     BoxWithConstraints(Modifier.fillMaxWidth().statusBarsPadding().padding(8.dp).height(50.dp)) {
         // Matches ChatAppBar's symmetric reservation so the island stays screen-centered.

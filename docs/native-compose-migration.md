@@ -57,9 +57,10 @@ LauncherActivity
       ├─ NativeSkillStoreViewModel → SkillIndexService (registry + workspace skill dirs)
       ├─ NativePluginMarketViewModel / NativePluginDetailViewModel → NativePluginRepository → OmniPluginHost
       ├─ NativeMemoryCenterViewModel → NativeMemoryCenterRepository → WorkspaceMemoryService
+      ├─ NativeTerminalSettingsViewModel → NativeTerminalSettingsRepository → EmbeddedTerminalSetupManager / EmbeddedTerminalInitCoordinator / EmbeddedTerminalAutoStartManager / WorkspaceMountManager
       ├─ NativeUsageStatisticsViewModel → NativeUsageStatisticsRepository → ConversationDomainService / TokenUsageRecordDao (read-only)
       ├─ :native-ui / NativeHomeApp
-      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills / Plugins / PluginDetail(pluginId) / Memory
+      │   └─ one saved miuix-nav stack: Home → Settings / Archive / About / Permissions / Appearance / Background / Pet / HomePreferences / Miscellaneous / AlarmSettings / OpenWith / Storage / RequestLogs / RuntimeLogs / WorkspaceMemory / SceneModels / ModelProviders / McpTools / Agents / AgentConfig(agentId) / RemoteBridge / ScheduledTasks / ExecutionHistory / Skills / Plugins / PluginDetail(pluginId) / Memory / Terminal(focusPackageId)
       └─ LegacyHomeNavigator → MainActivity → existing Flutter page
 ```
 
@@ -169,7 +170,9 @@ random greeting selection out of pixel comparisons.
   page is native as well (batch 4i-2). The skill store page is native
   (batch 4j); the plugin market and detail pages are native (batch 4k); the
   memory center is native (batch 4l-1); the drawer shortcut row no longer opens
-  any Flutter compatibility page. The OmniFlow execution center
+  any Flutter compatibility page. The terminal settings page is native
+  (batch 4m), including the distribution switch, environment inventory,
+  boot tasks and workspace mounts. The OmniFlow execution center
   (`/task/omniflow`, entered from tool-summary cards and manual recording) and
   the remote workspace browser remain Flutter compatibility destinations.
 - Native home must gain the launch/foreground behaviors currently owned by
@@ -203,6 +206,63 @@ The order below follows the actual owners in this repository, not page size alon
 
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
+
+## Batch 4m checkpoint: terminal settings (source complete; device acceptance pending)
+
+- The Settings row and the home composer terminal icon now open the saved native
+  `Terminal(focusPackageId)` route; the `TerminalPackage` deep link keeps its
+  focus behavior through the native route (the Agents page's runtime-missing
+  hand-off and the home Web-action path both land there). `Page.Terminal` had
+  no remaining callers and was removed with its mapping; the navigator's
+  `TerminalPackage` mapping stays as a defensive fallback that native home never
+  dispatches. The terminal process, environment installation and launch paths
+  are untouched: the page's setup/terminal buttons still call
+  `EmbeddedTerminalLaunchHelper.launch`.
+- **Owner conclusion**: the environment inventory stays with
+  `EmbeddedTerminalSetupManager.getPackageInventory()`; the distribution switch
+  reuses the channel handler's exact sequence
+  (`EmbeddedTerminalInitCoordinator.prepareDistribution` →
+  `TerminalManager.closeAllSessions` → the ReTerminal settings write), with
+  progress observed through the coordinator's existing listener registry and
+  cancel through `cancelCurrent()`. Boot tasks stay with
+  `EmbeddedTerminalAutoStartManager` (list/save/delete/runTaskNow).
+  **Workspace mounts**: the Flutter `WorkspaceMountService` was a Dart-only
+  owner over symlinks under the workspace root; the new
+  `WorkspaceMountManager` ports the same symlink format, alias validation and
+  unique-alias suggestion to Kotlin, rooted at the existing
+  `AgentWorkspaceManager.rootDirectory`. Both UIs operate on the same symlinks;
+  no second store or migration exists.
+- The mount picker uses the system document-tree picker; primary-volume and
+  Documents-home tree URIs map to host paths, other volumes report the
+  invalid-directory notice (the Flutter page used file_picker's real-path
+  conversion). Alias validation errors map to localized resources.
+- Compilation (`:app:compileDevelopStandardDebugKotlin`,
+  `:native-ui:testDebugUnitTest`,
+  `:native-ui:compileDebugAndroidTestKotlin`) and `git diff --check` are the
+  verification boundary. No device interaction, download, install or mount was
+  run. Visual parity and runtime acceptance remain pending.
+
+Manual acceptance checklist:
+
+1. Compare both themes and languages: distribution segmented control, intro
+   line, grouped environment rows (checkbox vs ready check, status tag, version
+   text), setup button states, boot-task rows and editor, mount rows, error
+   cards, insets and predictive back.
+2. Switch Alpine/Ubuntu with a real download: progress bar, stage text, cancel,
+   and failure revert (selection returns to the previous distribution). Repeat
+   with an interrupted network. Confirm the Flutter page and the terminal agree
+   afterwards.
+3. Detect a fresh environment; the missing items are preselected and the focus
+   deep link (`TerminalPackage` from the Agents Web action) selects its
+   package. Start configuration and confirm the terminal's setup session runs.
+4. Add, edit, toggle, run and delete boot tasks; confirm the terminal session
+   bridge state follows and the Flutter page shows the same list.
+5. Mount a primary-storage directory and a Documents-home directory; confirm
+   the symlink appears in `/workspace`, the chat/terminal see it, and unmount
+   removes only the link. Check a broken mount badge after deleting the source
+   directory, and alias validation errors.
+6. Rotate and recreate the process during a distribution switch and with the
+   boot-task editor open; confirm no duplicate preparation starts.
 
 ## Batch 4l-1 checkpoint: memory center (source complete; device acceptance pending)
 

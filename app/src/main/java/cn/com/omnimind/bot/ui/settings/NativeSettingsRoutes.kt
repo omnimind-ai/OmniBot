@@ -38,6 +38,8 @@ import cn.com.omnimind.nativeui.settings.SkillStoreScreen
 import cn.com.omnimind.nativeui.settings.PluginMarketScreen
 import cn.com.omnimind.nativeui.settings.PluginDetailScreen
 import cn.com.omnimind.nativeui.settings.MemoryCenterScreen
+import cn.com.omnimind.nativeui.settings.TerminalSettingsScreen
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalLaunchHelper
 import cn.com.omnimind.nativeui.settings.UsageStatisticsScreen
 
 @Composable
@@ -114,6 +116,7 @@ internal fun NativeAgentsRoute(
     onModelProviders: () -> Unit,
     onAgentConfig: (String) -> Unit,
     onRemoteBridge: () -> Unit,
+    onTerminalFocus: (String) -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -122,8 +125,11 @@ internal fun NativeAgentsRoute(
     LaunchedEffect(state.pendingDestination) {
         val destination = state.pendingDestination ?: return@LaunchedEffect
         viewModel.actions.consumeDestination()
-        if (destination == LegacyDestination.Page.ModelProviders) onModelProviders()
-        else openLegacy(destination)
+        when (destination) {
+            LegacyDestination.Page.ModelProviders -> onModelProviders()
+            is LegacyDestination.TerminalPackage -> onTerminalFocus(destination.packageId)
+            else -> openLegacy(destination)
+        }
     }
     AgentsScreen(state, viewModel.actions, onAgentConfig, onRemoteBridge, onBack)
 }
@@ -271,6 +277,51 @@ internal fun NativeMemoryCenterRoute(viewModel: NativeMemoryCenterViewModel, onB
     LaunchedEffect(Unit) { viewModel.load() }
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
     MemoryCenterScreen(state, viewModel.actions, onBack)
+}
+
+@Composable
+internal fun NativeTerminalSettingsRoute(
+    viewModel: NativeTerminalSettingsViewModel,
+    host: Context,
+    onBack: () -> Unit,
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    LaunchedEffect(Unit) { viewModel.load() }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { viewModel.resume() }
+    val directoryPicker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocumentTree(),
+    ) { uri ->
+        val path = uri?.let { resolveHostDirectoryPath(it) }
+        if (path != null) viewModel.onMountDirectoryPicked(path)
+        else if (uri != null) viewModel.mountDirectoryPickFailed()
+    }
+    TerminalSettingsScreen(
+        state, viewModel.actions,
+        onOpenSetup = { packageIds ->
+            // The terminal owns the setup session and its in-flight install.
+            EmbeddedTerminalLaunchHelper.launch(host, openSetup = true, setupPackageIds = packageIds)
+        },
+        onOpenTerminal = { EmbeddedTerminalLaunchHelper.launch(host) },
+        onPickMountDirectory = { directoryPicker.launch(null) },
+        onBack = onBack,
+    )
+}
+
+/** SAF tree URI → real host path (primary volume and Documents home only). */
+private fun resolveHostDirectoryPath(uri: android.net.Uri): String? {
+    val docId = runCatching { android.provider.DocumentsContract.getTreeDocumentId(uri) }
+        .getOrNull() ?: return null
+    val parts = docId.split(":", limit = 2)
+    val relative = parts.getOrNull(1).orEmpty()
+    return when (parts[0]) {
+        "primary" -> java.io.File(android.os.Environment.getExternalStorageDirectory(), relative).path
+        "home" -> java.io.File(
+            android.os.Environment.getExternalStoragePublicDirectory(
+                android.os.Environment.DIRECTORY_DOCUMENTS),
+            relative,
+        ).path
+        else -> null
+    }
 }
 
 @Composable

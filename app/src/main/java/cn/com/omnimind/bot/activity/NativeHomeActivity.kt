@@ -71,6 +71,8 @@ import cn.com.omnimind.bot.ui.settings.NativeSkillStoreViewModel
 import cn.com.omnimind.bot.ui.settings.NativeSkillStoreRoute
 import cn.com.omnimind.bot.ui.settings.NativeMemoryCenterViewModel
 import cn.com.omnimind.bot.ui.settings.NativeMemoryCenterRoute
+import cn.com.omnimind.bot.ui.settings.NativeTerminalSettingsViewModel
+import cn.com.omnimind.bot.ui.settings.NativeTerminalSettingsRoute
 import cn.com.omnimind.bot.ui.settings.NativePluginMarketViewModel
 import cn.com.omnimind.bot.ui.settings.NativePluginMarketRoute
 import cn.com.omnimind.bot.ui.settings.NativePluginDetailViewModel
@@ -221,8 +223,8 @@ class NativeHomeActivity : ComponentActivity() {
                     sceneModelsViewModel, onProviders, onEditAvatar, onBack) },
                 modelProviders = { onBack -> NativeModelProviderRoute(modelProviderViewModel, onBack) },
                 mcpTools = { onBack -> NativeRemoteMcpRoute(remoteMcpViewModel, onBack) },
-                agents = { onBack, onModelProviders, onAgentConfig, onRemoteBridge -> NativeAgentsRoute(
-                    agentsViewModel, navigator::open, onModelProviders, onAgentConfig, onRemoteBridge, onBack) },
+                agents = { onBack, onModelProviders, onAgentConfig, onRemoteBridge, onTerminalFocus -> NativeAgentsRoute(
+                    agentsViewModel, navigator::open, onModelProviders, onAgentConfig, onRemoteBridge, onTerminalFocus, onBack) },
                 agentConfig = { agentId, onBack ->
                     val configViewModel = remember(agentId) {
                         ViewModelProvider(this@NativeHomeActivity,
@@ -251,6 +253,14 @@ class NativeHomeActivity : ComponentActivity() {
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
+                terminal = { focusPackageId, onBack ->
+                    val terminalViewModel = remember(focusPackageId) {
+                        ViewModelProvider(this@NativeHomeActivity,
+                            NativeTerminalSettingsViewModel.Factory(this@NativeHomeActivity, focusPackageId))[
+                                "terminal:${focusPackageId.orEmpty()}", NativeTerminalSettingsViewModel::class.java]
+                    }
+                    NativeTerminalSettingsRoute(terminalViewModel, this@NativeHomeActivity, onBack)
+                },
                 plugins = { onBack, onPlugin -> NativePluginMarketRoute(pluginMarketViewModel, onPlugin, onBack) },
                 pluginDetail = { pluginId, onBack ->
                     val detailViewModel = remember(pluginId) {
