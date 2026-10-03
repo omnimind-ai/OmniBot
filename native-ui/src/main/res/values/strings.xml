@@ -804,7 +804,7 @@
     <string name="omni_plugin_vlm_debug_ready">The debug APK includes %1$s; no model setup is required.</string>
     <string name="omni_plugin_vlm_ready">%1$s is ready.</string>
     <string name="omni_plugin_vlm_configure">Plugin capabilities are installed. Configure a GUI Agent provider before online execution.</string>
-    <string name="omni_memory_greeting">Hi there,\nWe'll keep your memories together here.</string>
+    <string name="omni_memory_greeting">Hi there,\nWe’ll keep your memories together here.</string>
     <string name="omni_memory_tab_local">Short-term Memory</string>
     <string name="omni_memory_tab_cloud">Long-term Memory</string>
     <string name="omni_memory_short_retention">Short-term memories stay on this device without automatic expiry. Long-press an entry to delete it or select several to delete.</string>
