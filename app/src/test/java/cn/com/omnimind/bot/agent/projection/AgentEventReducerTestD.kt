@@ -962,41 +962,7 @@ class AgentEventReducerTestD {
         assertNull(runtime.currentDispatchTurnId)
     }
 
-    @Ignore("ported with coordinator tests")
-    @Test
-    fun `keeps replay delta offsets across matching snapshot replacement`() {
-        // final coordinator = ChatConversationRuntimeCoordinator.instance;
-        // const conversationId = 420042;
-        // final hydratedMessage = ChatMessageModel(
-        //   id: 'msg-1-agent-message',
-        //   type: 1,
-        //   user: 2,
-        //   content: {'text': 'Hello', 'id': 'msg-1-agent-message'},
-        // );
-        // final coordinatorRuntime = coordinator.debugEnsureRuntimeState(
-        //   conversationId: conversationId,
-        //   mode: kChatRuntimeModeAgent,
-        //   initialMessages: [hydratedMessage],
-        // );
-        // coordinatorRuntime.agentReplayDeltaOffsets['msg-1-agent-message'] = 3;
-        // coordinatorRuntime.agentReplayDeltaOffsets['stale-entry'] = 2;
-        //
-        // coordinator.replaceConversationSnapshot(
-        //   conversationId: conversationId,
-        //   mode: kChatRuntimeModeAgent,
-        //   messages: [hydratedMessage],
-        // );
-        //
-        // final updatedRuntime = coordinator.debugRuntimeStateFor(
-        //   conversationId: conversationId,
-        //   mode: kChatRuntimeModeAgent,
-        // )!;
-        // expect(updatedRuntime.agentReplayDeltaOffsets['msg-1-agent-message'], 3);
-        // expect(
-        //   updatedRuntime.agentReplayDeltaOffsets.containsKey('stale-entry'),
-        //   isFalse,
-        // );
-    }
+    // Ported to ChatRuntimeRoutingTest (needs the coordinator).
 
     // The next three tests drive `mergeRemoteCodexSnapshotMessagesForTesting`
     // (remote_codex_snapshot_mapper.dart), which has no Kotlin port yet.

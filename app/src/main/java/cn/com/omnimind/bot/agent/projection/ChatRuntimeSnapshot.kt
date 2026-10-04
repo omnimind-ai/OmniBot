@@ -1,5 +1,7 @@
 package cn.com.omnimind.bot.agent.projection
 
+import java.util.Collections
+
 /**
  * Immutable UI snapshot of one runtime: exactly what the Dart
  * `ChatRuntimeView` exposes. Surfaces render from it and never see the
@@ -105,14 +107,14 @@ data class ChatRuntimeSnapshot(
                 conversationId = state.conversationId,
                 mode = state.mode,
                 revision = revision,
-                conversation = state.conversation?.let { deepCopyMap(it) },
-                messages = state.messages.toList(),
+                conversation = state.conversation?.let { readOnlyMap(it) },
+                messages = Collections.unmodifiableList(state.messages.toList()),
                 structureRevision = state.messages.structureRevision,
                 lastMutationRevision = state.messages.lastMutationRevision,
                 lastMutationAffectsPageChrome = state.messages.lastMutationAffectsPageChrome,
                 lastMutationKind = state.messages.lastMutationKind,
-                currentAiMessages = LinkedHashMap(state.currentAiMessages),
-                currentThinkingMessages = LinkedHashMap(state.currentThinkingMessages),
+                currentAiMessages = Collections.unmodifiableMap(LinkedHashMap(state.currentAiMessages)),
+                currentThinkingMessages = Collections.unmodifiableMap(LinkedHashMap(state.currentThinkingMessages)),
                 isAiResponding = state.isAiResponding,
                 isContextCompressing = state.isContextCompressing,
                 isCheckingExecutableTask = state.isCheckingExecutableTask,
@@ -126,7 +128,7 @@ data class ChatRuntimeSnapshot(
                 activeAcpTurnId = state.activeAcpTurnId,
                 activeAcpSessionId = state.activeAcpSessionId,
                 lastAgentTurnId = state.lastAgentTurnId,
-                activeAgentTurnIds = LinkedHashSet(state.activeAgentTurnIds),
+                activeAgentTurnIds = Collections.unmodifiableSet(LinkedHashSet(state.activeAgentTurnIds)),
                 activeToolCardId = state.activeToolCardId,
                 activeThinkingCardId = state.activeThinkingCardId,
                 activeContextCompactionMarkerId = state.activeContextCompactionMarkerId,
@@ -136,13 +138,27 @@ data class ChatRuntimeSnapshot(
                 thinkingRound = state.thinkingRound,
                 chatIslandDisplayLayer = state.chatIslandDisplayLayer,
                 lastAgentToolType = state.lastAgentToolType,
-                browserSessionSnapshot = state.browserSessionSnapshot?.let { deepCopyMap(it) },
-                availableAcpCommands = state.availableAcpCommands.map { deepCopyMap(it) },
-                acpConfigOptions = state.acpConfigOptions.map { deepCopyMap(it) },
+                browserSessionSnapshot = state.browserSessionSnapshot?.let { readOnlyMap(it) },
+                availableAcpCommands = Collections.unmodifiableList(state.availableAcpCommands.map { readOnlyMap(it) }),
+                acpConfigOptions = Collections.unmodifiableList(state.acpConfigOptions.map { readOnlyMap(it) }),
                 currentAcpModeId = state.currentAcpModeId,
-                acpSessionInfo = deepCopyMap(state.acpSessionInfo),
+                acpSessionInfo = readOnlyMap(state.acpSessionInfo),
                 shouldSuppressLocalMessageSnapshotEcho = state.shouldSuppressLocalMessageSnapshotEcho,
                 isEphemeral = isEphemeral,
             )
     }
+}
+
+/** Deep, read-only copy: the snapshot never aliases mutable runtime state. */
+@Suppress("UNCHECKED_CAST")
+private fun readOnlyMap(value: Map<String, Any?>): Map<String, Any?> = readOnly(value) as Map<String, Any?>
+
+private fun readOnly(value: Any?): Any? = when (value) {
+    is Map<*, *> -> {
+        val copy = LinkedHashMap<String, Any?>(value.size)
+        for ((key, nested) in value) copy[key.toString()] = readOnly(nested)
+        Collections.unmodifiableMap(copy)
+    }
+    is List<*> -> Collections.unmodifiableList(value.map { readOnly(it) })
+    else -> value
 }

@@ -7,7 +7,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 import java.util.Base64
 
@@ -34,86 +33,9 @@ class AgentEventReducerTestC {
     private fun base64Utf8(text: String): String =
         Base64.getEncoder().encodeToString(text.toByteArray(Charsets.UTF_8))
 
-    @Test
-    @Ignore("ported with coordinator tests")
-    fun `routes a session-only event to its background conversation`() {
-        /*
-        final coordinator = ChatConversationRuntimeCoordinator.instance;
-        final first = coordinator.debugEnsureRuntimeState(
-          conversationId: 8101,
-          mode: kChatRuntimeModeAgent,
-        );
-        final second = coordinator.debugEnsureRuntimeState(
-          conversationId: 8102,
-          mode: kChatRuntimeModeAgent,
-        );
-        first.acceptsAcpEvent(
-          sessionId: 'session-background-1',
-          allowSessionAdmission: true,
-        );
-        second.acceptsAcpEvent(
-          sessionId: 'session-background-2',
-          allowSessionAdmission: true,
-        );
+    // Ported to ChatRuntimeRoutingTest (needs the coordinator).
 
-        expect(
-          coordinator.conversationIdForAcpEvent(sessionId: 'session-background-2'),
-          8102,
-        );
-
-        coordinator.discardConversationRuntime(
-          conversationId: 8101,
-          mode: kChatRuntimeModeAgent,
-        );
-        coordinator.discardConversationRuntime(
-          conversationId: 8102,
-          mode: kChatRuntimeModeAgent,
-        );
-        */
-    }
-
-    @Test
-    @Ignore("ported with coordinator tests")
-    fun `interrupts every running tool in a parallel tool batch`() {
-        /*
-        final coordinator = ChatConversationRuntimeCoordinator.instance;
-        final parallelRuntime = coordinator.debugEnsureRuntimeState(
-          conversationId: 8103,
-          mode: kChatRuntimeModeAgent,
-        )..activeRunId = 'run-parallel-tools';
-        parallelRuntime.messages.addAll([
-          ChatMessageModel.cardMessage({
-            'type': 'agent_tool_summary',
-            'taskId': 'run-parallel-tools',
-            'status': 'running',
-          }, id: 'parallel-tool-1'),
-          ChatMessageModel.cardMessage({
-            'type': 'agent_tool_summary',
-            'taskId': 'run-parallel-tools',
-            'status': 'progress',
-          }, id: 'parallel-tool-2'),
-        ]);
-        parallelRuntime.activeToolCardId = 'parallel-tool-2';
-
-        coordinator.interruptActiveToolCard(
-          conversationId: 8103,
-          mode: kChatRuntimeModeAgent,
-          summary: '已取消',
-        );
-
-        expect(
-          parallelRuntime.messages
-              .map((message) => message.cardData?['status'])
-              .toList(),
-          ['interrupted', 'interrupted'],
-        );
-        expect(parallelRuntime.activeToolCardId, isNull);
-        coordinator.discardConversationRuntime(
-          conversationId: 8103,
-          mode: kChatRuntimeModeAgent,
-        );
-        */
-    }
+    // Ported to ChatRuntimeRoutingTest (needs the coordinator).
 
     @Test
     fun `uses sessionId and toolCallId as the canonical tool identity`() {
