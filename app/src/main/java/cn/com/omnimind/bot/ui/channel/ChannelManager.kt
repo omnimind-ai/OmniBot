@@ -33,6 +33,7 @@ class ChannelManager {
     private var omniLinkPluginChannel: OmniLinkPluginChannel = OmniLinkPluginChannel()
     private var accountChannel: AccountChannel = AccountChannel()
     private var voicePlaybackChannel: VoicePlaybackChannel = VoicePlaybackChannel()
+    private var chatRuntimeChannel: ChatRuntimeChannel = ChatRuntimeChannel()
     fun getUIRouterChannel(): UIRouterChannel {
         return uiRouterChannel
     }
@@ -68,6 +69,8 @@ class ChannelManager {
         // lifecycle order so the event channel is never silently unbound.
         voicePlaybackChannel.onCreate(App.instance)
         voicePlaybackChannel.setChannel(flutterEngine)
+        chatRuntimeChannel.onCreate(App.instance)
+        chatRuntimeChannel.setChannel(flutterEngine)
     }
 
     fun onCreate(context: Context) {
@@ -87,6 +90,7 @@ class ChannelManager {
         pluginPlatformChannel.onCreate(context)
         omniLinkPluginChannel.onCreate(context)
         voicePlaybackChannel.onCreate(context)
+        chatRuntimeChannel.onCreate(context)
     }
 
     fun clearChannel() {
@@ -112,6 +116,7 @@ class ChannelManager {
         omniLinkPluginChannel.clear()
         accountChannel.clear()
         voicePlaybackChannel.clear()
+        chatRuntimeChannel.clear()
     }
 
 

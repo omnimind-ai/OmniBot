@@ -3,14 +3,14 @@ part of 'chat_conversation_runtime_coordinator.dart';
 /// Read-only projection of one conversation runtime.
 ///
 /// Pages, sheets and the drawer read runtime state only through this view and
-/// change it only through coordinator commands. The coordinator stays the
-/// single writer, so the projection can later move behind a native snapshot
-/// without the page keeping a second mutable copy.
+/// change it only through coordinator commands. The view reads the latest
+/// snapshot published by the native runtime owner; Flutter keeps no second
+/// mutable copy of runtime state.
 class ChatRuntimeView {
   ChatRuntimeView._(this._state)
     : messages = ChatRuntimeMessageListView._(_state.messages);
 
-  final ChatConversationRuntimeState _state;
+  final _ChatRuntimeMirror _state;
 
   /// Newest-first visible messages. Writes throw; use the coordinator's
   /// message commands instead.

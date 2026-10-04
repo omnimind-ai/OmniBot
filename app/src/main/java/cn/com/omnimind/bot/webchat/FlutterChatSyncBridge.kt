@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.webchat
 import android.os.Handler
 import android.os.Looper
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.agent.projection.ChatRuntimeHost
 import io.flutter.plugin.common.MethodChannel
 
 object FlutterChatSyncBridge {
@@ -78,17 +79,21 @@ object FlutterChatSyncBridge {
         attachments: List<Map<String, Any?>>,
         createdAt: Long
     ) {
-        dispatch(
-            method = "onExternalUserMessageAppended",
-            arguments = mapOf(
-                "conversationId" to conversationId,
-                "mode" to mode,
-                "entryId" to entryId,
-                "text" to text,
-                "attachments" to attachments,
-                "createdAt" to createdAt
-            )
+        // The chat runtime owner is native: insert the bubble directly into
+        // its runtime instead of round-tripping through Flutter.
+        val data = mapOf(
+            "conversationId" to conversationId,
+            "mode" to mode,
+            "entryId" to entryId,
+            "text" to text,
+            "attachments" to attachments,
+            "createdAt" to createdAt
         )
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            ChatRuntimeHost.onExternalUserMessageAppended(data)
+        } else {
+            mainHandler.post { ChatRuntimeHost.onExternalUserMessageAppended(data) }
+        }
     }
 
     private fun dispatch(method: String, arguments: Any?) {

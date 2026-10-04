@@ -2032,7 +2032,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         _activateRemoteCodexRuntimeForThread(resolvedThreadId);
       }
       final responseTurnId = _asAgentString(response['turnId']);
-      _runtimeCoordinator.applyAcpPromptResponse(
+      await _runtimeCoordinator.applyAcpPromptResponse(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
@@ -2083,7 +2083,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
       );
-      _runtimeCoordinator.applyAcpPromptResponse(
+      await _runtimeCoordinator.applyAcpPromptResponse(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,

@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../helpers/fake_native_chat_runtime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/command_overlay/chat_bot_sheet.dart';
@@ -17,7 +19,6 @@ import 'package:ui/theme/app_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const runtimeChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
-  const eventsChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntimeEvents');
   const assistChannel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
   const speechChannel = MethodChannel('cn.com.omnimind.bot/SpeechRecognition');
   const screenChannel = MethodChannel('cn.com.omnimind.bot/ScreenDialogEvent');
@@ -25,12 +26,13 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   final coordinator = ChatConversationRuntimeCoordinator.instance;
+  late FakeNativeChatRuntime nativeRuntime;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
     coordinator.resetForTest();
-    messenger.setMockMethodCallHandler(eventsChannel, (_) async => null);
+    nativeRuntime = FakeNativeChatRuntime.install();
     messenger.setMockMethodCallHandler(speechChannel, (_) async => true);
     messenger.setMockMethodCallHandler(screenChannel, (_) async => null);
     messenger.setMockMethodCallHandler(voiceChannel, (_) async => true);
@@ -52,9 +54,9 @@ void main() {
 
   tearDown(() {
     coordinator.resetForTest();
+    nativeRuntime.uninstall();
     for (final channel in <MethodChannel>[
       runtimeChannel,
-      eventsChannel,
       assistChannel,
       speechChannel,
       screenChannel,

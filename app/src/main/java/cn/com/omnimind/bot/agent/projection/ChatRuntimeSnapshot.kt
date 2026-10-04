@@ -53,22 +53,32 @@ data class ChatRuntimeSnapshot(
     val acpSessionInfo: Map<String, Any?>,
     val shouldSuppressLocalMessageSnapshotEcho: Boolean,
     val isEphemeral: Boolean,
+    /** Local task ids currently bound to this runtime (Dart `_taskBindings`). */
+    val boundTaskIds: Set<String> = emptySet(),
 ) {
     val currentDispatchTurnId: String? get() = activeRunId
 
-    /** Flutter `StandardMessageCodec` form consumed by the snapshot adapter. */
-    fun toChannelMap(): Map<String, Any?> = linkedMapOf(
+    /**
+     * Flutter `StandardMessageCodec` form consumed by the snapshot adapter.
+     *
+     * Messages travel as `messageIds` (full newest-first order) plus only the
+     * [changedMessages] the adapter has not seen, so a streamed chunk costs
+     * one message instead of the whole conversation. Text caches travel as
+     * keys only: surfaces test presence, never content.
+     */
+    fun toChannelMap(changedMessages: List<ChatMessage>): Map<String, Any?> = linkedMapOf(
         "conversationId" to conversationId,
         "mode" to mode,
         "revision" to revision,
         "conversation" to conversation,
-        "messages" to messages.map { it.toJson() },
+        "messageIds" to messages.map { it.id },
+        "changedMessages" to changedMessages.map { messageToChannel(it) },
         "structureRevision" to structureRevision,
         "lastMutationRevision" to lastMutationRevision,
         "lastMutationAffectsPageChrome" to lastMutationAffectsPageChrome,
         "lastMutationKind" to lastMutationKind.name,
-        "currentAiMessages" to currentAiMessages,
-        "currentThinkingMessages" to currentThinkingMessages,
+        "currentAiMessageKeys" to currentAiMessages.keys.toList(),
+        "currentThinkingMessageKeys" to currentThinkingMessages.keys.toList(),
         "isAiResponding" to isAiResponding,
         "isContextCompressing" to isContextCompressing,
         "isCheckingExecutableTask" to isCheckingExecutableTask,
@@ -99,10 +109,16 @@ data class ChatRuntimeSnapshot(
         "acpSessionInfo" to acpSessionInfo,
         "shouldSuppressLocalMessageSnapshotEcho" to shouldSuppressLocalMessageSnapshotEcho,
         "isEphemeral" to isEphemeral,
+        "boundTaskIds" to boundTaskIds.toList(),
     )
 
     companion object {
-        internal fun of(state: ChatConversationRuntimeState, revision: Long, isEphemeral: Boolean) =
+        internal fun of(
+            state: ChatConversationRuntimeState,
+            revision: Long,
+            isEphemeral: Boolean,
+            boundTaskIds: Set<String> = emptySet(),
+        ) =
             ChatRuntimeSnapshot(
                 conversationId = state.conversationId,
                 mode = state.mode,
@@ -145,6 +161,7 @@ data class ChatRuntimeSnapshot(
                 acpSessionInfo = readOnlyMap(state.acpSessionInfo),
                 shouldSuppressLocalMessageSnapshotEcho = state.shouldSuppressLocalMessageSnapshotEcho,
                 isEphemeral = isEphemeral,
+                boundTaskIds = Collections.unmodifiableSet(LinkedHashSet(boundTaskIds)),
             )
     }
 }
@@ -162,3 +179,7 @@ private fun readOnly(value: Any?): Any? = when (value) {
     is List<*> -> Collections.unmodifiableList(value.map { readOnly(it) })
     else -> value
 }
+
+/** Message JSON for the channel; `createAt` as epoch millis (exact round trip). */
+fun messageToChannel(message: ChatMessage): Map<String, Any?> =
+    LinkedHashMap(message.toJson()).apply { put("createAt", message.createAtMillis) }

@@ -8,6 +8,8 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../helpers/fake_native_chat_runtime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/state/habitual_hand_controller.dart';
 import 'package:ui/features/home/widgets/conversation_slidable.dart';
@@ -1425,6 +1427,8 @@ void main() {
   ) async {
     final coordinator = ChatConversationRuntimeCoordinator.instance;
     coordinator.resetForTest();
+    final nativeRuntime = FakeNativeChatRuntime.install();
+    addTearDown(nativeRuntime.uninstall);
     coordinator.ensureInitialized();
     addTearDown(coordinator.resetForTest);
     nativeConversations = <Map<String, Object?>>[

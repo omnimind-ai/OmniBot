@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.ui.channel
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import cn.com.omnimind.bot.agent.projection.ChatRuntimeHost
 import cn.com.omnimind.bot.voice.SceneVoicePlaybackManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -40,6 +41,11 @@ class VoicePlaybackChannel : EventChannel.StreamHandler {
         eventChannel = EventChannel(flutterEngine.dartExecutor.binaryMessenger, EVENT_CHANNEL)
         manager?.setEventEmitter { payload ->
             mainHandler.post { eventSink?.success(payload) }
+        }
+        // Assistant-reply autoplay is driven by the native chat runtime owner.
+        val boundManager = manager
+        ChatRuntimeHost.voiceSpeaker = boundManager?.let { voice ->
+            { messageId, text, enqueue -> voice.speakText(messageId, text, enqueue, preferStreaming = true) }
         }
         methodChannel?.setMethodCallHandler { call, result -> handle(call, result) }
         eventChannel?.setStreamHandler(this)
@@ -84,6 +90,7 @@ class VoicePlaybackChannel : EventChannel.StreamHandler {
     }
 
     fun clear() {
+        ChatRuntimeHost.voiceSpeaker = null
         eventSink = null
         methodChannel?.setMethodCallHandler(null)
         eventChannel?.setStreamHandler(null)

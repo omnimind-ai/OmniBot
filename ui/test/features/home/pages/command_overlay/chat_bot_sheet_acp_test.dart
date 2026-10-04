@@ -4,11 +4,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../../helpers/fake_native_chat_runtime.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/command_overlay/chat_bot_sheet.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/message_bubble.dart';
+import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/services/screen_dialog_service.dart';
@@ -17,7 +20,6 @@ import 'package:ui/theme/app_theme.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const runtimeChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
-  const eventsChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntimeEvents');
   const assistChannel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
   const speechChannel = MethodChannel('cn.com.omnimind.bot/SpeechRecognition');
   const screenChannel = MethodChannel('cn.com.omnimind.bot/ScreenDialogEvent');
@@ -25,12 +27,13 @@ void main() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   final coordinator = ChatConversationRuntimeCoordinator.instance;
+  late FakeNativeChatRuntime nativeRuntime;
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
     coordinator.resetForTest();
-    messenger.setMockMethodCallHandler(eventsChannel, (_) async => null);
+    nativeRuntime = FakeNativeChatRuntime.install();
     messenger.setMockMethodCallHandler(speechChannel, (_) async => true);
     messenger.setMockMethodCallHandler(screenChannel, (_) async => null);
     messenger.setMockMethodCallHandler(voiceChannel, (_) async => true);
@@ -52,9 +55,9 @@ void main() {
 
   tearDown(() {
     coordinator.resetForTest();
+    nativeRuntime.uninstall();
     for (final channel in <MethodChannel>[
       runtimeChannel,
-      eventsChannel,
       assistChannel,
       speechChannel,
       screenChannel,
@@ -242,24 +245,45 @@ void main() {
   testWidgets(
     'overlay prompt results preserve output and release the composer across stop and failure paths',
     (tester) async {
+      // The ACP projection is native. The test publishes the items the native
+      // reducer projects for each official update (see the Kotlin
+      // ChatConversationRuntimeCoordinator tests for the projection itself)
+      // and checks what the sheet does with them.
       Future<void> emitUpdate(Map<String, dynamic> update) async {
-        await messenger.handlePlatformMessage(
-          eventsChannel.name,
-          const StandardMethodCodec().encodeSuccessEnvelope(<String, dynamic>{
+        final ChatMessageModel projected;
+        switch (update['sessionUpdate']) {
+          case 'agent_message_chunk':
+            final text = (update['content'] as Map)['text'] as String;
+            projected = ChatMessageModel(
+              id: 'overlay-turn-${update['messageId']}-agent-message',
+              type: 1,
+              user: 2,
+              content: <String, dynamic>{'text': text},
+              streamMeta: const <String, dynamic>{'parentTaskId': 'overlay-turn'},
+            );
+          default:
+            final completed = update['status'] == 'completed';
+            projected = ChatMessageModel.cardMessage(<String, dynamic>{
+              'type': 'agent_tool_summary',
+              'uiStyle': 'agent_tool',
+              'toolCallId': update['toolCallId'],
+              'toolTitle': '读取资料',
+              'status': completed ? 'success' : 'running',
+              if (completed) 'rawResultJson': jsonEncode(update['rawOutput']),
+            }, id: 'tool-${update['toolCallId']}');
+        }
+        nativeRuntime.project(
+          conversationId: 1001,
+          mode: 'command_overlay',
+          upsert: <ChatMessageModel>[projected],
+          event: <String, dynamic>{
             'conversationId': 1001,
             'sessionId': 'overlay-session',
-            'turnId': 'overlay-turn',
-            'agentId': 'test-agent',
-            'allowImplicitTurnAdmission': true,
             'message': <String, dynamic>{
               'method': 'session/update',
-              'params': <String, dynamic>{
-                'sessionId': 'overlay-session',
-                'update': update,
-              },
+              'params': <String, dynamic>{'update': update},
             },
-          }),
-          (_) {},
+          },
         );
         await tester.pump();
       }
@@ -436,7 +460,14 @@ void main() {
           );
           expect(contents, contains('工具已经读取的完整结果'));
           if (scenario.result == 'error') {
-            expect(contents, contains('ACP transport disconnected'));
+            // The failure card is projected natively from this response.
+            expect(
+              nativeRuntime
+                  .callsTo('applyAcpPromptResponse')
+                  .map((call) => (call.arguments as Map)['error'].toString())
+                  .join(),
+              contains('ACP transport disconnected'),
+            );
           }
           expect(
             runtime.messages.where(

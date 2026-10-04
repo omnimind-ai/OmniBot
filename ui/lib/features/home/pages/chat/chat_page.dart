@@ -1739,14 +1739,16 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       conversationId: runtime.conversationId,
       mode: runtime.mode,
     );
-    _runtimeCoordinator.applyAcpPromptResponse(
-      taskId: taskId,
-      conversationId: runtime.conversationId,
-      mode: runtime.mode,
-      sessionId: runtime.activeAcpSessionId,
-      turnId: runtime.activeAcpTurnId,
-      stopReason: 'error',
-      error: displayError,
+    unawaited(
+      _runtimeCoordinator.applyAcpPromptResponse(
+        taskId: taskId,
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        sessionId: runtime.activeAcpSessionId,
+        turnId: runtime.activeAcpTurnId,
+        stopReason: 'error',
+        error: displayError,
+      ),
     );
   }
 

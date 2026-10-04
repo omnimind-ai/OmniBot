@@ -55,7 +55,12 @@ class ChatConversationRuntimeCoordinator(
 
     /** Receives the snapshots of runtimes changed by one notification. */
     fun interface Listener {
-        fun onRuntimesChanged(snapshots: List<ChatRuntimeSnapshot>, removedKeys: List<String>)
+        /**
+         * [removed] maps a discarded runtime key to the revision of its
+         * removal. Revisions come from one coordinator-wide sequence, so a
+         * consumer can order snapshots and removals of the same key.
+         */
+        fun onRuntimesChanged(snapshots: List<ChatRuntimeSnapshot>, removed: Map<String, Long>)
     }
 
     private val reducer = AgentEventReducer()
@@ -72,6 +77,7 @@ class ChatConversationRuntimeCoordinator(
     private val dirtyKeys = LinkedHashSet<String>()
     private val removedKeys = LinkedHashSet<String>()
     private val revisions = HashMap<String, Long>()
+    private var revisionSequence = 0L
 
     fun addListener(listener: Listener) {
         listeners.add(listener)
@@ -83,14 +89,17 @@ class ChatConversationRuntimeCoordinator(
 
     // ---------------------------------------------------------------- reads
 
+    /** Revision of the last published snapshot of this runtime (0 if none). */
+    fun revisionFor(conversationId: Int, mode: String): Long = revisions[runtimeKey(conversationId, mode)] ?: 0L
+
     fun snapshotFor(conversationId: Int, mode: String): ChatRuntimeSnapshot? {
         val key = runtimeKey(conversationId, mode)
         val state = runtimes[key] ?: return null
-        return ChatRuntimeSnapshot.of(state, revisions[key] ?: 0L, key in ephemeralRuntimeKeys)
+        return ChatRuntimeSnapshot.of(state, revisions[key] ?: 0L, key in ephemeralRuntimeKeys, boundTaskIdsFor(state))
     }
 
     fun allSnapshots(): List<ChatRuntimeSnapshot> = runtimes.keys.mapNotNull { key ->
-        runtimes[key]?.let { ChatRuntimeSnapshot.of(it, revisions[key] ?: 0L, key in ephemeralRuntimeKeys) }
+        runtimes[key]?.let { ChatRuntimeSnapshot.of(it, revisions[key] ?: 0L, key in ephemeralRuntimeKeys, boundTaskIdsFor(it)) }
     }
 
     /** Conversation ids with live work in the shared ACP projection. */
@@ -350,7 +359,7 @@ class ChatConversationRuntimeCoordinator(
             }
             notifyListeners(runtime)
         }
-        taskBindings.remove(taskId)
+        taskBindings.remove(taskId)?.let { markBindingDirty(it.conversationId, it.mode) }
     }
 
     private fun acpTurnBelongsToTask(runtime: ChatConversationRuntimeState, turnId: String?, taskId: String): Boolean {
@@ -479,6 +488,7 @@ class ChatConversationRuntimeCoordinator(
             error = error,
         )
         taskBindings.remove(taskId)
+        markDirty(runtime)
         if (result.handled) {
             notifyListeners(runtime)
             if (!isEphemeralRuntime(conversationId, mode)) {
@@ -710,7 +720,6 @@ class ChatConversationRuntimeCoordinator(
         if (removed != null) {
             removed.dispose()
             dirtyKeys.remove(key)
-            revisions.remove(key)
             removedKeys.add(key)
             publish()
         }
@@ -860,7 +869,18 @@ class ChatConversationRuntimeCoordinator(
         lastAgentToolType: String? = null,
         browserSessionSnapshot: Map<String, Any?>? = null,
         preserveLiveStreamingState: Boolean = false,
+        basedOnRevision: Long? = null,
+        keepTextCaches: Boolean = false,
     ) {
+        // A page builds its snapshot from the last runtime snapshot it saw.
+        // When the runtime has moved on since (an event was projected while
+        // the snapshot was in flight), its flags are stale: merge only new
+        // items, like a live refresh, instead of rolling the runtime back.
+        val existingKey = runtimeKey(conversationId, mode)
+        @Suppress("NAME_SHADOWING")
+        val preserveLiveStreamingState = preserveLiveStreamingState ||
+            (basedOnRevision != null && runtimes.containsKey(existingKey) &&
+                (revisions[existingKey] ?: 0L) > basedOnRevision)
         var normalizedMessages = normalizeIdleAgentRequestCards(
             normalizeIdleThinkingCards(
                 dedupeEquivalentAgentUserMessages(messages),
@@ -934,10 +954,14 @@ class ChatConversationRuntimeCoordinator(
         runtime.isAiResponding = isAiResponding
         runtime.isContextCompressing = isContextCompressing
         runtime.isCheckingExecutableTask = isCheckingExecutableTask
-        runtime.currentAiMessages.clear()
-        runtime.currentAiMessages.putAll(currentAiMessages ?: emptyMap())
-        runtime.currentThinkingMessages.clear()
-        runtime.currentThinkingMessages.putAll(currentThinkingMessages ?: emptyMap())
+        // Text caches are runtime-owned; the UI snapshot exposes only their
+        // keys, so a UI caller keeps them instead of echoing them back.
+        if (!keepTextCaches) {
+            runtime.currentAiMessages.clear()
+            runtime.currentAiMessages.putAll(currentAiMessages ?: emptyMap())
+            runtime.currentThinkingMessages.clear()
+            runtime.currentThinkingMessages.putAll(currentThinkingMessages ?: emptyMap())
+        }
         runtime.deepThinkingContent = deepThinkingContent
         runtime.isDeepThinking = isDeepThinking
         runtime.currentDispatchTurnId = currentDispatchTurnId
@@ -1487,11 +1511,20 @@ class ChatConversationRuntimeCoordinator(
         dirtyKeys.clear()
         removedKeys.clear()
         revisions.clear()
+        revisionSequence = 0L
     }
 
     // ------------------------------------------------------------- internal
 
     private fun stateFor(conversationId: Int, mode: String) = runtimes[runtimeKey(conversationId, mode)]
+
+    private fun boundTaskIdsFor(state: ChatConversationRuntimeState): Set<String> =
+        taskBindings.filterValues { it.conversationId == state.conversationId && it.mode == state.mode }.keys
+
+    /** Binding changes are visible to surfaces through [ChatRuntimeSnapshot.boundTaskIds]. */
+    private fun markBindingDirty(conversationId: Int, mode: String) {
+        stateFor(conversationId, mode)?.let { markDirty(it) }
+    }
 
     private fun ensureRuntimeState(
         conversationId: Int,
@@ -1747,11 +1780,16 @@ class ChatConversationRuntimeCoordinator(
         if (dirtyKeys.isEmpty() && removedKeys.isEmpty()) return
         val snapshots = dirtyKeys.mapNotNull { key ->
             val state = runtimes[key] ?: return@mapNotNull null
-            val revision = (revisions[key] ?: 0L) + 1
+            val revision = ++revisionSequence
             revisions[key] = revision
-            ChatRuntimeSnapshot.of(state, revision, key in ephemeralRuntimeKeys)
+            ChatRuntimeSnapshot.of(state, revision, key in ephemeralRuntimeKeys, boundTaskIdsFor(state))
         }
-        val removed = removedKeys.toList()
+        val removed = LinkedHashMap<String, Long>()
+        for (key in removedKeys) {
+            val revision = ++revisionSequence
+            revisions[key] = revision
+            removed[key] = revision
+        }
         dirtyKeys.clear()
         removedKeys.clear()
         for (listener in ArrayList(listeners)) listener.onRuntimesChanged(snapshots, removed)

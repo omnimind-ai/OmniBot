@@ -29,18 +29,6 @@ class VoiceMessagePlaybackState {
   }
 }
 
-class _VoiceStreamingTracker {
-  String lastText = '';
-  int nextIndex = 0;
-  bool hasQueuedAny = false;
-
-  void reset() {
-    lastText = '';
-    nextIndex = 0;
-    hasQueuedAny = false;
-  }
-}
-
 class VoicePlaybackCoordinator extends ChangeNotifier {
   VoicePlaybackCoordinator._();
 
@@ -53,8 +41,6 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
   SceneVoiceConfig _voiceConfig = const SceneVoiceConfig();
   final Map<String, VoiceMessagePlaybackState> _messageStates =
       <String, VoiceMessagePlaybackState>{};
-  final Map<String, _VoiceStreamingTracker> _trackers =
-      <String, _VoiceStreamingTracker>{};
   StreamSubscription<VoicePlaybackEvent>? _playbackSubscription;
 
   Future<void> ensureInitialized() async {
@@ -102,70 +88,6 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
         user == 2 &&
         type == 1 &&
         text.trim().isNotEmpty;
-  }
-
-  Future<void> onAssistantMessageUpdated({
-    required String messageId,
-    required String text,
-    required bool isFinal,
-  }) async {
-    await ensureInitialized();
-    if (!_isVoiceSceneBound || !_voiceConfig.autoPlay) {
-      if (isFinal) {
-        _trackers.remove(messageId);
-      }
-      return;
-    }
-    final normalizedText = text.trimRight();
-    if (normalizedText.isEmpty) {
-      return;
-    }
-    final tracker = _trackers.putIfAbsent(
-      messageId,
-      _VoiceStreamingTracker.new,
-    );
-    if (tracker.lastText.isNotEmpty &&
-        normalizedText.length < tracker.lastText.length &&
-        tracker.lastText.startsWith(normalizedText)) {
-      return;
-    }
-    if (tracker.lastText.isNotEmpty &&
-        !normalizedText.startsWith(tracker.lastText)) {
-      tracker.reset();
-    }
-    final extraction = SceneVoiceTextProcessing.extractSealedSegments(
-      fullText: normalizedText,
-      fromIndex: tracker.nextIndex,
-      isFinal: isFinal,
-    );
-    tracker.lastText = normalizedText;
-    tracker.nextIndex = extraction.nextIndex;
-    for (final segment in extraction.segments) {
-      final queued = tracker.hasQueuedAny;
-      final accepted = await VoicePlaybackChannelService.speakText(
-        messageId: messageId,
-        text: segment,
-        enqueue: queued,
-        preferStreaming: true,
-      );
-      if (accepted) {
-        tracker.hasQueuedAny = true;
-      }
-    }
-    if (isFinal) {
-      _trackers.remove(messageId);
-    }
-  }
-
-  Future<void> onAssistantMessageCompleted({
-    required String messageId,
-    required String text,
-  }) async {
-    await onAssistantMessageUpdated(
-      messageId: messageId,
-      text: text,
-      isFinal: true,
-    );
   }
 
   Future<void> togglePlayback({
@@ -228,9 +150,6 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
       _voiceConfig = voiceConfig;
       shouldNotify = true;
     }
-    if (!nextAvailable) {
-      _trackers.clear();
-    }
     if (shouldNotify) {
       notifyListeners();
     }
@@ -256,7 +175,6 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     _isVoiceSceneBound = false;
     _voiceConfig = const SceneVoiceConfig();
     _messageStates.clear();
-    _trackers.clear();
     notifyListeners();
   }
 

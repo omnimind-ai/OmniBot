@@ -1395,7 +1395,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           ?.toString()
           .trim();
       if (conversationId != null) {
-        final result = _runtimeCoordinator.applyAcpPromptResponse(
+        final result = await _runtimeCoordinator.applyAcpPromptResponse(
           taskId: aiMessageId,
           conversationId: conversationId,
           mode: _runtimeMode,
@@ -1423,7 +1423,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
               mode: _runtimeMode,
             );
       if (conversationId != null && runtime?.isAiResponding == true) {
-        final result = _runtimeCoordinator.applyAcpPromptResponse(
+        final result = await _runtimeCoordinator.applyAcpPromptResponse(
           taskId: aiMessageId,
           conversationId: conversationId,
           mode: _runtimeMode,
@@ -1444,7 +1444,9 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         // If preparation stopped before session/prompt, there is no ACP
         // PromptResponse to await. Release only this host reservation. For
         // submitted prompts, the response/error above has already reduced it.
-        _runtimeCoordinator.unregisterTask(
+        // The presentation sync below reads the runtime: wait until the
+        // native owner's release is mirrored.
+        await _runtimeCoordinator.unregisterTask(
           aiMessageId,
           conversationId: conversationId,
           mode: _runtimeMode,

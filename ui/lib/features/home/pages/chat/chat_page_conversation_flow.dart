@@ -50,7 +50,7 @@ Future<String?> _prepareAcpSessionForTurn({
     }
     return null;
   }
-  if (!runtimeCoordinator.bindAcpSession(
+  if (!await runtimeCoordinator.bindAcpSession(
     taskId: taskId,
     conversationId: conversationId,
     mode: mode,
@@ -1024,7 +1024,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final responseTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
-      _runtimeCoordinator.applyAcpPromptResponse(
+      await _runtimeCoordinator.applyAcpPromptResponse(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
@@ -1054,7 +1054,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       );
       // The request owner handles failure once, including background requests
       // and late errors after cancellation. The page does not infer lifecycle.
-      _runtimeCoordinator.applyAcpPromptResponse(
+      await _runtimeCoordinator.applyAcpPromptResponse(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
@@ -1202,7 +1202,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final responseTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
-      _runtimeCoordinator.applyAcpPromptResponse(
+      await _runtimeCoordinator.applyAcpPromptResponse(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
@@ -1227,7 +1227,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           conversationId: conversationId!,
           mode: dispatchModeKey,
         );
-        _runtimeCoordinator.applyAcpPromptResponse(
+        await _runtimeCoordinator.applyAcpPromptResponse(
           taskId: aiMessageId,
           conversationId: conversationId!,
           mode: dispatchModeKey,

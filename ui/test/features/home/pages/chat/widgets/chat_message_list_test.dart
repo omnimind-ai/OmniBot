@@ -1,8 +1,8 @@
+import 'dart:convert';
+
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:ui/services/agent_event_reducer.dart';
-import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/cards/deep_thinking_card.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
@@ -15,31 +15,14 @@ import 'package:ui/widgets/streaming_text.dart';
 
 void main() {
   testWidgets('Claude Code ACP answers survive completion and history reload', (tester) async {
-    final runtime = ChatConversationRuntimeState(conversationId: 63, mode: 'agent');
-    addTearDown(runtime.dispose);
-    const reducer = AgentEventReducer();
-    for (final entry in {'first': 'CC_FIRST_ANSWER', 'followup': 'CC_FOLLOWUP_ANSWER'}.entries) {
-      final event = <String, dynamic>{
-        'eventId': 'cc-${entry.key}-text',
-        'method': 'session/update',
-        'turnId': entry.key,
-        'params': {
-          'sessionId': 'cc-durable-session',
-          'update': {
-            'sessionUpdate': 'agent_message_chunk',
-            'messageId': 'cc-${entry.key}',
-            'content': {'type': 'text', 'text': entry.value},
-          },
-        },
-      };
-      reducer.reduce(runtime: runtime, event: event);
-      // A redelivered host notification must not duplicate the visible answer.
-      reducer.reduce(runtime: runtime, event: event);
-      reducer.reducePromptResponse(runtime: runtime, sessionId: 'cc-durable-session',
-        turnId: entry.key, stopReason: 'end_turn');
-    }
-    for (final messages in [runtime.messages,
-      runtime.messages.map((m) => ChatMessageModel.fromJson(m.toJson())).toList()]) {
+    // Projection produced by the native reducer for two Claude Code turns
+    // (each agent_message_chunk delivered twice, then PromptResponse
+    // end_turn); see AgentEventReducer in the app module.
+    final projected = (jsonDecode(_claudeCodeProjection) as List)
+        .map((item) => ChatMessageModel.fromJson(Map<String, dynamic>.from(item as Map)))
+        .toList();
+    for (final messages in [projected,
+      projected.map((m) => ChatMessageModel.fromJson(m.toJson())).toList()]) {
       await tester.pumpWidget(const SizedBox());
       final controller = ScrollController();
       await tester.pumpWidget(_buildLocalizedApp(child: ChatMessageList(
@@ -2875,3 +2858,60 @@ List<ChatMessageModel> _buildActiveAgentRunMessages() {
     ChatMessageModel.userMessage('用户问题', id: 'task-1-user'),
   ];
 }
+
+const String _claudeCodeProjection = r'''
+[
+  {
+    "id": "followup-cc-followup-agent-message",
+    "type": 1,
+    "user": 2,
+    "content": {
+      "text": "CC_FOLLOWUP_ANSWER",
+      "id": "followup-cc-followup-agent-message"
+    },
+    "isLoading": false,
+    "isFirst": false,
+    "isError": false,
+    "isSummarizing": false,
+    "streamMeta": {
+      "seq": 2,
+      "roundIndex": 2,
+      "kind": "text_snapshot",
+      "runId": "followup",
+      "turnId": "followup",
+      "cardId": "followup-cc-followup-agent-message",
+      "parentTaskId": "followup",
+      "entryId": "followup-cc-followup-agent-message",
+      "isFinal": true,
+      "stopReason": "end_turn"
+    },
+    "createAt": 1700000000000
+  },
+  {
+    "id": "first-cc-first-agent-message",
+    "type": 1,
+    "user": 2,
+    "content": {
+      "text": "CC_FIRST_ANSWER",
+      "id": "first-cc-first-agent-message"
+    },
+    "isLoading": false,
+    "isFirst": false,
+    "isError": false,
+    "isSummarizing": false,
+    "streamMeta": {
+      "seq": 1,
+      "roundIndex": 1,
+      "kind": "text_snapshot",
+      "runId": "first",
+      "turnId": "first",
+      "cardId": "first-cc-first-agent-message",
+      "parentTaskId": "first",
+      "entryId": "first-cc-first-agent-message",
+      "isFinal": true,
+      "stopReason": "end_turn"
+    },
+    "createAt": 1700000000000
+  }
+]
+''';

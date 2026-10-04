@@ -937,22 +937,13 @@ class AgentRuntimeService {
   static const MethodChannel _methodChannel = MethodChannel(
     'cn.com.omnimind.bot/AgentRuntime',
   );
-  static const EventChannel _eventChannel = EventChannel(
-    'cn.com.omnimind.bot/AgentRuntimeEvents',
-  );
-
-  static final StreamController<Map<String, dynamic>> _eventController =
-      StreamController<Map<String, dynamic>>.broadcast();
   static final Map<String, Future<Map<String, dynamic>>>
   _agentPreparationTasks = <String, Future<Map<String, dynamic>>>{};
   static final StreamController<Set<String>> _agentPreparationController =
       StreamController<Set<String>>.broadcast();
-  static StreamSubscription<dynamic>? _nativeEventSubscription;
-
-  static Stream<Map<String, dynamic>> get events {
-    _ensureEventSubscription();
-    return _eventController.stream;
-  }
+  // ACP session/update notifications are projected by the native chat
+  // runtime owner; Flutter reads its snapshots through
+  // ChatConversationRuntimeCoordinator, never the raw event stream.
 
   /// Harness preparation can spend minutes downloading npm/native packages.
   /// Keep the operation owned by the service instead of a settings page so it
@@ -1838,27 +1829,6 @@ class AgentRuntimeService {
         'sessionId': sessionId.trim(),
       'response': {'answers': <String, dynamic>{}},
     });
-  }
-
-  static void _ensureEventSubscription() {
-    if (_nativeEventSubscription != null) return;
-    _nativeEventSubscription = _eventChannel.receiveBroadcastStream().listen(
-      (event) {
-        final normalized = _normalizeMap(event);
-        if (normalized != null) {
-          _eventController.add(normalized);
-        }
-      },
-      onError: (Object error, StackTrace stackTrace) {
-        _eventController.add({
-          'method': 'error',
-          'message': {
-            'method': 'error',
-            'params': {'error': error.toString()},
-          },
-        });
-      },
-    );
   }
 
   static Future<Map<String, dynamic>> _invokeMap(

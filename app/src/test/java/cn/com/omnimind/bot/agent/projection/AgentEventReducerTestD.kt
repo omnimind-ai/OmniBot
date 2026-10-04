@@ -8,7 +8,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertNull
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -447,64 +446,8 @@ class AgentEventReducerTestD {
         assertContains((cardData["diffText"] ?: "").toString(), "diff --git")
     }
 
-    // The following remote-snapshot tests drive `remoteCodexMessagesFromThreadResponseForTesting`
-    // (ui/lib/features/home/pages/chat/adapters/remote_codex_snapshot_mapper.dart), a Flutter
-    // page adapter that has no Kotlin port in cn.com.omnimind.bot.agent.projection yet.
-
-    @Ignore("remote codex snapshot mapper not ported; Dart test lines 4785-4820")
-    @Test
-    fun `hydrates historical hunk-only file changes as diff cards`() {
-        // final messages = remoteCodexMessagesFromThreadResponseForTesting({thread: {id: 'thread-1',
-        //   turns: [{id: 'turn-1', items: [{id: 'call-1', type: 'fileChange', status: 'completed',
-        //   changes: jsonEncode({path: '/repo/lib/main.dart', kind: {type: 'update'},
-        //   diff: '@@ -1,2 +1,2 @@\n-old line\n+new line\n same line\n'})}]}]}});
-        // final cardData = messages.single.cardData!;
-        // expect(cardData['toolType'], 'file'); expect(cardData['showDiff'], isTrue);
-        // expect(cardData['filePath'], '/repo/lib/main.dart');
-        // expect(cardData['additions'], 1); expect(cardData['deletions'], 1);
-    }
-
-    @Ignore("remote codex snapshot mapper not ported; Dart test lines 4822-4903")
-    @Test
-    fun `hydrates historical codex tool item variants as tool cards`() {
-        // Items: webSearch(query 'Codex app server protocol'), imageView(path '/tmp/screenshot.png'),
-        // mcpToolCall(tool 'mcp__filesystem__read_file', arguments '{"path":"README.md"}'),
-        // mcp_tool_call(server filesystem, tool read_file, arguments {path: AGENTS.md}),
-        // command_execution(command 'flutter test', aggregated_output, exit_code 0),
-        // function_call(read_file, call_id raw-read-1, '{"path":"lib/main.dart"}'),
-        // local_shell_call(call_id raw-shell-1, action {type: exec, command: ['git','status']}).
-        // expect toolTypes containsAll ['search','image','workspace','terminal'];
-        // expect toolTitles containsAll ['Search: Codex app server protocol', 'View screenshot.png',
-        //   'Read README.md', 'Read AGENTS.md', 'flutter test', 'Read main.dart', 'git status'].
-    }
-
-    @Ignore("remote codex snapshot mapper not ported; Dart test lines 4905-4936")
-    @Test
-    fun `hydrates historical raw function outputs onto matching tool card`() {
-        // Items: function_call(exec_command, call_id raw-cmd-1, '{"cmd":"flutter test"}'),
-        //        function_call_output(call_id raw-cmd-1, output '00:01 +1: All tests passed!').
-        // expect(messages, hasLength(1)); toolType 'terminal'; toolTitle 'flutter test';
-        // terminalOutput contains 'All tests passed'; summary contains 'All tests passed'.
-    }
-
-    @Ignore("remote codex snapshot mapper not ported; Dart test lines 4938-4980")
-    @Test
-    fun `hydrates the complete remote tool output behind its compact summary`() {
-        // completeOutput = 'first remote fact\n' + 256 x 'middle remote fact' joined '\n'
-        //   + '\ntail remote fact must survive'; function_call exec_command '{"cmd":"inspect"}'
-        //   + function_call_output with completeOutput (call_id raw-cmd-long-output).
-        // summary must NOT contain the tail; rawResultJson contains 'first remote fact' and the tail.
-    }
-
-    @Ignore("remote codex snapshot mapper not ported; Dart test lines 4982-5020")
-    @Test
-    fun `hydrates codex user image blocks as message attachments`() {
-        // userMessage content [{type: text, text: '看这张图'}, {type: image, detail: null,
-        //   url: 'data:image/png;base64,AAAA'}]
-        // expect user == 1, text == '看这张图', text excludes 'data:image' and '{type: image';
-        // content['attachments'] single {dataUrl: 'data:image/png;base64,AAAA', mimeType: 'image/png',
-        //   isImage: true}.
-    }
+    // Remote-snapshot mapper cases live in the Flutter adapter suite
+    // (ui/test/features/home/pages/chat/remote_codex_snapshot_mapper_test.dart).
 
     @Test
     fun `uses file paths for concise file change tool titles`() {
@@ -801,18 +744,6 @@ class AgentEventReducerTestD {
         assertEquals("turn-1", runtime.currentDispatchTurnId)
     }
 
-    @Ignore("remote codex snapshot mapper not ported; Dart test lines 5318-5356")
-    @Test
-    fun `renders latest snapshot reasoning as active without explicit turn id`() {
-        // remoteCodexMessagesFromThreadResponseForTesting({thread: {id: 'thread-1',
-        //   status: {type: 'active', activeFlags: []}, turns: [{id: 'turn-1', status: 'inProgress',
-        //   items: [{id: 'user-1', type: 'userMessage', content: [{text: 'hi'}]},
-        //           {id: 'reasoning-1', type: 'reasoning', summary: ['thinking'], content: []}]}]}},
-        //   active: true);
-        // messages.first.cardData: type 'deep_thinking', isLoading true,
-        //   stage ThinkingStage.thinking.value, isCollapsible false; streamMeta isFinal false.
-    }
-
     @Test
     fun `ignores legacy thread status payloads`() {
         reducer.reduce(
@@ -963,37 +894,6 @@ class AgentEventReducerTestD {
     }
 
     // Ported to ChatRuntimeRoutingTest (needs the coordinator).
-
-    // The next three tests drive `mergeRemoteCodexSnapshotMessagesForTesting`
-    // (remote_codex_snapshot_mapper.dart), which has no Kotlin port yet.
-
-    @Ignore("remote codex snapshot merge not ported; Dart test lines 5578-5619")
-    @Test
-    fun `preserves extra local duplicate user messages missing from snapshot`() {
-        // now = 1700000000000; snapshot [user remote-user-1 'again' @now];
-        // existing [user local-user-2 'again' @now+2s, user local-user-1 'again' @now+1s];
-        // activeTaskId null, isAiResponding false.
-        // merged ids contain 'remote-user-1' and 'local-user-2', not 'local-user-1'.
-    }
-
-    @Ignore("remote codex snapshot merge not ported; Dart test lines 5621-5673")
-    @Test
-    fun `merge finalizes stale local thinking cards for the active codex turn`() {
-        // snapshot: deep_thinking card reason-2-agent-thinking (taskID turn-1, isLoading true,
-        //   stage thinking, 'latest', startTime now+2s) @now+2s;
-        // existing: deep_thinking card reason-1-agent-thinking (isLoading true, 'older') @now;
-        // activeTaskId 'turn-1', isAiResponding true.
-        // two thinking cards; latest isLoading true; older isLoading false, stage complete.
-    }
-
-    @Ignore("remote codex snapshot merge not ported; Dart test lines 5675-5717")
-    @Test
-    fun `preserves live pending user input request missing from snapshot`() {
-        // existing: codex_request card request-1-agent-user-input (requestKind user_input,
-        //   status pending, streamMeta kind clarify_required) @now+1s;
-        // snapshot: [user remote-user-1 'ask something' @now]; activeTaskId turn-1, responding.
-        // request card type 'agent_request', requestKind 'user_input', status 'pending'.
-    }
 
     @Test
     fun `finalizes assistant item without duplicating completed text`() {

@@ -12,17 +12,24 @@ optional runtime through a read-only `ChatRuntimeView`.
 2. `state/chat_page_mode_state.dart` owns mode-local presentation state and its
    reset contract. Do not add parallel `Map<ChatPageMode, ...>` fields to the
    page.
-3. `services/chat_conversation_runtime_coordinator.dart` is the runtime facade.
-   Its public commands and state ownership stay in that file; implementation
-   details live in the private `chat_runtime_*_support.dart` extensions.
-   Pages, the command-overlay sheet and the drawer read a runtime only through
+3. `services/chat_conversation_runtime_coordinator.dart` is the Flutter
+   adapter of the native runtime owner (batch 5a). The ACP projection — one
+   `AgentEventReducer`, one `ChatConversationRuntimeCoordinator`, history
+   persistence and reply voice autoplay — lives in the app module
+   (`cn.com.omnimind.bot.agent.projection`, hosted by `ChatRuntimeHost`).
+   This file only mirrors the immutable snapshots the owner publishes on
+   `cn.com.omnimind.bot/ChatRuntimeEvents` (`chat_runtime_mirror.dart`) and
+   forwards every command on `cn.com.omnimind.bot/ChatRuntime`. Pages, the
+   command-overlay sheet and the drawer read a runtime only through
    `ChatRuntimeView` (`chat_runtime_view.dart`) and change it only through
-   coordinator commands (`insertRuntimeMessage`, `updateRuntimePresentation`,
-   …). The coordinator is the only subscriber that projects
-   `AgentRuntimeService.events`: surfaces attach with
-   `attachEventHost(context:, onOutcome:)`, publish a declarative
-   `ChatRuntimeRoutingContext`, and receive one `ChatRuntimeEventOutcome` per
-   applied event (`chat_runtime_event_routing.dart`).
+   coordinator commands. Plain field/list writes are applied to the mirror at
+   once and confirmed by the next snapshot; commands whose result the caller
+   uses (`applyAcpPromptResponse`, `bindAcpSession`, `unregisterTask`, …)
+   return futures that complete after the mirror includes their change.
+   Surfaces attach with `attachEventHost(context:, onOutcome:)`, publish a
+   declarative `ChatRuntimeRoutingContext` (sent natively whenever it
+   changes), and receive one `ChatRuntimeEventOutcome` per applied event.
+   Never add event reduction or runtime state on the Dart side.
 4. `adapters/` converts remote Agent/Codex payloads into app models. Raw
    protocol traversal and compatibility aliases belong there, not in widgets
    or page lifecycle code.
@@ -38,6 +45,12 @@ must not call persistence or platform channels directly.
 - `ObservableChatMessageList` remains the source for row-level notifications;
   streaming content changes must not force a full page rebuild. Widgets accept
   any `ObservableChatMessageSource`, which the read-only view implements.
+  The mirror keeps row listenables across snapshots: a streamed chunk
+  replaces only the changed rows (snapshots carry only changed messages).
+- Snapshots carry a coordinator-wide revision. Late batches never roll a
+  runtime back, and a page snapshot sent with `replaceConversationSnapshot`
+  carries the revision it was built from so the owner treats it as a live
+  refresh when the runtime moved on meanwhile.
 - A runtime list obtained from `runtimeFor` throws on writes. Page helpers
   (`_insertVisibleMessage`, `_replaceVisibleMessage`, …) route a write to the
   coordinator when the visible list is runtime-owned and to the page-local

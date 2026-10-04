@@ -7,7 +7,6 @@ import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
-import org.junit.Ignore
 import org.junit.Test
 
 /**
@@ -428,51 +427,6 @@ class AgentEventReducerTestE {
     @Test
     fun `keeps failed request user input status during event replay`() =
         keepsSettledRequestUserInputStatus("failed")
-
-    @Ignore("remoteCodexMessagesFromThreadResponseForTesting (remote_codex_snapshot_mapper.dart) has no Kotlin port; ported with snapshot mapper tests")
-    @Test
-    fun `hydrates historical request user input as submitted request card`() {
-        /*
-        final messages = remoteCodexMessagesFromThreadResponseForTesting({
-          'thread': {
-            'id': 'thread-1',
-            'turns': [
-              {
-                'id': 'turn-1',
-                'items': [
-                  {
-                    'id': 'request-1',
-                    'type': 'requestUserInput',
-                    'status': 'completed',
-                    'questions': [
-                      {
-                        'id': 'choice',
-                        'question': 'Choose one',
-                        'options': [
-                          {'label': 'Option A'},
-                        ],
-                      },
-                    ],
-                    'answers': {
-                      'choice': {
-                        'answers': ['Option A'],
-                      },
-                    },
-                  },
-                ],
-              },
-            ],
-          },
-        });
-
-        final cardData = messages.single.cardData!;
-        expect(cardData['type'], 'agent_request');
-        expect(cardData['requestKind'], 'user_input');
-        expect(cardData['questionId'], 'choice');
-        expect(cardData['status'], 'submitted');
-        expect(cardData['rawParamsJson'], contains('Option A'));
-         */
-    }
 
     @Test
     fun `ignores unknown events without throwing`() {
@@ -964,92 +918,6 @@ class AgentEventReducerTestE {
 
         assertTrue(runtime.isAiResponding)
         assertNotNull(runtime.currentDispatchTurnId)
-    }
-
-    @Ignore("remoteCodexMessagesFromThreadResponseForTesting (remote_codex_snapshot_mapper.dart) has no Kotlin port; ported with snapshot mapper tests")
-    @Test
-    fun `snapshot renders reasoning as loading even when item_status is completed while turn is active`() {
-        /*
-        Dart name: 'snapshot renders reasoning as loading even when item.status is completed while turn is active'
-        final messages = remoteCodexMessagesFromThreadResponseForTesting(
-          {
-            'thread': {
-              'id': 'thread-1',
-              'status': {'type': 'active'},
-              'turns': [
-                {
-                  'id': 'turn-1',
-                  'status': 'inProgress',
-                  'items': [
-                    {
-                      'id': 'reason-1',
-                      'type': 'reasoning',
-                      'status': 'completed',
-                      'summary': ['done reasoning'],
-                    },
-                  ],
-                },
-              ],
-            },
-          },
-          active: true,
-          activeTurnId: 'turn-1',
-        );
-
-        final cardData = messages.first.cardData!;
-        expect(cardData['type'], 'deep_thinking');
-        expect(cardData['isLoading'], isTrue);
-        expect(cardData['isCollapsible'], isFalse);
-        expect(cardData['stage'], ThinkingStage.thinking.value);
-         */
-    }
-
-    @Ignore("remoteCodexMessagesFromThreadResponseForTesting (remote_codex_snapshot_mapper.dart) has no Kotlin port; ported with snapshot mapper tests")
-    @Test
-    fun `snapshot keeps only the latest reasoning card loading for active turn`() {
-        /*
-        final messages = remoteCodexMessagesFromThreadResponseForTesting(
-          {
-            'thread': {
-              'id': 'thread-1',
-              'status': {'type': 'active'},
-              'turns': [
-                {
-                  'id': 'turn-1',
-                  'status': 'inProgress',
-                  'items': [
-                    {
-                      'id': 'reason-1',
-                      'type': 'reasoning',
-                      'status': 'completed',
-                      'summary': ['older reasoning'],
-                    },
-                    {
-                      'id': 'reason-2',
-                      'type': 'reasoning',
-                      'status': 'completed',
-                      'summary': ['latest reasoning'],
-                    },
-                  ],
-                },
-              ],
-            },
-          },
-          active: true,
-          activeTurnId: 'turn-1',
-        );
-
-        final first = messages.firstWhere(
-          (message) => message.id == 'reason-1-agent-thinking',
-        );
-        final second = messages.firstWhere(
-          (message) => message.id == 'reason-2-agent-thinking',
-        );
-        expect(first.cardData!['isLoading'], isFalse);
-        expect(first.cardData!['stage'], ThinkingStage.complete.value);
-        expect(second.cardData!['isLoading'], isTrue);
-        expect(second.cardData!['stage'], ThinkingStage.thinking.value);
-         */
     }
 
     @Test

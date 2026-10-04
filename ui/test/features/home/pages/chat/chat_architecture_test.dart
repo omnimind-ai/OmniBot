@@ -116,27 +116,36 @@ void main() {
   );
 
   test('only the prompt response completes the shared reducer', () {
-    final reducer = File(
-      'lib/services/agent_event_reducer.dart',
-    ).readAsStringSync();
-    final response = reducer
-        .split('AgentReduceResult reducePromptResponse(')
+    // The one reducer is native (app module); Flutter holds none.
+    const projectionRoot =
+        '../app/src/main/java/cn/com/omnimind/bot/agent/projection';
+    final reducerSources = Directory(projectionRoot)
+        .listSync()
+        .whereType<File>()
+        .where((file) => file.path.contains('AgentEventReducer'))
+        .map((file) => file.readAsStringSync())
+        .join('\n');
+    final response = File('$projectionRoot/AgentEventReducer.kt')
+        .readAsStringSync()
+        .split('fun reducePromptResponse(')
         .last
-        .split('AgentReduceResult reduce(')
+        .split('fun reduce(')
         .first;
-    expect(response, contains('_completeTurn('));
-    // One call plus the method declaration; notifications cannot end a request.
+    expect(response, contains('completeTurn('));
+    // One call plus the declaration; notifications cannot end a request.
     expect(
       RegExp(
-        r'^\s*(?:void )?_completeTurn\(',
+        r'^\s*(?:internal fun AgentEventReducer\.)?completeTurn\(',
         multiLine: true,
-      ).allMatches(reducer),
+      ).allMatches(reducerSources),
       hasLength(2),
     );
+    expect(File('lib/services/agent_event_reducer.dart').existsSync(), isFalse);
     final coordinator = File(
       '$chatRoot/services/chat_conversation_runtime_coordinator.dart',
     ).readAsStringSync();
     expect(coordinator, isNot(contains('_isTerminalAcpBindingEvent')));
+    expect(coordinator, isNot(contains('reducePromptResponse(')));
     final page = File('$chatRoot/chat_page.dart').readAsStringSync();
     final errors = page
         .split('void handleAgentError(')
@@ -197,13 +206,23 @@ void main() {
         '$chatRoot/widgets/chat_widgets.dart',
       ).readAsStringSync();
 
+      // The runtime facade is a snapshot mirror + command forwarder; the
+      // projection parts it used to declare now live in the native owner.
       for (final part in const <String>[
+        'chat_runtime_mirror.dart',
+        'chat_runtime_view.dart',
+        'chat_runtime_event_routing.dart',
+      ]) {
+        expect(runtimeSource, contains("part '$part';"));
+      }
+      for (final removed in const <String>[
+        'chat_runtime_state.dart',
         'chat_runtime_message_support.dart',
         'chat_runtime_streaming_support.dart',
         'chat_runtime_thinking_support.dart',
         'chat_runtime_tool_support.dart',
       ]) {
-        expect(runtimeSource, contains("part '$part';"));
+        expect(File('$chatRoot/services/$removed').existsSync(), isFalse);
       }
       for (final part in const <String>[
         'chat_app_bar.dart',
@@ -217,9 +236,6 @@ void main() {
   );
 
   test('Agent Flutter runtime exposes only the ACP lifecycle entry points', () {
-    final reducerSource = File(
-      'lib/services/agent_event_reducer.dart',
-    ).readAsStringSync();
     final coordinatorSource = File(
       '$chatRoot/services/chat_conversation_runtime_coordinator.dart',
     ).readAsStringSync();
@@ -227,7 +243,6 @@ void main() {
       'lib/services/agent_runtime_service.dart',
     ).readAsStringSync();
 
-    expect(reducerSource, isNot(contains('completePrompt(')));
     expect(coordinatorSource, isNot(contains('completePrompt(')));
     expect(coordinatorSource, isNot(contains('agent_stream_handler')));
     expect(coordinatorSource, isNot(contains('agent_stream_reducer')));

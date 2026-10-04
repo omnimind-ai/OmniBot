@@ -106,8 +106,8 @@ locator, or an interface for every class.
 | Conversation and persisted items | Room + existing history services | Observe existing rows; never recreate a conversation for a drawer click. |
 | ACP session selection and connection | `AgentRuntimeManager` / `LocalAcpRuntime` | Reuse the selected Conversation/session binding. |
 | Prompt admission, turn and cancellation | Canonical ACP runtime prompt reservation | UI navigation must not start, replay, complete, or cancel a turn. |
-| `session/update` projection and merge | `AgentEventReducer` | Move the owner as one feature; do not implement a Compose-specific reducer beside it. |
-| Active conversation coordination | `ChatConversationRuntimeCoordinator` | Keep this owner until the chat feature migrates completely. |
+| `session/update` projection and merge | `AgentEventReducer` (app module since 5a) | One native reducer; Flutter and Compose surfaces consume its snapshots. Do not add a second reducer on any side. |
+| Active conversation coordination | `ChatConversationRuntimeCoordinator` (app module since 5a, hosted by `ChatRuntimeHost`) | The Dart class of the same name is only a snapshot mirror and command forwarder. |
 | Tool calls / approval / terminal response | Existing ACP request lifecycle | Preserve IDs, ordering, late-event handling, and official completion. |
 
 `openLegacyPage` is strictly a temporary **page navigation** request. It creates a
@@ -207,7 +207,7 @@ The order below follows the actual owners in this repository, not page size alon
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
-## Batch 5 plan: chat migration split (2026-10-04; 5a-0 source complete)
+## Batch 5 plan: chat migration split (2026-10-04; 5a-0 and 5a source complete)
 
 The chat domain is ~53.5k Dart lines (`chat/` 36.7k + `command_overlay/` 16.9k)
 and cannot move as one Goal. The architecture survey behind this split:
@@ -259,6 +259,87 @@ adapter could not absorb it without a second writer:
 May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
+
+## Batch 5a checkpoint: ACP projection owner moved to Kotlin (source complete; device acceptance pending)
+
+- **Content**: `AgentEventReducer`, `ChatConversationRuntimeCoordinator`,
+  `ChatConversationRuntimeState` and the event helpers (identity, stream
+  meta, message kinds, ACP extension registry, tool-call and diff parsers)
+  are ported method by method to `app/.../agent/projection`. The Dart
+  reducer, the coordinator's part files and the runtime state class are
+  deleted; `ChatConversationRuntimeCoordinator` in Dart keeps its public API
+  as a snapshot mirror plus command forwarder (`chat_runtime_mirror.dart`).
+  The tool/diff parsers and message-kind helpers stay in Dart for card
+  rendering only (5c).
+- **Owner decisions**:
+  - `ChatRuntimeHost` (process singleton, main thread) owns the coordinator,
+    takes `AgentRuntimeManager`'s primary event listener (which keeps
+    buffering until the first surface attaches, as it did for Flutter) and
+    publishes snapshots on `ChatRuntimeEvents`; commands arrive on
+    `ChatRuntime`. The `AgentRuntimeEvents` EventChannel and
+    `AgentRuntimeService.events` are removed: no Dart code sees raw ACP
+    events.
+  - Event attribution is the 5a-0 routing ported natively; surfaces publish
+    their `ChatRuntimeRoutingContext` whenever it changes (checked after each
+    frame and before turn admission).
+  - Snapshots carry a coordinator-wide revision and only the messages the
+    UI does not yet hold; the mirror keeps row listenables, ignores late
+    batches and requests a resync when it misses a message. Text caches
+    cross only as keys. `replaceConversationSnapshot` carries the revision
+    it was built from; a newer runtime treats it as a live refresh.
+  - Commands that return values (`applyAcpPromptResponse`, `bindAcpSession`,
+    `finishTaskFromAuthoritativeSnapshot`, `unregisterTask`, persistence)
+    are async and resolve after the mirror includes their change; call sites
+    in send/cancel now `await` them. `isTaskActive` reads `boundTaskIds` from
+    the snapshot.
+  - Persistence: `NativeChatRuntimeHistoryStore` calls
+    `ConversationDomainService` directly and keeps the Dart history-service
+    semantics (per-conversation write order, digest dedupe, failure throws,
+    legacy snapshot cleanup, latest-metadata merge). Summary generation is
+    shared through `ConversationSummaryGenerator`.
+  - Reply voice autoplay moved with the owner (`ChatRuntimeVoiceAutoplay`,
+    speaking through `SceneVoicePlaybackManager`); Flutter
+    `VoicePlaybackCoordinator` keeps manual play/pause/replay only.
+  - IM/external user messages (`FlutterChatSyncBridge`) go straight into
+    the native runtime instead of round-tripping through Flutter.
+  - Dart code with no caller (streaming text batches, link-preview
+    resolution, an old tool-card helper and related thinking helpers) was
+    not ported.
+- **Known differences**: the native metadata merge can read hidden Agent
+  conversations that the Dart lookup skipped (it then preserves their stored
+  fields). Page commands that used to mutate state synchronously are applied
+  optimistically to the mirror and confirmed by the owner.
+- **Verification boundary**: Kotlin `:app` unit tests — projection package
+  324 tests, 0 failures (ported reducer/coordinator/routing/voice suites plus
+  snapshot semantics); the other 45 failures in 16 `:app` test classes match
+  the pre-change baseline. `flutter test`: 968 passed, the same 4
+  pre-existing failures; the 12 remote-Codex snapshot-mapper cases moved to
+  `remote_codex_snapshot_mapper_test.dart`; overlay/drawer widget tests use
+  `FakeNativeChatRuntime`. `flutter analyze` 0 errors, no new warnings.
+  `:app:compileDevelopStandardDebugKotlin :native-ui:testDebugUnitTest
+  :native-ui:compileDebugAndroidTestKotlin
+  :app:mergeProductionStandardReleaseResources` succeeded; `git diff --check`
+  clean. No device run.
+
+Manual acceptance checklist:
+
+1. Agent, Xiaowan and pure-chat turns stream text, reasoning, tool and
+   approval cards without flicker; row-level updates only (no full list
+   rebuild per chunk).
+2. Stop during status/connect/session-new/prompt; late events never reach
+   the next turn; retry and edit of the latest message.
+3. Kill and reopen the app during a turn: buffered events replay into the
+   right conversation; history after restart matches what was shown.
+4. Background Sub Agent/scheduled conversation streams while another is
+   visible; the drawer running dot follows it.
+5. Command-overlay sheet with ChatPage mounted: one projection, correct
+   conversation.
+6. Remote Agent (PC Bridge): thread promotion, history hydration, switching
+   threads.
+7. Voice scene with autoplay on/off: sentences spoken once while streaming,
+   tail on completion; manual replay still works.
+8. IM/WeChat external user messages appear immediately in an open chat.
+9. Context compaction marker, link previews, OpenClaw waiting card.
 
 ## Batch 5a-0 checkpoint: chat runtime read/write seam (source complete; device acceptance pending)
 
