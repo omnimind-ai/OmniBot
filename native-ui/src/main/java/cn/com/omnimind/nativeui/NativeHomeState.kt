@@ -78,6 +78,8 @@ data class NativeHomeActions(
     val setSectionExpanded: (String, Boolean) -> Unit,
     val invokeWebAction: (WebQuickAction, Boolean) -> Unit,
     val refresh: () -> Unit,
+    /** Opens the read-only native transcript preview (batch 5c); set by the home navigation. */
+    val previewTranscript: (ConversationSummary) -> Unit = {},
 )
 
 @Immutable

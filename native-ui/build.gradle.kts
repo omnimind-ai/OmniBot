@@ -37,6 +37,13 @@ dependencies {
     implementation(libs.miuix.ui)
     implementation(libs.miuix.nav)
     implementation(libs.kotlinx.serialization.json)
+    // Chat message Markdown (tables, strikethrough, links, LaTeX via JLatexMath).
+    implementation(libs.markwon.core)
+    implementation(libs.markwon.ext.tables)
+    implementation(libs.markwon.ext.strikethrough)
+    implementation(libs.markwon.ext.latex)
+    implementation(libs.markwon.inline.parser)
+    implementation(libs.markwon.linkify)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.ui.test.junit4)

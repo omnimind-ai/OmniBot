@@ -62,6 +62,11 @@ internal sealed interface HomeRoute : NavKey {
     @Serializable data class PluginDetail(val pluginId: String) : HomeRoute
     @Serializable data object Memory : HomeRoute
     @Serializable data class Terminal(val focusPackageId: String? = null) : HomeRoute
+    @Serializable data class ChatTranscriptPreview(
+        val conversationId: Long,
+        val mode: String,
+        val title: String,
+    ) : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -96,10 +101,15 @@ fun NativeHomeApp(
     openWith: @Composable (onBack: () -> Unit) -> Unit,
     background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
     pet: @Composable (onBack: () -> Unit) -> Unit,
+    chatTranscript: @Composable (conversationId: Long, mode: String, title: String, onBack: () -> Unit) -> Unit =
+        { _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
         val backStack = rememberNavBackStack<HomeRoute>(HomeRoute.Home)
+        val openTranscript: (ConversationSummary) -> Unit = { conversation ->
+            backStack.add(HomeRoute.ChatTranscriptPreview(conversation.id, conversation.mode, conversation.title))
+        }
         LaunchedEffect(state.pendingDestination) {
             when (val destination = state.pendingDestination) {
                 LegacyDestination.Page.ModelProviders -> {
@@ -136,11 +146,14 @@ fun NativeHomeApp(
                     onSkills = { backStack.add(HomeRoute.Skills) },
                     onPlugins = { backStack.add(HomeRoute.Plugins) },
                     onMemory = { backStack.add(HomeRoute.Memory) },
+                    onTranscript = openTranscript,
                     actions = actions,
                 )
             }
             entry<HomeRoute.Archive> {
-                ConversationArchiveScreen(state, actions) { backStack.removeLastOrNull() }
+                ConversationArchiveScreen(state, actions.copy(previewTranscript = openTranscript)) {
+                    backStack.removeLastOrNull()
+                }
             }
             entry<HomeRoute.Settings> {
                 SettingsScreen(
@@ -220,6 +233,9 @@ fun NativeHomeApp(
             }
             entry<HomeRoute.ExecutionHistory> { executionHistory { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
+            entry<HomeRoute.ChatTranscriptPreview> { key ->
+                chatTranscript(key.conversationId, key.mode, key.title) { backStack.removeLastOrNull() }
+            }
         }
     }
 }
@@ -238,6 +254,7 @@ private fun HomeWithDrawer(
     onSkills: () -> Unit,
     onPlugins: () -> Unit,
     onMemory: () -> Unit,
+    onTranscript: (ConversationSummary) -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -273,7 +290,10 @@ private fun HomeWithDrawer(
                             onSkills = { navigate(onSkills) },
                             onPlugins = { navigate(onPlugins) },
                             onMemory = { navigate(onMemory) },
-                            actions = actions.copy(open = { destination -> navigate { actions.open(destination) } }),
+                            actions = actions.copy(
+                                open = { destination -> navigate { actions.open(destination) } },
+                                previewTranscript = { conversation -> navigate { onTranscript(conversation) } },
+                            ),
                         )
                     }
                 },

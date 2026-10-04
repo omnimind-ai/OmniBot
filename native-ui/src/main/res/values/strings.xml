@@ -955,4 +955,14 @@
     <string name="omni_terminal_env_ssh_client">SSH Client</string>
     <string name="omni_terminal_env_sshpass">SSH Password Helper</string>
     <string name="omni_terminal_env_sshd">OpenSSH Server</string>
+    <string name="omni_transcript_title">Message preview</string>
+    <string name="omni_transcript_live">Native preview · live runtime</string>
+    <string name="omni_transcript_history">Native preview · stored history</string>
+    <string name="omni_transcript_empty">No messages yet</string>
+    <string name="omni_transcript_open">Native message preview</string>
+    <string name="omni_run_running">Running</string>
+    <string name="omni_run_finished">Finished</string>
+    <string name="omni_run_failed">Failed</string>
+    <string name="omni_run_cancelled">Cancelled</string>
+    <string name="omni_run_counts">%1$d thoughts · %2$d tools</string>
 </resources>

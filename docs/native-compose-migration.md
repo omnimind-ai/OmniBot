@@ -260,6 +260,54 @@ May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
 
+## Batch 5c-1 checkpoint: run timeline, Markdown and read-only transcript preview (source complete; device acceptance pending)
+
+- **Slices of 5c** (owner decision: Miuix-first, matching structure rather
+  than pixel parity; each slice renders live snapshots on the preview page):
+  - 5c-1: message model, run timeline, Markdown/LaTeX text, message list and
+    the read-only preview page (this checkpoint).
+  - 5c-2: tool summary / transcript / diff cards.
+  - 5c-3: request/approval cards (actions go through the 5b
+    `respondToServerRequest` entry), deep thinking, plan and the remaining cards.
+  - 5c-4: run groups, tool activity strip, anchor bar.
+- **Content**:
+  - native-ui `chat/`: `ChatMessageUi` (field-for-field mirror of the runtime
+    `ChatMessage`, identity getters runId/sessionId/turnId/toolCallId),
+    `AgentRunTimeline` (method-by-method port of `agent_run_timeline.dart`,
+    Dart names kept except `startedAtMillis`/`finishedAtMillis`), the
+    timeline-only subset of `chat_message_kinds`, `ChatMarkdownText`
+    (Markwon 4.6.2 + tables/strikethrough/linkify + JLatexMath; inline `$…$`
+    normalized to `$$…$$` outside code), `ChatMessageList` /
+    `ChatTranscriptScreen` (user bubble, assistant Markdown, run group header
+    with folded process messages; cards render as a labelled placeholder until
+    5c-2/5c-3).
+  - Navigation: `HomeRoute.ChatTranscriptPreview`, opened from the drawer and
+    archive long-press sheet ("原生消息预览"), only in the native home.
+  - App: `NativeChatTranscriptViewModel` listens to the native coordinator
+    and mirrors the newest snapshot of that conversation; without a live
+    runtime it reads stored history (200 rows) from
+    `ConversationDomainService`. It never sends commands; the Flutter chat
+    page stays the only interactive surface until 5e. Links open only for
+    http(s).
+- **Verification boundary**: native-ui `AgentRunTimelineTest` 29 (ported from
+  Dart) and `ChatMarkdownMathTest` 3 pass; projection Kotlin tests 336, 0
+  failures. App JVM tests cannot load native-ui classes (native-ui compiles to
+  class file 65, app tests run on JDK 17), so the snapshot → `ChatMessageUi`
+  mapping is checked by compilation only. `flutter test` 967 passed with the
+  same 4 pre-existing failures; `flutter analyze` exit 0. Gradle compile /
+  native-ui tests / androidTest compile / release resource merge succeeded;
+  `git diff --check` clean. No device run.
+
+Manual acceptance checklist:
+
+1. Long-press a conversation in the native drawer → "原生消息预览": history
+   renders newest at the bottom; user bubbles right-aligned; Markdown tables,
+   code, links and `$x$` / `$$x$$` math render.
+2. Start an Agent run in Flutter, open the preview: the header says live
+   runtime, the run group shows running and updates as tools/thinking arrive;
+   tapping the header folds the process messages.
+3. Dark and light themes; back returns to the drawer.
+
 ## Batch 5b checkpoint: native prompt admission (source complete; device acceptance pending)
 
 - **Content**: `ChatPromptDispatcher` (app module, owned by `ChatRuntimeHost`)

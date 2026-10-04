@@ -84,6 +84,14 @@ internal fun DrawerConversationList(
                     actions.setArchived(conversation, !conversation.archived)
                 },
             )
+            TextButton(
+                text = stringResource(R.string.omni_transcript_open),
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                onClick = {
+                    menuKey = null
+                    actions.previewTranscript(conversation)
+                },
+            )
         }
     }
 }

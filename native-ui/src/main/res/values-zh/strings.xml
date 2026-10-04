@@ -955,4 +955,14 @@
     <string name="omni_terminal_env_ssh_client">SSH 客户端</string>
     <string name="omni_terminal_env_sshpass">SSH 密码辅助工具</string>
     <string name="omni_terminal_env_sshd">OpenSSH 服务器</string>
+    <string name="omni_transcript_title">消息预览</string>
+    <string name="omni_transcript_live">原生预览 · 实时运行时</string>
+    <string name="omni_transcript_history">原生预览 · 历史记录</string>
+    <string name="omni_transcript_empty">暂无消息</string>
+    <string name="omni_transcript_open">原生消息预览</string>
+    <string name="omni_run_running">运行中</string>
+    <string name="omni_run_finished">已完成</string>
+    <string name="omni_run_failed">失败</string>
+    <string name="omni_run_cancelled">已取消</string>
+    <string name="omni_run_counts">思考 %1$d · 工具 %2$d</string>
 </resources>

@@ -1,5 +1,7 @@
 package cn.com.omnimind.bot.activity
 
+import cn.com.omnimind.bot.ui.chat.NativeChatTranscriptRoute
+import cn.com.omnimind.bot.ui.chat.NativeChatTranscriptViewModel
 import android.content.Context
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -253,6 +255,14 @@ class NativeHomeActivity : ComponentActivity() {
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
+                chatTranscript = { conversationId, mode, title, onBack ->
+                    val transcriptViewModel = remember(conversationId, mode) {
+                        ViewModelProvider(this@NativeHomeActivity,
+                            NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title))[
+                                "transcript:$mode:$conversationId", NativeChatTranscriptViewModel::class.java]
+                    }
+                    NativeChatTranscriptRoute(transcriptViewModel, ::openTranscriptLink, onBack)
+                },
                 terminal = { focusPackageId, onBack ->
                     val terminalViewModel = remember(focusPackageId) {
                         ViewModelProvider(this@NativeHomeActivity,
@@ -314,5 +324,11 @@ class NativeHomeActivity : ComponentActivity() {
         }
         getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
         Toast.makeText(this, cn.com.omnimind.nativeui.R.string.omni_log_copied, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun openTranscriptLink(link: String) {
+        val uri = runCatching { android.net.Uri.parse(link) }.getOrNull() ?: return
+        if (uri.scheme !in setOf("http", "https")) return
+        runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri)) }
     }
 }
