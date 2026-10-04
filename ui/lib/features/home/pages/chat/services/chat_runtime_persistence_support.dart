@@ -16,7 +16,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       return;
     }
     final key = _runtimeKey(conversationId: conversationId, mode: mode);
-    final expectedRuntime = runtimeFor(
+    final expectedRuntime = _runtimeStateFor(
       conversationId: conversationId,
       mode: mode,
     );
@@ -64,10 +64,10 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
   }) async {
     final runtime =
         expectedRuntime ??
-        runtimeFor(conversationId: conversationId, mode: mode);
+        _runtimeStateFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
     if (!identical(
-      runtimeFor(conversationId: conversationId, mode: mode),
+      _runtimeStateFor(conversationId: conversationId, mode: mode),
       runtime,
     )) {
       return;
@@ -141,7 +141,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       // Metadata I/O can overlap streamed chunks and PromptResponse. Capture
       // message content at the write boundary, not before that await. Keep the
       // admitted snapshot if this runtime was replaced/reset in the meantime.
-      if (identical(runtimeFor(conversationId: conversationId, mode: mode), runtime) &&
+      if (identical(_runtimeStateFor(conversationId: conversationId, mode: mode), runtime) &&
           runtime.persistenceGeneration == persistenceGeneration) {
         _flushRuntimeStreamingText(runtime);
         snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
@@ -163,7 +163,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     // operation returns; the ordered write still preserves the user's data.
     final isCurrentRuntime =
         identical(
-          runtimeFor(conversationId: conversationId, mode: mode),
+          _runtimeStateFor(conversationId: conversationId, mode: mode),
           runtime,
         ) &&
         runtime.persistenceGeneration == persistenceGeneration;

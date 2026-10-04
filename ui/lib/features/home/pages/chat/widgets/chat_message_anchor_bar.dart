@@ -299,7 +299,7 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
   double _ringScroll = 0;
   double? _panLastSlotPosition;
 
-  ObservableChatMessageList? _observableMessages;
+  ObservableChatMessageSource? _observableMessages;
   List<ChatMessageAnchor> _anchorsCache = const <ChatMessageAnchor>[];
   List<ChatMessageModel>? _anchorsCacheSource;
   int _anchorsCacheRevision = -1;
@@ -358,7 +358,7 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
   }
 
   void _bindObservableMessages(List<ChatMessageModel> messages) {
-    final nextObservable = messages is ObservableChatMessageList
+    final nextObservable = messages is ObservableChatMessageSource
         ? messages
         : null;
     if (identical(_observableMessages, nextObservable)) {
@@ -386,7 +386,7 @@ class _ChatMessageAnchorBarState extends State<ChatMessageAnchorBar>
 
   List<ChatMessageAnchor> _resolveAnchors() {
     final source = widget.messages;
-    final observable = source is ObservableChatMessageList ? source : null;
+    final observable = source is ObservableChatMessageSource ? source : null;
     final revision = observable?.structureRevision ?? -1;
     // observable 源按 structureRevision 判缓存；普通 List 源按实例 + 长度
     // 兜底（该路径只出现在会话 runtime 建立前，通常为空列表）。

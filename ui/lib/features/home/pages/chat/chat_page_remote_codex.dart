@@ -120,9 +120,8 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
       resolveVisibleChatMessages(
         runtimeMessages: runtime?.messages,
         fallbackMessages: _modeState(ChatPageMode.agent).messages,
-        preserveFallbackDuringHandoff: _modeState(
-          ChatPageMode.agent,
-        ).isAiResponding,
+        preserveFallbackDuringHandoff: _modeState(ChatPageMode.agent)
+            .isAiResponding,
       ),
     );
     final snapshotMessages = hasTurns
@@ -254,95 +253,33 @@ extension _ChatPageRemoteCodexSupport on _ChatPageStateBase {
     return runtimeId;
   }
 
-  int _ensureRemoteCodexRuntimeForThread(String threadId) {
-    final normalizedThreadId = threadId.trim();
-    final runtimeId = _remoteCodexRuntimeId(normalizedThreadId);
-    final now = DateTime.now().millisecondsSinceEpoch;
-    _runtimeCoordinator.ensureEphemeralRuntime(
-      conversationId: runtimeId,
-      mode: kChatRuntimeModeAgent,
-      conversation:
-          _runtimeCoordinator
-              .runtimeFor(
-                conversationId: runtimeId,
-                mode: kChatRuntimeModeAgent,
-              )
-              ?.conversation ??
-          ConversationModel(
-            id: runtimeId,
-            mode: ConversationMode.agent,
-            title:
-                'Agent ${normalizedThreadId.length > 6 ? normalizedThreadId.substring(normalizedThreadId.length - 6) : normalizedThreadId}',
-            status: 0,
-            messageCount: 0,
-            createdAt: now,
-            updatedAt: now,
-          ),
-      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
-    );
-    return runtimeId;
-  }
+  int _ensureRemoteCodexRuntimeForThread(String threadId) =>
+      _runtimeCoordinator.ensureRemoteThreadRuntime(threadId);
 
   int _activateRemoteCodexRuntimeForThread(String threadId) {
     final normalizedThreadId = threadId.trim();
-    final runtimeId = _ensureRemoteCodexRuntimeForThread(normalizedThreadId);
+    final runtimeId = _runtimeCoordinator.activateRemoteThreadRuntime(
+      normalizedThreadId,
+      fallbackMessages: _modeState(ChatPageMode.agent).messages,
+      conversation: _modeState(ChatPageMode.agent).currentConversation,
+    );
+    _adoptRemoteCodexThread(normalizedThreadId, runtimeId);
+    return runtimeId;
+  }
+
+  /// Page-side half of a remote thread activation: the coordinator already
+  /// moved the visible messages/conversation into the runtime.
+  void _adoptRemoteCodexThread(String threadId, int runtimeId) {
     final runtime = _runtimeCoordinator.runtimeFor(
       conversationId: runtimeId,
       mode: kChatRuntimeModeAgent,
     );
     if (runtime != null) {
-      final visibleMessages = _modeState(ChatPageMode.agent).messages;
-      if (visibleMessages.isNotEmpty) {
-        final existingIds = runtime.messages
-            .map((message) => message.id)
-            .toSet();
-        for (final message in visibleMessages.reversed) {
-          if (existingIds.add(message.id)) {
-            runtime.messages.add(message);
-          }
-        }
-      }
-      final currentConversation = _modeState(
-        ChatPageMode.agent,
-      ).currentConversation;
-      if (currentConversation != null) {
-        runtime.conversation = currentConversation.copyWith(id: runtimeId);
-      }
       _modeState(ChatPageMode.agent).currentConversation = runtime.conversation;
     }
     _activeRemoteCodexRuntimeId = runtimeId;
-    _activeAgentThreadId = normalizedThreadId;
+    _activeAgentThreadId = threadId;
     _modeState(ChatPageMode.agent).currentConversationId = runtimeId;
-    _startRemoteCodexSessionSync(normalizedThreadId);
-    return runtimeId;
-  }
-
-  bool _shouldPromoteRemoteCodexEventToVisibleThread({
-    required String threadId,
-    required int runtimeId,
-  }) {
-    final activeThreadId = _activeAgentThreadId?.trim();
-    if (activeThreadId == threadId) {
-      return true;
-    }
-    final currentConversationId = _modeState(
-      ChatPageMode.agent,
-    ).currentConversationId;
-    if (currentConversationId == runtimeId) {
-      return true;
-    }
-    if (activeThreadId != null && activeThreadId.isNotEmpty) {
-      return false;
-    }
-    if (currentConversationId == null ||
-        currentConversationId != _activeRemoteCodexRuntimeId) {
-      return false;
-    }
-    final runtime = _runtimeCoordinator.runtimeFor(
-      conversationId: currentConversationId,
-      mode: kChatRuntimeModeAgent,
-    );
-    return _modeState(ChatPageMode.agent).messages.isNotEmpty ||
-        (runtime?.hasInFlightTask ?? false);
+    _startRemoteCodexSessionSync(threadId);
   }
 }

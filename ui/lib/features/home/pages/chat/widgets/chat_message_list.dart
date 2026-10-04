@@ -146,10 +146,10 @@ class _ChatMessageListState extends State<ChatMessageList> {
   static const double _latestEdgeTolerance = 48.0;
   static const double _manualLatestAttachTolerance = 2.0;
   static const double _historyLoadTriggerExtent = 180.0;
-  ObservableChatMessageList? _observableMessages;
+  ObservableChatMessageSource? _observableMessages;
   DateTime? _autoStickSuppressedUntil;
   List<AgentRunTimelineEntry>? _timelineEntriesCache;
-  ObservableChatMessageList? _timelineCacheSource;
+  ObservableChatMessageSource? _timelineCacheSource;
   int _timelineCacheStructureRevision = -1;
   Set<String>? _timelineCacheActiveTaskIds;
   String? _timelineCacheAgentId;
@@ -287,7 +287,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   }
 
   void _bindObservableMessages(List<ChatMessageModel> messages) {
-    final nextObservable = messages is ObservableChatMessageList
+    final nextObservable = messages is ObservableChatMessageSource
         ? messages
         : null;
     if (identical(_observableMessages, nextObservable)) {
@@ -681,7 +681,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   }
 
   ValueListenable<ChatMessageModel>? _messageListenableFor(
-    ObservableChatMessageList messages,
+    ObservableChatMessageSource messages,
     String messageId,
   ) {
     final index = messages.indexWhere((message) => message.id == messageId);
@@ -692,7 +692,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   }
 
   List<Listenable> _groupMessageListenablesFor(
-    ObservableChatMessageList messages,
+    ObservableChatMessageSource messages,
     AgentRunTimelineGroup group,
   ) {
     final seenIds = <String>{};
@@ -715,7 +715,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   List<AgentRunTimelineEntry> _resolveTimelineEntries(
     List<ChatMessageModel> messageSource,
   ) {
-    final observable = messageSource is ObservableChatMessageList
+    final observable = messageSource is ObservableChatMessageSource
         ? messageSource
         : null;
     if (observable == null) {
@@ -747,7 +747,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
   }
 
   AgentRunTimelineGroup _refreshTimelineGroup(
-    ObservableChatMessageList messages,
+    ObservableChatMessageSource messages,
     AgentRunTimelineGroup group,
   ) {
     return group.withRefreshedMessages(<String, ChatMessageModel>{
@@ -786,7 +786,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
       );
     }
 
-    final observableMessages = messageSource is ObservableChatMessageList
+    final observableMessages = messageSource is ObservableChatMessageSource
         ? messageSource
         : null;
     if (observableMessages == null) {

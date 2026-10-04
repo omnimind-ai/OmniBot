@@ -201,6 +201,11 @@ class ChatConversationRuntimeState {
   String? lastAgentToolType;
   ChatBrowserSessionSnapshot? browserSessionSnapshot;
   int _localSnapshotEchoSuppressionUntilMillis = 0;
+  ChatRuntimeView? _view;
+
+  /// The single read-only view handed to pages. Cached so list widgets that
+  /// compare sources by identity keep their caches across reads.
+  ChatRuntimeView get view => _view ??= ChatRuntimeView._(this);
 
   /// The single host-facing run identity. Protocol consumers should use the
   /// ACP fields inside this value instead of treating taskId, turnId, or

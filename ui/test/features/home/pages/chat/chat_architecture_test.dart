@@ -266,13 +266,28 @@ void main() {
         'int _activateRemoteCodexRuntimeForThread(',
       );
       final activationEnd = source.indexOf(
-        '\n  bool _shouldPromoteRemoteCodexEventToVisibleThread(',
+        '\n  /// Page-side half of a remote thread activation',
         activationStart,
       );
       expect(activationStart, greaterThanOrEqualTo(0));
       expect(activationEnd, greaterThan(activationStart));
       final activationBody = source.substring(activationStart, activationEnd);
-      expect(activationBody, contains('_startRemoteCodexSessionSync('));
+      // Event-driven promotion and explicit activation share the page-side
+      // adoption, which owns the session sync.
+      expect(activationBody, contains('_adoptRemoteCodexThread('));
+      final adoptStart = source.indexOf('void _adoptRemoteCodexThread(');
+      final adoptEnd = source.indexOf('\n  }\n', adoptStart);
+      expect(adoptStart, greaterThanOrEqualTo(0));
+      expect(
+        source.substring(adoptStart, adoptEnd),
+        contains('_startRemoteCodexSessionSync('),
+      );
+      expect(
+        File(
+          '$chatRoot/chat_page_agent.dart',
+        ).readAsStringSync(),
+        contains('_adoptRemoteCodexThread(promotedThreadId'),
+      );
     },
   );
 
@@ -306,7 +321,7 @@ void main() {
       'Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId)',
     );
     final flowEnd = source.indexOf(
-      '\n  void _handleIncomingAcpRuntimeEvent(',
+      '\n  ChatRuntimeRoutingContext? _acpRuntimeRoutingContext(',
       flowStart,
     );
     expect(flowStart, greaterThanOrEqualTo(0));
@@ -342,7 +357,7 @@ void main() {
       'Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId)',
     );
     final flowEnd = source.indexOf(
-      '\n  void _handleIncomingAcpRuntimeEvent(',
+      '\n  ChatRuntimeRoutingContext? _acpRuntimeRoutingContext(',
       flowStart,
     );
     expect(flowStart, greaterThanOrEqualTo(0));
@@ -486,5 +501,39 @@ void main() {
     final disposeBody = source.substring(disposeStart, disposeEnd);
     expect(disposeBody, contains('_closeAcpLifecycle('));
     expect(disposeBody, contains('setOnBeforeCloseChatBotDialog(null)'));
+  });
+
+  test('only the runtime coordinator projects runtime events and owns state', () {
+    final surfaces = <File>[
+      ...Directory(chatRoot)
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where(
+            (file) =>
+                file.path.endsWith('.dart') &&
+                !file.path.contains('/services/'),
+          ),
+      File('lib/features/home/pages/command_overlay/chat_bot_sheet.dart'),
+      File('lib/features/home/widgets/home_drawer.dart'),
+      File('lib/features/home/widgets/home_drawer_conversation_list.dart'),
+    ];
+    for (final file in surfaces) {
+      final source = file.readAsStringSync();
+      expect(
+        source,
+        isNot(contains('AgentRuntimeService.events')),
+        reason: '${file.path} must attach through attachEventHost',
+      );
+      expect(
+        source,
+        isNot(contains('ChatConversationRuntimeState')),
+        reason: '${file.path} must read runtimes through ChatRuntimeView',
+      );
+      expect(
+        source,
+        isNot(contains('.applyAgentEvent(')),
+        reason: '${file.path} must not project events itself',
+      );
+    }
   });
 }

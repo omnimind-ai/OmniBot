@@ -2905,11 +2905,11 @@ void main() {
 
   test('routes a session-only event to its background conversation', () {
     final coordinator = ChatConversationRuntimeCoordinator.instance;
-    final first = coordinator.ensureRuntime(
+    final first = coordinator.debugEnsureRuntimeState(
       conversationId: 8101,
       mode: kChatRuntimeModeAgent,
     );
-    final second = coordinator.ensureRuntime(
+    final second = coordinator.debugEnsureRuntimeState(
       conversationId: 8102,
       mode: kChatRuntimeModeAgent,
     );
@@ -2939,7 +2939,7 @@ void main() {
 
   test('interrupts every running tool in a parallel tool batch', () {
     final coordinator = ChatConversationRuntimeCoordinator.instance;
-    final parallelRuntime = coordinator.ensureRuntime(
+    final parallelRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: 8103,
       mode: kChatRuntimeModeAgent,
     )..activeRunId = 'run-parallel-tools';
@@ -5550,7 +5550,7 @@ diff --git a/lib/main.dart b/lib/main.dart
       user: 2,
       content: {'text': 'Hello', 'id': 'msg-1-agent-message'},
     );
-    final coordinatorRuntime = coordinator.ensureRuntime(
+    final coordinatorRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
       initialMessages: [hydratedMessage],
@@ -5564,7 +5564,7 @@ diff --git a/lib/main.dart b/lib/main.dart
       messages: [hydratedMessage],
     );
 
-    final updatedRuntime = coordinator.runtimeFor(
+    final updatedRuntime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;

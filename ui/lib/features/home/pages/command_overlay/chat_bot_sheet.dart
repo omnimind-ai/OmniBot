@@ -101,7 +101,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   bool _closeRequested = false;
   bool _cancelRequested = false;
   bool _acpCloseStarted = false;
-  StreamSubscription<Map<String, dynamic>>? _acpRuntimeSubscription;
+  ChatRuntimeEventHost? _acpRuntimeEventHost;
   final ChatConversationRuntimeCoordinator _runtimeCoordinator =
       ChatConversationRuntimeCoordinator.instance;
   static const String _runtimeMode = 'command_overlay';
@@ -176,10 +176,11 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     // 页面关闭回调
     ScreenDialogService.setOnBeforeCloseChatBotDialog(_onDialogClose);
 
-    _acpRuntimeSubscription = AgentRuntimeService.events.listen(
-      _handleIncomingAcpRuntimeEvent,
-    );
     _runtimeCoordinator.ensureInitialized();
+    _acpRuntimeEventHost = _runtimeCoordinator.attachEventHost(
+      context: _acpRuntimeRoutingContext,
+      onOutcome: _handleAcpRuntimeEventOutcome,
+    );
     unawaited(_loadActiveAcpAgentIdentity());
   }
 
@@ -725,8 +726,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _openClawBaseUrlController.dispose();
     _openClawTokenController.dispose();
     _openClawUserIdController.dispose();
-    _acpRuntimeSubscription?.cancel();
-    _acpRuntimeSubscription = null;
+    _acpRuntimeEventHost?.detach();
+    _acpRuntimeEventHost = null;
     ScreenDialogService.setOnBeforeCloseChatBotDialog(null);
     final conversationId = _currentConversationId;
     if (conversationId != null) {
@@ -767,7 +768,10 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         _acpCloseStarted = false;
         debugPrint('关闭 ACP 会话失败: $error');
         if (mounted && !_closeRequested) {
-          showToast(formatAgentRuntimeErrorForUser(error), type: ToastType.error);
+          showToast(
+            formatAgentRuntimeErrorForUser(error),
+            type: ToastType.error,
+          );
         }
       }
     }
@@ -1458,20 +1462,30 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       !_cancelRequested &&
       _currentDispatchTurnId == taskId;
 
-  void _handleIncomingAcpRuntimeEvent(Map<String, dynamic> event) {
-    final conversationId = _asInt(event['conversationId']);
+  /// The sheet claims only events for its own conversation, and only while
+  /// it has a prompt in flight.
+  ChatRuntimeRoutingContext? _acpRuntimeRoutingContext() {
+    final conversationId = _currentConversationId;
+    if (!mounted || _currentDispatchTurnId == null || conversationId == null) {
+      return null;
+    }
+    return ChatRuntimeRoutingContext.dispatchScoped(
+      conversationId: conversationId,
+      mode: _runtimeMode,
+      conversation: _currentConversation,
+    );
+  }
+
+  void _handleAcpRuntimeEventOutcome(ChatRuntimeEventOutcome outcome) {
+    final conversationId = outcome.conversationId;
     if (!mounted ||
         _currentDispatchTurnId == null ||
-        conversationId == null ||
+        outcome.mode != _runtimeMode ||
         conversationId != _currentConversationId) {
       return;
     }
-    final result = _runtimeCoordinator.applyAgentEvent(
-      conversationId: conversationId,
-      mode: _runtimeMode,
-      event: event,
-      conversation: _currentConversation,
-    );
+    final event = outcome.event;
+    final result = outcome.result;
     if (!result.handled) {
       return;
     }
@@ -1508,12 +1522,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     if (!runtime.isAiResponding) {
       unawaited(_saveConversationToDb());
     }
-  }
-
-  static int? _asInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return int.tryParse(value?.toString() ?? '');
   }
 
   String _latestUserUtterance() {

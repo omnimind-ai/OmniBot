@@ -370,6 +370,13 @@ class _ConversationManagerHarnessState
       ? (_inMemorySnapshots[_currentConversationId] ?? _messages) : _messages;
 
   @override
+  void clearVisibleMessages() => messages.clear();
+
+  @override
+  void appendVisibleMessages(Iterable<ChatMessageModel> items) =>
+      messages.addAll(items);
+
+  @override
   int? get currentConversationId => _currentConversationId;
 
   @override

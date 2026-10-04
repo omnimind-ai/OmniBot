@@ -11,10 +11,6 @@ String? _asAgentString(dynamic value) {
   return text.isEmpty ? null : text;
 }
 
-String? _remoteCodexEventThreadId(Map<String, dynamic> event) {
-  return _remoteCodexThreadIdFromEnvelope(event);
-}
-
 /// Top-level diagnostic counter that survives navigation. Used purely for
 /// `flutter logs` / `adb logcat` introspection — the user reported that
 /// exec_command tool cards do not surface in our UI even though the codex
@@ -55,46 +51,7 @@ const List<String> _remoteCodexEnvelopeKeys = <String>[
   'result',
 ];
 
-String? _remoteCodexThreadIdFromEnvelope(dynamic value, {int depth = 0}) {
-  if (depth > 6) {
-    return null;
-  }
-  final map = _asAgentMap(value);
-  if (map == null) {
-    return null;
-  }
-  final direct = _asAgentString(map['threadId'] ?? map['thread_id']);
-  if (direct != null) {
-    return direct;
-  }
-  final thread = _asAgentMap(map['thread']);
-  final threadId = _asAgentString(thread?['id']);
-  if (threadId != null) {
-    return threadId;
-  }
-  for (final key in _remoteCodexEnvelopeKeys) {
-    final nested = map[key];
-    if (nested == null) {
-      continue;
-    }
-    final nestedThreadId = _remoteCodexThreadIdFromEnvelope(
-      nested,
-      depth: depth + 1,
-    );
-    if (nestedThreadId != null) {
-      return nestedThreadId;
-    }
-  }
-  return null;
-}
-
-int _remoteCodexRuntimeId(String seed) {
-  var hash = 0x45d9f3b;
-  for (final codeUnit in seed.codeUnits) {
-    hash = 0x1fffffff & (hash * 31 + codeUnit);
-  }
-  return -((hash & 0x3fffffff) + 1);
-}
+int _remoteCodexRuntimeId(String seed) => remoteAgentRuntimeIdForThread(seed);
 
 ConversationModel _remoteCodexConversationFromResponse({
   required int runtimeId,

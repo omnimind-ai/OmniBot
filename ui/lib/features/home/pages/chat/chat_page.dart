@@ -5,6 +5,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +13,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+
 import '../../../../models/conversation_model.dart';
 import '../../../../models/conversation_thread_target.dart';
 import '../../../../models/chat_link_preview.dart';
@@ -24,13 +26,16 @@ import '../authorize/authorize_page_args.dart';
 import '../command_overlay/widgets/chat_input_area.dart';
 import '../command_overlay/services/manual_recording_flow_controller.dart';
 import '../command_overlay/services/manual_recording_result_card.dart';
+
 import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
+
 import '../command_overlay/services/tool_card_detail_gesture_gate.dart';
 import '../common/openclaw_connection_checker.dart';
 import '../omnibot_workspace/widgets/omnibot_workspace_browser.dart';
 import 'services/chat_conversation_lifecycle_guard.dart';
 import 'services/chat_conversation_runtime_coordinator.dart';
 import 'state/chat_page_mode_state.dart';
+
 import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/services/app_update_service.dart';
@@ -86,6 +91,7 @@ import 'widgets/chat_message_anchor_bar.dart';
 import 'widgets/pet_overlay_permission_sheet.dart';
 import 'widgets/chat_tool_activity_strip.dart';
 import 'widgets/chat_spotlight_tour.dart';
+
 import 'package:ui/widgets/app_update_dialog.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/conversation_model_selector.dart';
@@ -137,7 +143,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     implements RouteAware {
   void removeLatestLoadingIfExists() {
     if (_messages.isNotEmpty && _messages.first.isLoading) {
-      setState(() => _messages.removeAt(0));
+      setState(() => _removeLeadingVisibleMessages(1));
     }
   }
 
@@ -276,7 +282,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   _conversationMessagesChangedSubscription;
   StreamSubscription<Map<String, dynamic>>?
   _browserSessionSnapshotChangedSubscription;
-  StreamSubscription<Map<String, dynamic>>? _agentEventSubscription;
+  ChatRuntimeEventHost? _agentEventHost;
   StreamSubscription<Map<String, dynamic>>? _omniLinkEventSubscription;
   final Set<String> _pendingManualAgentRetryTaskIds = <String>{};
   bool _pendingAgentInputResponseInFlight = false;
@@ -414,9 +420,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final runtimeMessages = resolveVisibleChatMessages(
       runtimeMessages: _runtimeForMode(ChatPageMode.agent)?.messages,
       fallbackMessages: _modeState(ChatPageMode.agent).messages,
-      preserveFallbackDuringHandoff: _modeState(
-        ChatPageMode.agent,
-      ).isAiResponding,
+      preserveFallbackDuringHandoff: _modeState(ChatPageMode.agent)
+          .isAiResponding,
     );
     for (final message in runtimeMessages.reversed) {
       final messageAgentId = message.agentId?.trim() ?? '';
@@ -568,7 +573,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     ChatPageMode.openclaw => kChatRuntimeModeOpenClaw,
     ChatPageMode.agent => kChatRuntimeModeAgent,
   };
-  ChatConversationRuntimeState? _runtimeForMode(ChatPageMode mode) {
+  ChatRuntimeView? _runtimeForMode(ChatPageMode mode) {
     final conversationId = _modeState(mode).currentConversationId;
     if (conversationId == null) return null;
     return _runtimeCoordinator.runtimeFor(
@@ -591,8 +596,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     );
   }
 
-  ChatConversationRuntimeState? get _activeRuntime =>
-      _runtimeForMode(_activeMode);
+  ChatRuntimeView? get _activeRuntime => _runtimeForMode(_activeMode);
   int _beginConversationTargetRequest() => ++_conversationTargetRequestId;
   bool _isConversationTargetRequestCurrent(int requestId) =>
       mounted && requestId == _conversationTargetRequestId;
@@ -616,7 +620,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   bool get _isWorkspaceSurface =>
       _activeSurfaceMode == ChatSurfaceMode.workspace;
 
-  String _runtimeChromeSignature(ChatConversationRuntimeState? runtime) {
+  String _runtimeChromeSignature(ChatRuntimeView? runtime) {
     if (runtime == null) {
       return '';
     }
@@ -830,6 +834,108 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         ? false
         : _modeState(_activeMode).isAiResponding,
   );
+
+  /// The runtime whose list is currently visible, if any. A runtime-owned
+  /// list changes only through coordinator commands; before a runtime exists
+  /// the page-local fallback list is ordinary page state.
+  ChatRuntimeView? get _visibleMessageRuntime {
+    final runtime = _activeRuntime;
+    if (runtime == null || !identical(_messages, runtime.messages)) {
+      return null;
+    }
+    return runtime;
+  }
+
+  void _insertVisibleMessage(ChatMessageModel message, {int index = 0}) {
+    final runtime = _visibleMessageRuntime;
+    if (runtime == null) {
+      _messages.insert(index, message);
+      return;
+    }
+    _runtimeCoordinator.insertRuntimeMessage(
+      conversationId: runtime.conversationId,
+      mode: runtime.mode,
+      message: message,
+      index: index,
+    );
+  }
+
+  void _replaceVisibleMessage(String messageId, ChatMessageModel message) {
+    final runtime = _visibleMessageRuntime;
+    if (runtime == null) {
+      final index = _messages.indexWhere((item) => item.id == messageId);
+      if (index >= 0) _messages[index] = message;
+      return;
+    }
+    _runtimeCoordinator.replaceRuntimeMessage(
+      conversationId: runtime.conversationId,
+      mode: runtime.mode,
+      messageId: messageId,
+      message: message,
+    );
+  }
+
+  void _removeVisibleMessages(Iterable<String> messageIds) {
+    final ids = messageIds.toSet();
+    if (ids.isEmpty) return;
+    final runtime = _visibleMessageRuntime;
+    if (runtime == null) {
+      _messages.removeWhere((message) => ids.contains(message.id));
+      return;
+    }
+    _runtimeCoordinator.removeRuntimeMessages(
+      conversationId: runtime.conversationId,
+      mode: runtime.mode,
+      messageIds: ids,
+    );
+  }
+
+  void _removeLeadingVisibleMessages(int count) {
+    if (count <= 0) return;
+    final runtime = _visibleMessageRuntime;
+    if (runtime == null) {
+      _messages.removeRange(0, math.min(count, _messages.length));
+      return;
+    }
+    _runtimeCoordinator.removeLeadingRuntimeMessages(
+      conversationId: runtime.conversationId,
+      mode: runtime.mode,
+      count: count,
+    );
+  }
+
+  @override
+  void insertVisibleMessage(ChatMessageModel message, {int index = 0}) =>
+      _insertVisibleMessage(message, index: index);
+
+  @override
+  void clearVisibleMessages() {
+    final runtime = _visibleMessageRuntime;
+    if (runtime == null) {
+      _messages.clear();
+      return;
+    }
+    _runtimeCoordinator.replaceRuntimeMessages(
+      conversationId: runtime.conversationId,
+      mode: runtime.mode,
+      messages: const <ChatMessageModel>[],
+    );
+  }
+
+  @override
+  void appendVisibleMessages(Iterable<ChatMessageModel> messages) {
+    final runtime = _visibleMessageRuntime;
+    if (runtime == null) {
+      _messages.addAll(messages);
+      return;
+    }
+    _runtimeCoordinator.appendRuntimeMessages(
+      conversationId: runtime.conversationId,
+      mode: runtime.mode,
+      messages: messages,
+    );
+  }
+
   double get _toolActivityOccupiedHeight =>
       _modeState(_activeMode).toolActivityOccupiedHeight;
   double get _slashCommandPanelOccupiedHeight =>
@@ -859,7 +965,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _isAiResponding(bool value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.isAiResponding = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        isAiResponding: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -900,7 +1010,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _isContextCompressing(bool value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.isContextCompressing = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        isContextCompressing: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -916,7 +1030,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _isCheckingExecutableTask(bool value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.isCheckingExecutableTask = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        isCheckingExecutableTask: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -937,7 +1055,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _deepThinkingContent(String value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.deepThinkingContent = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        deepThinkingContent: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -953,7 +1075,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _isDeepThinking(bool value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.isDeepThinking = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        isDeepThinking: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -969,7 +1095,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _currentDispatchTurnId(String? value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.currentDispatchTurnId = value;
+      _runtimeCoordinator.setRuntimeDispatchTurnId(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        turnId: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -985,7 +1115,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _currentThinkingStage(int value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.currentThinkingStage = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        currentThinkingStage: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -999,7 +1133,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _isInputAreaVisible(bool value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.isInputAreaVisible = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        isInputAreaVisible: value,
+      );
       return;
     }
     _modeState(_activeMode).isInputAreaVisible = value;
@@ -1013,7 +1151,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _isExecutingTask(bool value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.isExecutingTask = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        isExecutingTask: value,
+      );
       return;
     }
     if (_activeMode != ChatPageMode.agent) {
@@ -1032,7 +1174,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     _modeState(_activeMode).currentConversation = value;
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.conversation = value;
+      _runtimeCoordinator.setRuntimeConversation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        conversation: value,
+      );
     }
   }
 
@@ -1046,7 +1192,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _chatIslandDisplayLayer(ChatIslandDisplayLayer value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.chatIslandDisplayLayer = value;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        chatIslandDisplayLayer: value,
+      );
       return;
     }
     _modeState(_activeMode).chatIslandDisplayLayer = value;
@@ -1108,7 +1258,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _lastAgentToolType(String? value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.lastAgentToolType = value;
+      _runtimeCoordinator.setRuntimeLastAgentToolType(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        toolType: value,
+      );
       return;
     }
     _modeState(_activeMode).lastAgentToolType = value;
@@ -1120,7 +1274,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   set _browserSessionSnapshot(ChatBrowserSessionSnapshot? value) {
     final runtime = _activeRuntime;
     if (runtime != null) {
-      runtime.browserSessionSnapshot = value;
+      _runtimeCoordinator.setRuntimeBrowserSessionSnapshot(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        snapshot: value,
+      );
       return;
     }
     _modeState(_activeMode).browserSessionSnapshot = value;
@@ -1448,7 +1606,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         initialChatIslandDisplayLayer: _chatIslandDisplayLayerForMode(pageMode),
       );
     } else if (conversation != null) {
-      runtime.conversation = conversation;
+      _runtimeCoordinator.setRuntimeConversation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        conversation: conversation,
+      );
     }
     _syncRuntimeSnapshotForMode(
       pageMode,
@@ -1659,9 +1821,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     };
 
     setState(() {
-      _messages.removeWhere((msg) => msg.id == waitingCardId);
-      _messages.insert(
-        0,
+      _removeVisibleMessages(<String>[waitingCardId]);
+      _insertVisibleMessage(
         ChatMessageModel(
           id: waitingCardId,
           type: 2,
@@ -1678,7 +1839,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     if (!hasWaitingCard) return;
 
     setState(() {
-      _messages.removeWhere((msg) => msg.id == waitingCardId);
+      _removeVisibleMessages(<String>[waitingCardId]);
     });
   }
 
@@ -1690,9 +1851,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final nextChromeSignature = _runtimeChromeSignature(runtime);
     final previousChromeSignature = _modeState(mode).runtimeChromeSignature;
     final nextMutationRevision = runtime.messages.lastMutationRevision;
-    final previousMutationRevision = _modeState(
-      mode,
-    ).runtimeMessageMutationRevision;
+    final previousMutationRevision = _modeState(mode)
+        .runtimeMessageMutationRevision;
     final hasChromeChange = nextChromeSignature != previousChromeSignature;
     final hasMessageMutation = nextMutationRevision != previousMutationRevision;
 
@@ -1855,7 +2015,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     ConversationThreadTarget target,
   );
 
-  void _handleAgentRuntimeEvent(Map<String, dynamic> event);
+  ChatRuntimeRoutingContext? _agentEventRoutingContext();
+  void _handleAgentRuntimeEventOutcome(ChatRuntimeEventOutcome outcome);
 
   Future<void> _sendAgentMessage(
     String aiMessageId,

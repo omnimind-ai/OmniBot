@@ -26,9 +26,8 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
             ? conversation.latestPromptTokens
             : null,
         onThresholdSaved: (nextThreshold) async {
-          final trackedConversation = _modeState(
-            conversationMode,
-          ).currentConversation;
+          final trackedConversation = _modeState(conversationMode)
+              .currentConversation;
           final activeConversation = _currentConversation;
           final ConversationModel latestConversation;
           if (trackedConversation?.id == conversation.id) {
@@ -380,8 +379,13 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       final nextCard = Map<String, dynamic>.from(cardData)
         ..['status'] = 'submitted'
         ..['submittedAnswers'] = <String>[answer];
-      runtime.messages[index] = message.copyWith(
-        content: <String, dynamic>{'cardData': nextCard, 'id': message.id},
+      _runtimeCoordinator.replaceRuntimeMessage(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        messageId: message.id,
+        message: message.copyWith(
+          content: <String, dynamic>{'cardData': nextCard, 'id': message.id},
+        ),
       );
       return;
     }
@@ -489,7 +493,7 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       if (shouldClearEditState) {
         _editingUserMessageId = null;
       }
-      _messages.removeRange(0, removeCount);
+      _removeLeadingVisibleMessages(removeCount);
     });
     if (shouldClearEditState) {
       _modeState(_activeMode).draftMessage = '';

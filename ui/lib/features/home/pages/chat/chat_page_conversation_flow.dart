@@ -216,7 +216,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }) {
     final loadingIndex = _messages.indexWhere((msg) => msg.id == taskID);
     if (loadingIndex != -1) {
-      setState(() => _messages.removeAt(loadingIndex));
+      setState(() => _removeVisibleMessages(<String>[taskID]));
     }
 
     final startTime = DateTime.now().millisecondsSinceEpoch;
@@ -233,9 +233,8 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     };
 
     setState(() {
-      _messages.removeWhere((msg) => msg.id == thinkingCardId);
-      _messages.insert(
-        0,
+      _removeVisibleMessages(<String>[thinkingCardId]);
+      _insertVisibleMessage(
         ChatMessageModel(
           id: thinkingCardId,
           type: 2,
@@ -289,11 +288,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       cardData['endTime'] = endTime;
 
       content['cardData'] = cardData;
-      _messages[index] = existing.copyWith(
-        content: content,
-        streamMeta: ensureAgentStreamMessageMeta(
-          streamMeta ?? existing.streamMeta,
-          entryId: thinkingCardId,
+      _replaceVisibleMessage(
+        existing.id,
+        existing.copyWith(
+          content: content,
+          streamMeta: ensureAgentStreamMessageMeta(
+            streamMeta ?? existing.streamMeta,
+            entryId: thinkingCardId,
+          ),
         ),
       );
     });
@@ -636,9 +638,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         );
         setState(() {
           if (index == -1) {
-            _messages.insert(0, card);
+            _insertVisibleMessage(card);
           } else {
-            _messages[index] = card;
+            _replaceVisibleMessage(messageId, card);
           }
         });
         unawaited(saveConversation());
@@ -798,7 +800,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       } else {
         content['linkPreviews'] = nextPreviews;
       }
-      _messages[index] = message.copyWith(content: content);
+      _replaceVisibleMessage(message.id, message.copyWith(content: content));
     });
 
     // 用户消息也先展示 loading 卡片，抓取完成后再回填真实预览。
@@ -855,7 +857,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
 
       content['linkPreviews'] = updatedPreviews;
-      _messages[index] = message.copyWith(content: content);
+      _replaceVisibleMessage(message.id, message.copyWith(content: content));
     });
 
     if (!didUpdate) {
@@ -1332,8 +1334,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         _isCheckingExecutableTask = false;
         _isExecutingTask = false;
         _isInputAreaVisible = true;
-        _messages.removeWhere(
-          (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
+        _removeVisibleMessages(
+          _messages
+              .where(
+                (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
+              )
+              .map((msg) => msg.id),
         );
       });
 
@@ -1474,8 +1480,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         resetDispatchState();
       }
       setState(() {
-        _messages.removeWhere(
-          (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
+        _removeVisibleMessages(
+          _messages
+              .where(
+                (msg) => msg.isLoading || _isOpenClawWaitingCardMessage(msg),
+              )
+              .map((msg) => msg.id),
         );
       });
     } catch (e) {
@@ -1501,12 +1511,15 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     cardData['endTime'] = DateTime.now().millisecondsSinceEpoch;
 
     setState(() {
-      _messages[index] = ChatMessageModel(
-        id: thinkingCardId,
-        type: 2,
-        user: 3,
-        content: {'cardData': cardData, 'id': thinkingCardId},
-        createAt: thinkingCard.createAt,
+      _replaceVisibleMessage(
+        thinkingCardId,
+        ChatMessageModel(
+          id: thinkingCardId,
+          type: 2,
+          user: 3,
+          content: {'cardData': cardData, 'id': thinkingCardId},
+          createAt: thinkingCard.createAt,
+        ),
       );
     });
     _persistDeepThinkingCardIfNeeded(_messages[index]);
@@ -1553,8 +1566,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     );
     setState(() {
       if (existingIndex == -1) {
-        _messages.insert(
-          0,
+        _insertVisibleMessage(
           ChatMessageModel(
             id: messageId,
             type: 1,
@@ -1564,11 +1576,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           ),
         );
       } else {
-        _messages[existingIndex] = _messages[existingIndex].copyWith(
-          content: content,
-          isLoading: false,
-          isError: false,
-          streamMeta: streamMeta,
+        _replaceVisibleMessage(
+          messageId,
+          _messages[existingIndex].copyWith(
+            content: content,
+            isLoading: false,
+            isError: false,
+            streamMeta: streamMeta,
+          ),
         );
       }
     });

@@ -145,7 +145,7 @@ extension _ChatRuntimeThinkingSupport on ChatConversationRuntimeCoordinator {
         createdAtMillis: message.createAt.millisecondsSinceEpoch,
         mode: _conversationModeFromRuntimeMode(
           mode,
-          conversation: runtimeFor(
+          conversation: _runtimeStateFor(
             conversationId: conversationId,
             mode: mode,
           )?.conversation,

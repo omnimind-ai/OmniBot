@@ -198,7 +198,11 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     if (syncRuntime) {
       final runtime = _runtimeForMode(browserMode);
       if (runtime != null) {
-        runtime.browserSessionSnapshot = resolved;
+        _runtimeCoordinator.setRuntimeBrowserSessionSnapshot(
+          conversationId: runtime.conversationId,
+          mode: runtime.mode,
+          snapshot: resolved,
+        );
       } else {
         _modeState(browserMode).browserSessionSnapshot = resolved;
       }
@@ -243,7 +247,11 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
         : null;
     final runtime = _runtimeForMode(browserMode);
     if (runtime != null) {
-      runtime.browserSessionSnapshot = resolved;
+      _runtimeCoordinator.setRuntimeBrowserSessionSnapshot(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        snapshot: resolved,
+      );
     } else {
       _modeState(browserMode).browserSessionSnapshot = resolved;
     }
@@ -282,7 +290,11 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
     _modeState(mode).chatIslandDisplayLayer = resolvedLayer;
     final runtime = _runtimeForMode(mode);
     if (runtime != null) {
-      runtime.chatIslandDisplayLayer = resolvedLayer;
+      _runtimeCoordinator.updateRuntimePresentation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        chatIslandDisplayLayer: resolvedLayer,
+      );
     }
   }
 
@@ -557,7 +569,11 @@ mixin _ChatPageBrowserMixin on _ChatPageStateBase {
                       : null;
                   final runtime = _runtimeForMode(browserMode);
                   if (runtime != null) {
-                    runtime.browserSessionSnapshot = resolved;
+                    _runtimeCoordinator.setRuntimeBrowserSessionSnapshot(
+                      conversationId: runtime.conversationId,
+                      mode: runtime.mode,
+                      snapshot: resolved,
+                    );
                   } else {
                     _modeState(browserMode).browserSessionSnapshot = resolved;
                   }

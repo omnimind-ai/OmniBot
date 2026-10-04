@@ -24,7 +24,7 @@ extension _ChatRuntimeMessageSupport on ChatConversationRuntimeCoordinator {
   ChatConversationRuntimeState? _runtimeForTask(String taskId) {
     final binding = _taskBindings[taskId];
     if (binding == null) return null;
-    return ensureRuntime(
+    return _ensureRuntimeState(
       conversationId: binding.conversationId,
       mode: binding.mode,
     );
@@ -206,7 +206,7 @@ extension _ChatRuntimeMessageSupport on ChatConversationRuntimeCoordinator {
     required String url,
   }) async {
     final resolved = await LinkPreviewService.instance.loadPreview(url);
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(conversationId: conversationId, mode: mode);
     if (runtime == null) {
       return;
     }

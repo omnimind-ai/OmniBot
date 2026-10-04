@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../../../models/conversation_model.dart';
 import '../../../../../models/conversation_thread_target.dart';
 import '../../../../../models/chat_message_model.dart';
@@ -37,7 +38,11 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
 
   // ===================== 抽象属性/方法（需要在主类中实现）=====================
 
+  /// Read-only for this mixin: runtime-owned lists change only through the
+  /// coordinator, so writes go through the two hooks below.
   List<ChatMessageModel> get messages;
+  void clearVisibleMessages();
+  void appendVisibleMessages(Iterable<ChatMessageModel> messages);
   int? get currentConversationId;
   set currentConversationId(int? value);
   ConversationModel? get currentConversation;
@@ -112,7 +117,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           return;
         }
         setState(() {
-          messages.clear();
+          clearVisibleMessages();
           currentConversationId = null;
           currentConversation = null;
           _hasSavedConversation = false;
@@ -169,7 +174,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           return;
         }
         setState(() {
-          messages.clear();
+          clearVisibleMessages();
           currentConversationId = null;
           currentConversation = null;
           _hasSavedConversation = false;
@@ -254,7 +259,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
 
     if (mounted) {
       setState(() {
-        messages.clear();
+        clearVisibleMessages();
         currentConversationId = null;
         currentConversation = null;
         _hasSavedConversation = false;
@@ -263,7 +268,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         isLoadingMore = false;
       });
     } else {
-      messages.clear();
+      clearVisibleMessages();
       currentConversationId = null;
       currentConversation = null;
       _hasSavedConversation = false;
@@ -376,7 +381,8 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
             ? List<ChatMessageModel>.from(latestRuntimeMessages)
             : pagedResult.messages;
         setState(() {
-          hasMoreMessages = latestRuntimeMessages == null && pagedResult.hasMore;
+          hasMoreMessages =
+              latestRuntimeMessages == null && pagedResult.hasMore;
           // The history provider is allowed to return a short page. Advance
           // from what was actually received so a partial response cannot
           // create a gap before the next page.
@@ -431,7 +437,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           );
       if (_isConversationOperationCurrent(token)) {
         setState(() {
-          messages.addAll(pagedResult.messages);
+          appendVisibleMessages(pagedResult.messages);
           hasMoreMessages = pagedResult.hasMore;
           messageOffset = messageOffset + pagedResult.messages.length;
           isLoadingMore = false;
@@ -522,7 +528,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         if (_isConversationOperationCurrent(transitionToken)) {
           // 对话已被删除，切换到新对话
           setState(() {
-            messages.clear();
+            clearVisibleMessages();
             currentConversationId = null;
             currentConversation = null;
             hasMoreMessages = false;
@@ -891,7 +897,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
       return;
     }
     setState(() {
-      messages.clear();
+      clearVisibleMessages();
       currentConversationId = null;
       currentConversation = null;
       _hasSavedConversation = false;

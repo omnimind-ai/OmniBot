@@ -235,8 +235,21 @@ class ChatMessageListItemNotifier extends ValueNotifier<ChatMessageModel> {
   }
 }
 
+/// A newest-first message list with row-level listenables and mutation
+/// revisions. Implemented by the runtime-owned [ObservableChatMessageList] and
+/// by the read-only view pages receive from the runtime coordinator.
+abstract interface class ObservableChatMessageSource
+    implements List<ChatMessageModel>, Listenable {
+  int get structureRevision;
+  int get lastMutationRevision;
+  bool get lastMutationAffectsPageChrome;
+  ChatMessageListMutationKind get lastMutationKind;
+  ValueListenable<ChatMessageModel> listenableAt(int index);
+}
+
 class ObservableChatMessageList extends ChangeNotifier
-    with ListMixin<ChatMessageModel> {
+    with ListMixin<ChatMessageModel>
+    implements ObservableChatMessageSource {
   static const String _kAgentToolSummaryCardType = 'agent_tool_summary';
 
   final List<ChatMessageModel> _messages = <ChatMessageModel>[];
@@ -250,11 +263,16 @@ class ObservableChatMessageList extends ChangeNotifier
   ChatMessageListMutationKind _lastMutationKind =
       ChatMessageListMutationKind.none;
 
+  @override
   int get structureRevision => _structureRevision;
+  @override
   int get lastMutationRevision => _lastMutationRevision;
+  @override
   bool get lastMutationAffectsPageChrome => _lastMutationAffectsPageChrome;
+  @override
   ChatMessageListMutationKind get lastMutationKind => _lastMutationKind;
 
+  @override
   ValueListenable<ChatMessageModel> listenableAt(int index) {
     return _messageNotifiers[index];
   }

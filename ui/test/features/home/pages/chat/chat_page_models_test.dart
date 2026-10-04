@@ -52,7 +52,7 @@ void main() {
           conversationId: conversationId,
           mode: mode,
         );
-        final runtime = coordinator.runtimeFor(
+        final runtime = coordinator.debugRuntimeStateFor(
           conversationId: conversationId,
           mode: mode,
         )!;
@@ -102,7 +102,7 @@ void main() {
         conversationId: conversationId,
         mode: mode,
       );
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: mode,
       )!;
@@ -129,7 +129,7 @@ void main() {
       () {
         const conversationId = 0xD55;
         const mode = kChatRuntimeModeAgent;
-        final runtime = coordinator.ensureRuntime(
+        final runtime = coordinator.debugEnsureRuntimeState(
           conversationId: conversationId,
           mode: mode,
           initialMessages: <ChatMessageModel>[
@@ -165,7 +165,7 @@ void main() {
       );
 
       final messages = coordinator
-          .runtimeFor(conversationId: conversationId, mode: mode)!
+          .debugRuntimeStateFor(conversationId: conversationId, mode: mode)!
           .messages;
       expect(messages, hasLength(2));
       expect(messages.map((message) => message.id), <String>[

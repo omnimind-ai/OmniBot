@@ -2,8 +2,8 @@
 
 The chat feature is intentionally split around ownership rather than around
 individual product modes. Normal chat, OpenClaw, and Agent share the same page
-shell, but each mode owns one `ChatPageModeState` instance and one optional
-`ChatConversationRuntimeState`.
+shell, but each mode owns one `ChatPageModeState` instance and reads one
+optional runtime through a read-only `ChatRuntimeView`.
 
 ## Dependency direction
 
@@ -15,6 +15,14 @@ shell, but each mode owns one `ChatPageModeState` instance and one optional
 3. `services/chat_conversation_runtime_coordinator.dart` is the runtime facade.
    Its public commands and state ownership stay in that file; implementation
    details live in the private `chat_runtime_*_support.dart` extensions.
+   Pages, the command-overlay sheet and the drawer read a runtime only through
+   `ChatRuntimeView` (`chat_runtime_view.dart`) and change it only through
+   coordinator commands (`insertRuntimeMessage`, `updateRuntimePresentation`,
+   …). The coordinator is the only subscriber that projects
+   `AgentRuntimeService.events`: surfaces attach with
+   `attachEventHost(context:, onOutcome:)`, publish a declarative
+   `ChatRuntimeRoutingContext`, and receive one `ChatRuntimeEventOutcome` per
+   applied event (`chat_runtime_event_routing.dart`).
 4. `adapters/` converts remote Agent/Codex payloads into app models. Raw
    protocol traversal and compatibility aliases belong there, not in widgets
    or page lifecycle code.
@@ -28,7 +36,12 @@ must not call persistence or platform channels directly.
 ## Runtime invariants
 
 - `ObservableChatMessageList` remains the source for row-level notifications;
-  streaming content changes must not force a full page rebuild.
+  streaming content changes must not force a full page rebuild. Widgets accept
+  any `ObservableChatMessageSource`, which the read-only view implements.
+- A runtime list obtained from `runtimeFor` throws on writes. Page helpers
+  (`_insertVisibleMessage`, `_replaceVisibleMessage`, …) route a write to the
+  coordinator when the visible list is runtime-owned and to the page-local
+  fallback list otherwise.
 - Runtime text caches and active turn IDs are different identity spaces. Never
   infer active turns from `currentAiMessages` keys.
 - Polling snapshots must preserve reducer-owned in-flight state when

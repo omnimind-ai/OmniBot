@@ -65,8 +65,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _browserSessionSnapshotChangedSubscription = AssistsMessageService
         .browserSessionSnapshotChangedStream
         .listen(_handleBrowserSessionSnapshotChanged);
-    _agentEventSubscription = AgentRuntimeService.events.listen(
-      _handleAgentRuntimeEvent,
+    _agentEventHost = _runtimeCoordinator.attachEventHost(
+      context: _agentEventRoutingContext,
+      onOutcome: _handleAgentRuntimeEventOutcome,
     );
     _omniLinkEventSubscription = OmniLinkPluginService.events.listen(
       _handleOmniLinkEvent,
@@ -420,8 +421,12 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
             _modeState(ChatPageMode.agent).currentConversation =
                 updatedConversation;
             final runtime = _runtimeForMode(ChatPageMode.agent);
-            if (runtime?.conversation?.id == conversationId) {
-              runtime!.conversation = updatedConversation;
+            if (runtime != null && runtime.conversation?.id == conversationId) {
+              _runtimeCoordinator.setRuntimeConversation(
+                conversationId: runtime.conversationId,
+                mode: runtime.mode,
+                conversation: updatedConversation,
+              );
             }
           }
         }
@@ -541,7 +546,11 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         initialChatIslandDisplayLayer: _chatIslandDisplayLayerForMode(mode),
       );
     } else if (resolvedConversation != null) {
-      runtime.conversation = resolvedConversation;
+      _runtimeCoordinator.setRuntimeConversation(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+        conversation: resolvedConversation,
+      );
     }
     _syncRuntimeSnapshotForMode(
       mode,
@@ -706,7 +715,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _openClawTokenController.dispose();
     _openClawUserIdController.dispose();
     this._stopRemoteCodexSessionSync();
-    _agentEventSubscription?.cancel();
+    _agentEventHost?.detach();
+    _agentEventHost = null;
     _omniLinkEventSubscription?.cancel();
     super.dispose();
   }
@@ -765,7 +775,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       },
     );
     setState(() {
-      _messages.insert(0, chatMessage);
+      _insertVisibleMessage(chatMessage);
     });
     final conversationId = _currentConversationId;
     if (conversationId != null &&

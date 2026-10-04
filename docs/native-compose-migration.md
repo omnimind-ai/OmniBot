@@ -207,7 +207,7 @@ The order below follows the actual owners in this repository, not page size alon
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
-## Batch 5 plan: chat migration split (2026-10-04, not started)
+## Batch 5 plan: chat migration split (2026-10-04; 5a-0 source complete)
 
 The chat domain is ~53.5k Dart lines (`chat/` 36.7k + `command_overlay/` 16.9k)
 and cannot move as one Goal. The architecture survey behind this split:
@@ -240,11 +240,16 @@ and cannot move as one Goal. The architecture survey behind this split:
   `session/request_permission` / `elicitation/create` /
   `item/tool/requestUserInput`, answered via `respondToServerRequest`.
 
-Split order (each row is one bounded Goal; 5a/5b are atomic):
+Split order (each row is one bounded Goal; 5a/5b are atomic). 5a-0 was added
+after the first 5a attempt found that ChatPage writes the runtime directly
+(29 message-list mutations, 21 field writes, ~100 synchronous coordinator
+calls) and attributes events from page-local state, so a read-only snapshot
+adapter could not absorb it without a second writer:
 
 | Slice | Scope | Completion boundary |
 | --- | --- | --- |
-| 5a | Move `AgentEventReducer` + `ChatConversationRuntimeCoordinator`(+parts) + `ChatConversationRuntimeState` + event helpers (`agent_message_kinds`, tool/diff parsers, identity, stream-meta, acp extension registry) into app-module Kotlin, emitting immutable UI snapshots; Flutter keeps a thin snapshot-forwarding adapter. TTS side effects and the persistence tail chain move with the owner. | Dart has no second reducer/coordinator; UI stops consuming `AgentRuntimeService.events` directly; the existing Dart reducer/coordinator tests are ported to Kotlin unit tests and pass. Atomic — a partial move creates the forbidden second reducer. Highest-risk slice and prerequisite for everything below. |
+| 5a-0 | Dart-only seam, behavior-preserving: pages/sheet/drawer read a runtime only through a read-only `ChatRuntimeView` and write only through coordinator commands; ChatPage/ChatBotSheet event attribution moves into the coordinator (`attachEventHost` + declarative `ChatRuntimeRoutingContext`). | No page code mutates `ChatConversationRuntimeState` or a runtime message list; the coordinator is the only `AgentRuntimeService.events` projector; existing Dart tests pass. Source complete — see the 5a-0 checkpoint. |
+| 5a | Move `AgentEventReducer` + `ChatConversationRuntimeCoordinator`(+parts) + `ChatConversationRuntimeState` + event helpers (`agent_message_kinds`, tool/diff parsers, identity, stream-meta, acp extension registry) into app-module Kotlin behind the 5a-0 command/view/routing API, emitting immutable UI snapshots; the Dart coordinator becomes a thin adapter implementing `ChatRuntimeView` from snapshots, forwarding commands over a channel and pushing the routing context. TTS side effects and the persistence tail chain move with the owner. Parsers still imported by Dart cards stay in Dart for rendering only until 5c. | Dart has no second reducer/coordinator; the existing Dart reducer/coordinator tests are ported to Kotlin unit tests and pass. Commands that return values to the page (`bindAcpSession`, `isTaskActive`, `applyAcpPromptResponse`, …) become async; their call ordering in send/cancel must be reviewed with 5b. Atomic — a partial move creates the forbidden second reducer. Highest-risk slice and prerequisite for everything below. |
 | 5b | Prompt admission: `_sendAgentMessage`/`_sendPureChatMessage`/`_prepareAcpSessionForTurn`/harness-switch barrier/cancel become a native `ChatPromptDispatcher`; the composer emits intents only. | `session/prompt` admission, `respondToServerRequest` and `$/cancel_request` have a single native entry; idle/busy states come from the 5a snapshot. Atomic for the same reason. |
 | 5c | Message rendering in Compose: run timeline, MessageBubble, card family (tool summary/transcript/diff/request cards/deep thinking/plan), message list, run groups, tool activity strip. | Same fixture renders identically in Flutter and Compose; approval buttons call the 5b response entry. Card kinds may be split further for pixel comparison. |
 | 5d | Composer in Compose: ChatInputArea family + state machine + attachments + agent menus + context-usage ring; send button calls the 5b intent. | Keyboard/popup/expand animations aligned; slash-command panel works. Manual recording and omniflow tooling may stay Flutter behind compatibility entries. |
@@ -254,6 +259,74 @@ Split order (each row is one bounded Goal; 5a/5b are atomic):
 May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
+
+## Batch 5a-0 checkpoint: chat runtime read/write seam (source complete; device acceptance pending)
+
+- **Content**: Dart-only and behavior-preserving; no Kotlin, channel or
+  persistence change. `ChatConversationRuntimeCoordinator.runtimeFor` /
+  `ensureRuntime` / `ensureEphemeralRuntime` now return a cached read-only
+  `ChatRuntimeView` (`services/chat_runtime_view.dart`) whose message list
+  (`ChatRuntimeMessageListView`) throws on any write while keeping row
+  listenables and mutation revisions. Message-list widgets accept the new
+  `ObservableChatMessageSource` interface. The coordinator's internal code
+  uses private `_runtimeStateFor` / `_ensureRuntimeState`.
+- **Write path**: every former page write is a coordinator command —
+  `updateRuntimePresentation`, `setRuntimeDispatchTurnId`,
+  `setRuntimeConversation`, `setRuntimeLastAgentToolType`,
+  `setRuntimeBrowserSessionSnapshot`, and the id-based message commands
+  `insertRuntimeMessage` (keeps the list's upsert-by-id), `replaceRuntimeMessage`,
+  `removeRuntimeMessages`, `removeLeadingRuntimeMessages`,
+  `appendRuntimeMessages`, `replaceRuntimeMessages`. Like the direct writes they
+  replace, they do not notify coordinator listeners. ChatPage routes writes
+  through `_insertVisibleMessage` etc., which fall back to the page-local list
+  before a runtime exists; the `ChatDispatchSupport` / `ConversationManager`
+  mixins gained `insertVisibleMessage` / `clearVisibleMessages` /
+  `appendVisibleMessages` hooks. Remote Agent thread runtimes are created and
+  promoted by `ensureRemoteThreadRuntime` / `activateRemoteThreadRuntime`;
+  the page keeps only its own pointers (`_adoptRemoteCodexThread`).
+- **Event attribution (owner decision)**: the coordinator is now the only
+  `AgentRuntimeService.events` projector. It subscribes while at least one
+  surface is attached (`attachEventHost`), matching the former page-scoped
+  subscriptions, and pulls a declarative `ChatRuntimeRoutingContext` (visible
+  mode, per-mode conversation ids, remote thread facts) at event time. The
+  ChatPage attribution order is ported unchanged (explicit conversation id →
+  remote thread → session/turn identity → legacy process owner → visible Agent
+  conversation for identity-less `error`/process events). The command-overlay
+  sheet attaches as a `dispatchScoped` surface that claims only its explicit
+  conversation while a prompt is in flight. Each event is applied once and the
+  `ChatRuntimeEventOutcome` goes to every surface for presentation follow-up
+  (toasts, session/turn pointers, collaboration mode, `setState`).
+  **Intentional difference**: with ChatPage and the sheet both mounted, an
+  event for the sheet's conversation was previously applied by both
+  handlers (deduped only when it carried a host `eventId`); it is now applied
+  once, to the identity owner if one exists, otherwise to the sheet's runtime.
+  Remote-thread promotion now updates the page's thread pointers right after
+  the event is projected (same synchronous call) instead of right before.
+- In 5a the routing context becomes a pushed value and the commands become
+  channel calls; nothing in page code needs to change for that move.
+- **Verification boundary**: `flutter test` (baseline before the change: 1263
+  passed, 4 pre-existing failures in background/misc settings and
+  `app_background_service_test`, unrelated to chat; after: 1273 passed, the
+  same 4 failures), `flutter analyze --no-fatal-warnings --no-fatal-infos`
+  (0 errors; no new warnings/infos against HEAD), the new
+  `chat_runtime_view_and_routing_test.dart` (read-only view, command write
+  path, attach/detach, single application, identity/background routing,
+  sheet claims, remote promotion), and `git diff --check`. No device run.
+
+Manual acceptance checklist:
+
+1. Agent and Xiaowan turns stream text, reasoning and tool cards exactly as
+   before; Stop cancels and the late events do not reappear in the next turn.
+2. Open the command-overlay sheet while ChatPage is mounted; send from the
+   sheet and confirm its messages stream once and ChatPage shows no stray
+   runtime for that conversation.
+3. Background Sub Agent / scheduled conversation streams while another
+   conversation is visible; the drawer running indicator follows it.
+4. Remote Agent (PC Bridge): first event of a new thread promotes the pending
+   messages into the thread view; switching threads keeps each history.
+5. History paging, retry/edit of the latest user message, OpenClaw waiting
+   card, manual-recording result card and link previews still update in
+   place.
 
 ## Batch 4m checkpoint: terminal settings (source complete; device acceptance pending)
 

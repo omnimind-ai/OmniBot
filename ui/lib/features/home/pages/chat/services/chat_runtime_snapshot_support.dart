@@ -39,7 +39,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
       isAiResponding: isAiResponding,
       preserveLiveStreamingState: preserveLiveStreamingState,
     );
-    final runtime = ensureRuntime(
+    final runtime = _ensureRuntimeState(
       conversationId: conversationId,
       mode: mode,
       conversation: conversation,
@@ -204,7 +204,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     ConversationModel? conversation,
     bool allowHistoryRemoval = false,
   }) async {
-    final runtime = ensureRuntime(
+    final runtime = _ensureRuntimeState(
       conversationId: conversationId,
       mode: mode,
       conversation: conversation,

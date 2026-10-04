@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ui/models/conversation_model.dart';
+
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/storage_service.dart';
 
@@ -11,7 +12,9 @@ const String kChatContextStorageKey = 'chat_context_for_summary';
 mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
   // ===================== 抽象属性/方法（需要在主类中实现）=====================
 
+  /// Read-only for this mixin; inserts go through [insertVisibleMessage].
   List<ChatMessageModel> get messages;
+  void insertVisibleMessage(ChatMessageModel message, {int index = 0});
   ConversationModel? get currentConversation;
   TextEditingController get messageController;
   FocusNode get inputFocusNode;
@@ -193,8 +196,7 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
       if (attachments.isNotEmpty) {
         content['attachments'] = attachments;
       }
-      messages.insert(
-        0,
+      insertVisibleMessage(
         ChatMessageModel(
           id: userMessageId,
           type: 1,

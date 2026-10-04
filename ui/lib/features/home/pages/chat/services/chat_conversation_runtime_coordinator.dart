@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
@@ -11,6 +12,7 @@ import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/agent_event_reducer.dart';
 import 'package:ui/services/agent_identity.dart';
 import 'package:ui/services/agent_message_kinds.dart';
+import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/agent_tool_call_parser.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
@@ -21,6 +23,8 @@ import 'package:ui/services/agent_diff_parser.dart';
 
 part 'chat_runtime_internal_support.dart';
 part 'chat_runtime_state.dart';
+part 'chat_runtime_view.dart';
+part 'chat_runtime_event_routing.dart';
 part 'chat_runtime_snapshot_support.dart';
 part 'chat_runtime_persistence_support.dart';
 part 'chat_runtime_external_message_support.dart';
@@ -79,6 +83,13 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   // never finish after a newer one and move durable history backwards.
   final Map<String, Future<void>> _persistenceTails = <String, Future<void>>{};
   final Set<String> _ephemeralRuntimeKeys = <String>{};
+  final List<ChatRuntimeEventHost> _eventHosts = <ChatRuntimeEventHost>[];
+  StreamSubscription<Map<String, dynamic>>? _agentEventSubscription;
+
+  /// Source of runtime events while a surface is attached. Tests replace it.
+  @visibleForTesting
+  Stream<Map<String, dynamic>> Function() agentEventSource = () =>
+      AgentRuntimeService.events;
 
   bool _initialized = false;
 
@@ -97,7 +108,16 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     );
   }
 
-  ChatConversationRuntimeState? runtimeFor({
+  /// Read-only view of a runtime. Callers change it only through the
+  /// coordinator commands below.
+  ChatRuntimeView? runtimeFor({
+    required int conversationId,
+    required String mode,
+  }) {
+    return _runtimeStateFor(conversationId: conversationId, mode: mode)?.view;
+  }
+
+  ChatConversationRuntimeState? _runtimeStateFor({
     required int conversationId,
     required String mode,
   }) {
@@ -119,7 +139,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   );
 
   bool isAgentConversationActive(int conversationId) {
-    final runtime = runtimeFor(
+    final runtime = _runtimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -143,7 +163,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       kChatRuntimeModeAgent,
       kChatRuntimeModeOpenClaw,
     ]) {
-      final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+      final runtime = _runtimeStateFor(
+        conversationId: conversationId,
+        mode: mode,
+      );
       if (runtime == null) continue;
       if ((normalizedSessionId.isNotEmpty &&
               runtime.activeAcpSessionId == normalizedSessionId) ||
@@ -204,7 +227,23 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     return null;
   }
 
-  ChatConversationRuntimeState ensureRuntime({
+  ChatRuntimeView ensureRuntime({
+    required int conversationId,
+    required String mode,
+    List<ChatMessageModel>? initialMessages,
+    ConversationModel? conversation,
+    ChatIslandDisplayLayer? initialChatIslandDisplayLayer,
+  }) {
+    return _ensureRuntimeState(
+      conversationId: conversationId,
+      mode: mode,
+      initialMessages: initialMessages,
+      conversation: conversation,
+      initialChatIslandDisplayLayer: initialChatIslandDisplayLayer,
+    ).view;
+  }
+
+  ChatConversationRuntimeState _ensureRuntimeState({
     required int conversationId,
     required String mode,
     List<ChatMessageModel>? initialMessages,
@@ -236,14 +275,30 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     return runtime;
   }
 
-  ChatConversationRuntimeState ensureEphemeralRuntime({
+  ChatRuntimeView ensureEphemeralRuntime({
     required int conversationId,
     required String mode,
     List<ChatMessageModel>? initialMessages,
     ConversationModel? conversation,
     ChatIslandDisplayLayer? initialChatIslandDisplayLayer,
   }) {
-    final runtime = ensureRuntime(
+    return _ensureEphemeralRuntimeState(
+      conversationId: conversationId,
+      mode: mode,
+      initialMessages: initialMessages,
+      conversation: conversation,
+      initialChatIslandDisplayLayer: initialChatIslandDisplayLayer,
+    ).view;
+  }
+
+  ChatConversationRuntimeState _ensureEphemeralRuntimeState({
+    required int conversationId,
+    required String mode,
+    List<ChatMessageModel>? initialMessages,
+    ConversationModel? conversation,
+    ChatIslandDisplayLayer? initialChatIslandDisplayLayer,
+  }) {
+    final runtime = _ensureRuntimeState(
       conversationId: conversationId,
       mode: mode,
       initialMessages: initialMessages,
@@ -281,7 +336,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         mode: existingBinding.mode,
       );
     }
-    final runtime = ensureRuntime(conversationId: conversationId, mode: mode);
+    final runtime = _ensureRuntimeState(
+      conversationId: conversationId,
+      mode: mode,
+    );
     // A new prompt starts with a local render key. The official ACP turn is
     // admitted by the first session/update; never let a previous turn's
     // official id claim the new prompt's terminal event.
@@ -302,7 +360,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
   }) {
     final existingBinding = _taskBindings[taskId];
-    final existingRuntime = runtimeFor(
+    final existingRuntime = _runtimeStateFor(
       conversationId: conversationId,
       mode: mode,
     );
@@ -316,7 +374,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     if (alreadyStarted) {
       return;
     }
-    final runtime = ensureRuntime(conversationId: conversationId, mode: mode);
+    final runtime = _ensureRuntimeState(
+      conversationId: conversationId,
+      mode: mode,
+    );
     runtime.persistenceGeneration += 1;
     runtime.isAiResponding = true;
     runtime.currentDispatchTurnId = taskId;
@@ -348,7 +409,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         )) {
       return false;
     }
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null) return false;
     final currentSessionId = runtime.activeAcpSessionId?.trim() ?? '';
     final currentTurnId = runtime.activeAcpTurnId?.trim() ?? '';
@@ -375,7 +439,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required int conversationId,
     required String mode,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     final binding = _taskBindings[taskId];
     if (runtime == null ||
         binding == null ||
@@ -400,7 +467,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     String? sessionId,
     String? turnId,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null ||
         !isTaskActive(
           taskId: taskId,
@@ -565,7 +635,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     ConversationModel? conversation,
   }) {
     ensureInitialized();
-    final runtime = ensureRuntime(
+    final runtime = _ensureRuntimeState(
       conversationId: conversationId,
       mode: mode,
       conversation: conversation,
@@ -688,7 +758,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     )) {
       return const AgentReduceResult(handled: false, affectsActiveTurn: false);
     }
-    final runtime = ensureRuntime(
+    final runtime = _ensureRuntimeState(
       conversationId: conversationId,
       mode: mode,
       conversation: conversation,
@@ -954,7 +1024,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
     bool removeCard = true,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     final binding = _taskBindings[taskId];
     if (runtime == null ||
         binding == null ||
@@ -1021,13 +1094,19 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     _runtimes.clear();
     _taskBindings.clear();
     _ephemeralRuntimeKeys.clear();
+    _eventHosts.clear();
+    unawaited(_agentEventSubscription?.cancel());
+    _agentEventSubscription = null;
   }
 
   void clearConversationRuntimeSession({
     required int conversationId,
     required String mode,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null) return;
     runtime.persistenceGeneration += 1;
     _flushRuntimeStreamingText(runtime);
@@ -1105,7 +1184,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required int conversationId,
     required String mode,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime != null) {
       _flushRuntimeStreamingText(runtime);
     }
@@ -1131,7 +1213,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
     String? summary,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null) return;
     final activeCard = runtime.activeToolCardId == null
         ? null
@@ -1201,7 +1286,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     int? latestPromptTokens,
     int? promptTokenThreshold,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null) return;
 
     _applyPromptTokenUsageUpdate(
@@ -1243,7 +1331,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     int? latestPromptTokens,
     int? promptTokenThreshold,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null) return;
 
     _applyPromptTokenUsageUpdate(
@@ -1275,11 +1366,309 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
     required ChatIslandDisplayLayer layer,
   }) {
-    final runtime = runtimeFor(conversationId: conversationId, mode: mode);
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
     if (runtime == null || runtime.chatIslandDisplayLayer == layer) {
       return;
     }
     runtime.chatIslandDisplayLayer = layer;
     notifyListeners();
   }
+
+  /// Attaches a mounted chat surface to the shared runtime event route.
+  ///
+  /// The coordinator is the only subscriber that projects runtime events.
+  /// It listens while at least one surface is attached, applies each event to
+  /// exactly one runtime, then hands the outcome to every surface for its
+  /// presentation-only follow-up (toasts, scroll, local session pointers).
+  ChatRuntimeEventHost attachEventHost({
+    required ChatRuntimeRoutingContext? Function() context,
+    required void Function(ChatRuntimeEventOutcome outcome) onOutcome,
+  }) {
+    ensureInitialized();
+    final host = ChatRuntimeEventHost._(this, context, onOutcome);
+    _eventHosts.add(host);
+    _agentEventSubscription ??= agentEventSource().listen(routeAgentEvent);
+    return host;
+  }
+
+  void _detachEventHost(ChatRuntimeEventHost host) {
+    if (!_eventHosts.remove(host) || _eventHosts.isNotEmpty) return;
+    unawaited(_agentEventSubscription?.cancel());
+    _agentEventSubscription = null;
+  }
+
+  /// Routes one runtime event. Public for tests; production events arrive
+  /// through the subscription opened by [attachEventHost].
+  @visibleForTesting
+  ChatRuntimeEventOutcome? routeAgentEvent(Map<String, dynamic> event) {
+    final outcome = _routeAgentEvent(event);
+    if (outcome == null) return null;
+    for (final host in List<ChatRuntimeEventHost>.from(_eventHosts)) {
+      if (_eventHosts.contains(host)) host._onOutcome(outcome);
+    }
+    return outcome;
+  }
+
+  /// Ensures the ephemeral runtime that mirrors a remote Agent thread.
+  int ensureRemoteThreadRuntime(String threadId) {
+    final normalizedThreadId = threadId.trim();
+    final runtimeId = remoteAgentRuntimeIdForThread(normalizedThreadId);
+    final now = DateTime.now().millisecondsSinceEpoch;
+    _ensureEphemeralRuntimeState(
+      conversationId: runtimeId,
+      mode: kChatRuntimeModeAgent,
+      conversation:
+          _runtimeStateFor(
+            conversationId: runtimeId,
+            mode: kChatRuntimeModeAgent,
+          )?.conversation ??
+          ConversationModel(
+            id: runtimeId,
+            mode: ConversationMode.agent,
+            title:
+                'Agent ${normalizedThreadId.length > 6 ? normalizedThreadId.substring(normalizedThreadId.length - 6) : normalizedThreadId}',
+            status: 0,
+            messageCount: 0,
+            createdAt: now,
+            updatedAt: now,
+          ),
+      initialChatIslandDisplayLayer: ChatIslandDisplayLayer.mode,
+    );
+    return runtimeId;
+  }
+
+  /// Makes a remote thread's runtime the visible Agent runtime, carrying over
+  /// the page-local messages and conversation shown before it existed.
+  int activateRemoteThreadRuntime(
+    String threadId, {
+    List<ChatMessageModel> fallbackMessages = const <ChatMessageModel>[],
+    ConversationModel? conversation,
+  }) {
+    final runtimeId = ensureRemoteThreadRuntime(threadId);
+    final runtime = _runtimeStateFor(
+      conversationId: runtimeId,
+      mode: kChatRuntimeModeAgent,
+    );
+    if (runtime != null) {
+      if (fallbackMessages.isNotEmpty) {
+        final existingIds = runtime.messages
+            .map((message) => message.id)
+            .toSet();
+        for (final message in fallbackMessages.reversed) {
+          if (existingIds.add(message.id)) {
+            runtime.messages.add(message);
+          }
+        }
+      }
+      if (conversation != null) {
+        runtime.conversation = conversation.copyWith(id: runtimeId);
+      }
+    }
+    return runtimeId;
+  }
+
+  // Page write commands. Pages never mutate a runtime directly; these are the
+  // only writes besides the lifecycle commands above. Like the direct field
+  // writes they replace, they do not notify coordinator listeners: the caller
+  // rebuilds, and message-list writes notify the list's own row listeners.
+
+  /// Updates presentation flags the page drives for pure-chat compatibility
+  /// paths. ACP turn admission/termination still goes only through
+  /// [beginAcpTurn], [applyAgentEvent], [applyAcpPromptResponse] and
+  /// [unregisterTask].
+  void updateRuntimePresentation({
+    required int conversationId,
+    required String mode,
+    bool? isAiResponding,
+    bool? isContextCompressing,
+    bool? isCheckingExecutableTask,
+    bool? isExecutingTask,
+    bool? isInputAreaVisible,
+    bool? isDeepThinking,
+    String? deepThinkingContent,
+    int? currentThinkingStage,
+    ChatIslandDisplayLayer? chatIslandDisplayLayer,
+  }) {
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
+    if (runtime == null) return;
+    if (isAiResponding != null) runtime.isAiResponding = isAiResponding;
+    if (isContextCompressing != null) {
+      runtime.isContextCompressing = isContextCompressing;
+    }
+    if (isCheckingExecutableTask != null) {
+      runtime.isCheckingExecutableTask = isCheckingExecutableTask;
+    }
+    if (isExecutingTask != null) runtime.isExecutingTask = isExecutingTask;
+    if (isInputAreaVisible != null) {
+      runtime.isInputAreaVisible = isInputAreaVisible;
+    }
+    if (isDeepThinking != null) runtime.isDeepThinking = isDeepThinking;
+    if (deepThinkingContent != null) {
+      runtime.deepThinkingContent = deepThinkingContent;
+    }
+    if (currentThinkingStage != null) {
+      runtime.currentThinkingStage = currentThinkingStage;
+    }
+    if (chatIslandDisplayLayer != null) {
+      runtime.chatIslandDisplayLayer = chatIslandDisplayLayer;
+    }
+  }
+
+  void setRuntimeDispatchTurnId({
+    required int conversationId,
+    required String mode,
+    required String? turnId,
+  }) {
+    _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    )?.currentDispatchTurnId = turnId;
+  }
+
+  void setRuntimeLastAgentToolType({
+    required int conversationId,
+    required String mode,
+    required String? toolType,
+  }) {
+    _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    )?.lastAgentToolType = toolType;
+  }
+
+  void setRuntimeBrowserSessionSnapshot({
+    required int conversationId,
+    required String mode,
+    required ChatBrowserSessionSnapshot? snapshot,
+  }) {
+    _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    )?.browserSessionSnapshot = snapshot;
+  }
+
+  void setRuntimeConversation({
+    required int conversationId,
+    required String mode,
+    required ConversationModel? conversation,
+  }) {
+    _runtimeStateFor(conversationId: conversationId, mode: mode)?.conversation =
+        conversation;
+  }
+
+  /// Inserts [message] at [index] (newest first). An existing message with
+  /// the same id is replaced in place instead, as the list always did.
+  void insertRuntimeMessage({
+    required int conversationId,
+    required String mode,
+    required ChatMessageModel message,
+    int index = 0,
+  }) {
+    _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    )?.messages.insert(index, message);
+  }
+
+  /// Appends older messages after the current ones; existing ids are
+  /// replaced in place.
+  void appendRuntimeMessages({
+    required int conversationId,
+    required String mode,
+    required Iterable<ChatMessageModel> messages,
+  }) {
+    _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    )?.messages.addAll(messages);
+  }
+
+  /// Replaces the message identified by [messageId]. Returns false when the
+  /// runtime or message is gone.
+  bool replaceRuntimeMessage({
+    required int conversationId,
+    required String mode,
+    required String messageId,
+    required ChatMessageModel message,
+  }) {
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
+    if (runtime == null) return false;
+    final index = runtime.messages.indexWhere((item) => item.id == messageId);
+    if (index < 0) return false;
+    runtime.messages[index] = message;
+    return true;
+  }
+
+  void removeRuntimeMessages({
+    required int conversationId,
+    required String mode,
+    required Iterable<String> messageIds,
+  }) {
+    final ids = messageIds.toSet();
+    if (ids.isEmpty) return;
+    _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    )?.messages.removeWhere((message) => ids.contains(message.id));
+  }
+
+  /// Removes the [count] newest messages.
+  void removeLeadingRuntimeMessages({
+    required int conversationId,
+    required String mode,
+    required int count,
+  }) {
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
+    if (runtime == null || count <= 0) return;
+    runtime.messages.removeRange(0, count.clamp(0, runtime.messages.length));
+  }
+
+  /// Replaces every message, e.g. after a history reload.
+  void replaceRuntimeMessages({
+    required int conversationId,
+    required String mode,
+    required Iterable<ChatMessageModel> messages,
+  }) {
+    final runtime = _runtimeStateFor(
+      conversationId: conversationId,
+      mode: mode,
+    );
+    if (runtime == null) return;
+    runtime.messages
+      ..clear()
+      ..addAll(messages);
+  }
+
+  @visibleForTesting
+  ChatConversationRuntimeState debugEnsureRuntimeState({
+    required int conversationId,
+    required String mode,
+    List<ChatMessageModel>? initialMessages,
+    ConversationModel? conversation,
+    ChatIslandDisplayLayer? initialChatIslandDisplayLayer,
+  }) => _ensureRuntimeState(
+    conversationId: conversationId,
+    mode: mode,
+    initialMessages: initialMessages,
+    conversation: conversation,
+    initialChatIslandDisplayLayer: initialChatIslandDisplayLayer,
+  );
+
+  @visibleForTesting
+  ChatConversationRuntimeState? debugRuntimeStateFor({
+    required int conversationId,
+    required String mode,
+  }) => _runtimeStateFor(conversationId: conversationId, mode: mode);
 }

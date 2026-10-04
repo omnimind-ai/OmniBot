@@ -19,7 +19,7 @@ void main() {
   final recordedMethodCalls = <MethodCall>[];
 
   test('compaction observations cannot overwrite the saved user threshold', () {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 99109,
       mode: kChatRuntimeModeAgent,
     );
@@ -95,7 +95,7 @@ void main() {
   }) {
     if (method == 'turn/started' &&
         coordinator
-                .runtimeFor(conversationId: conversationId, mode: mode)
+                .debugRuntimeStateFor(conversationId: conversationId, mode: mode)
                 ?.currentDispatchTurnId ==
             null) {
       coordinator.beginAcpTurn(
@@ -127,7 +127,7 @@ void main() {
     String mode = kChatRuntimeModeAgent,
     Map<String, dynamic> params = const {},
   }) {
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: mode,
     )!;
@@ -210,7 +210,7 @@ void main() {
         event: commands('bound', true),
       );
       expect(accepted.handled, isTrue);
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: 2002,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -275,7 +275,7 @@ void main() {
       },
     );
 
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -341,7 +341,7 @@ void main() {
       turnId: 'turn-official',
       stopReason: 'end_turn',
     );
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -405,7 +405,7 @@ void main() {
         mode: kChatRuntimeModeAgent,
       );
       final generationAfterFirstBegin = coordinator
-          .runtimeFor(
+          .debugRuntimeStateFor(
             conversationId: conversationId,
             mode: kChatRuntimeModeAgent,
           )!
@@ -416,7 +416,7 @@ void main() {
         mode: kChatRuntimeModeAgent,
       );
 
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -463,7 +463,7 @@ void main() {
         },
       );
 
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -476,7 +476,7 @@ void main() {
   );
 
   test('keeps the local run identity separate from the official ACP turn', () {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 2008,
       mode: kChatRuntimeModeAgent,
     );
@@ -494,7 +494,7 @@ void main() {
   });
 
   test('projection buffers do not keep a completed runtime in flight', () {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 2009,
       mode: kChatRuntimeModeAgent,
     );
@@ -509,7 +509,7 @@ void main() {
   });
 
   test('routes ACP lifecycle by admitted turn identity', () {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 42,
       mode: kChatRuntimeModeNormal,
     );
@@ -527,7 +527,7 @@ void main() {
   });
 
   test('retains ACP dedupe and turn ownership across a long conversation', () {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 4201,
       mode: kChatRuntimeModeAgent,
     );
@@ -557,7 +557,7 @@ void main() {
   });
 
   test('routes a known legacy process to its owning conversation', () {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 4202,
       mode: kChatRuntimeModeAgent,
     );
@@ -575,7 +575,7 @@ void main() {
 
   test('does not restore a completed run as an active timeline group', () {
     const conversationId = 2004;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -604,7 +604,7 @@ void main() {
 
   test('an idle snapshot cannot demote an admitted ACP turn', () {
     const conversationId = 2005;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -655,7 +655,7 @@ void main() {
 
   test('a snapshot with running flags cannot clear the admitted ACP identity', () {
     const conversationId = 20051;
-    final runtime = coordinator.ensureRuntime(conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    final runtime = coordinator.debugEnsureRuntimeState(conversationId: conversationId, mode: kChatRuntimeModeAgent);
     coordinator.registerTask(taskId: 'host-run', conversationId: conversationId, mode: kChatRuntimeModeAgent);
     coordinator.beginAcpTurn(taskId: 'host-run', conversationId: conversationId, mode: kChatRuntimeModeAgent);
     runtime.activeAcpSessionId = 'official-session';
@@ -675,7 +675,7 @@ void main() {
 
   test('an authoritative idle snapshot can finish only its matching turn', () {
     const conversationId = 2008;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -723,7 +723,7 @@ void main() {
     'expires persisted ACP request cards when restoring an idle session',
     () {
       const conversationId = 2006;
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -759,7 +759,7 @@ void main() {
 
   for (final preserveLive in [false, true]) {
     test('terminal historical requests stay closed during active restore $preserveLive', () {
-      final runtime = coordinator.ensureRuntime(conversationId: 2018, mode: kChatRuntimeModeAgent);
+      final runtime = coordinator.debugEnsureRuntimeState(conversationId: 2018, mode: kChatRuntimeModeAgent);
       coordinator.replaceConversationSnapshot(
         conversationId: 2018, mode: kChatRuntimeModeAgent,
         isAiResponding: true, preserveLiveStreamingState: preserveLive,
@@ -801,7 +801,7 @@ void main() {
 
   test('keeps a live ACP request card pending during an active snapshot', () {
     const conversationId = 2007;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -841,7 +841,7 @@ void main() {
       sessionId: 'session-current',
     );
 
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -924,7 +924,7 @@ void main() {
       },
     );
 
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -964,7 +964,7 @@ void main() {
           sessionId: 'session-current',
         ),
       );
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -1034,7 +1034,7 @@ void main() {
     expect(result.affectsActiveTurn, isFalse);
     expect(
       coordinator
-          .runtimeFor(
+          .debugRuntimeStateFor(
             conversationId: conversationId,
             mode: kChatRuntimeModeAgent,
           )!
@@ -1086,11 +1086,11 @@ void main() {
       params: <String, dynamic>{'status': 'completed'},
     );
 
-    final first = coordinator.runtimeFor(
+    final first = coordinator.debugRuntimeStateFor(
       conversationId: firstConversation,
       mode: kChatRuntimeModeAgent,
     )!;
-    final second = coordinator.runtimeFor(
+    final second = coordinator.debugRuntimeStateFor(
       conversationId: secondConversation,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -1108,14 +1108,14 @@ void main() {
       const firstSession = 'session-first-background';
       const secondSession = 'session-current-visible';
 
-      final first = coordinator.ensureRuntime(
+      final first = coordinator.debugEnsureRuntimeState(
         conversationId: firstConversation,
         mode: kChatRuntimeModeAgent,
         initialMessages: <ChatMessageModel>[
           ChatMessageModel.userMessage('请先整理第一份资料', id: 'first-user'),
         ],
       );
-      final second = coordinator.ensureRuntime(
+      final second = coordinator.debugEnsureRuntimeState(
         conversationId: secondConversation,
         mode: kChatRuntimeModeAgent,
         initialMessages: <ChatMessageModel>[
@@ -1184,7 +1184,7 @@ void main() {
       const secondTask = 'local-second-task';
       const secondTurn = 'turn-second-active';
       const secondSession = 'session-second-active';
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
         initialMessages: <ChatMessageModel>[
@@ -1301,7 +1301,7 @@ void main() {
           'official prompt cancellation preserves history: next=$nextSession late=$lateStopReason turnId=$lateHasTurnId',
           () async {
             const conversationId = 2110;
-            final runtime = coordinator.ensureRuntime(
+            final runtime = coordinator.debugEnsureRuntimeState(
               conversationId: conversationId,
               mode: kChatRuntimeModeAgent,
               initialMessages: <ChatMessageModel>[
@@ -1505,7 +1505,7 @@ void main() {
             mode: kChatRuntimeModeAgent,
             sessionId: sessionId,
           );
-          final runtime = coordinator.runtimeFor(
+          final runtime = coordinator.debugRuntimeStateFor(
             conversationId: conversationId,
             mode: kChatRuntimeModeAgent,
           )!;
@@ -1586,7 +1586,7 @@ void main() {
     'official cancellation after partial output survives reload and duplicate completion',
     () {
       const id = 2990;
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: id,
         mode: kChatRuntimeModeAgent,
       );
@@ -1661,7 +1661,7 @@ void main() {
       'official prompt without streamed output ends its own request: $stopReason',
       () {
         const conversationId = 2111;
-        final runtime = coordinator.ensureRuntime(
+        final runtime = coordinator.debugEnsureRuntimeState(
           conversationId: conversationId,
           mode: kChatRuntimeModeAgent,
           initialMessages: <ChatMessageModel>[
@@ -1720,7 +1720,7 @@ void main() {
       );
       expect(result.handled, isFalse);
       expect(
-        coordinator.runtimeFor(
+        coordinator.debugRuntimeStateFor(
           conversationId: 2112,
           mode: kChatRuntimeModeAgent,
         ),
@@ -1752,7 +1752,7 @@ void main() {
     expect(result.handled, isTrue);
     expect(
       coordinator
-          .runtimeFor(conversationId: 2113, mode: kChatRuntimeModeAgent)!
+          .debugRuntimeStateFor(conversationId: 2113, mode: kChatRuntimeModeAgent)!
           .isAiResponding,
       isFalse,
     );
@@ -1766,7 +1766,7 @@ void main() {
     );
     expect(
       coordinator
-          .runtimeFor(conversationId: 2114, mode: kChatRuntimeModeAgent)!
+          .debugRuntimeStateFor(conversationId: 2114, mode: kChatRuntimeModeAgent)!
           .isAiResponding,
       isTrue,
     );
@@ -1807,7 +1807,7 @@ void main() {
       params: <String, dynamic>{'itemId': 'thought-2', 'delta': '第二阶段：根据结果判断。'},
     );
 
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -1831,7 +1831,7 @@ void main() {
     'continuous updates cannot postpone durable history indefinitely',
     () async {
       const conversationId = 99112;
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -1867,7 +1867,7 @@ void main() {
       'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'reply',
         'content': {'text': 'partial '}}
     });
-    final runtime = coordinator.runtimeFor(conversationId: conversationId, mode: kChatRuntimeModeAgent)!;
+    final runtime = coordinator.debugRuntimeStateFor(conversationId: conversationId, mode: kChatRuntimeModeAgent)!;
     final old = runtime.messages.firstWhere((m) => m.user == 2);
     applyAcp(conversationId, 'session/update', turnId: turn, params: {
       'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'reply',
@@ -1921,7 +1921,7 @@ void main() {
         'content': {'text': 'complete'}}
     });
     completePrompt(conversationId, turnId: turn, params: {'stopReason': 'end_turn'});
-    final current = coordinator.runtimeFor(conversationId: conversationId, mode: kChatRuntimeModeAgent)!;
+    final current = coordinator.debugRuntimeStateFor(conversationId: conversationId, mode: kChatRuntimeModeAgent)!;
     expect(current.messages.firstWhere((m) => m.user == 2).streamMeta?['stopReason'], 'end_turn');
     release.complete();
     await saving;
@@ -1936,7 +1936,7 @@ void main() {
 
   test('persists ACP runtime messages back to native history', () async {
     const conversationId = 2201;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -1976,7 +1976,7 @@ void main() {
   });
 
   test('partial idle page updates preserve committed messages', () async {
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: 99111,
       mode: kChatRuntimeModeAgent,
     );
@@ -1998,7 +1998,7 @@ void main() {
   test(
     'ordinary completion persistence cannot clear an empty runtime history',
     () async {
-      coordinator.ensureRuntime(
+      coordinator.debugEnsureRuntimeState(
         conversationId: 99110,
         mode: kChatRuntimeModeAgent,
       );
@@ -2020,7 +2020,7 @@ void main() {
     'persists an empty snapshot when the caller owns message replacement',
     () async {
       const conversationId = 2200;
-      coordinator.ensureRuntime(
+      coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -2051,7 +2051,7 @@ void main() {
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -2105,7 +2105,7 @@ void main() {
       const conversationId = 2210;
       const turnId = 'multi-reply';
       applyAcp(conversationId, 'turn/started', turnId: turnId);
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -2151,7 +2151,7 @@ void main() {
       const conversationId = 2209;
       const turnId = 'timed-request';
       applyAcp(conversationId, 'turn/started', turnId: turnId);
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -2255,7 +2255,7 @@ void main() {
         },
       );
 
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -2328,7 +2328,7 @@ void main() {
       );
       await Future<void>.delayed(Duration.zero);
 
-      final runtime = coordinator.runtimeFor(
+      final runtime = coordinator.debugRuntimeStateFor(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       )!;
@@ -2347,7 +2347,7 @@ void main() {
     'manual compaction marker does not manufacture an automatic or user turn',
     () {
       const conversationId = 2204;
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -2373,7 +2373,7 @@ void main() {
       conversationId: conversationId,
       mode: kChatRuntimeModeNormal,
     );
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeNormal,
     );
@@ -2403,7 +2403,7 @@ void main() {
 
   test('clears transient runtime state when an ACP session ends', () {
     const conversationId = 2401;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -2448,7 +2448,7 @@ void main() {
       const conversationId = 2404;
       const taskId = 'local-run-2404';
       const officialTurnId = 'acp-turn-2404';
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -2475,7 +2475,7 @@ void main() {
 
   test('late thinking cleanup for an old task cannot clear the new task', () {
     const conversationId = 2405;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -2513,7 +2513,7 @@ void main() {
   test('beginAcpTurn admits a pure chat runtime when it is created lazily', () {
     const conversationId = 2406;
     const taskId = 'pure-chat-lazy-runtime';
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeNormal,
     );
@@ -2547,7 +2547,7 @@ void main() {
     () {
       const conversationId = 24061;
       const taskId = 'session-reservation-task';
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -2600,7 +2600,7 @@ void main() {
 
     completePrompt(conversationId, turnId: turnId, sessionId: sessionId);
 
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;
@@ -2619,11 +2619,11 @@ void main() {
     const oldConversationId = 2407;
     const newConversationId = 2408;
     const taskId = 'handoff-task';
-    final oldRuntime = coordinator.ensureRuntime(
+    final oldRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: oldConversationId,
       mode: kChatRuntimeModeAgent,
     );
-    final newRuntime = coordinator.ensureRuntime(
+    final newRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: newConversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -2660,11 +2660,11 @@ void main() {
     const oldConversationId = 2409;
     const newConversationId = 2410;
     const taskId = 'reused-task-id';
-    final oldRuntime = coordinator.ensureRuntime(
+    final oldRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: oldConversationId,
       mode: kChatRuntimeModeAgent,
     );
-    final newRuntime = coordinator.ensureRuntime(
+    final newRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: newConversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -2702,11 +2702,11 @@ void main() {
     const oldConversationId = 2411;
     const newConversationId = 2412;
     const taskId = 'direct-begin-rebind';
-    final oldRuntime = coordinator.ensureRuntime(
+    final oldRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: oldConversationId,
       mode: kChatRuntimeModeAgent,
     );
-    final newRuntime = coordinator.ensureRuntime(
+    final newRuntime = coordinator.debugEnsureRuntimeState(
       conversationId: newConversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -2744,7 +2744,7 @@ void main() {
 
   test('fences a sessionless late turn event after runtime reset', () {
     const conversationId = 2403;
-    final runtime = coordinator.ensureRuntime(
+    final runtime = coordinator.debugEnsureRuntimeState(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     );
@@ -2770,7 +2770,7 @@ void main() {
     'fences late events from a reset session but allows a new turn to reuse it',
     () {
       const conversationId = 2402;
-      final runtime = coordinator.ensureRuntime(
+      final runtime = coordinator.debugEnsureRuntimeState(
         conversationId: conversationId,
         mode: kChatRuntimeModeAgent,
       );
@@ -2848,7 +2848,7 @@ void main() {
         },
       },
     );
-    final runtime = coordinator.runtimeFor(
+    final runtime = coordinator.debugRuntimeStateFor(
       conversationId: conversationId,
       mode: kChatRuntimeModeAgent,
     )!;

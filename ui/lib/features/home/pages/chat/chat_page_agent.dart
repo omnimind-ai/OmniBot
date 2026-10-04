@@ -1655,8 +1655,38 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     return '$_kLegacyAgentPreferenceStoragePrefix.$kind$source.conversation.$conversationId';
   }
 
+  /// Attribution facts for the coordinator's single runtime event route.
   @override
-  void _handleAgentRuntimeEvent(Map<String, dynamic> event) {
+  ChatRuntimeRoutingContext? _agentEventRoutingContext() {
+    if (!mounted) return null;
+    return ChatRuntimeRoutingContext.page(
+      activeMode: _modeKey(_activeMode),
+      conversationIdsByMode: <String, int?>{
+        for (final mode in ChatPageMode.values)
+          _modeKey(mode): _modeState(mode).currentConversationId,
+      },
+      conversationsByMode: <String, ConversationModel?>{
+        for (final mode in ChatPageMode.values)
+          _modeKey(mode): _modeState(mode).currentConversation,
+      },
+      remote: _isRemoteCodexConfigured()
+          ? ChatRuntimeRemoteRoutingContext(
+              activeThreadId: _activeAgentThreadId,
+              activeRemoteRuntimeId: _activeRemoteCodexRuntimeId,
+              agentFallbackMessages: List<ChatMessageModel>.unmodifiable(
+                _modeState(ChatPageMode.agent).messages,
+              ),
+              agentConversation: _modeState(ChatPageMode.agent)
+                  .currentConversation,
+            )
+          : null,
+    );
+  }
+
+  /// Presentation follow-up after the coordinator projected one event.
+  @override
+  void _handleAgentRuntimeEventOutcome(ChatRuntimeEventOutcome outcome) {
+    final event = outcome.event;
     final diagnosticMethod = _diagnosticEventMethod(event);
     _agentEventDiagnosticCounter.update(
       diagnosticMethod,
@@ -1687,125 +1717,26 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         '${_agentEventDiagnosticCounter.entries.map((e) => '${e.key}:${e.value}').join(', ')}',
       );
     }
-    final remoteCodex = _isRemoteCodexConfigured();
-    final eventThreadId = _remoteCodexEventThreadId(event);
-    final explicitConversationId = _asAgentInt(event['conversationId']);
-    final eventSessionId = acpEventSessionId(event);
-    final eventTurnId = acpEventTurnId(event);
-    final eventParams = _asAgentMap(event['params']);
-    final hasStandaloneProcessIdentity = <dynamic>[
-      event['processId'],
-      event['process_id'],
-      event['processHandle'],
-      event['process_handle'],
-      eventParams?['processId'],
-      eventParams?['process_id'],
-      eventParams?['processHandle'],
-      eventParams?['process_handle'],
-    ].any((value) => value?.toString().trim().isNotEmpty == true);
-    String? standaloneProcessId;
-    for (final value in <dynamic>[
-      event['processId'],
-      event['process_id'],
-      event['processHandle'],
-      event['process_handle'],
-      eventParams?['processId'],
-      eventParams?['process_id'],
-      eventParams?['processHandle'],
-      eventParams?['process_handle'],
-    ]) {
-      final normalized = value?.toString().trim() ?? '';
-      if (normalized.isNotEmpty) {
-        standaloneProcessId = normalized;
-        break;
-      }
+    if (!mounted) return;
+    final promotedThreadId = outcome.promotedRemoteThreadId;
+    if (promotedThreadId != null) {
+      _adoptRemoteCodexThread(promotedThreadId, outcome.conversationId);
     }
-    final standaloneProcessOwner = standaloneProcessId == null
-        ? null
-        : _runtimeCoordinator.conversationIdForStandaloneProcess(
-            standaloneProcessId!,
-          );
-    final hasProtocolIdentity =
-        eventSessionId != null || eventTurnId != null || eventThreadId != null;
-    final canUseVisibleFallback =
-        diagnosticMethod == 'error' || hasStandaloneProcessIdentity;
-    final identityConversationId = explicitConversationId == null
-        ? _runtimeCoordinator.conversationIdForAcpEvent(
-            sessionId: eventSessionId,
-            turnId: eventTurnId,
-          )
-        : null;
-    final mappedRemoteConversationId = remoteCodex && eventThreadId != null
-        ? _remoteCodexRuntimeId(eventThreadId)
-        : null;
-    final shouldPromoteRemoteEvent =
-        remoteCodex &&
-        eventThreadId != null &&
-        this._shouldPromoteRemoteCodexEventToVisibleThread(
-          threadId: eventThreadId,
-          runtimeId: mappedRemoteConversationId!,
-        );
-    final conversationId =
-        explicitConversationId ??
-        (shouldPromoteRemoteEvent
-            ? _activateRemoteCodexRuntimeForThread(eventThreadId)
-            : mappedRemoteConversationId) ??
-        identityConversationId ??
-        standaloneProcessOwner ??
-        (!hasProtocolIdentity && canUseVisibleFallback
-            ? _modeState(ChatPageMode.agent).currentConversationId
-            : null);
-    if (conversationId == null) {
-      debugPrint(
-        '[Agent] dropping $diagnosticMethod — no safe ACP owner '
-        '(remoteCodex=$remoteCodex, eventSessionId=$eventSessionId, '
-        'eventTurnId=$eventTurnId, eventThreadId=$eventThreadId)',
-      );
-      return;
-    }
-    if (remoteCodex && eventThreadId != null && !shouldPromoteRemoteEvent) {
-      this._ensureRemoteCodexRuntimeForThread(eventThreadId);
-    }
-    final normalConversationId = _modeState(
-      ChatPageMode.normal,
-    ).currentConversationId;
-    final agentConversationId = _modeState(
-      ChatPageMode.agent,
-    ).currentConversationId;
-    final ownerMode = _runtimeCoordinator.modeForAcpEvent(
-      conversationId: conversationId,
-      sessionId: eventSessionId,
-      turnId: eventTurnId,
-    );
-    final eventMode = switch (ownerMode) {
+    final conversationId = outcome.conversationId;
+    final eventMode = switch (outcome.mode) {
       kChatRuntimeModeNormal => ChatPageMode.normal,
-      kChatRuntimeModeAgent => ChatPageMode.agent,
       kChatRuntimeModeOpenClaw => ChatPageMode.openclaw,
-      _ =>
-        remoteCodex ||
-                conversationId == agentConversationId ||
-                event['conversationMode'] == ConversationMode.agent.storageValue
-            ? ChatPageMode.agent
-            : conversationId == normalConversationId
-            ? ChatPageMode.normal
-            : _activeMode,
+      _ => ChatPageMode.agent,
     };
     final isVisibleConversation =
         conversationId == _modeState(eventMode).currentConversationId &&
         _activeMode == eventMode;
-    final result = _runtimeCoordinator.applyAgentEvent(
-      conversationId: conversationId,
-      event: event,
-      mode: _modeKey(eventMode),
-      conversation: isVisibleConversation
-          ? _modeState(eventMode).currentConversation
-          : null,
-    );
+    final result = outcome.result;
     if (result.compatibilityWarning != null && isVisibleConversation) {
       showToast(result.compatibilityWarning!, type: ToastType.warning);
     }
     final threadId = _asAgentString(event['threadId']) ?? result.threadId;
-    final turnId = eventTurnId ?? result.turnId;
+    final turnId = acpEventTurnId(event) ?? result.turnId;
     if (eventMode == ChatPageMode.agent &&
         isVisibleConversation &&
         result.handled &&
@@ -1828,12 +1759,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         }
       }
     }
-    if (!result.handled &&
-        result.method != 'codex/stderr' &&
-        result.method != 'codex/parseError') {
-      debugPrint('[Agent] unhandled ACP event: ${jsonEncode(event)}');
-    }
-    if (_activeMode == ChatPageMode.agent && mounted && isVisibleConversation) {
+    if (_activeMode == ChatPageMode.agent && isVisibleConversation) {
       setState(() {});
     }
   }
