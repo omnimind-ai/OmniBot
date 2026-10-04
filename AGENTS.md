@@ -167,6 +167,16 @@ capabilities must be exposed through the shared ACP runtime and MCP/plugin
 modules, then consumed by `AgentEventReducer` and
 `ChatConversationRuntimeCoordinator`.
 
+Since migration batch 5a both owners are native, in
+`app/src/main/java/cn/com/omnimind/bot/agent/projection/` and hosted by
+`ChatRuntimeHost`, which takes `AgentRuntimeManager`'s event stream. Flutter
+receives immutable runtime snapshots on `cn.com.omnimind.bot/ChatRuntimeEvents`
+and sends commands on `cn.com.omnimind.bot/ChatRuntime`; the Dart
+`ChatConversationRuntimeCoordinator` is only a snapshot mirror and command
+forwarder. Never reduce ACP events or keep runtime lifecycle state in Dart or
+in a Compose screen; extend the native owner and expose the result through
+its snapshot.
+
 The following lifecycle invariants are permanent project rules:
 
 - Design changes from the top down: first map `Conversation -> ACP Session ->
