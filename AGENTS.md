@@ -175,7 +175,10 @@ and sends commands on `cn.com.omnimind.bot/ChatRuntime`; the Dart
 `ChatConversationRuntimeCoordinator` is only a snapshot mirror and command
 forwarder. Never reduce ACP events or keep runtime lifecycle state in Dart or
 in a Compose screen; extend the native owner and expose the result through
-its snapshot.
+its snapshot. Prompt admission, `session/cancel`, `$/cancel_request` and
+server-request answers from the UI have one native entry,
+`ChatPromptDispatcher` (batch 5b); UI code expresses intents and never calls
+the prompt transport directly.
 
 The following lifecycle invariants are permanent project rules:
 

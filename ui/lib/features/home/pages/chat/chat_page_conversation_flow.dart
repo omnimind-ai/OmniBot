@@ -2,11 +2,12 @@ part of 'chat_page.dart';
 
 /// Reserves the official ACP session for one already-admitted local run.
 ///
-/// This is a stateless application helper shared by every new ChatPage prompt
-/// path. It performs no local lifecycle transitions: the coordinator owns the
-/// run, while ACP owns the session and turn. If the run loses ownership while
-/// `session/new` is in flight, a newly-created session is closed and no prompt
-/// is sent.
+/// The native prompt dispatcher owns the reservation (`session/new`,
+/// coordinator binding, closing a session the run no longer owns). The page
+/// only checks its own navigation target: if it moved on while the
+/// reservation was in flight, the reservation is released again and no
+/// prompt is sent. A transport failure is already applied to the runtime as
+/// this run's PromptResponse.
 Future<String?> _prepareAcpSessionForTurn({
   required ChatConversationRuntimeCoordinator runtimeCoordinator,
   required String taskId,
@@ -18,57 +19,41 @@ Future<String?> _prepareAcpSessionForTurn({
   String? effort,
   String? collaborationMode,
   String? conversationMode,
+  bool clearThinkingOnFailure = false,
 }) async {
-  bool ownsTurn() =>
-      isTargetCurrent() &&
-      runtimeCoordinator.isTaskActive(
+  if (!isTargetCurrent() ||
+      !runtimeCoordinator.isTaskActive(
         taskId: taskId,
         conversationId: conversationId,
         mode: mode,
-      );
-  if (!ownsTurn()) return null;
-
-  final hadExistingSession = existingSessionId?.trim().isNotEmpty == true;
-  final sessionId = await AgentRuntimeService.ensureSession(
-    sessionId: existingSessionId,
-    conversationId: conversationId,
-    model: model,
-    effort: effort,
-    collaborationMode: collaborationMode,
-    conversationMode: conversationMode,
-  );
-  if (!ownsTurn()) {
-    if (!hadExistingSession) {
-      try {
-        await AgentRuntimeService.closeSession(
-          sessionId: sessionId,
-          conversationId: conversationId,
-        );
-      } catch (error) {
-        debugPrint('ACP abandoned session close failed: $error');
-      }
-    }
+      )) {
     return null;
   }
-  if (!await runtimeCoordinator.bindAcpSession(
+  final prepared = await ChatPromptDispatcher.instance.prepareTurnSession(
     taskId: taskId,
     conversationId: conversationId,
     mode: mode,
-    sessionId: sessionId,
-  )) {
-    if (!hadExistingSession) {
-      try {
-        await AgentRuntimeService.closeSession(
-          sessionId: sessionId,
-          conversationId: conversationId,
-        );
-      } catch (error) {
-        debugPrint('ACP unowned session close failed: $error');
-      }
-    }
+    existingSessionId: existingSessionId,
+    sessionArgs: AgentRuntimeService.newSessionArguments(
+      conversationId: conversationId,
+      model: model,
+      effort: effort,
+      collaborationMode: collaborationMode,
+      conversationMode: conversationMode,
+    ),
+    clearThinkingOnFailure: clearThinkingOnFailure,
+  );
+  if (!prepared.isReady) return null;
+  if (!isTargetCurrent()) {
+    await ChatPromptDispatcher.instance.releaseTurnSession(
+      taskId: taskId,
+      conversationId: conversationId,
+      mode: mode,
+      closeSessionId: prepared.created ? prepared.sessionId : null,
+    );
     return null;
   }
-  return sessionId;
+  return prepared.sessionId;
 }
 
 mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
@@ -986,6 +971,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         model: dispatchSelection?.modelId,
         effort: dispatchReasoningEffort,
         conversationMode: dispatchConversationMode.storageValue,
+        clearThinkingOnFailure: true,
       );
       if (acpSessionId == null) {
         _runtimeCoordinator.unregisterTask(
@@ -997,44 +983,41 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       _normalAcpSessionId = acpSessionId;
       _normalAcpSessionConversationId = resolvedConversationId;
-      final response = await AgentRuntimeService.promptSession(
+      final outcome = await ChatPromptDispatcher.instance.submitTurnPrompt(
+        taskId: aiMessageId,
         conversationId: resolvedConversationId,
-        sessionId: acpSessionId,
-        requestId: _buildPromptRequestId(aiMessageId),
-        // Pure chat is an ACP turn with tools disabled, not a provider-only
-        // transport. It deliberately has no Harness identity: otherwise a
-        // previous DSH/Xiaowan switch leaks into the pure-chat session and
-        // the runtime can reconnect the wrong Agent.
-        agentId: dispatchConversationMode == ConversationMode.chatOnly
-            ? null
-            : _kXiaowanAcpAgentId,
-        text: userMessage,
-        attachments: userAttachments,
-        approvalPolicy: dispatchPermissionMode.approvalPolicy,
-        approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
-        sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
-        model: dispatchSelection?.modelId,
-        effort: dispatchReasoningEffort,
-        conversationMode: dispatchConversationMode.storageValue,
-        terminalEnvironment: dispatchTerminalEnvironment,
+        mode: dispatchModeKey,
+        fallbackSessionId: acpSessionId,
+        clearThinkingOnFailure: true,
+        promptArgs: AgentRuntimeService.promptSessionArguments(
+          conversationId: resolvedConversationId,
+          sessionId: acpSessionId,
+          requestId: _buildPromptRequestId(aiMessageId),
+          // Pure chat is an ACP turn with tools disabled, not a provider-only
+          // transport. It deliberately has no Harness identity: otherwise a
+          // previous DSH/Xiaowan switch leaks into the pure-chat session and
+          // the runtime can reconnect the wrong Agent.
+          agentId: dispatchConversationMode == ConversationMode.chatOnly
+              ? null
+              : _kXiaowanAcpAgentId,
+          text: userMessage,
+          attachments: userAttachments,
+          approvalPolicy: dispatchPermissionMode.approvalPolicy,
+          approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
+          sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
+          model: dispatchSelection?.modelId,
+          effort: dispatchReasoningEffort,
+          conversationMode: dispatchConversationMode.storageValue,
+          terminalEnvironment: dispatchTerminalEnvironment,
+        ),
       );
+      final response = outcome.response;
       final responseSessionId =
           _asAgentString(response['sessionId']) ??
           _asAgentString(response['threadId']);
       final responseTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
-      await _runtimeCoordinator.applyAcpPromptResponse(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-        sessionId: responseSessionId ?? acpSessionId,
-        turnId: responseTurnId,
-        stopReason:
-            _asAgentString(response['stopReason']) ??
-            _asAgentString(response['status']),
-        error: _asAgentString(response['error']),
-      );
       if (isDispatchTargetCurrent()) {
         _normalAcpSessionId = responseSessionId ?? acpSessionId;
         if (_normalAcpSessionId != null) {
@@ -1174,45 +1157,41 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       _normalAcpSessionId = acpSessionId;
       _normalAcpSessionConversationId = resolvedConversationId;
-      final response = await AgentRuntimeService.promptSession(
+      final outcome = await ChatPromptDispatcher.instance.submitTurnPrompt(
+        taskId: aiMessageId,
         conversationId: resolvedConversationId,
-        sessionId: acpSessionId,
-        // A normal transport retry keeps the request id so ACP can safely
-        // deduplicate an in-flight request. Manual retry/continue actions
-        // must provide a fresh id; otherwise LocalAcpRuntime's idempotency
-        // table returns the already-failed turn and no new execution starts.
-        requestId: requestIdOverride ?? _buildPromptRequestId(aiMessageId),
-        // The visible conversation target is authoritative. Runtime status
-        // can briefly describe the previous process during an ACP switch;
-        // using it here can send the first turn to the old Harness.
-        agentId: _kXiaowanAcpAgentId,
-        text: dispatchUserMessage,
-        attachments: dispatchAttachments,
-        approvalPolicy: dispatchPermissionMode.approvalPolicy,
-        approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
-        sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
-        model: dispatchSelection?.modelId,
-        effort: dispatchReasoningEffort,
-        conversationMode: dispatchConversationMode.storageValue,
-        terminalEnvironment: dispatchTerminalEnvironment,
+        mode: dispatchModeKey,
+        fallbackSessionId: acpSessionId,
+        promptArgs: AgentRuntimeService.promptSessionArguments(
+          conversationId: resolvedConversationId,
+          sessionId: acpSessionId,
+          // A normal transport retry keeps the request id so ACP can safely
+          // deduplicate an in-flight request. Manual retry/continue actions
+          // must provide a fresh id; otherwise LocalAcpRuntime's idempotency
+          // table returns the already-failed turn and no new execution starts.
+          requestId: requestIdOverride ?? _buildPromptRequestId(aiMessageId),
+          // The visible conversation target is authoritative. Runtime status
+          // can briefly describe the previous process during an ACP switch;
+          // using it here can send the first turn to the old Harness.
+          agentId: _kXiaowanAcpAgentId,
+          text: dispatchUserMessage,
+          attachments: dispatchAttachments,
+          approvalPolicy: dispatchPermissionMode.approvalPolicy,
+          approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
+          sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
+          model: dispatchSelection?.modelId,
+          effort: dispatchReasoningEffort,
+          conversationMode: dispatchConversationMode.storageValue,
+          terminalEnvironment: dispatchTerminalEnvironment,
+        ),
       );
+      final response = outcome.response;
       final responseSessionId =
           _asAgentString(response['sessionId']) ??
           _asAgentString(response['threadId']);
       final responseTurnId =
           _asAgentString(response['promptId']) ??
           _asAgentString(response['turnId']);
-      await _runtimeCoordinator.applyAcpPromptResponse(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-        sessionId: responseSessionId ?? acpSessionId,
-        turnId: responseTurnId,
-        stopReason:
-            _asAgentString(response['stopReason']) ??
-            _asAgentString(response['status']),
-        error: _asAgentString(response['error']),
-      );
       if (isDispatchTargetCurrent()) {
         _normalAcpSessionId = responseSessionId ?? acpSessionId;
         if (_normalAcpSessionId != null) {
@@ -1220,7 +1199,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         }
         _normalAcpTurnId = responseTurnId;
       }
-      return true;
+      // A transport failure was projected natively as this run's
+      // PromptResponse; report it like the former exception path.
+      return outcome.completed;
     } catch (e) {
       if (conversationId != null) {
         final runtime = _runtimeCoordinator.runtimeFor(

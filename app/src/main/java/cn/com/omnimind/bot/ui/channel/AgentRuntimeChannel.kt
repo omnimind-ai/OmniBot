@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.ui.channel
 
 import android.content.Context
 import cn.com.omnimind.bot.agent.AgentRuntimeErrorSupport
+import cn.com.omnimind.bot.agent.projection.ChatRuntimeHost
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -45,9 +46,18 @@ class AgentRuntimeChannel {
 
         scope.launch {
             runCatching {
-                AgentRuntimeManager
-                    .getInstance(safeContext)
-                    .handleMethod(call.method, arguments)
+                ChatRuntimeHost.initialize(safeContext)
+                // Prompt admission, cancellation and server-request answers
+                // have one native entry (ChatPromptDispatcher, batch 5b).
+                when (call.method) {
+                    "session/prompt" -> ChatRuntimeHost.dispatcher.submitDetachedPrompt(arguments)
+                    "session/cancel" -> ChatRuntimeHost.dispatcher.cancelTurn(arguments)
+                    "\$/cancel_request" -> ChatRuntimeHost.dispatcher.cancelRequest(arguments)
+                    "respondToServerRequest" -> ChatRuntimeHost.dispatcher.respondToServerRequest(arguments)
+                    else -> AgentRuntimeManager
+                        .getInstance(safeContext)
+                        .handleMethod(call.method, arguments)
+                }
             }.onSuccess { payload ->
                 result.success(payload)
             }.onFailure { error ->

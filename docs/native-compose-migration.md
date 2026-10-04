@@ -207,7 +207,7 @@ The order below follows the actual owners in this repository, not page size alon
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
-## Batch 5 plan: chat migration split (2026-10-04; 5a-0 and 5a source complete)
+## Batch 5 plan: chat migration split (2026-10-04; 5a-0, 5a and 5b source complete)
 
 The chat domain is ~53.5k Dart lines (`chat/` 36.7k + `command_overlay/` 16.9k)
 and cannot move as one Goal. The architecture survey behind this split:
@@ -259,6 +259,54 @@ adapter could not absorb it without a second writer:
 May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
+
+## Batch 5b checkpoint: native prompt admission (source complete; device acceptance pending)
+
+- **Content**: `ChatPromptDispatcher` (app module, owned by `ChatRuntimeHost`)
+  is the single native entry for chat prompt admission. It reserves the ACP
+  session (`session/new` + coordinator `bindAcpSession`, closing a session the
+  run no longer owns), sends `session/prompt`, and applies the official
+  PromptResponse or the transport error through the one coordinator.
+  `session/cancel`, `$/cancel_request` and `respondToServerRequest` from
+  Flutter land on the same entry (`AgentRuntimeChannel` routes them), as does
+  the runtime-less scheduled Sub Agent prompt. Chat pages and the
+  command-overlay sheet call `ChatPromptDispatcher.instance`
+  (`prepareTurnSession` / `submitTurnPrompt` / `releaseTurnSession`); no chat
+  surface calls the prompt transport (guarded by `chat_architecture_test`).
+- **Owner decisions**:
+  - Error text for transport failures is produced natively by
+    `AgentUserErrorText` (the full port of `formatAgentRuntimeErrorForUser`,
+    now shared with the reducer), from the same `userFacingMessage` /
+    `failureKind` the channel used to report.
+  - Page navigation stays with the page: it checks its own target before
+    reserving and again after the reservation returns, and releases the
+    reservation when it moved on. The Harness switch send barrier also stays
+    page-side: it sequences the page's own target installation, while native
+    admission is protected by task ownership (`isTaskActive`).
+  - Busy/idle comes from the 5a snapshot (`isAiResponding`, `boundTaskIds`).
+- **Behavior differences**: the command-overlay sheet now binds its ACP
+  session like the main page, and shows the formatted failure text instead
+  of the raw exception string. In the Agent page, remote-thread adoption runs
+  after the PromptResponse is applied instead of just before.
+- **Verification boundary**: projection Kotlin tests 336, 0 failures
+  (adds `ChatPromptDispatcherTest`: reserve/reuse/abandon-close/failure as
+  PromptResponse/release/submit/classified errors/single entry); other `:app`
+  failures unchanged from baseline. `flutter test` 967 passed with the same 4
+  pre-existing failures; `flutter analyze` 0 errors. Gradle compile/native-ui
+  tests/androidTest compile/release resource merge succeeded; `git diff
+  --check` clean. No device run.
+
+Manual acceptance checklist:
+
+1. Send in Agent, Xiaowan and pure-chat modes; stop during status, session
+   creation and streaming; no leaked sessions, no stray error bubbles.
+2. Switch Harness or conversation while a send is preparing: no prompt
+   reaches the old target and its session is closed.
+3. Provider errors (quota, auth, timeout, disconnect) show the same short
+   text as before in the failure card.
+4. Approve/decline requests, answer user-input and elicitation requests,
+   cancel requests; scheduled Sub Agent tasks still run.
+5. Command-overlay sheet: send, stop, close-retry, and a failed send.
 
 ## Batch 5a checkpoint: ACP projection owner moved to Kotlin (source complete; device acceptance pending)
 

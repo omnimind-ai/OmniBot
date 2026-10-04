@@ -1357,18 +1357,26 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       // ACP separates session ownership from prompt execution. Reserve the
       // session first so cancellation and late-event attribution have a
       // stable official identity before the potentially long prompt call.
-      final sessionResponse = await AgentRuntimeService.newSession(
+      final prepared = await ChatPromptDispatcher.instance.prepareTurnSession(
+        taskId: aiMessageId,
         conversationId: conversationId,
-        model: dispatchScene?.effectiveModel.trim(),
-        conversationMode: ConversationMode.agent.storageValue,
+        mode: _runtimeMode,
+        existingSessionId: null,
+        sessionArgs: AgentRuntimeService.newSessionArguments(
+          conversationId: conversationId,
+          model: dispatchScene?.effectiveModel.trim(),
+          conversationMode: ConversationMode.agent.storageValue,
+        ),
       );
-      _acpSessionId =
-          (sessionResponse['sessionId'] ?? sessionResponse['threadId'])
-              ?.toString()
-              .trim();
-      if ((_acpSessionId ?? '').isEmpty) {
-        throw StateError('ACP did not return a session id');
+      if (!prepared.isReady) {
+        // `failed` is already projected as this run's PromptResponse;
+        // `abandoned` released (and closed) the reservation natively.
+        if (prepared.status == 'failed') {
+          _syncAcpRuntimePresentation(conversationId);
+        }
+        return false;
       }
+      _acpSessionId = prepared.sessionId;
       // A stop may have arrived while session/new was pending. Its earlier
       // cleanup did not own this newly returned session.
       _acpCloseStarted = false;
@@ -1377,16 +1385,24 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         return false;
       }
 
-      final response = await AgentRuntimeService.promptSession(
-        sessionId: _acpSessionId,
+      final outcome = await ChatPromptDispatcher.instance.submitTurnPrompt(
+        taskId: aiMessageId,
         conversationId: conversationId,
-        requestId: aiMessageId,
-        agentId: status.activeAgentId,
-        text: userMessage,
-        attachments: attachments,
-        model: dispatchScene?.effectiveModel.trim(),
-        conversationMode: ConversationMode.agent.storageValue,
+        mode: _runtimeMode,
+        fallbackSessionId: _acpSessionId,
+        conversation: _currentConversation,
+        promptArgs: AgentRuntimeService.promptSessionArguments(
+          sessionId: _acpSessionId,
+          conversationId: conversationId,
+          requestId: aiMessageId,
+          agentId: status.activeAgentId,
+          text: userMessage,
+          attachments: attachments,
+          model: dispatchScene?.effectiveModel.trim(),
+          conversationMode: ConversationMode.agent.storageValue,
+        ),
       );
+      final response = outcome.response;
       final responseSessionId =
           (response['sessionId'] ?? response['threadId'] ?? _acpSessionId)
               ?.toString()
@@ -1394,26 +1410,14 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       final responsePromptId = (response['promptId'] ?? response['turnId'])
           ?.toString()
           .trim();
-      if (conversationId != null) {
-        final result = await _runtimeCoordinator.applyAcpPromptResponse(
-          taskId: aiMessageId,
-          conversationId: conversationId,
-          mode: _runtimeMode,
-          sessionId: responseSessionId,
-          turnId: responsePromptId,
-          stopReason:
-              response['stopReason']?.toString() ??
-              response['status']?.toString(),
-          error: response['error']?.toString(),
-          conversation: _currentConversation,
-        );
-        if (result.handled) {
+      if (outcome.result.handled) {
+        if (outcome.completed) {
           _acpSessionId = responseSessionId;
           _acpPromptId = responsePromptId;
-          _syncAcpRuntimePresentation(conversationId);
         }
+        _syncAcpRuntimePresentation(conversationId);
       }
-      return true;
+      return outcome.completed;
     } catch (e) {
       final conversationId = _currentConversationId;
       final runtime = conversationId == null

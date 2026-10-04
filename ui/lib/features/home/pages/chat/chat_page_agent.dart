@@ -2003,46 +2003,44 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         return;
       }
       _activeAgentThreadId = acpSessionId;
-      final response = await AgentRuntimeService.promptSession(
+      final outcome = await ChatPromptDispatcher.instance.submitTurnPrompt(
+        taskId: aiMessageId,
         conversationId: resolvedConversationId,
-        sessionId: acpSessionId,
-        // Keep the request id stable across a retry of this message. The ACP
-        // runtime uses it to return the original turn instead of replaying
-        // tool calls.
-        requestId: aiMessageId,
-        agentId: remoteCodex ? null : dispatchAgentId,
-        text: messageText,
-        attachments: attachments,
-        approvalPolicy: dispatchPermissionMode.approvalPolicy,
-        approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
-        sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
-        model: turnModel,
-        effort: dispatchReasoningEffort,
-        collaborationMode: dispatchCollaborationMode,
-        // The Agent page owns ConversationMode.agent. Keep the mode on the
-        // canonical ACP prompt so built-in agents read the same durable
-        // history bucket that this page writes.
-        conversationMode: ConversationMode.agent.storageValue,
-        terminalEnvironment: dispatchTerminalEnvironment,
+        mode: dispatchModeKey,
+        fallbackSessionId: acpSessionId,
+        promptArgs: AgentRuntimeService.promptSessionArguments(
+          conversationId: resolvedConversationId,
+          sessionId: acpSessionId,
+          // Keep the request id stable across a retry of this message. The ACP
+          // runtime uses it to return the original turn instead of replaying
+          // tool calls.
+          requestId: aiMessageId,
+          agentId: remoteCodex ? null : dispatchAgentId,
+          text: messageText,
+          attachments: attachments,
+          approvalPolicy: dispatchPermissionMode.approvalPolicy,
+          approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
+          sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
+          model: turnModel,
+          effort: dispatchReasoningEffort,
+          collaborationMode: dispatchCollaborationMode,
+          // The Agent page owns ConversationMode.agent. Keep the mode on the
+          // canonical ACP prompt so built-in agents read the same durable
+          // history bucket that this page writes.
+          conversationMode: ConversationMode.agent.storageValue,
+          terminalEnvironment: dispatchTerminalEnvironment,
+        ),
       );
+      // A transport failure was already projected as this run's
+      // PromptResponse by the native dispatcher.
+      if (!outcome.completed) return;
+      final response = outcome.response;
       final resolvedThreadId = _asAgentString(response['threadId']);
       if (resolvedThreadId != null &&
           remoteCodex &&
           isDispatchTargetCurrent()) {
         _activateRemoteCodexRuntimeForThread(resolvedThreadId);
       }
-      final responseTurnId = _asAgentString(response['turnId']);
-      await _runtimeCoordinator.applyAcpPromptResponse(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-        sessionId: _asAgentString(response['sessionId']) ?? acpSessionId,
-        turnId: responseTurnId,
-        stopReason:
-            _asAgentString(response['stopReason']) ??
-            _asAgentString(response['status']),
-        error: _asAgentString(response['error']),
-      );
       if (isDispatchTargetCurrent()) {
         _activeAgentThreadId = resolvedThreadId ?? acpSessionId;
         _activeAgentTurnId = null;

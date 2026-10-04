@@ -102,43 +102,37 @@ void main() {
     },
   );
 
-  test('ensureSession reserves a session before a new prompt', () async {
-    final calls = <MethodCall>[];
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      calls.add(call);
-      return <String, dynamic>{'sessionId': 'session-created'};
-    });
-
-    final sessionId = await AgentRuntimeService.ensureSession(
-      conversationId: 42,
-      model: 'model-1',
-      conversationMode: 'agent',
-    );
-
-    expect(sessionId, 'session-created');
-    expect(calls.map((call) => call.method), ['session/new']);
-    expect((calls.single.arguments as Map)['conversationId'], 42);
-    expect((calls.single.arguments as Map)['model'], 'model-1');
-  });
-
-  test(
-    'ensureSession reuses an existing official session without a call',
-    () async {
-      var callCount = 0;
-      messenger.setMockMethodCallHandler(channel, (call) async {
-        callCount += 1;
-        return <String, dynamic>{'sessionId': 'unexpected'};
-      });
-
-      final sessionId = await AgentRuntimeService.ensureSession(
-        sessionId: '  session-existing  ',
+  // Session reservation moved to the native prompt dispatcher (batch 5b);
+  // see ChatPromptDispatcherTest. Dart builds only the canonical arguments.
+  test('builds canonical session/new and session/prompt arguments', () {
+    expect(
+      AgentRuntimeService.newSessionArguments(
         conversationId: 42,
-      );
-
-      expect(sessionId, 'session-existing');
-      expect(callCount, 0);
-    },
-  );
+        model: ' model-1 ',
+        effort: '',
+        conversationMode: 'agent',
+      ),
+      <String, dynamic>{
+        'conversationId': 42,
+        'model': 'model-1',
+        'conversationMode': 'agent',
+      },
+    );
+    expect(
+      AgentRuntimeService.promptSessionArguments(
+        sessionId: 's1',
+        conversationId: 42,
+        requestId: ' req ',
+        text: 'hi',
+      ),
+      <String, dynamic>{
+        'sessionId': 's1',
+        'conversationId': 42,
+        'requestId': 'req',
+        'text': 'hi',
+      },
+    );
+  });
 
   test('request cancellation is not encoded as session cancellation', () async {
     MethodCall? capturedCall;
@@ -208,18 +202,8 @@ void main() {
     },
   );
 
-  test('prompt failures retain structured classification across the shared service', () async {
-    messenger.setMockMethodCallHandler(channel, (call) async => <String, dynamic>{
-      'status': 'error', 'stopReason': 'error', 'completed': true,
-      'error': '测试失败', 'failureKind': 'provider_authentication_failed',
-      'sessionId': 'session-1', 'turnId': 'turn-1',
-    });
-    final response = await AgentRuntimeService.promptSession(sessionId: 'session-1', text: 'test');
-    expect(response['error'], '模型连接验证失败，请在模型设置中检查接口地址和密钥。');
-    expect(response['status'], 'error');
-    expect(response['turnId'], 'turn-1');
-    expect(response['completed'], true);
-  });
+  // Classified prompt failures are formatted by the native prompt
+  // dispatcher (ChatPromptDispatcherTest), the single session/prompt entry.
 
   test('promptSession forwards ACP permission payload', () async {
     MethodCall? capturedCall;

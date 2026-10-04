@@ -14,6 +14,7 @@ import 'package:ui/services/assists_core_service.dart';
 part 'chat_runtime_mirror.dart';
 part 'chat_runtime_view.dart';
 part 'chat_runtime_event_routing.dart';
+part 'chat_prompt_dispatcher.dart';
 
 const String kChatRuntimeModeNormal = 'normal';
 const String kChatRuntimeModeOpenClaw = 'openclaw';

@@ -378,11 +378,18 @@ void main() {
     expect(flowStart, greaterThanOrEqualTo(0));
     expect(flowEnd, greaterThan(flowStart));
     final flowBody = source.substring(flowStart, flowEnd);
-    final newSessionIndex = flowBody.indexOf('AgentRuntimeService.newSession(');
-    final promptIndex = flowBody.indexOf('AgentRuntimeService.promptSession(');
-    expect(newSessionIndex, greaterThanOrEqualTo(0));
-    expect(promptIndex, greaterThan(newSessionIndex));
-    expect(flowBody.substring(promptIndex), isNot(contains('sessionId: null')));
+    final reserveIndex = flowBody.indexOf(
+      'ChatPromptDispatcher.instance.prepareTurnSession(',
+    );
+    final promptIndex = flowBody.indexOf(
+      'ChatPromptDispatcher.instance.submitTurnPrompt(',
+    );
+    expect(reserveIndex, greaterThanOrEqualTo(0));
+    expect(promptIndex, greaterThan(reserveIndex));
+    expect(
+      flowBody.substring(promptIndex),
+      contains('sessionId: _acpSessionId'),
+    );
   });
 
   test('main chat prompts reserve and bind ACP sessions before prompt', () {
@@ -394,7 +401,14 @@ void main() {
     ).readAsStringSync();
 
     expect(flowSource, contains('_prepareAcpSessionForTurn('));
-    expect(flowSource, contains('AgentRuntimeService.promptSession('));
+    expect(
+      flowSource,
+      contains('ChatPromptDispatcher.instance.prepareTurnSession('),
+    );
+    expect(
+      flowSource,
+      contains('ChatPromptDispatcher.instance.submitTurnPrompt('),
+    );
     expect(flowSource, contains('sessionId: acpSessionId'));
     expect(agentSource, contains('_prepareAcpSessionForTurn('));
     expect(agentSource, contains('sessionId: acpSessionId'));
@@ -549,6 +563,40 @@ void main() {
         isNot(contains('.applyAgentEvent(')),
         reason: '${file.path} must not project events itself',
       );
+    }
+  });
+
+  test('prompt admission has one native entry (batch 5b)', () {
+    final surfaces = <File>[
+      ...Directory(chatRoot)
+          .listSync(recursive: true)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.dart')),
+      File('lib/features/home/pages/command_overlay/chat_bot_sheet.dart'),
+    ];
+    for (final file in surfaces) {
+      final source = file.readAsStringSync();
+      for (final transportCall in const <String>[
+        'AgentRuntimeService.promptSession(',
+        'AgentRuntimeService.newSession(',
+        'AgentRuntimeService.ensureSession(',
+      ]) {
+        expect(
+          source,
+          isNot(contains(transportCall)),
+          reason: '${file.path} must use ChatPromptDispatcher',
+        );
+      }
+    }
+    final agentChannel = File(
+      '../app/src/main/java/cn/com/omnimind/bot/ui/channel/AgentRuntimeChannel.kt',
+    ).readAsStringSync();
+    for (final method in const <String>[
+      '"session/prompt" -> ChatRuntimeHost.dispatcher',
+      '"session/cancel" -> ChatRuntimeHost.dispatcher',
+      '"respondToServerRequest" -> ChatRuntimeHost.dispatcher',
+    ]) {
+      expect(agentChannel, contains(method));
     }
   });
 }

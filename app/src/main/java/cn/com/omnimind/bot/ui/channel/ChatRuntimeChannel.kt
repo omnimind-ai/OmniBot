@@ -60,6 +60,13 @@ class ChatRuntimeChannel {
             ) { outcome ->
                 outcome.fold({ result.success(null) }, { result.error("CHAT_RUNTIME_PERSIST_FAILED", it.message, null) })
             }
+            "prepareTurnSession", "releaseTurnSession", "submitTurnPrompt" ->
+                ChatRuntimeHost.handleDispatchCommand(call.method, args) { outcome ->
+                    outcome.fold(
+                        { result.success(it) },
+                        { result.error("CHAT_PROMPT_DISPATCH_FAILED", it.message, call.method) },
+                    )
+                }
             else -> ChatRuntimeHost.handleAsyncCommand(call.method, args) { outcome ->
                 outcome.fold(
                     { result.success(it) },

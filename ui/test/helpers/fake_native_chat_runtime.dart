@@ -17,7 +17,16 @@ class FakeNativeChatRuntime {
     'cn.com.omnimind.bot/ChatRuntime',
   );
 
+  /// The native dispatcher calls the ACP transport; tests mock that
+  /// transport on the AgentRuntime channel, so the fake forwards to it.
+  static const MethodChannel _transport = MethodChannel(
+    'cn.com.omnimind.bot/AgentRuntime',
+  );
+
   final List<MethodCall> calls = <MethodCall>[];
+
+  /// Transport errors the dispatcher projected as a failed PromptResponse.
+  final List<Object> failures = <Object>[];
   final Map<String, _FakeRuntime> _runtimes = <String, _FakeRuntime>{};
   int _revision = 0;
 
@@ -109,6 +118,78 @@ class FakeNativeChatRuntime {
         final owned = runtime!.boundTaskIds.contains(taskId);
         if (owned) runtime.release(taskId!);
         result = <String, dynamic>{'handled': owned};
+      case 'prepareTurnSession':
+        if (!runtime!.boundTaskIds.contains(taskId)) {
+          result = <String, dynamic>{'status': 'abandoned'};
+          break;
+        }
+        final existing = args['existingSessionId']?.toString().trim() ?? '';
+        if (existing.isNotEmpty) {
+          result = <String, dynamic>{
+            'status': 'ready',
+            'sessionId': existing,
+            'created': false,
+          };
+          break;
+        }
+        try {
+          final response = await _transport.invokeMethod<dynamic>(
+            'session/new',
+            args['sessionArgs'],
+          );
+          final sessionId = (response is Map
+                  ? response['sessionId'] ?? response['threadId']
+                  : null)
+              ?.toString();
+          if (!runtime.boundTaskIds.contains(taskId)) {
+            await _transport.invokeMethod<dynamic>('session/close', {
+              'sessionId': sessionId,
+              'conversationId': conversationId,
+            });
+            result = <String, dynamic>{'status': 'abandoned'};
+          } else {
+            result = <String, dynamic>{
+              'status': 'ready',
+              'sessionId': sessionId,
+              'created': true,
+            };
+          }
+        } catch (error) {
+          failures.add(error);
+          runtime.release(taskId!);
+          result = <String, dynamic>{'status': 'failed'};
+        }
+      case 'releaseTurnSession':
+        final closeSessionId = args['closeSessionId'];
+        if (closeSessionId != null) {
+          await _transport.invokeMethod<dynamic>('session/close', {
+            'sessionId': closeSessionId,
+            'conversationId': conversationId,
+          });
+        }
+        runtime!.release(taskId!);
+      case 'submitTurnPrompt':
+        try {
+          final response = await _transport.invokeMethod<dynamic>(
+            'session/prompt',
+            args['promptArgs'],
+          );
+          final owned = runtime!.boundTaskIds.contains(taskId);
+          if (owned) runtime.release(taskId!);
+          result = <String, dynamic>{
+            'status': 'completed',
+            'response': response,
+            'result': <String, dynamic>{'handled': owned},
+          };
+        } catch (error) {
+          failures.add(error);
+          final owned = runtime!.boundTaskIds.contains(taskId);
+          if (owned) runtime.release(taskId!);
+          result = <String, dynamic>{
+            'status': 'failed',
+            'result': <String, dynamic>{'handled': owned},
+          };
+        }
       case 'clearConversationRuntimeSession':
         runtime!
           ..boundTaskIds.clear()

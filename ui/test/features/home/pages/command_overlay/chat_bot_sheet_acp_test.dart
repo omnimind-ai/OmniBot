@@ -461,11 +461,10 @@ void main() {
           expect(contents, contains('工具已经读取的完整结果'));
           if (scenario.result == 'error') {
             // The failure card is projected natively from this response.
+            // The native dispatcher projects the transport failure; the
+            // card shows formatted text, never the raw transport payload.
             expect(
-              nativeRuntime
-                  .callsTo('applyAcpPromptResponse')
-                  .map((call) => (call.arguments as Map)['error'].toString())
-                  .join(),
+              nativeRuntime.failures.map((error) => error.toString()).join(),
               contains('ACP transport disconnected'),
             );
           }

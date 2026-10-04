@@ -57,6 +57,67 @@ object ChatRuntimeHost {
     val coordinator: ChatConversationRuntimeCoordinator
         get() = coordinatorInstance ?: createCoordinator().also { coordinatorInstance = it }
 
+    /** The single native prompt admission entry (batch 5b). */
+    val dispatcher: ChatPromptDispatcher
+        get() = dispatcherInstance ?: ChatPromptDispatcher(coordinator) { method, args ->
+            AgentRuntimeManager.getInstance(checkNotNull(appContext)).handleMethod(method, args)
+        }.also { dispatcherInstance = it }
+
+    private var dispatcherInstance: ChatPromptDispatcher? = null
+
+    /**
+     * Runs one prompt-admission intent from the UI. The reply carries the
+     * target runtime's current snapshot, so an awaiting caller reads a mirror
+     * that includes the outcome.
+     */
+    fun handleDispatchCommand(
+        method: String,
+        args: Map<String, Any?>,
+        reply: (Result<Map<String, Any?>>) -> Unit,
+    ) {
+        scope.launch {
+            val outcome = runCatching {
+                val target = ChatPromptDispatcher.TurnTarget(
+                    taskId = dartToString(args["taskId"]) ?: error("taskId is required"),
+                    conversationId = asInt(args["conversationId"]) ?: error("conversationId is required"),
+                    mode = dartToString(args["mode"]) ?: error("mode is required"),
+                )
+                val result: Any? = when (method) {
+                    "prepareTurnSession" -> dispatcher.prepareTurnSession(
+                        target,
+                        existingSessionId = dartToString(args["existingSessionId"]),
+                        sessionArgs = copyStringMap(args["sessionArgs"]).orEmpty(),
+                        clearThinkingOnFailure = args["clearThinkingOnFailure"] == true,
+                    )
+                    "releaseTurnSession" -> dispatcher.releaseTurnSession(
+                        target,
+                        closeSessionId = dartToString(args["closeSessionId"]),
+                    ).let { null }
+                    "submitTurnPrompt" -> dispatcher.submitTurnPrompt(
+                        target,
+                        promptArgs = copyStringMap(args["promptArgs"]).orEmpty(),
+                        fallbackSessionId = dartToString(args["fallbackSessionId"]),
+                        conversation = copyStringMap(args["conversation"]),
+                        clearThinkingOnFailure = args["clearThinkingOnFailure"] == true,
+                    ).let { encodeDispatchResult(it) }
+                    else -> throw UnsupportedOperationException("Unknown dispatch command: $method")
+                }
+                coordinator.publishDirtySnapshots()
+                val snapshot = coordinator.snapshotFor(target.conversationId, target.mode)
+                linkedMapOf(
+                    "result" to result,
+                    "sync" to listOf(syncBatch(listOfNotNull(snapshot), emptyMap())),
+                )
+            }
+            reply(outcome)
+        }
+    }
+
+    private fun encodeDispatchResult(result: Map<String, Any?>): Map<String, Any?> =
+        LinkedHashMap(result).apply {
+            (get("result") as? AgentReduceResult)?.let { put("result", reduceResultToChannel(it)) }
+        }
+
     private fun createCoordinator(): ChatConversationRuntimeCoordinator {
         val context = checkNotNull(appContext) { "ChatRuntimeHost.initialize was not called" }
         val voice = ChatRuntimeVoiceAutoplay(autoplayEnabled = ::isVoiceAutoplayEnabled) { id, text, enqueue ->

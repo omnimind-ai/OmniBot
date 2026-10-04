@@ -1108,7 +1108,32 @@ class AgentRuntimeService {
     String? conversationMode,
     List<String> additionalDirectories = const <String>[],
   }) {
-    return _invokeMap('session/new', {
+    return _invokeMap(
+      'session/new',
+      newSessionArguments(
+        conversationId: conversationId,
+        cwd: cwd,
+        model: model,
+        effort: effort,
+        collaborationMode: collaborationMode,
+        conversationMode: conversationMode,
+        additionalDirectories: additionalDirectories,
+      ),
+    );
+  }
+
+  /// Canonical `session/new` arguments. Chat prompts hand these to the
+  /// native prompt dispatcher, which reserves the session itself.
+  static Map<String, dynamic> newSessionArguments({
+    int? conversationId,
+    String? cwd,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+    String? conversationMode,
+    List<String> additionalDirectories = const <String>[],
+  }) {
+    return <String, dynamic>{
       if (conversationId != null) 'conversationId': conversationId,
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
       if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
@@ -1119,45 +1144,7 @@ class AgentRuntimeService {
         'conversationMode': conversationMode.trim(),
       if (additionalDirectories.isNotEmpty)
         'additionalDirectories': additionalDirectories,
-    });
-  }
-
-  /// Resolves the ACP session identity required by a prompt.
-  ///
-  /// A missing session is an application-level bootstrap case, not a second
-  /// protocol. Keep the bootstrap on the official `session/new` operation and
-  /// return only the stable identity that the caller must use for
-  /// `session/prompt`. Legacy callers may still call `promptSession` without
-  /// an id; new lifecycle code should resolve it here first.
-  static Future<String> ensureSession({
-    String? sessionId,
-    int? conversationId,
-    String? cwd,
-    String? model,
-    String? effort,
-    String? collaborationMode,
-    String? conversationMode,
-    List<String> additionalDirectories = const <String>[],
-  }) async {
-    final existing = sessionId?.trim() ?? '';
-    if (existing.isNotEmpty) return existing;
-
-    final response = await newSession(
-      conversationId: conversationId,
-      cwd: cwd,
-      model: model,
-      effort: effort,
-      collaborationMode: collaborationMode,
-      conversationMode: conversationMode,
-      additionalDirectories: additionalDirectories,
-    );
-    final resolved = (response['sessionId'] ?? response['threadId'])
-        ?.toString()
-        .trim();
-    if (resolved == null || resolved.isEmpty) {
-      throw StateError('ACP session/new did not return a session id');
-    }
-    return resolved;
+    };
   }
 
   static Future<Map<String, dynamic>> loadSession({
@@ -1403,6 +1390,10 @@ class AgentRuntimeService {
     });
   }
 
+  /// Sends a prompt that no chat runtime owns (scheduled Sub Agent runs).
+  /// Chat prompts use the native prompt dispatcher instead; natively this
+  /// call lands on the same single admission entry, which also formats a
+  /// classified failure.
   static Future<Map<String, dynamic>> promptSession({
     String? sessionId,
     int? conversationId,
@@ -1420,7 +1411,47 @@ class AgentRuntimeService {
     String? conversationMode,
     Map<String, String>? terminalEnvironment,
   }) {
-    return _invokeMap('session/prompt', {
+    return _invokeMap(
+      'session/prompt',
+      promptSessionArguments(
+        sessionId: sessionId,
+        conversationId: conversationId,
+        requestId: requestId,
+        agentId: agentId,
+        text: text,
+        attachments: attachments,
+        cwd: cwd,
+        approvalPolicy: approvalPolicy,
+        approvalsReviewer: approvalsReviewer,
+        sandboxPolicy: sandboxPolicy,
+        model: model,
+        effort: effort,
+        collaborationMode: collaborationMode,
+        conversationMode: conversationMode,
+        terminalEnvironment: terminalEnvironment,
+      ),
+    );
+  }
+
+  /// Canonical `session/prompt` arguments.
+  static Map<String, dynamic> promptSessionArguments({
+    String? sessionId,
+    int? conversationId,
+    String? requestId,
+    String? agentId,
+    required String text,
+    List<Map<String, dynamic>> attachments = const [],
+    String? cwd,
+    String? approvalPolicy,
+    String? approvalsReviewer,
+    Map<String, dynamic>? sandboxPolicy,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+    String? conversationMode,
+    Map<String, String>? terminalEnvironment,
+  }) {
+    return <String, dynamic>{
       if (sessionId != null) 'sessionId': sessionId,
       if (conversationId != null) 'conversationId': conversationId,
       if (requestId != null && requestId.trim().isNotEmpty)
@@ -1443,20 +1474,7 @@ class AgentRuntimeService {
         'terminalEnvironment': terminalEnvironment,
       'text': text,
       if (attachments.isNotEmpty) 'attachments': attachments,
-    }).then((response) {
-      final failureKind = response['failureKind'];
-      if (failureKind is String && response['error'] is String) {
-        return <String, dynamic>{
-          ...response,
-          'error': formatAgentRuntimeErrorForUser(PlatformException(
-            code: 'AGENT_RUNTIME_CALL_FAILED',
-            message: response['error'] as String,
-            details: <String, dynamic>{'failureKind': failureKind},
-          )),
-        };
-      }
-      return response;
-    });
+    };
   }
 
   static Future<Map<String, dynamic>> cancelPrompt({
