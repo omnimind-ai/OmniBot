@@ -207,6 +207,54 @@ The order below follows the actual owners in this repository, not page size alon
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
+## Batch 5 plan: chat migration split (2026-10-04, not started)
+
+The chat domain is ~53.5k Dart lines (`chat/` 36.7k + `command_overlay/` 16.9k)
+and cannot move as one Goal. The architecture survey behind this split:
+
+- The ACP runtime (`AgentRuntimeManager`/`LocalAcpRuntime`) is already native.
+  What still lives in Dart is the projection (`AgentEventReducer`, ~7k lines,
+  pure) and the runtime owner (`ChatConversationRuntimeCoordinator` + 9 part
+  files, ~3.5k lines, singleton ChangeNotifier keyed by
+  `(conversationId, mode)`), plus all UI.
+- Event chain: `LocalAcpRuntime.emitAcpNotification` (host envelope adds
+  `eventId=$sessionId:$seq`, `hostTurnId`, `replay`) →
+  `AgentRuntimeManager.onMessage` normalization (turn attribution via host
+  prompt reservation only; Room `syncMessage`; public envelope with
+  conversationId/turnId/agentId) → EventChannel
+  `cn.com.omnimind.bot/AgentRuntimeEvents` (buffered when no listener) →
+  Dart `AgentRuntimeService.events` → ChatPage attribution →
+  coordinator admission (session identity + `acceptsAcpEvent`) →
+  `AgentEventReducer.reduce` → ChatPage chrome-signature/mutation-revision
+  gated `setState`. `session/prompt` MethodChannel responses also enter the
+  same reducer (`reducePromptResponse`); nothing synthesizes private
+  `turn/*` events.
+- `ChatPage` is one State + 2 mixins + 12 `part of` files sharing the State,
+  not independent components; sending lives in
+  `chat_page_conversation_flow.dart` (`_sendMessage` →
+  `_dispatchUserMessage` → `_sendAgentMessage`: turn pre-admission
+  `beginAcpTurn`, session reservation, then channel `session/prompt`).
+- History double-writes converge on Room: native `syncMessage` plus the
+  coordinator's debounced snapshot via `replaceConversationMessages`.
+  Approval/user-input/elicitation cards are reducer projections of
+  `session/request_permission` / `elicitation/create` /
+  `item/tool/requestUserInput`, answered via `respondToServerRequest`.
+
+Split order (each row is one bounded Goal; 5a/5b are atomic):
+
+| Slice | Scope | Completion boundary |
+| --- | --- | --- |
+| 5a | Move `AgentEventReducer` + `ChatConversationRuntimeCoordinator`(+parts) + `ChatConversationRuntimeState` + event helpers (`agent_message_kinds`, tool/diff parsers, identity, stream-meta, acp extension registry) into app-module Kotlin, emitting immutable UI snapshots; Flutter keeps a thin snapshot-forwarding adapter. TTS side effects and the persistence tail chain move with the owner. | Dart has no second reducer/coordinator; UI stops consuming `AgentRuntimeService.events` directly; the existing Dart reducer/coordinator tests are ported to Kotlin unit tests and pass. Atomic — a partial move creates the forbidden second reducer. Highest-risk slice and prerequisite for everything below. |
+| 5b | Prompt admission: `_sendAgentMessage`/`_sendPureChatMessage`/`_prepareAcpSessionForTurn`/harness-switch barrier/cancel become a native `ChatPromptDispatcher`; the composer emits intents only. | `session/prompt` admission, `respondToServerRequest` and `$/cancel_request` have a single native entry; idle/busy states come from the 5a snapshot. Atomic for the same reason. |
+| 5c | Message rendering in Compose: run timeline, MessageBubble, card family (tool summary/transcript/diff/request cards/deep thinking/plan), message list, run groups, tool activity strip. | Same fixture renders identically in Flutter and Compose; approval buttons call the 5b response entry. Card kinds may be split further for pixel comparison. |
+| 5d | Composer in Compose: ChatInputArea family + state machine + attachments + agent menus + context-usage ring; send button calls the 5b intent. | Keyboard/popup/expand animations aligned; slash-command panel works. Manual recording and omniflow tooling may stay Flutter behind compatibility entries. |
+| 5e | Page shell: ChatPage lifecycle/bootstrap/target resolution, app bar (agent switching uses the existing native `agent/select`), drawer embedding, browser overlay, HD tablet layout, remote workspace panel. | The native home agent selector placeholder connects to the real switcher; the `/home/chat` compatibility route retires. |
+| 5f | Retirement: delete the Flutter chat routes/part files and obsolete channel methods; decide CommandOverlay/ChatBotSheet ownership. | No chat functionality left in the Flutter engine; feeds batch 6. |
+
+May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
+hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
+workspace browser panel — they interact through intents/routes only.
+
 ## Batch 4m checkpoint: terminal settings (source complete; device acceptance pending)
 
 - The Settings row and the home composer terminal icon now open the saved native
