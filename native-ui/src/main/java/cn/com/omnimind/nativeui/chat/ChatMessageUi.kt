@@ -24,6 +24,8 @@ data class ChatMessageUi(
     val turnUsage: Map<String, Any?>? = null,
     val reasoningContent: String? = null,
     val createAtMillis: Long = 0L,
+    /** Presentation of an `agent_tool_summary` card, derived by the app module. */
+    val toolCard: AgentToolCardUi? = null,
 ) {
     val text: String? get() = content?.get("text")?.toString()
 

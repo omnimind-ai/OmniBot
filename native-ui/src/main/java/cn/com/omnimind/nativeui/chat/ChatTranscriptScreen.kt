@@ -17,7 +17,10 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -59,6 +62,7 @@ fun ChatTranscriptScreen(
     state: ChatTranscriptState,
     onBack: () -> Unit,
     onOpenLink: (String) -> Unit = {},
+    onToolAction: (AgentToolActionUi) -> Unit = {},
 ) {
     val palette = LocalOmniPalette.current
     val subtitle = stringResource(
@@ -77,7 +81,7 @@ fun ChatTranscriptScreen(
                     Text(stringResource(R.string.omni_transcript_empty), color = palette.secondaryText)
                 }
             } else {
-                ChatMessageList(state, onOpenLink, Modifier.fillMaxSize())
+                ChatMessageList(state, onOpenLink, onToolAction, Modifier.fillMaxSize())
             }
         }
     }
@@ -88,6 +92,7 @@ fun ChatTranscriptScreen(
 fun ChatMessageList(
     state: ChatTranscriptState,
     onOpenLink: (String) -> Unit,
+    onToolAction: (AgentToolActionUi) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val entries = remember(state.messages, state.activeTaskIds, state.conversationAgentId) {
@@ -98,6 +103,12 @@ fun ChatMessageList(
         )
     }
     val expandedRuns = remember { mutableStateMapOf<String, Boolean>() }
+    // Keyed by message id so an open sheet follows the card's live updates.
+    var detailMessageId by remember { mutableStateOf<String?>(null) }
+    val detail = detailMessageId?.let { id -> state.messages.firstOrNull { it.id == id }?.toolCard?.detail }
+    val itemHandlers = remember(onOpenLink) {
+        ChatItemHandlers(onOpenLink) { messageId -> detailMessageId = messageId }
+    }
     LazyColumn(
         modifier = modifier,
         reverseLayout = true,
@@ -107,24 +118,33 @@ fun ChatMessageList(
             val message = entry.message
             val group = entry.group
             when {
-                message != null -> ChatMessageItem(message, onOpenLink)
+                message != null -> ChatMessageItem(message, itemHandlers)
                 group != null -> AgentRunGroupItem(
                     group = group,
                     expanded = expandedRuns[group.taskId] ?: group.isRunning,
                     onToggle = { expandedRuns[group.taskId] = !(expandedRuns[group.taskId] ?: group.isRunning) },
-                    onOpenLink = onOpenLink,
+                    handlers = itemHandlers,
                 )
             }
         }
     }
+    AgentToolDetailSheet(detail, onDismiss = { detailMessageId = null }, onAction = onToolAction)
 }
 
+/** Stable callbacks shared by every row. */
+private class ChatItemHandlers(
+    val onOpenLink: (String) -> Unit,
+    val onOpenToolDetail: (messageId: String) -> Unit,
+)
+
 @Composable
-private fun ChatMessageItem(message: ChatMessageUi, onOpenLink: (String) -> Unit) {
+private fun ChatMessageItem(message: ChatMessageUi, handlers: ChatItemHandlers) {
+    val toolCard = message.toolCard
     when {
+        toolCard != null -> AgentToolCard(toolCard) { handlers.onOpenToolDetail(message.id) }
         message.type == 2 -> ChatCardPlaceholder(message)
         message.user == 1 -> UserBubble(message)
-        else -> AssistantText(message, onOpenLink)
+        else -> AssistantText(message, handlers.onOpenLink)
     }
 }
 
@@ -163,7 +183,7 @@ private fun AssistantText(message: ChatMessageUi, onOpenLink: (String) -> Unit) 
     )
 }
 
-/** Card kinds migrate in 5c-2/5c-3; until then show which card sits here. */
+/** Remaining card kinds migrate in 5c-3; until then show which card sits here. */
 @Composable
 private fun ChatCardPlaceholder(message: ChatMessageUi) {
     val palette = LocalOmniPalette.current
@@ -189,7 +209,7 @@ private fun AgentRunGroupItem(
     group: AgentRunTimelineGroup,
     expanded: Boolean,
     onToggle: () -> Unit,
-    onOpenLink: (String) -> Unit,
+    handlers: ChatItemHandlers,
 ) {
     val palette = LocalOmniPalette.current
     val statusText = stringResource(
@@ -221,9 +241,9 @@ private fun AgentRunGroupItem(
         }
         for (segment in group.segmentsOldestFirst) {
             if (segment.isProcess) {
-                if (expanded) segment.messages.forEach { ChatMessageItem(it, onOpenLink) }
+                if (expanded) segment.messages.forEach { ChatMessageItem(it, handlers) }
             } else {
-                ChatMessageItem(segment.message, onOpenLink)
+                ChatMessageItem(segment.message, handlers)
             }
         }
     }

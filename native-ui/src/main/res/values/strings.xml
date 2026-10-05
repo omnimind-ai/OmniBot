@@ -965,4 +965,12 @@
     <string name="omni_run_failed">Failed</string>
     <string name="omni_run_cancelled">Cancelled</string>
     <string name="omni_run_counts">%1$d thoughts · %2$d tools</string>
+    <string name="omni_diff_empty">No diff</string>
+    <string name="omni_diff_files">%1$d files</string>
+    <string name="omni_diff_state_new">New</string>
+    <string name="omni_diff_state_deleted">Deleted</string>
+    <string name="omni_diff_state_modified">Modified</string>
+    <string name="omni_tool_copy_details">Copy details</string>
+    <string name="omni_tool_copied">Copied</string>
+    <string name="omni_tool_action_flutter_only">Open this from the chat page for now</string>
 </resources>

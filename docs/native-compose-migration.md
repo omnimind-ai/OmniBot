@@ -260,6 +260,55 @@ May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
 
+## Batch 5c-2 checkpoint: tool summary, transcript and diff cards (source complete; device acceptance pending)
+
+- **Content**:
+  - App (`ui/chat/`): `presentAgentToolCard` ports the display logic of
+    `AgentToolSummaryCard` / `tool_activity_utils` / `agent_tool_transcript` /
+    `terminal_output_utils` and `AgentAcpCardNormalizer` method by method
+    (titles, progress title, type/status labels, inline vs capsule style,
+    transcript prompt/output, copy text, actions, diff extraction) into the
+    immutable `AgentToolCardUi`. It reuses the 5a projection parsers
+    (`AgentDiffParser`, `AgentToolCallParser`, `DartJson`); nothing is
+    duplicated. `LegacyTextLocalizer` is ported in full (423 exact entries plus
+    the regex rewriters) and takes the locale as a parameter.
+    `ToolCardCache` re-presents a card only when its content map changes.
+  - native-ui (`chat/`): `AgentToolCard` (status capsule with spinner/icon,
+    shimmer title while running, diff-stat chip; flat inline row for file and
+    agent-native tools whose diff expands in place), `AgentDiffView` (lazy,
+    wrapping unified diff with gutters and the GitHub-like palette),
+    `AgentToolDetailSheet` (Miuix `OverlayBottomSheet`: type/status chips,
+    copy, ANSI-colored terminal transcript or diff, action buttons),
+    `ansiAnnotatedString` (port of `AnsiTextSpanBuilder`), 14 Lucide icons.
+- **Owner decisions**:
+  - Detail actions: app routes (`route` with an in-app path) hand off to the
+    Flutter page like plugin routes; workspace/file preview/save actions need
+    the Flutter resource service and show a hint in the preview until 5e.
+  - Deferred to 5c-3: subagent timeline, plan entries, VLM result, image
+    preview and audio inside tool cards (they render as a normal capsule).
+  - App JVM unit tests now run on a Java 21 launcher so they can load
+    native-ui classes (native-ui compiles to class file 65).
+- **Verification boundary**: app `ui.chat` tests 39 (ported
+  `agent_tool_transcript_test`, `terminal_output_utils_test`,
+  `agent_acp_card_normalizer_test`, the label/style decisions of
+  `agent_tool_summary_card_test`, localizer, snapshot mapping) and projection
+  tests 336, 0 failures; native-ui chat tests 35 (adds `AnsiTextTest`).
+  Skipped Dart cases: VLM, image, subagent, appearance color, ANSI widget test
+  (ported natively). The full `:app` unit suite now passes (1469 tests, 0 failures): the 16 classes that failed at the 5a baseline pass on the Java 21 launcher.
+  `flutter test` / `flutter analyze` unchanged (no Dart edits). Gradle
+  compile/native-ui tests/androidTest compile/release resource merge
+  succeeded; `git diff --check` clean. No device run.
+
+Manual acceptance checklist:
+
+1. In the preview, terminal/search/MCP tools show capsules; running ones spin
+   and shimmer, finished ones show the status badge and colors.
+2. A file edit row shows the file name highlighted and `+n -m`; tapping
+   expands the diff; long diffs scroll.
+3. Tapping a capsule opens the detail sheet; copy works; ANSI colors render;
+   a schedule tool's "查看定时任务" opens the Flutter page.
+4. English locale: labels switch to English.
+
 ## Batch 5c-1 checkpoint: run timeline, Markdown and read-only transcript preview (source complete; device acceptance pending)
 
 - **Slices of 5c** (owner decision: Miuix-first, matching structure rather

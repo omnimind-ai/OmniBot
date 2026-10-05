@@ -965,4 +965,12 @@
     <string name="omni_run_failed">失败</string>
     <string name="omni_run_cancelled">已取消</string>
     <string name="omni_run_counts">思考 %1$d · 工具 %2$d</string>
+    <string name="omni_diff_empty">暂无 diff</string>
+    <string name="omni_diff_files">%1$d 个文件</string>
+    <string name="omni_diff_state_new">新</string>
+    <string name="omni_diff_state_deleted">删</string>
+    <string name="omni_diff_state_modified">改</string>
+    <string name="omni_tool_copy_details">复制详情</string>
+    <string name="omni_tool_copied">已复制</string>
+    <string name="omni_tool_action_flutter_only">暂请在聊天页中打开</string>
 </resources>

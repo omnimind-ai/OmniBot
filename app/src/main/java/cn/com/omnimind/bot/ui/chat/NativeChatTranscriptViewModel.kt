@@ -13,7 +13,10 @@ import cn.com.omnimind.bot.agent.projection.ChatConversationRuntimeCoordinator
 import cn.com.omnimind.bot.agent.projection.ChatMessage
 import cn.com.omnimind.bot.agent.projection.ChatRuntimeHost
 import cn.com.omnimind.bot.agent.projection.ChatRuntimeSnapshot
+import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.bot.webchat.ConversationDomainService
+import cn.com.omnimind.nativeui.chat.AgentToolCardUi
+import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.nativeui.chat.ChatMessageUi
 import cn.com.omnimind.nativeui.chat.ChatTranscriptScreen
 import cn.com.omnimind.nativeui.chat.ChatTranscriptState
@@ -48,6 +51,7 @@ internal class NativeChatTranscriptViewModel(
             ?.let(::applySnapshot)
     }
     private var liveRevision = 0L
+    private val toolCards = ToolCardCache()
     private var loaded = false
 
     init {
@@ -73,7 +77,7 @@ internal class NativeChatTranscriptViewModel(
                     val agentId = conversations.getConversationPayload(conversationId)?.get("agentId")?.toString()
                     @Suppress("UNCHECKED_CAST")
                     val rows = (page["messages"] as? List<Map<String, Any?>>).orEmpty()
-                    rows.mapNotNull { row -> runCatching { ChatMessage.fromJson(row).toUi() }.getOrNull() } to agentId
+                    rows.mapNotNull { row -> runCatching { ChatMessage.fromJson(row).toUi(toolCards) }.getOrNull() } to agentId
                 }
             }.onFailure { Log.w(TAG, "读取对话历史失败: ${it.message}") }.getOrNull()
             // A live snapshot that arrived while history loaded wins.
@@ -94,7 +98,7 @@ internal class NativeChatTranscriptViewModel(
         liveRevision = snapshot.revision
         mutableState.update {
             it.copy(
-                messages = snapshot.messages.map { message -> message.toUi() },
+                messages = snapshot.messages.map { message -> message.toUi(toolCards) },
                 activeTaskIds = snapshot.activeAgentTurnIds,
                 conversationAgentId = snapshot.conversation?.get("agentId")?.toString()?.ifBlank { null },
                 isLive = true,
@@ -126,7 +130,29 @@ internal class NativeChatTranscriptViewModel(
     }
 }
 
-internal fun ChatMessage.toUi() = ChatMessageUi(
+/**
+ * Presented tool cards by message id. Snapshots reuse unchanged message
+ * content maps, so a card is only re-derived when its content changed.
+ */
+internal class ToolCardCache {
+    private val entries = HashMap<String, Pair<Map<String, Any?>, AgentToolCardUi>>()
+
+    @Synchronized
+    fun present(message: ChatMessage): AgentToolCardUi? {
+        val content = message.content ?: return null
+        val cardData = message.cardData ?: return null
+        if (message.type != 2 || cardData["type"]?.toString() != "agent_tool_summary") return null
+        entries[message.id]?.let { (cachedContent, card) -> if (cachedContent === content) return card }
+        val english = runCatching { AppLocaleManager.isEnglish() }.getOrDefault(false)
+        val card = runCatching { presentAgentToolCard(cardData, english) }
+            .onFailure { Log.w("NativeChatTranscript", "工具卡片投影失败: ${it.message}") }
+            .getOrNull() ?: return null
+        entries[message.id] = content to card
+        return card
+    }
+}
+
+internal fun ChatMessage.toUi(toolCards: ToolCardCache? = null) = ChatMessageUi(
     id = id,
     type = type,
     user = user,
@@ -138,15 +164,17 @@ internal fun ChatMessage.toUi() = ChatMessageUi(
     turnUsage = turnUsage,
     reasoningContent = reasoningContent,
     createAtMillis = createAtMillis,
+    toolCard = toolCards?.present(this),
 )
 
 @Composable
 internal fun NativeChatTranscriptRoute(
     viewModel: NativeChatTranscriptViewModel,
     onOpenLink: (String) -> Unit,
+    onToolAction: (AgentToolActionUi) -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
-    ChatTranscriptScreen(state, onBack, onOpenLink)
+    ChatTranscriptScreen(state, onBack, onOpenLink, onToolAction)
 }

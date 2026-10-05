@@ -360,6 +360,12 @@ kotlin {
     }
 }
 
+// native-ui compiles to Java 21 bytecode; JVM unit tests that load its UI
+// models (chat presenters) need a launcher that can read it.
+tasks.withType<Test>().configureEach {
+    javaLauncher.set(javaToolchains.launcherFor { languageVersion.set(JavaLanguageVersion.of(21)) })
+}
+
 tasks.named("preBuild").configure {
     dependsOn(syncWebChatBundle, syncPluginAssets)
 }

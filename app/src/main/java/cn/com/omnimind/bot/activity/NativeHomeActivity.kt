@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.activity
 
+import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.bot.ui.chat.NativeChatTranscriptRoute
 import cn.com.omnimind.bot.ui.chat.NativeChatTranscriptViewModel
 import android.content.Context
@@ -261,7 +262,7 @@ class NativeHomeActivity : ComponentActivity() {
                             NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title))[
                                 "transcript:$mode:$conversationId", NativeChatTranscriptViewModel::class.java]
                     }
-                    NativeChatTranscriptRoute(transcriptViewModel, ::openTranscriptLink, onBack)
+                    NativeChatTranscriptRoute(transcriptViewModel, ::openTranscriptLink, ::runTranscriptToolAction, onBack)
                 },
                 terminal = { focusPackageId, onBack ->
                     val terminalViewModel = remember(focusPackageId) {
@@ -324,6 +325,23 @@ class NativeHomeActivity : ComponentActivity() {
         }
         getSystemService(ClipboardManager::class.java)?.setPrimaryClip(clip)
         Toast.makeText(this, cn.com.omnimind.nativeui.R.string.omni_log_copied, Toast.LENGTH_SHORT).show()
+    }
+
+    /**
+     * Tool-card follow-ups from the read-only preview. App routes hand off to
+     * Flutter like plugin routes; workspace/file actions need the Flutter
+     * resource service (route extras), so they stay in the Flutter chat until 5e.
+     */
+    private fun runTranscriptToolAction(action: AgentToolActionUi) {
+        val type = action.type.trim().lowercase()
+        val target = action.target.trim()
+        when {
+            type == "route" && target.startsWith("/") -> LegacyHomeNavigator(this).open(LegacyDestination.PluginRoute(target))
+            type in setOf("workspace", "save", "preview", "open") -> Toast.makeText(
+                this, cn.com.omnimind.nativeui.R.string.omni_tool_action_flutter_only, Toast.LENGTH_SHORT,
+            ).show()
+            target.isNotEmpty() -> openTranscriptLink(target)
+        }
     }
 
     private fun openTranscriptLink(link: String) {
