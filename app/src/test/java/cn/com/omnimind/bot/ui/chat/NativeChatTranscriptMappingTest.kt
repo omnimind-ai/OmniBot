@@ -38,7 +38,7 @@ class NativeChatTranscriptMappingTest {
 
     @Test
     fun `tool summary cards are presented and reused until their content changes`() {
-        val cache = ToolCardCache()
+        val cache = ChatCardCache()
         val running = toolMessage("m1", "running")
         val first = running.toUi(cache).toolCard
         assertNotNull(first)
@@ -52,8 +52,36 @@ class NativeChatTranscriptMappingTest {
 
     @Test
     fun `text messages carry no tool card`() {
-        val cache = ToolCardCache()
+        val cache = ChatCardCache()
         val text = ChatMessage(id = "t", type = 1, user = 2, content = linkedMapOf("text" to "hi"))
         assertNull(text.toUi(cache).toolCard)
+    }
+
+    @Test
+    fun `request and thinking cards are presented by card type`() {
+        val cache = ChatCardCache()
+        val request = ChatMessage(
+            id = "r1", type = 2, user = 3,
+            content = linkedMapOf(
+                "cardData" to linkedMapOf(
+                    "type" to "codex_request", "requestKind" to "approval", "requestId" to 7,
+                    "title" to "Run tests?", "status" to "pending",
+                ),
+            ),
+        ).toUi(cache)
+        assertNotNull(request.requestCard)
+        assertEquals("approval", request.requestCard!!.kind)
+        assertNull(request.toolCard)
+        val thinking = ChatMessage(
+            id = "run-1-thinking", type = 2, user = 3,
+            content = linkedMapOf(
+                "cardData" to linkedMapOf(
+                    "type" to "deep_thinking", "stage" to 2, "thinkingContent" to "推理中",
+                    "taskID" to "run-1", "cardId" to "run-1-thinking",
+                ),
+            ),
+        ).toUi(cache)
+        assertEquals("推理中", thinking.thinkingCard!!.text)
+        assertNull(thinking.requestCard)
     }
 }

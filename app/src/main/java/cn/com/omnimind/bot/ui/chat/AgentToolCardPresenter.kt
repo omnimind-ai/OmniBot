@@ -14,6 +14,8 @@ import cn.com.omnimind.nativeui.chat.AgentDiffFileUi
 import cn.com.omnimind.nativeui.chat.AgentDiffLineUi
 import cn.com.omnimind.nativeui.chat.AgentDiffStatUi
 import cn.com.omnimind.nativeui.chat.AgentDiffUi
+import cn.com.omnimind.nativeui.chat.AgentPlanEntryState
+import cn.com.omnimind.nativeui.chat.AgentPlanEntryUi
 import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.nativeui.chat.AgentToolCardStyle
 import cn.com.omnimind.nativeui.chat.AgentToolCardUi
@@ -120,8 +122,31 @@ internal fun presentAgentToolCard(
         filePath = filePath,
         diffStat = diffStat,
         diff = inlineDiff,
+        // Dart `_PlanEntriesBlock`: capsule plans only; inline rows omit it.
+        planEntries = if (!inline && dartTrim(dartStr(card["toolType"])) == "plan") presentPlanEntries(card) else emptyList(),
         detail = buildAgentToolDetail(card, status, english),
     )
+}
+
+/** Dart `_planEntries` + `_planEntryText` + `_planEntryIcon`. */
+internal fun presentPlanEntries(cardData: Map<String, Any?>): List<AgentPlanEntryUi> {
+    val raw = cardData["planEntries"] ?: cardData["entries"]
+    if (raw !is List<*>) return emptyList()
+    val entries = raw.filterIsInstance<Map<*, *>>().map(::stringKeyedMap)
+        .filter { dartTrim(planEntryText(it, 0)).isNotEmpty() }
+    return entries.mapIndexed { index, entry ->
+        val state = when (dartTrim(dartToStringValue(entry["status"])).lowercase()) {
+            "completed", "complete", "done" -> AgentPlanEntryState.Completed
+            "in_progress", "in-progress", "inprogress", "running" -> AgentPlanEntryState.InProgress
+            else -> AgentPlanEntryState.Pending
+        }
+        AgentPlanEntryUi(planEntryText(entry, index), state)
+    }
+}
+
+private fun planEntryText(entry: Map<String, Any?>, index: Int): String {
+    val text = dartTrim(dartStr(entry["content"] ?: entry["title"] ?: entry["text"] ?: ""))
+    return text.ifEmpty { "任务 ${index + 1}" }
 }
 
 /** Dart `_AgentToolDetailContent.build` minus the widgets. */
@@ -1370,14 +1395,14 @@ private fun dartIntTryParse(text: String): Int? {
     return parsed?.toInt()
 }
 
-private fun stringKeyedMap(value: Map<*, *>): Map<String, Any?> {
+internal fun stringKeyedMap(value: Map<*, *>): Map<String, Any?> {
     val result = LinkedHashMap<String, Any?>()
     for ((key, nested) in value) result[dartToStringValue(key)] = nested
     return result
 }
 
 /** Dart `_decodeJsonMap`: object JSON as a string-keyed map, else empty. */
-private fun decodeJsonMapOrEmpty(raw: String): Map<String, Any?> {
+internal fun decodeJsonMapOrEmpty(raw: String): Map<String, Any?> {
     val trimmed = dartTrim(raw)
     if (trimmed.isEmpty()) {
         return emptyMap()

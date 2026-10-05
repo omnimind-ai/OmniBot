@@ -207,7 +207,7 @@ The order below follows the actual owners in this repository, not page size alon
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
-## Batch 5 plan: chat migration split (2026-10-04; 5a-0, 5a and 5b source complete)
+## Batch 5 plan: chat migration split (2026-10-04; 5a-0, 5a, 5b, 5c-1, 5c-2 and 5c-3 source complete)
 
 The chat domain is ~53.5k Dart lines (`chat/` 36.7k + `command_overlay/` 16.9k)
 and cannot move as one Goal. The architecture survey behind this split:
@@ -260,6 +260,72 @@ May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
 
+## Batch 5c-3 checkpoint: request, thinking and plan cards (source complete; device acceptance pending)
+
+- **Content**:
+  - App (`ui/chat/`): `AgentChatCardPresenter` ports `AgentRequestNotice`
+    presentation (`_compactRequestPresentation` schema-field title/detail and
+    `可选：` choices, `_cardStatus`, unavailable/session-ended rules) and the
+    `CardWidgetFactory` `deep_thinking` branch (stage/isLoading defaults,
+    64-bit timestamps, primary `<taskId>-thinking` avatar rule, English
+    line-by-line localization). `presentPlanEntries` ports `_PlanEntriesBlock`
+    data (`planEntries`/`entries`, content/title/text, `任务 n` fallback,
+    completed / in-progress / pending). `ToolCardCache` became
+    `ChatCardCache` (tool, request and thinking cards, still keyed by the
+    content map instance).
+  - native-ui (`chat/`): `AgentRequestNotice` (Miuix `TextButton` deny /
+    primary allow, outcome labels, composer hint for user input),
+    `DeepThinkingCard` (avatar + status row with shimmer while thinking,
+    "思考完成 (用时n秒)" once both boundaries exist, chevron fold, 210dp
+    window that follows the newest line until the user scrolls up, bottom
+    fade, cancelled footer), plan rows under the plan capsule,
+    `ContextCompactionMarker` and `HistoryOmittedCard`. The shimmer brush is
+    shared with the tool title (`rememberShimmerBrush`). 4 Lucide icons.
+  - Preview page: thinking cards show the existing avatar
+    (`loadAgentAvatarPreview`); the first thinking card of a run group drops
+    it because the group header names the Agent.
+- **Owner decisions**:
+  - Approval answers are the preview page's only runtime write. They go
+    through `ChatRuntimeHost.dispatcher.respondToServerRequest` (the 5b
+    entry) with the Dart `respondToApproval` payload, require `{ok: true}`,
+    and only then set `status`/`submittedAnswers` through
+    `coordinator.replaceRuntimeMessage` + `publishDirtySnapshots` +
+    `schedulePersistRuntimeConversation(persistMessages)`, so the Flutter
+    mirror and Room history see the same card. Answers are offered only for
+    live snapshots; stored history rows show "该请求当前无法操作".
+  - The Dart notice also wrote `agent_request_response.*` SharedPreferences
+    keys; only the full `AgentRequestCard` (not used by the timeline) reads
+    them, so the native path does not write them.
+  - Flutter's paced character reveal and the parent-scroll hand-off are not
+    ported: Compose nested scrolling hands overscroll to the list.
+  - Still placeholders (kept for 5c-4 or later owners): the legacy Xiaowan
+    `isExecutable` "准备执行任务…/取消任务" footer, `stage_hint`,
+    `permission_section` (needs the Flutter authorize flow),
+    `openclaw_attachment`, `artifact_card` (resource service), `acp_audio`
+    and audio/image/VLM/subagent content inside tool cards.
+- **Verification boundary**: app `ui.chat` tests 51 (adds
+  `AgentChatCardPresenterTest` 11, porting the presentation decisions of
+  `agent_request_card_test` and `deep_thinking_card_test`, plus request /
+  thinking mapping); full `:app` unit suite 1481, 0 failures; native-ui unit
+  tests 43, 0 failures. Gradle compile / androidTest compile / release
+  resource merge succeeded; no Dart edits; `git diff --check` clean. No
+  device run.
+
+Manual acceptance checklist:
+
+1. Start a Claude Code / Codex run with approval mode on, open "原生消息预览"
+   from the drawer: the request card shows allow/deny; tapping allow
+   continues the run, the card reads "已允许" in both the preview and the
+   Flutter chat page, and survives reopening the conversation.
+2. Turn off the network or kill the agent before answering: the toast
+   "回复未送达，可以重试" appears and the buttons stay usable.
+3. While thinking streams, the status shimmers and the text follows the
+   newest line; scrolling up inside it stops following. When finished it
+   folds to "思考完成 (用时n秒)"; tapping expands it.
+4. A plan update shows the plan capsule with completed / in-progress /
+   pending rows; context compaction shows the centered chip.
+5. Dark/light themes and English locale.
+
 ## Batch 5c-2 checkpoint: tool summary, transcript and diff cards (source complete; device acceptance pending)
 
 - **Content**:
@@ -288,7 +354,7 @@ workspace browser panel — they interact through intents/routes only.
     preview and audio inside tool cards (they render as a normal capsule).
   - App JVM unit tests now run on a Java 21 launcher so they can load
     native-ui classes (native-ui compiles to class file 65).
-- **Verification boundary**: app `ui.chat` tests 39 (ported
+- **Verification boundary** (at 5c-2): app `ui.chat` tests 39 (ported
   `agent_tool_transcript_test`, `terminal_output_utils_test`,
   `agent_acp_card_normalizer_test`, the label/style decisions of
   `agent_tool_summary_card_test`, localizer, snapshot mapping) and projection
@@ -317,7 +383,7 @@ Manual acceptance checklist:
     the read-only preview page (this checkpoint).
   - 5c-2: tool summary / transcript / diff cards.
   - 5c-3: request/approval cards (actions go through the 5b
-    `respondToServerRequest` entry), deep thinking, plan and the remaining cards.
+    `respondToServerRequest` entry), deep thinking, plan and small markers.
   - 5c-4: run groups, tool activity strip, anchor bar.
 - **Content**:
   - native-ui `chat/`: `ChatMessageUi` (field-for-field mirror of the runtime

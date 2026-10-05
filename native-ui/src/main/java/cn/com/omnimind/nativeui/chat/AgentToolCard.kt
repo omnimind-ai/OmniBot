@@ -78,8 +78,55 @@ import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
 @Composable
 fun AgentToolCard(card: AgentToolCardUi, onOpenDetail: (AgentToolCardUi) -> Unit) {
     when (card.style) {
-        AgentToolCardStyle.Capsule -> ToolCapsule(card) { onOpenDetail(card) }
+        AgentToolCardStyle.Capsule -> if (card.planEntries.isEmpty()) {
+            ToolCapsule(card) { onOpenDetail(card) }
+        } else {
+            Column {
+                ToolCapsule(card) { onOpenDetail(card) }
+                AgentPlanEntries(card.planEntries)
+            }
+        }
         AgentToolCardStyle.Inline -> InlineToolRow(card, onOpenDetail)
+    }
+}
+
+/** Flutter `_PlanEntriesBlock`: the live plan rows under a plan capsule. */
+@Composable
+private fun AgentPlanEntries(entries: List<AgentPlanEntryUi>) {
+    val palette = LocalOmniPalette.current
+    val shape = RoundedCornerShape(10.dp)
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        Column(
+            Modifier.widthIn(max = maxWidth * 0.78f).padding(start = 12.dp, top = 4.dp, end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+            for (entry in entries) {
+                val (icon, tint) = when (entry.state) {
+                    AgentPlanEntryState.Completed -> R.drawable.omni_circle_check to Color(0xFF2F8F4E)
+                    AgentPlanEntryState.InProgress -> R.drawable.omni_circle_dot to palette.accent
+                    AgentPlanEntryState.Pending -> R.drawable.omni_circle to palette.tertiaryText
+                }
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .clip(shape)
+                        .background(
+                            if (palette.dark) palette.elevatedSurface.copy(alpha = .52f)
+                            else palette.secondarySurface.copy(alpha = .72f),
+                        )
+                        .border(1.dp, palette.border.copy(alpha = .72f), shape)
+                        .padding(horizontal = 9.dp, vertical = 7.dp),
+                ) {
+                    OmniIcon(icon, modifier = Modifier.padding(top = 1.dp), size = 14.dp, tint = tint)
+                    Spacer(Modifier.width(7.dp))
+                    Text(
+                        entry.text,
+                        color = palette.secondaryText, fontSize = 11.sp, fontWeight = FontWeight.SemiBold,
+                        lineHeight = 14.sp, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -279,21 +326,25 @@ private fun ToolTitle(text: String, style: TextStyle, shimmer: Boolean, modifier
         Text(text, modifier, style = style, maxLines = 1, overflow = TextOverflow.Ellipsis)
         return
     }
-    val base = style.color
+    Text(text, modifier, style = style.copy(brush = rememberShimmerBrush(style.color)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+}
+
+/** The soft highlight sweep shared by running tool titles and thinking status. */
+@Composable
+internal fun rememberShimmerBrush(base: Color): Brush {
     val highlight = lerp(base, if (LocalOmniPalette.current.dark) Color.White else Color(0xFF2C7FEB), .55f)
-    val progress by rememberInfiniteTransition(label = "tool-title").animateFloat(
+    val progress by rememberInfiniteTransition(label = "shimmer").animateFloat(
         initialValue = -1f,
         targetValue = 2f,
         animationSpec = infiniteRepeatable(tween(1800, easing = LinearEasing), RepeatMode.Restart),
-        label = "tool-title-sweep",
+        label = "shimmer-sweep",
     )
     val width = with(LocalDensity.current) { 240.dp.toPx() }
-    val brush = Brush.linearGradient(
+    return Brush.linearGradient(
         0.08f to base, 0.5f to highlight, 0.92f to base,
         start = Offset(width * progress - width / 2, 0f),
         end = Offset(width * progress + width / 2, 0f),
     )
-    Text(text, modifier, style = style.copy(brush = brush), maxLines = 1, overflow = TextOverflow.Ellipsis)
 }
 
 /**

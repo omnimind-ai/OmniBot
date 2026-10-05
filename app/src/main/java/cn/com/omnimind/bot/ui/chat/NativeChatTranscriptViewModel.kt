@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.ui.chat
 
 import android.content.Context
 import android.util.Log
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -13,9 +14,13 @@ import cn.com.omnimind.bot.agent.projection.ChatConversationRuntimeCoordinator
 import cn.com.omnimind.bot.agent.projection.ChatMessage
 import cn.com.omnimind.bot.agent.projection.ChatRuntimeHost
 import cn.com.omnimind.bot.agent.projection.ChatRuntimeSnapshot
+import cn.com.omnimind.bot.agent.projection.isAgentRequestCardType
+import cn.com.omnimind.bot.ui.settings.loadAgentAvatarPreview
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.bot.webchat.ConversationDomainService
+import cn.com.omnimind.nativeui.chat.AgentRequestCardUi
 import cn.com.omnimind.nativeui.chat.AgentToolCardUi
+import cn.com.omnimind.nativeui.chat.DeepThinkingCardUi
 import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.nativeui.chat.ChatMessageUi
 import cn.com.omnimind.nativeui.chat.ChatTranscriptScreen
@@ -28,10 +33,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Read-only native transcript (batch 5c preview). Mirrors the live runtime
- * snapshot of [conversationId] when the native coordinator holds one, and
- * falls back to stored history otherwise. It never writes to the runtime:
- * the Flutter chat page stays the only interactive surface until 5e.
+ * Native transcript preview (batch 5c). Mirrors the live runtime snapshot of
+ * [conversationId] when the native coordinator holds one, and falls back to
+ * stored history otherwise. Its only write is answering a live approval
+ * request (5c-3) through the 5b [ChatRuntimeHost.dispatcher] entry; prompts
+ * and everything else stay with the Flutter chat page until 5e.
  */
 internal class NativeChatTranscriptViewModel(
     context: Context,
@@ -51,7 +57,8 @@ internal class NativeChatTranscriptViewModel(
             ?.let(::applySnapshot)
     }
     private var liveRevision = 0L
-    private val toolCards = ToolCardCache()
+    private var liveMode: String? = null
+    private val cards = ChatCardCache()
     private var loaded = false
 
     init {
@@ -63,6 +70,10 @@ internal class NativeChatTranscriptViewModel(
     fun load() {
         if (loaded) return
         loaded = true
+        viewModelScope.launch {
+            val avatar = withContext(Dispatchers.IO) { loadAgentAvatarPreview(appContext) }
+            mutableState.update { it.copy(agentAvatar = avatar) }
+        }
         val live = coordinator.allSnapshots()
             .filter { it.conversationId.toLong() == conversationId && it.messages.isNotEmpty() }
             .maxByOrNull { it.revision }
@@ -77,7 +88,7 @@ internal class NativeChatTranscriptViewModel(
                     val agentId = conversations.getConversationPayload(conversationId)?.get("agentId")?.toString()
                     @Suppress("UNCHECKED_CAST")
                     val rows = (page["messages"] as? List<Map<String, Any?>>).orEmpty()
-                    rows.mapNotNull { row -> runCatching { ChatMessage.fromJson(row).toUi(toolCards) }.getOrNull() } to agentId
+                    rows.mapNotNull { row -> runCatching { ChatMessage.fromJson(row).toUi(cards) }.getOrNull() } to agentId
                 }
             }.onFailure { Log.w(TAG, "读取对话历史失败: ${it.message}") }.getOrNull()
             // A live snapshot that arrived while history loaded wins.
@@ -96,9 +107,10 @@ internal class NativeChatTranscriptViewModel(
     private fun applySnapshot(snapshot: ChatRuntimeSnapshot) {
         if (snapshot.revision <= liveRevision) return
         liveRevision = snapshot.revision
+        liveMode = snapshot.mode
         mutableState.update {
             it.copy(
-                messages = snapshot.messages.map { message -> message.toUi(toolCards) },
+                messages = snapshot.messages.map { message -> message.toUi(cards) },
                 activeTaskIds = snapshot.activeAgentTurnIds,
                 conversationAgentId = snapshot.conversation?.get("agentId")?.toString()?.ifBlank { null },
                 isLive = true,
@@ -106,6 +118,67 @@ internal class NativeChatTranscriptViewModel(
             )
         }
     }
+
+    /**
+     * Answers a pending approval (Flutter `AgentRequestNotice._respond`). The
+     * request belongs to the live ACP session, so history rows are never
+     * answered. After the runtime acknowledges, the card's status is written
+     * through the coordinator, which republishes to the Flutter mirror and
+     * persists the message like the composer's user-input answer.
+     */
+    fun respondToApproval(messageId: String, accepted: Boolean) {
+        val mode = liveMode ?: return
+        val runtimeConversationId = conversationId.toInt()
+        val message = coordinator.snapshotFor(runtimeConversationId, mode)?.messages
+            ?.firstOrNull { it.id == messageId } ?: return
+        val cardData = message.cardData ?: return
+        val requestId = cardData["requestId"] ?: return
+        if (messageId in state.value.respondingRequestIds) return
+        mutableState.update { it.copy(respondingRequestIds = it.respondingRequestIds + messageId) }
+        viewModelScope.launch {
+            val acknowledged = runCatching {
+                val args = linkedMapOf<String, Any?>("requestId" to requestId)
+                cardData["agentId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { args["agentId"] = it }
+                requestConversationId(cardData["conversationId"])?.let { args["conversationId"] = it }
+                cardData["sessionId"]?.toString()?.trim()?.takeIf { it.isNotEmpty() }?.let { args["sessionId"] = it }
+                args["response"] = linkedMapOf("decision" to if (accepted) "accept" else "decline")
+                val result = ChatRuntimeHost.dispatcher.respondToServerRequest(args) as? Map<*, *>
+                check(result?.get("ok") == true) { "ACP server request was not acknowledged" }
+            }.onFailure { Log.w(TAG, "审批回复失败: ${it.message}") }.isSuccess
+            if (acknowledged) {
+                markRequestAnswered(runtimeConversationId, mode, messageId, if (accepted) "accepted" else "declined")
+            } else {
+                Toast.makeText(
+                    appContext,
+                    if (AppLocaleManager.isEnglish()) "Reply was not sent. Try again." else "回复未送达，可以重试",
+                    Toast.LENGTH_SHORT,
+                ).show()
+            }
+            mutableState.update { it.copy(respondingRequestIds = it.respondingRequestIds - messageId) }
+        }
+    }
+
+    /** Re-reads the message: the reducer may have replaced it while the reply was in flight. */
+    private fun markRequestAnswered(conversationId: Int, mode: String, messageId: String, status: String) {
+        val current = coordinator.snapshotFor(conversationId, mode)?.messages
+            ?.firstOrNull { it.id == messageId } ?: return
+        val cardData = LinkedHashMap(current.cardData ?: return)
+        // A terminal status the reducer applied meanwhile (cancelled, expired) wins.
+        if (requestCardStatus(cardData) != "pending") return
+        cardData["status"] = status
+        cardData["submittedAnswers"] = emptyList<String>()
+        val content = LinkedHashMap(current.content ?: emptyMap()).apply {
+            put("cardData", cardData)
+            put("id", messageId)
+        }
+        if (coordinator.replaceRuntimeMessage(conversationId, mode, messageId, current.copy(content = content))) {
+            coordinator.publishDirtySnapshots()
+            coordinator.schedulePersistRuntimeConversation(conversationId, mode, persistMessages = true)
+        }
+    }
+
+    private fun requestConversationId(value: Any?): Int? =
+        (value as? Number)?.toInt() ?: value?.toString()?.toIntOrNull()
 
     override fun onCleared() {
         coordinator.removeListener(listener)
@@ -131,41 +204,59 @@ internal class NativeChatTranscriptViewModel(
 }
 
 /**
- * Presented tool cards by message id. Snapshots reuse unchanged message
- * content maps, so a card is only re-derived when its content changed.
+ * Presented cards by message id. Snapshots reuse unchanged message content
+ * maps, so a card is only re-derived when its content changed.
  */
-internal class ToolCardCache {
-    private val entries = HashMap<String, Pair<Map<String, Any?>, AgentToolCardUi>>()
+internal class ChatCardCache {
+    internal data class Cards(
+        val tool: AgentToolCardUi? = null,
+        val request: AgentRequestCardUi? = null,
+        val thinking: DeepThinkingCardUi? = null,
+    )
+
+    private val entries = HashMap<String, Pair<Map<String, Any?>, Cards>>()
 
     @Synchronized
-    fun present(message: ChatMessage): AgentToolCardUi? {
+    fun present(message: ChatMessage): Cards? {
         val content = message.content ?: return null
         val cardData = message.cardData ?: return null
-        if (message.type != 2 || cardData["type"]?.toString() != "agent_tool_summary") return null
-        entries[message.id]?.let { (cachedContent, card) -> if (cachedContent === content) return card }
+        if (message.type != 2) return null
+        entries[message.id]?.let { (cachedContent, cards) -> if (cachedContent === content) return cards }
         val english = runCatching { AppLocaleManager.isEnglish() }.getOrDefault(false)
-        val card = runCatching { presentAgentToolCard(cardData, english) }
-            .onFailure { Log.w("NativeChatTranscript", "工具卡片投影失败: ${it.message}") }
+        val type = cardData["type"]?.toString()
+        val cards = runCatching {
+            when {
+                type == "agent_tool_summary" -> Cards(tool = presentAgentToolCard(cardData, english))
+                isAgentRequestCardType(type) -> Cards(request = presentAgentRequestCard(cardData))
+                type == "deep_thinking" -> Cards(thinking = presentDeepThinkingCard(cardData, english))
+                else -> null
+            }
+        }.onFailure { Log.w("NativeChatTranscript", "卡片投影失败($type): ${it.message}") }
             .getOrNull() ?: return null
-        entries[message.id] = content to card
-        return card
+        entries[message.id] = content to cards
+        return cards
     }
 }
 
-internal fun ChatMessage.toUi(toolCards: ToolCardCache? = null) = ChatMessageUi(
-    id = id,
-    type = type,
-    user = user,
-    content = content,
-    isLoading = isLoading,
-    isError = isError,
-    isSummarizing = isSummarizing,
-    streamMeta = streamMeta,
-    turnUsage = turnUsage,
-    reasoningContent = reasoningContent,
-    createAtMillis = createAtMillis,
-    toolCard = toolCards?.present(this),
-)
+internal fun ChatMessage.toUi(cards: ChatCardCache? = null): ChatMessageUi {
+    val presented = cards?.present(this)
+    return ChatMessageUi(
+        id = id,
+        type = type,
+        user = user,
+        content = content,
+        isLoading = isLoading,
+        isError = isError,
+        isSummarizing = isSummarizing,
+        streamMeta = streamMeta,
+        turnUsage = turnUsage,
+        reasoningContent = reasoningContent,
+        createAtMillis = createAtMillis,
+        toolCard = presented?.tool,
+        requestCard = presented?.request,
+        thinkingCard = presented?.thinking,
+    )
+}
 
 @Composable
 internal fun NativeChatTranscriptRoute(
@@ -176,5 +267,5 @@ internal fun NativeChatTranscriptRoute(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
-    ChatTranscriptScreen(state, onBack, onOpenLink, onToolAction)
+    ChatTranscriptScreen(state, onBack, onOpenLink, onToolAction, viewModel::respondToApproval)
 }

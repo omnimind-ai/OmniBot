@@ -26,6 +26,10 @@ data class ChatMessageUi(
     val createAtMillis: Long = 0L,
     /** Presentation of an `agent_tool_summary` card, derived by the app module. */
     val toolCard: AgentToolCardUi? = null,
+    /** Presentation of an `agent_request` card, derived by the app module. */
+    val requestCard: AgentRequestCardUi? = null,
+    /** Presentation of a `deep_thinking` card, derived by the app module. */
+    val thinkingCard: DeepThinkingCardUi? = null,
 ) {
     val text: String? get() = content?.get("text")?.toString()
 

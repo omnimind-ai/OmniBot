@@ -27,6 +27,8 @@ data class AgentToolCardUi(
     val filePath: String = "",
     val diffStat: AgentDiffStatUi? = null,
     val diff: AgentDiffUi? = null,
+    /** ACP plan entries shown under the capsule (`toolType == plan`). */
+    val planEntries: List<AgentPlanEntryUi> = emptyList(),
     val detail: AgentToolDetailUi,
 )
 
