@@ -207,7 +207,7 @@ The order below follows the actual owners in this repository, not page size alon
 The bounded checkpoints below implement batches 1, 2, 3a, 3b-1, 3b-2a, 3b-2b and the bounded slices of 4 through 4i-2. Later rows are a
 roadmap, not authorization to continue after a Goal's stopping condition.
 
-## Batch 5 plan: chat migration split (2026-10-04; 5a-0, 5a, 5b, 5c-1, 5c-2 and 5c-3 source complete)
+## Batch 5 plan: chat migration split (2026-10-04; 5a-0 through 5c-4 source complete)
 
 The chat domain is ~53.5k Dart lines (`chat/` 36.7k + `command_overlay/` 16.9k)
 and cannot move as one Goal. The architecture survey behind this split:
@@ -259,6 +259,64 @@ adapter could not absorb it without a second writer:
 May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
+
+## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
+
+- **Content** (all native-ui `chat/`; no app-side presenter needed):
+  - `AgentRunGroupBlock` ports `AgentRunGroupMessage` (ACP presentation):
+    one `AgentRunHeader` per turn (brand avatar, shimmering "正在处理 Ns" or
+    "<live tool> · Ns" while running, "已处理 / 执行失败 / 已取消  1m 5s"
+    after, fold chevron only when there is history), arrival-order segments,
+    a 320 ms fold for process cards and non-final prose, plans and failures
+    kept out of the fold, the first thinking card's avatar dropped, and
+    consecutive tool cards collapsed into `_AgentToolCallGroup` rows (live
+    title or "已处理", count, chevron). Finished runs start folded; running
+    runs are always open.
+  - `ChatActivityModels`: `resolveAgentToolActivitySnapshot`,
+    `shouldShowAgentToolActivitySnapshot`, `resolveActiveAgentToolMessage`
+    and `buildChatMessageAnchors` ported from `tool_activity_utils.dart` /
+    `chat_message_anchor_bar.dart`.
+  - `ChatToolActivityStrip`: active row (status dot, title, type label,
+    status tag) with a stop button while running, the run's other tools in a
+    drawer above (≤264dp, newest next to the active row); rows open the tool
+    detail sheet. `ChatMessageAnchorBar`: round button above the list that
+    opens a popup list of avatars + first lines; tapping scrolls the list to
+    the entry.
+  - The shared `components/AgentBrandIcon` moved out of `AgentsScreen`
+    (same mapping, adds size/tint and `hasKnownAgentBrand`).
+  - The strip follows the run the user expanded last
+    (`expandedAgentRunTaskOrder`), like Flutter.
+- **Owner decisions**:
+  - Stop goes through the 5b `dispatcher.cancelTurn` (`session/cancel`)
+    with the snapshot's `activeAcpSessionId` / `activeAcpTurnId` and the
+    card's `runId`; ACP has no per-tool cancel. The button stays disabled
+    until the card leaves `running`; failures show
+    "停止工具调用失败，请稍后重试". The preview page's runtime writes are now
+    approval answers and this stop.
+  - Not ported (Miuix-first simplification or still owned elsewhere): the
+    strip's browser/terminal preview thumbnails and glass cutout, the
+    slash-command strip (`ChatCommandActivityStrip`, composer-owned, 5d),
+    the anchor fan layout, long-press magnifier and system-bar spotlight
+    (replaced by a plain popup list), and the non-ACP Xiaowan run header
+    (Flutter now uses ACP presentation for every mode).
+- **Verification boundary**: native-ui tests 53 (adds `ChatActivityModelsTest`
+  10, porting the snapshot cases of `chat_tool_activity_strip_test` plus
+  anchors and elapsed labels); full `:app` unit suite 1481, 0 failures.
+  Gradle compile / androidTest compile / release resource merge succeeded;
+  no Dart edits; `git diff --check` clean. No device run.
+
+Manual acceptance checklist:
+
+1. During a run the header shimmers "正在处理 Ns" and switches to the live
+   tool's title; when it ends it folds to "已处理 …" and only the final reply
+   stays; tapping the header unfolds it smoothly.
+2. Several consecutive tools show one row with a count; tapping expands them.
+3. While a tool runs the strip shows it with the stop button; stopping ends
+   the turn and the Flutter chat page shows the same cancellation.
+4. After the run, expanding its header shows its tools in the strip;
+   folding hides the strip.
+5. The anchor button lists the conversation's messages; tapping one scrolls
+   to it.
 
 ## Batch 5c-3 checkpoint: request, thinking and plan cards (source complete; device acceptance pending)
 
@@ -384,7 +442,7 @@ Manual acceptance checklist:
   - 5c-2: tool summary / transcript / diff cards.
   - 5c-3: request/approval cards (actions go through the 5b
     `respondToServerRequest` entry), deep thinking, plan and small markers.
-  - 5c-4: run groups, tool activity strip, anchor bar.
+  - 5c-4: run groups, tool activity strip, anchor bar (source complete).
 - **Content**:
   - native-ui `chat/`: `ChatMessageUi` (field-for-field mirror of the runtime
     `ChatMessage`, identity getters runId/sessionId/turnId/toolCallId),

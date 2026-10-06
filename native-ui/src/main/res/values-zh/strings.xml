@@ -960,11 +960,8 @@
     <string name="omni_transcript_history">原生预览 · 历史记录</string>
     <string name="omni_transcript_empty">暂无消息</string>
     <string name="omni_transcript_open">原生消息预览</string>
-    <string name="omni_run_running">运行中</string>
-    <string name="omni_run_finished">已完成</string>
-    <string name="omni_run_failed">失败</string>
+    <string name="omni_run_failed">执行失败</string>
     <string name="omni_run_cancelled">已取消</string>
-    <string name="omni_run_counts">思考 %1$d · 工具 %2$d</string>
     <string name="omni_diff_empty">暂无 diff</string>
     <string name="omni_diff_files">%1$d 个文件</string>
     <string name="omni_diff_state_new">新</string>
@@ -999,4 +996,11 @@
     <string name="omni_compaction_done">已压缩</string>
     <string name="omni_history_omitted_title">历史过程卡片已折叠</string>
     <string name="omni_history_omitted_subtitle">历史过程</string>
+    <string name="omni_run_processing">正在处理 %1$ds</string>
+    <string name="omni_run_active_tool">%1$s · %2$ds</string>
+    <string name="omni_run_processed">已处理</string>
+    <string name="omni_tool_stop">停止工具</string>
+    <string name="omni_tool_stop_failed">停止工具调用失败，请稍后重试</string>
+    <string name="omni_anchor_open">消息锚点</string>
+    <string name="omni_anchor_working">思考中…</string>
 </resources>

@@ -960,11 +960,8 @@
     <string name="omni_transcript_history">Native preview · stored history</string>
     <string name="omni_transcript_empty">No messages yet</string>
     <string name="omni_transcript_open">Native message preview</string>
-    <string name="omni_run_running">Running</string>
-    <string name="omni_run_finished">Finished</string>
     <string name="omni_run_failed">Failed</string>
     <string name="omni_run_cancelled">Cancelled</string>
-    <string name="omni_run_counts">%1$d thoughts · %2$d tools</string>
     <string name="omni_diff_empty">No diff</string>
     <string name="omni_diff_files">%1$d files</string>
     <string name="omni_diff_state_new">New</string>
@@ -999,4 +996,11 @@
     <string name="omni_compaction_done">Compressed</string>
     <string name="omni_history_omitted_title">Earlier process card folded</string>
     <string name="omni_history_omitted_subtitle">Earlier process</string>
+    <string name="omni_run_processing">Processing %1$ds</string>
+    <string name="omni_run_active_tool">%1$s · %2$ds</string>
+    <string name="omni_run_processed">Processed</string>
+    <string name="omni_tool_stop">Stop tool</string>
+    <string name="omni_tool_stop_failed">Couldn\'t stop the tool call. Try again later.</string>
+    <string name="omni_anchor_open">Message anchors</string>
+    <string name="omni_anchor_working">Working…</string>
 </resources>

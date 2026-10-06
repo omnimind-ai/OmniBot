@@ -37,6 +37,7 @@ import androidx.compose.ui.unit.sp
 import cn.com.omnimind.nativeui.R
 import cn.com.omnimind.nativeui.WebProcessStatus
 import cn.com.omnimind.nativeui.WebQuickAction
+import cn.com.omnimind.nativeui.components.AgentBrandIcon
 import cn.com.omnimind.nativeui.components.OmniIcon
 import cn.com.omnimind.nativeui.components.OmniIconButton
 import cn.com.omnimind.nativeui.components.SectionTitle
@@ -342,7 +343,7 @@ private fun AgentRow(
     }
     val openConfig = { onConfigure(agent.id) }
     FlatTile(
-        leading = { AgentBrandIcon(agent.id, state.xiaowanAvatar) },
+        leading = { AgentBrandIcon(agent.id, state.xiaowanAvatar, description = stringResource(R.string.omni_agent_select)) },
         title = agent.name,
         statusColor = statusColor,
         statusLabel = statusLabel,
@@ -520,35 +521,4 @@ private fun AgentEditor(draft: AgentEditorDraft, saving: Boolean, actions: Agent
             }
         }
     }
-}
-
-/** Same brand identity mapping as ui/lib/widgets/agent_brand_icon.dart. */
-@Composable
-private fun AgentBrandIcon(agentId: String, xiaowanAvatar: ImageBitmap?) {
-    val palette = LocalOmniPalette.current
-    when (normalizeAgentBrandId(agentId)) {
-        "xiaowan-acp" -> if (xiaowanAvatar != null) {
-            Image(xiaowanAvatar, stringResource(R.string.omni_agent_select),
-                Modifier.size(18.dp).clip(CircleShape), contentScale = ContentScale.Crop)
-        } else {
-            OmniIcon(R.drawable.omni_bot, tint = palette.accent)
-        }
-        "kimi-code-acp" -> OmniIcon(R.drawable.omni_brand_moonshot, tint = Color(0xFF1783FF))
-        "claude-code-acp" -> OmniIcon(R.drawable.omni_brand_claude, tint = Color(0xFFD97757))
-        "codex-acp" -> OmniIcon(R.drawable.omni_brand_codex, tint = palette.text)
-        "opencode-acp" -> OmniIcon(R.drawable.omni_brand_opencode, tint = palette.text)
-        "deepseek-harness-acp" -> OmniIcon(R.drawable.omni_brand_deepseek, tint = Color(0xFF4D6BFE))
-        else -> OmniIcon(R.drawable.omni_bot, tint = palette.accent)
-    }
-}
-
-private fun normalizeAgentBrandId(agentId: String): String = when (agentId.trim().lowercase()) {
-    "xiaowan", "xiaowan-acp" -> "xiaowan-acp"
-    "codex", "codex-acp", "codex-remote" -> "codex-acp"
-    "kimi", "kimi-code", "kimi-code-acp" -> "kimi-code-acp"
-    "claude", "claude-code", "claude-code-acp" -> "claude-code-acp"
-    "opencode", "open-code", "opencode-acp" -> "opencode-acp"
-    "deepseek", "deepseek-acp", "deepseek-harness", "deepseek_harness", "deepseek-harness-acp" ->
-        "deepseek-harness-acp"
-    else -> agentId.trim().lowercase()
 }

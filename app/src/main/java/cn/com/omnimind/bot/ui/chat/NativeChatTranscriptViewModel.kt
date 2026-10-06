@@ -6,6 +6,7 @@ import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -23,6 +24,7 @@ import cn.com.omnimind.nativeui.chat.AgentToolCardUi
 import cn.com.omnimind.nativeui.chat.DeepThinkingCardUi
 import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.nativeui.chat.ChatMessageUi
+import cn.com.omnimind.nativeui.chat.ChatTranscriptActions
 import cn.com.omnimind.nativeui.chat.ChatTranscriptScreen
 import cn.com.omnimind.nativeui.chat.ChatTranscriptState
 import kotlinx.coroutines.Dispatchers
@@ -109,7 +111,11 @@ internal class NativeChatTranscriptViewModel(
         liveRevision = snapshot.revision
         liveMode = snapshot.mode
         mutableState.update {
+            val stopping = it.stoppingToolMessageId?.takeIf { id ->
+                snapshot.messages.firstOrNull { message -> message.id == id }?.cardData?.get("status") == "running"
+            }
             it.copy(
+                stoppingToolMessageId = stopping,
                 messages = snapshot.messages.map { message -> message.toUi(cards) },
                 activeTaskIds = snapshot.activeAgentTurnIds,
                 conversationAgentId = snapshot.conversation?.get("agentId")?.toString()?.ifBlank { null },
@@ -174,6 +180,43 @@ internal class NativeChatTranscriptViewModel(
         if (coordinator.replaceRuntimeMessage(conversationId, mode, messageId, current.copy(content = content))) {
             coordinator.publishDirtySnapshots()
             coordinator.schedulePersistRuntimeConversation(conversationId, mode, persistMessages = true)
+        }
+    }
+
+    /**
+     * Stops the live tool from the activity strip (Flutter
+     * `_handleToolActivityStopRequested`): ACP has no per-tool cancel, so the
+     * active turn is cancelled through the 5b `session/cancel` entry. The
+     * PromptResponse that follows ends the turn through the reducer.
+     */
+    fun stopActiveTool(messageId: String) {
+        val mode = liveMode ?: return
+        if (state.value.stoppingToolMessageId != null) return
+        val runtimeConversationId = conversationId.toInt()
+        val snapshot = coordinator.snapshotFor(runtimeConversationId, mode) ?: return
+        val runId = snapshot.messages.firstOrNull { it.id == messageId || it.cardData?.get("cardId")?.toString()?.trim() == messageId }
+            ?.cardData?.let { (it["runId"] ?: it["run_id"])?.toString()?.trim() }
+            ?.takeIf { it.isNotEmpty() }
+        val args = linkedMapOf<String, Any?>("conversationId" to runtimeConversationId)
+        // Normal and Agent chats both keep the live ACP session and prompt on the runtime.
+        snapshot.activeAcpSessionId?.let { args["sessionId"] = it }
+        snapshot.activeAcpTurnId?.let { args["promptId"] = it }
+        runId?.let { args["runId"] = it }
+        mutableState.update { it.copy(stoppingToolMessageId = messageId) }
+        viewModelScope.launch {
+            val stopped = runCatching {
+                val response = ChatRuntimeHost.dispatcher.cancelTurn(args) as? Map<*, *>
+                response?.get("ok") == true || response?.get("cancelled") == true || response?.get("status") == "cancelled"
+            }.onFailure { Log.w(TAG, "停止工具失败: ${it.message}") }.getOrDefault(false)
+            // On success the button stays disabled until the card stops running.
+            if (!stopped) {
+                Toast.makeText(
+                    appContext,
+                    if (AppLocaleManager.isEnglish()) "Couldn't stop the tool call. Try again later." else "停止工具调用失败，请稍后重试",
+                    Toast.LENGTH_SHORT,
+                ).show()
+                mutableState.update { it.copy(stoppingToolMessageId = null) }
+            }
         }
     }
 
@@ -267,5 +310,13 @@ internal fun NativeChatTranscriptRoute(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
-    ChatTranscriptScreen(state, onBack, onOpenLink, onToolAction, viewModel::respondToApproval)
+    val actions = remember(viewModel, onOpenLink, onToolAction) {
+        ChatTranscriptActions(
+            onOpenLink = onOpenLink,
+            onToolAction = onToolAction,
+            onRespondToApproval = viewModel::respondToApproval,
+            onStopTool = viewModel::stopActiveTool,
+        )
+    }
+    ChatTranscriptScreen(state, onBack, actions)
 }

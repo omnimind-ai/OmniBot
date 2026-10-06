@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -22,6 +23,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -35,6 +37,7 @@ import cn.com.omnimind.nativeui.components.OmniPage
 import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Text
+import kotlinx.coroutines.launch
 
 private val UserBubbleLight = Color(0xE6F1F8FF)
 private val ChatErrorText = Color(0xFFE05252)
@@ -55,21 +58,31 @@ data class ChatTranscriptState(
     val agentAvatar: ImageBitmap? = null,
     /** Request card message ids whose answer is in flight. */
     val respondingRequestIds: Set<String> = emptySet(),
+    /** Tool card message id whose stop request is in flight. */
+    val stoppingToolMessageId: String? = null,
+)
+
+/** The preview page's few actions into the live runtime. */
+class ChatTranscriptActions(
+    val onOpenLink: (String) -> Unit = {},
+    val onToolAction: (AgentToolActionUi) -> Unit = {},
+    val onRespondToApproval: (messageId: String, accepted: Boolean) -> Unit = { _, _ -> },
+    /** Cancels the active turn from the activity strip; null on stored history. */
+    val onStopTool: ((messageId: String) -> Unit)? = null,
 )
 
 /**
  * Compose rendering of one conversation, fed by native runtime snapshots.
  * Used to compare the migrated message surfaces with the Flutter chat on a
- * device until the chat page itself moves (batch 5e). Its only action into
- * the runtime is answering a live approval request.
+ * device until the chat page itself moves (batch 5e). Its only actions into
+ * the runtime are answering a live approval request and stopping the live
+ * tool from the activity strip.
  */
 @Composable
 fun ChatTranscriptScreen(
     state: ChatTranscriptState,
     onBack: () -> Unit,
-    onOpenLink: (String) -> Unit = {},
-    onToolAction: (AgentToolActionUi) -> Unit = {},
-    onRespondToApproval: (messageId: String, accepted: Boolean) -> Unit = { _, _ -> },
+    actions: ChatTranscriptActions = ChatTranscriptActions(),
 ) {
     val palette = LocalOmniPalette.current
     val subtitle = stringResource(
@@ -88,19 +101,20 @@ fun ChatTranscriptScreen(
                     Text(stringResource(R.string.omni_transcript_empty), color = palette.secondaryText)
                 }
             } else {
-                ChatMessageList(state, onOpenLink, onToolAction, onRespondToApproval, Modifier.fillMaxSize())
+                ChatMessageList(state, actions, Modifier.fillMaxSize())
             }
         }
     }
 }
 
-/** The message list: newest at the bottom, grouped into Agent runs. */
+/**
+ * The message list (newest at the bottom, grouped into Agent runs) with the
+ * tool activity strip and the message anchor button floating above it.
+ */
 @Composable
 fun ChatMessageList(
     state: ChatTranscriptState,
-    onOpenLink: (String) -> Unit,
-    onToolAction: (AgentToolActionUi) -> Unit,
-    onRespondToApproval: (messageId: String, accepted: Boolean) -> Unit,
+    actions: ChatTranscriptActions,
     modifier: Modifier = Modifier,
 ) {
     val entries = remember(state.messages, state.activeTaskIds, state.conversationAgentId) {
@@ -111,34 +125,86 @@ fun ChatMessageList(
         )
     }
     val expandedRuns = remember { mutableStateMapOf<String, Boolean>() }
+    // The strip follows the run the user expanded last (Flutter `expandedAgentRunTaskOrder`).
+    var lastExpandedRun by remember { mutableStateOf<String?>(null) }
     // Keyed by message id so an open sheet follows the card's live updates.
     var detailMessageId by remember { mutableStateOf<String?>(null) }
     val detail = detailMessageId?.let { id -> state.messages.firstOrNull { it.id == id }?.toolCard?.detail }
-    val itemHandlers = remember(onOpenLink, onRespondToApproval) {
-        ChatItemHandlers(onOpenLink, onRespondToApproval) { messageId -> detailMessageId = messageId }
+    val itemHandlers = remember(actions) {
+        ChatItemHandlers(actions.onOpenLink, actions.onRespondToApproval) { messageId -> detailMessageId = messageId }
     }
     val itemContext = ChatItemContext(state.agentAvatar, state.isLive, state.respondingRequestIds)
-    LazyColumn(
-        modifier = modifier,
-        reverseLayout = true,
-        contentPadding = PaddingValues(horizontal = 18.dp, vertical = 12.dp),
-    ) {
-        items(entries, key = { it.key }) { entry ->
-            val message = entry.message
-            val group = entry.group
-            when {
-                message != null -> ChatMessageItem(message, itemHandlers, itemContext)
-                group != null -> AgentRunGroupItem(
-                    group = group,
-                    expanded = expandedRuns[group.taskId] ?: group.isRunning,
-                    onToggle = { expandedRuns[group.taskId] = !(expandedRuns[group.taskId] ?: group.isRunning) },
-                    handlers = itemHandlers,
-                    context = itemContext,
+
+    val expandedRunIds = expandedRuns.filterValues { it }.keys
+    val activity = remember(entries, state.activeTaskIds, lastExpandedRun) {
+        resolveAgentToolActivitySnapshot(
+            state.messages,
+            activeTaskIds = state.activeTaskIds,
+            preferredCompletedTaskId = lastExpandedRun?.takeIf { expandedRuns[it] == true },
+            entries = entries,
+        )
+    }
+    val showStrip = shouldShowAgentToolActivitySnapshot(activity, expandedRunIds)
+    var stripExpanded by remember { mutableStateOf(false) }
+    val anchors = remember(entries) { buildChatMessageAnchors(entries) }
+    var anchorsExpanded by remember { mutableStateOf(false) }
+    val listState = rememberLazyListState()
+    val scope = rememberCoroutineScope()
+
+    Box(modifier) {
+        Column(Modifier.fillMaxSize()) {
+            LazyColumn(
+                modifier = Modifier.weight(1f),
+                state = listState,
+                reverseLayout = true,
+                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 12.dp, bottom = 56.dp),
+            ) {
+                items(entries, key = { it.key }) { entry ->
+                    val message = entry.message
+                    val group = entry.group
+                    when {
+                        message != null -> ChatMessageItem(message, itemHandlers, itemContext)
+                        group != null -> AgentRunGroupItem(
+                            group = group,
+                            // Finished runs start folded; a running run is forced open by the block.
+                            expanded = expandedRuns[group.taskId] == true,
+                            onToggle = {
+                                val next = expandedRuns[group.taskId] != true
+                                expandedRuns[group.taskId] = next
+                                if (next) lastExpandedRun = group.taskId
+                            },
+                            handlers = itemHandlers,
+                            context = itemContext,
+                        )
+                    }
+                }
+            }
+            if (showStrip) {
+                ChatToolActivityStrip(
+                    messages = activity.messages,
+                    expanded = stripExpanded,
+                    onExpandedChange = { stripExpanded = it },
+                    onOpenDetail = { detailMessageId = it },
+                    stopPending = state.stoppingToolMessageId != null,
+                    onStop = actions.onStopTool.takeIf { activity.isActiveRun },
                 )
             }
         }
+        ChatMessageAnchorBar(
+            anchors = anchors,
+            expanded = anchorsExpanded,
+            onExpandedChange = { anchorsExpanded = it },
+            onJump = { key ->
+                val index = entries.indexOfFirst { it.key == key }
+                if (index >= 0) scope.launch { listState.animateScrollToItem(index) }
+            },
+            agentAvatar = state.agentAvatar,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(end = 24.dp, bottom = if (showStrip) 44.dp else 12.dp),
+        )
     }
-    AgentToolDetailSheet(detail, onDismiss = { detailMessageId = null }, onAction = onToolAction)
+    AgentToolDetailSheet(detail, onDismiss = { detailMessageId = null }, onAction = actions.onToolAction)
 }
 
 /** Stable callbacks shared by every row. */
@@ -255,10 +321,6 @@ private fun ChatCardPlaceholder(message: ChatMessageUi) {
     }
 }
 
-/**
- * One Agent run: a header with status and counts, its process cards folded
- * behind it, and the run's visible messages always shown (5c-4 refines it).
- */
 @Composable
 private fun AgentRunGroupItem(
     group: AgentRunTimelineGroup,
@@ -267,46 +329,7 @@ private fun AgentRunGroupItem(
     handlers: ChatItemHandlers,
     context: ChatItemContext,
 ) {
-    val palette = LocalOmniPalette.current
-    // The run header already names the Agent, so its first thinking card drops the avatar.
-    val firstThinkingId = remember(group) {
-        group.processMessagesOldestFirst.firstOrNull { it.thinkingCard != null }?.id
-    }
-    val statusText = stringResource(
-        when (group.status) {
-            AgentRunStatus.running -> R.string.omni_run_running
-            AgentRunStatus.finished -> R.string.omni_run_finished
-            AgentRunStatus.failed -> R.string.omni_run_failed
-            AgentRunStatus.cancelled -> R.string.omni_run_cancelled
-        },
-    )
-    Column(Modifier.fillMaxWidth().padding(top = 12.dp)) {
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .clickable(enabled = group.hasProcessMessages, onClick = onToggle)
-                .padding(vertical = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(group.agentId, color = palette.text, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
-            Text(
-                "  $statusText" + if (group.hasProcessMessages) {
-                    " · " + stringResource(R.string.omni_run_counts, group.thinkingCount, group.toolCount)
-                } else {
-                    ""
-                },
-                color = palette.secondaryText,
-                fontSize = 12.sp,
-            )
-        }
-        for (segment in group.segmentsOldestFirst) {
-            if (segment.isProcess) {
-                if (expanded) {
-                    segment.messages.forEach { ChatMessageItem(it, handlers, context, hideThinkingAvatar = it.id == firstThinkingId) }
-                }
-            } else {
-                ChatMessageItem(segment.message, handlers, context)
-            }
-        }
+    AgentRunGroupBlock(group, expanded, onToggle, context.agentAvatar) { message, hideThinkingAvatar ->
+        ChatMessageItem(message, handlers, context, hideThinkingAvatar)
     }
 }
