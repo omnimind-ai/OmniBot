@@ -1281,7 +1281,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       return;
     }
     if (command == '/review') {
-      await _startAgentReviewCommand();
+      // Same submit as typing it: an advertised command is an ordinary ACP
+      // prompt through the turn launcher (5d-0c).
+      await _sendMessage(text: '/review');
       return;
     }
     if (command == '/init') {
@@ -1377,125 +1379,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _startAgentReviewCommand() async {
-    if (_availableAcpCommandForText('/review') == null) {
-      _showSnackBar(LegacyTextLocalizer.isEnglish
-          ? 'This Agent does not advertise /review'
-          : '当前 Agent 未提供 /review 命令');
-      return;
-    }
-    if (_isAiResponding) {
-      return;
-    }
-    _inputFocusNode.unfocus();
-    _messageController.clear();
-    _hideSlashCommandPanel();
-    late AgentRuntimeStatus status;
-    try {
-      status = await _refreshConnectedAgentRuntimeStatus();
-    } catch (error) {
-      if (mounted) {
-        handleAgentError('Agent review 启动失败: $error');
-      }
-      return;
-    }
-    final messageIds = addUserMessage('/review');
-    final preflightConversationId = _currentConversationId;
-    if (preflightConversationId != null) {
-      _runtimeCoordinator.beginAcpTurn(
-        taskId: messageIds.aiMessageId,
-        conversationId: preflightConversationId,
-        mode: _modeKey(_activeMode),
-      );
-    }
-    void releasePreflightReservation() {
-      if (preflightConversationId == null) return;
-      _runtimeCoordinator.unregisterTask(
-        messageIds.aiMessageId,
-        conversationId: preflightConversationId,
-        mode: _modeKey(_activeMode),
-      );
-    }
-
-    final remoteCodex = agentModelSourceKey(status) == 'remote';
-    int? conversationId = preflightConversationId;
-    if (remoteCodex) {
-      conversationId = this._ensureRemoteCodexRuntimeForCurrentMessages();
-    } else if (conversationId == null) {
-      try {
-        await _ensureActiveConversationReadyForStreaming();
-      } catch (error) {
-        if (mounted) {
-          handleAgentError(
-            'Conversation setup failed. Please retry. $error',
-            taskIdOverride: messageIds.aiMessageId,
-          );
-        }
-        releasePreflightReservation();
-        return;
-      }
-      conversationId = _currentConversationId;
-      if (conversationId == null) {
-        if (mounted) {
-          handleAgentError(
-            'Conversation setup failed. Please retry.',
-            taskIdOverride: messageIds.aiMessageId,
-          );
-        }
-        releasePreflightReservation();
-        return;
-      }
-    }
-
-    final resolvedConversationId = conversationId;
-    try {
-      // Begin before replacing the page projection. The coordinator's
-      // admission is the identity boundary that makes a snapshot a live-turn
-      // merge instead of an idle restore.
-      _runtimeCoordinator.beginAcpTurn(
-        taskId: messageIds.aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: _modeKey(_activeMode),
-      );
-      _syncRuntimeSnapshotForMode(_activeMode);
-      if (!remoteCodex) {
-        await _runtimeCoordinator.persistRuntimeConversation(
-          conversationId: resolvedConversationId,
-          mode: _modeKey(_activeMode),
-          persistMessages: true,
-        );
-      }
-      final reviewModel = await _resolveAgentRequestModel(status);
-      final response = await AgentRuntimeService.reviewSession(
-        conversationId: remoteCodex ? null : resolvedConversationId,
-        sessionId: _activeAgentThreadId,
-        approvalPolicy: _agentPermissionMode.approvalPolicy,
-        approvalsReviewer: _agentPermissionMode.approvalsReviewer,
-        sandboxPolicy: _agentPermissionMode.sandboxPolicy,
-        model: reviewModel,
-        effort: _activeAgentReasoningEffort,
-        collaborationMode: _activeAgentCollaborationMode,
-      );
-      final resolvedThreadId = _asAgentString(response['threadId']);
-      if (resolvedThreadId != null && remoteCodex) {
-        _activateRemoteCodexRuntimeForThread(resolvedThreadId);
-      }
-      _activeAgentThreadId = resolvedThreadId ?? _activeAgentThreadId;
-      _activeAgentTurnId =
-          _asAgentString(response['turnId']) ?? _activeAgentTurnId;
-      if (!remoteCodex) {
-        await _persistVisibleThreadTargetIfNeeded();
-      }
-      await _writeAgentCommandPreferencesForCurrentConversation();
-    } catch (error) {
-      if (mounted) {
-        handleAgentError('Agent review 启动失败: $error');
-      }
-      _runtimeCoordinator.unregisterTask(
-        messageIds.aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: _modeKey(_activeMode),
-      );
-    }
+    // An advertised /review was already routed as an ordinary prompt by
+    // _tryHandleAgentSlashCommand. The old side path called review/start
+    // and dropped its result, and only a PromptResponse ends a turn, so the
+    // page stayed responding after every review (5d-0c).
+    _showSnackBar(LegacyTextLocalizer.isEnglish
+        ? 'This Agent does not advertise /review'
+        : '当前 Agent 未提供 /review 命令');
   }
 
   Future<void> _startAgentTurnCommand({

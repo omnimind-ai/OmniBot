@@ -265,39 +265,6 @@ void main() {
     });
   });
 
-  test('startReview forwards codex review payload', () async {
-    MethodCall? capturedCall;
-    messenger.setMockMethodCallHandler(channel, (call) async {
-      capturedCall = call;
-      return <String, dynamic>{'ok': true};
-    });
-
-    await AgentRuntimeService.startReview(
-      conversationId: 42,
-      threadId: 'thread-1',
-      approvalPolicy: 'on-request',
-      approvalsReviewer: 'auto_review',
-      model: 'gpt-5-codex',
-      effort: 'xhigh',
-      collaborationMode: 'plan',
-    );
-
-    expect(capturedCall?.method, 'review/start');
-    final args = Map<String, dynamic>.from(
-      (capturedCall?.arguments as Map).cast<String, dynamic>(),
-    );
-    expect(args['conversationId'], 42);
-    expect(args['threadId'], 'thread-1');
-    expect(args['approvalPolicy'], 'on-request');
-    expect(args['approvalsReviewer'], 'auto_review');
-    expect(args['target'], const <String, dynamic>{
-      'type': 'uncommittedChanges',
-    });
-    expect(args['model'], 'gpt-5-codex');
-    expect(args['effort'], 'xhigh');
-    expect(args['collaborationMode'], 'plan');
-  });
-
   test('session prompt forwards the turn idempotency key', () async {
     MethodCall? capturedCall;
     messenger.setMockMethodCallHandler(channel, (call) async {

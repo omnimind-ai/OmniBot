@@ -214,9 +214,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   // Guard each visible conversation target independently: a prompt remains
   // in flight until its ACP turn completes, but that must not block sending
   // from another conversation that the user opens in the meantime.
-  final Set<int> _sendMessageInFlightTargetIds = <int>{};
   final HarnessSwitchSendBarrier _harnessSwitchSendBarrier =
       HarnessSwitchSendBarrier();
+  late final ChatSubmitGate _submitGate = ChatSubmitGate(
+    _harnessSwitchSendBarrier,
+  );
   final Set<String> _consumedInitialMessageRequests = <String>{};
 
   // OpenClaw 配置与开关
@@ -2244,7 +2246,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String text, {
     List<Map<String, dynamic>> attachments,
     String? retainedUserMessageId,
+    bool modelConfigurationChecked,
   });
+
+  /// Runs a retry or edited resend behind the chat submit gate.
+  Future<bool> _runRetrySubmit(Future<void> Function() submit);
 
   Future<void> _sendChatMessage(
     String aiMessageId,

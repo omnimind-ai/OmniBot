@@ -446,14 +446,16 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       showToast('No content to send after editing', type: ToastType.warning);
       return;
     }
-    if (!await _ensureNormalChatModelConfigurationForSend()) {
-      return;
-    }
-
-    if (!await _clearRetriedMessageRound(message)) return;
-    if (!mounted) return;
-
-    await _retryUserMessageText(editedText, attachments: attachments);
+    await _runRetrySubmit(() async {
+      if (!await _ensureNormalChatModelConfigurationForSend()) return;
+      if (!await _clearRetriedMessageRound(message)) return;
+      if (!mounted) return;
+      await _retryUserMessageText(
+        editedText,
+        attachments: attachments,
+        modelConfigurationChecked: true,
+      );
+    });
   }
 
   int _retryMessageRoundLength(
@@ -550,31 +552,34 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       );
       return;
     }
-    if (!await _ensureNormalChatModelConfigurationForSend()) {
-      return;
-    }
+    await _runRetrySubmit(() async {
+      if (!await _ensureNormalChatModelConfigurationForSend()) return;
 
-    if (text.isNotEmpty) {
-      await AssistsMessageService.copyToClipboard(text);
+      if (text.isNotEmpty) {
+        await AssistsMessageService.copyToClipboard(text);
+        if (!mounted) return;
+      }
+
+      if (_editingUserMessageId == message.id) {
+        _stopUserMessageEditing();
+        if (!mounted) return;
+      }
+
+      if (!await _clearRetriedMessageRound(
+        message,
+        preserveUserMessage: true,
+      )) {
+        return;
+      }
       if (!mounted) return;
-    }
 
-    if (_editingUserMessageId == message.id) {
-      _stopUserMessageEditing();
-      if (!mounted) return;
-    }
-
-    if (!await _clearRetriedMessageRound(message, preserveUserMessage: true)) {
-      return;
-    }
-    if (!mounted) return;
-
-    await _retryUserMessageText(
-      text,
-      attachments: attachments,
-      retainedUserMessageId: message.id,
-    );
-    if (!mounted) return;
+      await _retryUserMessageText(
+        text,
+        attachments: attachments,
+        retainedUserMessageId: message.id,
+        modelConfigurationChecked: true,
+      );
+    });
   }
 
   Future<void> _retryFailedAgentTurn(ChatMessageModel message) async {
@@ -618,10 +623,12 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
       // path and receives a fresh ACP turn id. Keep the original user and
       // failed-assistant items intact rather than replacing either with a
       // local "retrying" presentation.
-      await _retryUserMessageText(
-        userMessage.text ?? '',
-        attachments: _extractRetryAttachments(userMessage),
-        retainedUserMessageId: userMessage.id,
+      await _runRetrySubmit(
+        () => _retryUserMessageText(
+          userMessage.text ?? '',
+          attachments: _extractRetryAttachments(userMessage),
+          retainedUserMessageId: userMessage.id,
+        ),
       );
     } finally {
       _pendingManualAgentRetryTaskIds.remove(taskId);

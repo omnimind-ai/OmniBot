@@ -1507,65 +1507,6 @@ class AgentRuntimeService {
     });
   }
 
-  static Future<Map<String, dynamic>> reviewSession({
-    String? sessionId,
-    int? conversationId,
-    String? cwd,
-    Map<String, dynamic>? target,
-    String? approvalPolicy,
-    String? approvalsReviewer,
-    Map<String, dynamic>? sandboxPolicy,
-    String? model,
-    String? effort,
-    String? collaborationMode,
-  }) {
-    return _invokeMap('review/start', {
-      if (sessionId != null) 'sessionId': sessionId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
-      'target': target ?? <String, dynamic>{'type': 'uncommittedChanges'},
-      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
-        'approvalPolicy': approvalPolicy.trim(),
-      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
-        'approvalsReviewer': approvalsReviewer.trim(),
-      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
-      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
-      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
-      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
-        'collaborationMode': collaborationMode.trim(),
-    });
-  }
-
-  @Deprecated('Use reviewSession')
-  static Future<Map<String, dynamic>> startReview({
-    String? threadId,
-    int? conversationId,
-    String? cwd,
-    Map<String, dynamic>? target,
-    String? approvalPolicy,
-    String? approvalsReviewer,
-    Map<String, dynamic>? sandboxPolicy,
-    String? model,
-    String? effort,
-    String? collaborationMode,
-  }) {
-    return _invokeMap('review/start', {
-      if (threadId != null) 'threadId': threadId,
-      if (conversationId != null) 'conversationId': conversationId,
-      if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
-      'target': target ?? <String, dynamic>{'type': 'uncommittedChanges'},
-      if (approvalPolicy != null && approvalPolicy.trim().isNotEmpty)
-        'approvalPolicy': approvalPolicy.trim(),
-      if (approvalsReviewer != null && approvalsReviewer.trim().isNotEmpty)
-        'approvalsReviewer': approvalsReviewer.trim(),
-      if (sandboxPolicy != null) 'sandboxPolicy': sandboxPolicy,
-      if (model != null && model.trim().isNotEmpty) 'model': model.trim(),
-      if (effort != null && effort.trim().isNotEmpty) 'effort': effort.trim(),
-      if (collaborationMode != null && collaborationMode.trim().isNotEmpty)
-        'collaborationMode': collaborationMode.trim(),
-    });
-  }
-
   static Future<Map<String, dynamic>> listModels() {
     return _invokeMap('model/list');
   }

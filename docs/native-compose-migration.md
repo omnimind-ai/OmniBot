@@ -260,7 +260,7 @@ May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
 
-## Batch 5d-0 plan: native turn launcher (2026-10-06; 5d-0a and 5d-0b source complete)
+## Batch 5d-0 plan: native turn launcher (2026-10-06; 5d-0a, 5d-0b and 5d-0c source complete)
 
 The 5b dispatcher takes ready-made `session/new` / `session/prompt`
 arguments. Building them is still Dart page code: three dispatch paths
@@ -298,6 +298,12 @@ Legacy defects fixed in the move (each covered by a Kotlin test):
 6. Cleanups: the model configuration was checked up to three times per
    send; the task-flow `handleAgentError` after a failed submit cannot fire
    (the dispatcher already ended the run).
+7. `/review` called `review/start` beside the launcher and dropped its
+   result. Only a PromptResponse ends a run (the reducer completes nothing
+   else), so after every review the page stayed "responding" until it was
+   reopened. `review/start` is not an ACP method: locally it was only
+   `startTurn(text = "/review")`, and `/review` is offered only when the
+   Agent advertises it, so it is now an ordinary advertised prompt. 5d-0c.
 
 ### 5d-0a checkpoint (source complete, unwired)
 
@@ -344,8 +350,8 @@ Legacy defects fixed in the move (each covered by a Kotlin test):
 - **Fixes landed here**: 2 (errors go to the run's own runtime), 3
   (pointers only from a current outcome), 4 (submission, no double hint),
   5 (every path filters `sendToModel: false`), 6 (dead fallback).
-  Remaining for 5d-0c: 1 (retry / edited resend barrier and lock),
-  `/review`, and the triple model-configuration check.
+  Remaining for 5d-0c (done there): 1 (retry / edited resend barrier and
+  lock), `/review`, and the triple model-configuration check.
 - **Verification**: `ChatTurnLauncherTest` 11 (admission, reuse, submission
   text, attachment filtering, empty, stale before reservation, stale during
   `session/new` closes the session, no pointers after a move, persistence
@@ -359,6 +365,33 @@ Legacy defects fixed in the move (each covered by a Kotlin test):
   every chat surface sends through `launchTurn` and runs none of its steps.
   No device run.
 
+### 5d-0c checkpoint (source complete; device acceptance pending)
+
+- **Submit gate**: `ChatSubmitGate` (`chat_page_models.dart`) is the one
+  admission path of a page submit: Harness switch barrier, then the
+  per-target lock, then the conversation bootstrap. `_sendMessage` and the
+  three retry entries (`_retryUserMessage`, `_saveAndResendEditedUserMessage`,
+  `_retryFailedAgentTurn`, via `_runRetrySubmit`) go through it; a retry
+  passes `requireSameTarget` and is dropped when the page moved to another
+  target while it waited (fix 1). `_sendMessageInFlightTargetIds` is gone.
+- **`/review`**: the slash card submits `/review` like typing it, so an
+  advertised command reaches the launcher as an ordinary prompt (fix 7).
+  Removed `AgentRuntimeService.reviewSession` / `startReview` and their
+  test. The native `review/start` handlers stay for now (no Dart caller);
+  retired with the channel in 5f.
+- **Model check**: one `_ensureNormalChatModelConfigurationForSend` per send,
+  in `_dispatchUserMessage` after slash routing; a retry checks before
+  clearing the old round and passes `modelConfigurationChecked` (fix 6).
+- **Verification**: `ChatSubmitGate` behavior tests 6 (queued retry runs
+  after the switch, dropped after a target move, refused after a failed
+  switch, retry + composer send once, other targets not blocked, move
+  during bootstrap); `ChatTurnLauncherTest` +2 (advertised `/review` ends
+  its run, retry keeps its row with a new run id); architecture test for
+  the shared gate and the single model check. `:app` unit suite 1504,
+  native-ui 53, 0 failures; androidTest compile and release resource merge
+  succeeded. `flutter test` 970 passed, 4 failed (the same 4 baseline
+  settings/background tests); `flutter analyze` 0 errors. No device run.
+
 Manual acceptance checklist:
 
 1. Agent, normal and pure chat each send and stream as before; a fresh
@@ -370,6 +403,10 @@ Manual acceptance checklist:
    list it twice.
 4. Command overlay: send, close the sheet during "connecting": no prompt
    is sent; stop during a reply ends it.
+5. Tap retry (or save an edited message) while switching Harness: it
+   sends once to the new Agent, or is dropped if the conversation changed.
+6. Run `/review` from the slash panel and by typing it: the reply streams
+   and the composer returns to idle when it ends.
 
 ## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
 

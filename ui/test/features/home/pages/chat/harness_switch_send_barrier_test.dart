@@ -104,4 +104,105 @@ void main() {
       barrier.finish(third);
     },
   );
+
+  group('ChatSubmitGate (5d-0c)', () {
+    test('a retry queued behind a Harness switch runs after it settles', () async {
+      final barrier = HarnessSwitchSendBarrier();
+      final gate = ChatSubmitGate(barrier);
+      final generation = barrier.begin();
+      var sent = false;
+      final retry = gate.run(
+        currentTarget: () => 1,
+        requireSameTarget: true,
+        submit: () async => sent = true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(sent, isFalse);
+      barrier.finish(generation);
+      expect(await retry, isTrue);
+      expect(sent, isTrue);
+    });
+
+    test('a retry is dropped when the switch moved the page to another target', () async {
+      final barrier = HarnessSwitchSendBarrier();
+      final gate = ChatSubmitGate(barrier);
+      var target = 1;
+      final generation = barrier.begin();
+      var sent = false;
+      final retry = gate.run(
+        currentTarget: () => target,
+        requireSameTarget: true,
+        submit: () async => sent = true,
+      );
+      target = 2;
+      barrier.finish(generation);
+      expect(await retry, isFalse);
+      expect(sent, isFalse);
+    });
+
+    test('a failed switch refuses a queued retry', () async {
+      final barrier = HarnessSwitchSendBarrier();
+      final gate = ChatSubmitGate(barrier);
+      final generation = barrier.begin();
+      final retry = gate.run(currentTarget: () => 1, submit: () async {});
+      barrier.finish(generation, succeeded: false);
+      expect(await retry, isFalse);
+    });
+
+    test('a retry and a composer send on one target submit once', () async {
+      final gate = ChatSubmitGate(HarnessSwitchSendBarrier());
+      final release = Completer<void>();
+      var sends = 0;
+      Future<void> submit() async {
+        sends += 1;
+        await release.future;
+      }
+
+      final first = gate.run(currentTarget: () => 1, submit: submit);
+      final second = gate.run(
+        currentTarget: () => 1,
+        requireSameTarget: true,
+        submit: submit,
+      );
+      expect(await second, isFalse);
+      expect(gate.isInFlight(1), isTrue);
+      release.complete();
+      expect(await first, isTrue);
+      expect(sends, 1);
+      expect(gate.isInFlight(1), isFalse);
+    });
+
+    test('another target is not blocked by an in-flight submit', () async {
+      final gate = ChatSubmitGate(HarnessSwitchSendBarrier());
+      final release = Completer<void>();
+      var target = 1;
+      final first = gate.run(
+        currentTarget: () => target,
+        submit: () => release.future,
+      );
+      await Future<void>.delayed(Duration.zero);
+      target = 2;
+      expect(await gate.run(currentTarget: () => target, submit: () async {}), isTrue);
+      release.complete();
+      await first;
+    });
+
+    test('the bootstrap is awaited before submit, and a move during it drops a retry', () async {
+      final gate = ChatSubmitGate(HarnessSwitchSendBarrier());
+      final bootstrap = Completer<void>();
+      var target = 1;
+      var sent = false;
+      final retry = gate.run(
+        currentTarget: () => target,
+        requireSameTarget: true,
+        bootstrap: () => bootstrap.future,
+        submit: () async => sent = true,
+      );
+      await Future<void>.delayed(Duration.zero);
+      target = 2;
+      bootstrap.complete();
+      expect(await retry, isFalse);
+      expect(sent, isFalse);
+    });
+  });
 }

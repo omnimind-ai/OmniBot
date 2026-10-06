@@ -141,6 +141,53 @@ class HarnessSwitchSendBarrier {
   }
 }
 
+/// The one admission gate of every user submit on the chat page (5d-0c).
+///
+/// A submit first queues behind an in-progress Harness switch, then holds
+/// the per-target lock (one submit at a time per visible conversation
+/// target, so two UI submit paths waking together send once), then waits for
+/// the conversation bootstrap. A fresh send and a retry or edited resend
+/// share this path; before 5d-0c only the composer send did, so a retry
+/// tapped during a Harness switch registered against the old target.
+///
+/// A retry or edited resend acts on a visible message and passes
+/// [requireSameTarget]: when the page moved to another target while it
+/// waited, the action is dropped instead of rewriting the new target.
+class ChatSubmitGate {
+  ChatSubmitGate(this.switchBarrier);
+
+  final HarnessSwitchSendBarrier switchBarrier;
+  final Set<int> _inFlightTargets = <int>{};
+
+  bool isInFlight(int target) => _inFlightTargets.contains(target);
+
+  /// Runs [submit] once admitted. Returns false when it was not admitted.
+  Future<bool> run({
+    required int Function() currentTarget,
+    required Future<void> Function() submit,
+    bool waitForSwitch = true,
+    bool requireSameTarget = false,
+    Future<void>? Function()? bootstrap,
+  }) async {
+    final requestedTarget = currentTarget();
+    if (waitForSwitch && !await switchBarrier.waitUntilIdle()) return false;
+    if (requireSameTarget && currentTarget() != requestedTarget) return false;
+    // Take the lock right after the barrier: queued submits wake in the same
+    // microtask turn and only the first may continue.
+    final target = currentTarget();
+    if (!_inFlightTargets.add(target)) return false;
+    try {
+      final pending = bootstrap?.call();
+      if (pending != null) await pending;
+      if (requireSameTarget && currentTarget() != target) return false;
+      await submit();
+      return true;
+    } finally {
+      _inFlightTargets.remove(target);
+    }
+  }
+}
+
 ConversationThreadTarget buildHarnessSwitchTarget({
   required String agentId,
   required String agentRuntime,

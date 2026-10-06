@@ -101,13 +101,14 @@ void main() {
       final flow = File(
         '$chatRoot/chat_page_conversation_flow.dart',
       ).readAsStringSync();
+      // The barrier wait itself is ChatSubmitGate's (behavior-tested in
+      // harness_switch_send_barrier_test); the queued input is captured
+      // before entering it.
+      final send = flow.split('Future<void> _sendMessage(').last;
       expect(
-        flow.indexOf('final submittedText ='),
-        lessThan(
-          flow.indexOf('await _harnessSwitchSendBarrier.waitUntilIdle()'),
-        ),
+        send.indexOf('final submittedText ='),
+        lessThan(send.indexOf('await _submitGate.run(')),
       );
-      expect(flow, contains('if (!mounted || !switched) return;'));
       expect(
         flow,
         contains('submittedText ?? text ?? _messageController.text'),
@@ -364,6 +365,36 @@ void main() {
     expect(sendBody, isNot(contains('message.text == messageText')));
   });
 
+  test('retry, edited resend and the composer share one submit gate (5d-0c)', () {
+    final flow = File('$chatRoot/chat_page_conversation_flow.dart').readAsStringSync();
+    final actions = File('$chatRoot/chat_page_user_message_actions.dart').readAsStringSync();
+    final send = flow.split('Future<void> _sendMessage(').last
+        .split('Future<void> _startManualRecordingCommand').first;
+    expect(send, contains('_submitGate.run('));
+    for (final name in const <String>[
+      'Future<void> _saveAndResendEditedUserMessage(',
+      'Future<void> _retryUserMessage(',
+      'Future<void> _retryFailedAgentTurn(',
+    ]) {
+      final body = actions.split(name).last.split('\n  Future<').first;
+      expect(body, contains('_runRetrySubmit('), reason: name);
+      expect(body.indexOf('_runRetrySubmit('),
+          lessThan(body.indexOf('_retryUserMessageText(')), reason: name);
+    }
+    final retrySubmit = flow.split('Future<bool> _runRetrySubmit(').last
+        .split('Future<void> _dispatchUserMessage(').first;
+    expect(retrySubmit, contains('_submitGate.run('));
+    expect(retrySubmit, contains('requireSameTarget: true'));
+    // One model configuration check per send (5d-0 fix 6).
+    expect('_ensureNormalChatModelConfigurationForSend()'.allMatches(send), isEmpty);
+    expect(
+      '_ensureNormalChatModelConfigurationForSend()'
+          .allMatches(flow.split('Future<void> _dispatchUserMessage(').last)
+          .length,
+      1,
+    );
+  });
+
   test('every chat send goes through the native turn launcher (5d-0b)', () {
     final surfaces = <String, String>{
       'agent': File('$chatRoot/chat_page_agent.dart').readAsStringSync(),
@@ -385,6 +416,9 @@ void main() {
         'ChatPromptDispatcher.instance.releaseTurnSession(',
         'AgentRuntimeService.promptSessionArguments(',
         'AgentRuntimeService.newSessionArguments(',
+        // /review is an ordinary advertised prompt, never review/start (5d-0c).
+        'AgentRuntimeService.reviewSession(',
+        'AgentRuntimeService.startReview(',
       ]) {
         expect(
           source,

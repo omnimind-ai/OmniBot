@@ -479,7 +479,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }) async {
     // A Harness switch changes both the native ACP adapter and the visible
     // conversation runtime. Let a user submit queue behind that atomic
-    // transition instead of registering it against the old target.
+    // transition instead of registering it against the old target; the
+    // queued text and attachments are captured now so the composer stays
+    // editable while it waits.
     final queuedDuringSwitch =
         waitForBootstrap && _harnessSwitchSendBarrier.isActive;
     final submittedText = queuedDuringSwitch
@@ -488,56 +490,45 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final submittedAttachments = queuedDuringSwitch
         ? List<ChatInputAttachment>.of(_pendingAttachments)
         : null;
-    if (waitForBootstrap) {
-      final switched = await _harnessSwitchSendBarrier.waitUntilIdle();
-      // A failed switch must not deliver the queued prompt to the old Agent.
-      // The preserved composer remains editable for the user to send later.
-      if (!mounted || !switched) return;
-    }
-    // Acquire the per-target submit lock immediately after the transition
-    // barrier. Two queued UI submit paths wake in the same microtask turn, so
-    // only the first may continue into bootstrap/model loading.
-    // The target request id changes whenever the page moves to another
-    // conversation, allowing independent ACP sessions to send concurrently.
-    final sendTargetId = _conversationTargetRequestId;
-    if (!_sendMessageInFlightTargetIds.add(sendTargetId)) return;
-    try {
+    await _submitGate.run(
+      currentTarget: () => _conversationTargetRequestId,
+      waitForSwitch: waitForBootstrap,
       // The chat surface is rendered before the asynchronous conversation
-      // bootstrap finishes. Wait for it before inserting the optimistic user
-      // row; otherwise bootstrap can restore/reset the target immediately after
-      // this method and make the row flash and disappear.
-      final bootstrapFuture = _conversationBootstrapFuture;
-      // _sendInitialMessageIfNeeded is called from inside this very bootstrap
-      // future. Waiting for it here would await the current Future forever,
-      // leaving enhancement/replay prompts with no user message or request.
-      if (waitForBootstrap && bootstrapFuture != null) {
-        await bootstrapFuture;
-      }
-      final messageText = (submittedText ?? text ?? _messageController.text)
-          .trim();
-      final inputAttachments = submittedAttachments ?? _pendingAttachments;
-      final hasAttachments = inputAttachments.isNotEmpty;
-      if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
-      if (!hasAttachments &&
-          ManualRecordingFlowController.isCommand(messageText)) {
-        await _startManualRecordingCommand(messageText);
-        return;
-      }
-      if (!await _ensureNormalChatModelConfigurationForSend()) return;
-
-      final attachments = inputAttachments.map((item) => item.toMap()).toList();
-      await _dispatchUserMessage(
-        messageText,
-        attachments: attachments,
-        runSlashCommand: true,
-        restoreInputValue:
-            queuedDuringSwitch && _messageController.text != submittedText
-            ? _messageController.value
-            : null,
-      );
-    } finally {
-      _sendMessageInFlightTargetIds.remove(sendTargetId);
-    }
+      // bootstrap finishes; inserting the optimistic row before it would let
+      // bootstrap reset the target and make the row flash and disappear.
+      // _sendInitialMessageIfNeeded runs inside that very future, so it
+      // passes waitForBootstrap: false instead of awaiting itself.
+      bootstrap: waitForBootstrap ? () => _conversationBootstrapFuture : null,
+      submit: () async {
+        if (!mounted) return;
+        final messageText = (submittedText ?? text ?? _messageController.text)
+            .trim();
+        final inputAttachments = submittedAttachments ?? _pendingAttachments;
+        final hasAttachments = inputAttachments.isNotEmpty;
+        if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) {
+          return;
+        }
+        if (!hasAttachments &&
+            ManualRecordingFlowController.isCommand(messageText)) {
+          await _startManualRecordingCommand(messageText);
+          return;
+        }
+        // The model configuration is checked once, in _dispatchUserMessage,
+        // after slash routing: a configuration command needs no model.
+        final attachments = inputAttachments
+            .map((item) => item.toMap())
+            .toList();
+        await _dispatchUserMessage(
+          messageText,
+          attachments: attachments,
+          runSlashCommand: true,
+          restoreInputValue:
+              queuedDuringSwitch && _messageController.text != submittedText
+              ? _messageController.value
+              : null,
+        );
+      },
+    );
   }
 
   @override
@@ -596,6 +587,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String text, {
     List<Map<String, dynamic>> attachments = const [],
     String? retainedUserMessageId,
+    bool modelConfigurationChecked = false,
   }) async {
     final messageText = text.trim();
     if (messageText.isEmpty && attachments.isEmpty) return;
@@ -611,6 +603,22 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       runSlashCommand: false,
       restoreInputValue: _messageController.value,
       retainedUserMessageId: retainedUserMessageId,
+      modelConfigurationChecked: modelConfigurationChecked,
+    );
+  }
+
+  @override
+  Future<bool> _runRetrySubmit(Future<void> Function() submit) {
+    // A retry or edited resend acts on a visible message of this target, so
+    // it shares the composer's gate and is dropped when the page moved on
+    // while it waited for a Harness switch (5d-0 fix 1).
+    return _submitGate.run(
+      currentTarget: () => _conversationTargetRequestId,
+      requireSameTarget: true,
+      submit: () async {
+        if (!mounted) return;
+        await submit();
+      },
     );
   }
 
@@ -620,6 +628,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     required bool runSlashCommand,
     TextEditingValue? restoreInputValue,
     String? retainedUserMessageId,
+    bool modelConfigurationChecked = false,
   }) async {
     if ((messageText.isEmpty && attachments.isEmpty) || _isAiResponding) {
       return;
@@ -638,7 +647,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _showOpenClawCommandPanel(expand: true);
       return;
     }
-    if (!await _ensureNormalChatModelConfigurationForSend()) return;
+    // The one model configuration check of a send. A retry checks before it
+    // clears the old round (so a missing model never drops it) and says so.
+    if (!modelConfigurationChecked &&
+        !await _ensureNormalChatModelConfigurationForSend()) {
+      return;
+    }
 
     _inputFocusNode.unfocus();
     final retainedUserMessageIndex = retainedUserMessageId == null

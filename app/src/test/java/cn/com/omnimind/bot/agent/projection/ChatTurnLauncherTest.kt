@@ -214,6 +214,29 @@ class ChatTurnLauncherTest {
         assertFalse(runtime().isAiResponding)
     }
 
+    @Test
+    fun `an advertised review command is an ordinary prompt that ends its run`() = runBlocking {
+        // 5d-0c: the page called review/start, dropped the result, and only a
+        // PromptResponse ends a run, so the page stayed responding.
+        val outcome = launcher.launchTurn(request(text = "/review", existingSessionId = "kept"))
+        assertEquals(ChatTurnOutcome.Status.Completed, outcome.status)
+        assertEquals(listOf("session/prompt"), methods())
+        assertEquals("/review", argsOf("session/prompt")["text"])
+        assertFalse(runtime().isAiResponding)
+        assertFalse(coordinator.isTaskActive(TASK, CONVERSATION, CHAT_RUNTIME_MODE_AGENT))
+    }
+
+    @Test
+    fun `a retry keeps its user row and starts a new run`() = runBlocking {
+        coordinator.insertRuntimeMessage(CONVERSATION, CHAT_RUNTIME_MODE_AGENT, userRow("你好"))
+        val retry = ChatTurnIds.forRetry("1-user", 2L)
+        val outcome = launcher.launchTurn(request(userMessage = null).copy(taskId = retry.taskId))
+        assertEquals(ChatTurnOutcome.Status.Completed, outcome.status)
+        assertEquals("2-ai", argsOf("session/prompt")["requestId"])
+        assertEquals(listOf("1-user"), runtime().messages.filter { it.user == 1 }.map { it.id })
+        assertFalse(runtime().isAiResponding)
+    }
+
     private companion object {
         const val CONVERSATION = 501
         const val OTHER = 502
