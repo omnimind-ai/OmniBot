@@ -252,13 +252,64 @@ adapter could not absorb it without a second writer:
 | 5a | Move `AgentEventReducer` + `ChatConversationRuntimeCoordinator`(+parts) + `ChatConversationRuntimeState` + event helpers (`agent_message_kinds`, tool/diff parsers, identity, stream-meta, acp extension registry) into app-module Kotlin behind the 5a-0 command/view/routing API, emitting immutable UI snapshots; the Dart coordinator becomes a thin adapter implementing `ChatRuntimeView` from snapshots, forwarding commands over a channel and pushing the routing context. TTS side effects and the persistence tail chain move with the owner. Parsers still imported by Dart cards stay in Dart for rendering only until 5c. | Dart has no second reducer/coordinator; the existing Dart reducer/coordinator tests are ported to Kotlin unit tests and pass. Commands that return values to the page (`bindAcpSession`, `isTaskActive`, `applyAcpPromptResponse`, …) become async; their call ordering in send/cancel must be reviewed with 5b. Atomic — a partial move creates the forbidden second reducer. Highest-risk slice and prerequisite for everything below. |
 | 5b | Prompt admission: `_sendAgentMessage`/`_sendPureChatMessage`/`_prepareAcpSessionForTurn`/harness-switch barrier/cancel become a native `ChatPromptDispatcher`; the composer emits intents only. | `session/prompt` admission, `respondToServerRequest` and `$/cancel_request` have a single native entry; idle/busy states come from the 5a snapshot. Atomic for the same reason. |
 | 5c | Message rendering in Compose: run timeline, MessageBubble, card family (tool summary/transcript/diff/request cards/deep thinking/plan), message list, run groups, tool activity strip. | Same fixture renders identically in Flutter and Compose; approval buttons call the 5b response entry. Card kinds may be split further for pixel comparison. |
-| 5d | Composer in Compose: ChatInputArea family + state machine + attachments + agent menus + context-usage ring; send button calls the 5b intent. | Keyboard/popup/expand animations aligned; slash-command panel works. Manual recording and omniflow tooling may stay Flutter behind compatibility entries. |
+| 5d | (Preceded by 5d-0, see below.) Composer in Compose: ChatInputArea family + state machine + attachments + agent menus + context-usage ring; send button calls the 5b intent. | Keyboard/popup/expand animations aligned; slash-command panel works. Manual recording and omniflow tooling may stay Flutter behind compatibility entries. |
 | 5e | Page shell: ChatPage lifecycle/bootstrap/target resolution, app bar (agent switching uses the existing native `agent/select`), drawer embedding, browser overlay, HD tablet layout, remote workspace panel. | The native home agent selector placeholder connects to the real switcher; the `/home/chat` compatibility route retires. |
 | 5f | Retirement: delete the Flutter chat routes/part files and obsolete channel methods; decide CommandOverlay/ChatBotSheet ownership. | No chat functionality left in the Flutter engine; feeds batch 6. |
 
 May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
+
+## Batch 5d-0 plan: native turn launcher (2026-10-06; 5d-0a source complete)
+
+The 5b dispatcher takes ready-made `session/new` / `session/prompt`
+arguments. Building them is still Dart page code: three dispatch paths
+(`_sendAgentMessage`, `_sendPureChatMessage`, `_tryAgentFlow`) each freeze
+the target, admit the run, create the conversation, assemble the arguments
+and apply the session pointers afterwards, and `/review` bypasses the
+dispatcher entirely (`review/start`). A native composer has nothing to call
+until that moves, so 5d-0 precedes the Compose composer:
+
+| Slice | Scope |
+| --- | --- |
+| 5d-0a | Pure argument logic in Kotlin (`projection/ChatTurnArguments.kt`), unwired. |
+| 5d-0b | `ChatTurnLauncher`: one native `launchTurn` for the three paths (user row, admission, conversation creation, persistence, prepare/submit/release, error application); returns session/thread pointers. Atomic: no second send orchestration. Settings stay caller-frozen (Dart today, a native reader in 5d-1). Native conversation creation notifies Dart to adopt the id and refresh the drawer. |
+| 5d-0c | Pre-send guards (Harness switch barrier, per-target lock), retry / edited resend and `/review` through the launcher. |
+
+Legacy defects fixed in the move (each covered by a Kotlin test):
+
+1. Retry and edited resend skipped the Harness barrier and the submit lock
+   (could reach the old Agent or send twice). 5d-0c.
+2. `handleAgentError` applied errors to the *visible* runtime instead of the
+   dispatch target. 5d-0b.
+3. Session pointers were written before submit without a target check, so
+   a conversation switch could inherit the old session. 5d-0b.
+4. Pure chat re-read "the newest user message" after its awaits instead of
+   sending the submission. The launcher takes the submitted text and
+   attachments (`buildUserPromptText`). 5d-0a/b.
+5. The task-flow path did not filter `sendToModel: false` attachments; the
+   ACP adapter turns any readable path into a resource link, so excluded
+   files still reached the model. `modelAttachments` filters every path.
+   Verified in `LocalAcpRuntime` prompt block building. 5d-0a.
+6. Cleanups: the model configuration was checked up to three times per
+   send; the task-flow `handleAgentError` after a failed submit cannot fire
+   (the dispatcher already ended the run).
+
+### 5d-0a checkpoint (source complete, unwired)
+
+- `ChatTurnArguments.kt`: `newSessionArguments` / `promptSessionArguments`
+  (same keys, order and trimming as Dart; permission expands to the policy
+  triple), `AgentPermissionMode` (policy mapping + stored preference values
+  and legacy spellings), `agentModelSourceKey`, `selectAgentRequestModel`,
+  `ChatTurnIds` (`<ms>-user` / `<ms>-ai`, run id = request id),
+  `buildUserPromptText` and `modelAttachments`. The prompt text reuses the
+  adapter's `AgentAttachmentPromptSupport` (equivalent to Dart, plus UTF-16
+  sanitizing and `data:image/` detection) instead of a second copy; terminal
+  variables reuse `OmnibotTerminalEnvironment.loadUserVariables`.
+- Verification: `ChatTurnArgumentsTest` 10 (ports the argument / source /
+  model cases of `agent_runtime_service_test` and the prompt text rules,
+  plus fix 5); full `:app` unit suite 1491, 0 failures. Nothing calls the
+  new code yet; no Dart edits.
 
 ## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
 
