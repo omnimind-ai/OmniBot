@@ -3,13 +3,11 @@ package cn.com.omnimind.bot.agent.projection
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
  * Ports the argument, model-source and attachment cases of
- * ui/test/services/agent_runtime_service_test.dart and the prompt text rules
- * of `chat_dispatch_support.dart`, plus the 5d-0 attachment fix.
+ * ui/test/services/agent_runtime_service_test.dart, plus the 5d-0 attachment fix.
  */
 class ChatTurnArgumentsTest {
     @Test
@@ -116,22 +114,23 @@ class ChatTurnArgumentsTest {
     }
 
     @Test
-    fun `prompt text lists workspace paths, else non-image names`() {
-        assertEquals("hi", buildUserPromptText("hi", emptyList()))
+    fun `prompt text describes only the files the model reads by itself`() {
+        // Forwarded attachments are described by the adapter, never here too.
+        assertEquals("看看", buildUserPromptText("看看", listOf(mapOf("name" to "notes.md", "path" to "/sdcard/notes.md"))))
         assertEquals(
-            "看看\n已添加到 workspace，可通过以下路径读取：\n- a.md: /workspace/a.md",
-            buildUserPromptText("看看", listOf(mapOf("name" to "a.md", "promptPath" to "/workspace/a.md"))),
+            "看看\n已添加到 workspace，可通过以下路径读取：\n- big.zip: /workspace/big.zip",
+            buildUserPromptText(
+                "看看",
+                listOf(
+                    mapOf("name" to "screen.png", "path" to "/tmp/screen.png", "isImage" to true),
+                    mapOf("name" to "big.zip", "promptPath" to "/workspace/big.zip", "sendToModel" to false),
+                ),
+            ),
         )
-        // An excluded file is described by its path instead of being sent.
         assertEquals(
-            "已添加到 workspace，可通过以下路径读取：\n- big.zip: /sdcard/big.zip",
-            buildUserPromptText("", listOf(mapOf("path" to "/sdcard/big.zip", "sendToModel" to false))),
+            "已添加到 workspace，可通过以下路径读取：\n- x.bin: /sdcard/x.bin",
+            buildUserPromptText("", listOf(mapOf("path" to "/sdcard/x.bin", "sendToModel" to false))),
         )
-        assertEquals(
-            "看看\n已附加附件：notes.txt",
-            buildUserPromptText("看看", listOf(mapOf("name" to "notes.txt"), mapOf("name" to "p.png", "mimeType" to "image/png"))),
-        )
-        assertEquals("看看", buildUserPromptText("看看", listOf(mapOf("path" to "/tmp/shot.JPG?x=1"))))
     }
 
     @Test
@@ -140,6 +139,5 @@ class ChatTurnArgumentsTest {
         val excluded = mapOf("name" to "big.zip", "path" to "/sdcard/big.zip", "sendToModel" to false)
         val excludedAsString = mapOf("name" to "x.bin", "path" to "/sdcard/x.bin", "sendToModel" to "FALSE")
         assertEquals(listOf(keep), modelAttachments(listOf(keep, excluded, excludedAsString)))
-        assertTrue(buildUserPromptText("", listOf(excluded)).contains("/sdcard/big.zip"))
     }
 }

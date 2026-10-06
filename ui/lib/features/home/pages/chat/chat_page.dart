@@ -597,7 +597,21 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }
 
   ChatRuntimeView? get _activeRuntime => _runtimeForMode(_activeMode);
-  int _beginConversationTargetRequest() => ++_conversationTargetRequestId;
+  int _beginConversationTargetRequest() {
+    final generation = ++_conversationTargetRequestId;
+    // The native turn launcher reads this generation between its awaits, so
+    // a turn for a target the page left stops without calling back here.
+    unawaited(
+      ChatPromptDispatcher.instance.setSurfaceGeneration(
+        _chatPageSurfaceId,
+        generation,
+      ),
+    );
+    return generation;
+  }
+
+  /// Identity of this page in the native turn launcher's navigation fence.
+  String get _chatPageSurfaceId => 'chat-page-${identityHashCode(this)}';
   bool _isConversationTargetRequestCurrent(int requestId) =>
       mounted && requestId == _conversationTargetRequestId;
   @override
@@ -2232,24 +2246,20 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     String? retainedUserMessageId,
   });
 
-  Future<void> _sendChatMessage(String aiMessageId);
+  Future<void> _sendChatMessage(
+    String aiMessageId,
+    _ChatTurnSubmission submission,
+  );
 
-  Future<void> _sendPureChatMessage(String aiMessageId);
+  Future<void> _sendPureChatMessage(
+    String aiMessageId,
+    _ChatTurnSubmission submission,
+  );
 
   Future<bool> _handleExecutableTaskFlow(
     String aiMessageId,
-    String userMessageId,
+    _ChatTurnSubmission submission,
   );
-
-  Future<bool> _tryAgentFlow(
-    String aiMessageId,
-    String userMessageId, {
-    String? promptText,
-    List<Map<String, dynamic>>? attachmentsOverride,
-    String? requestIdOverride,
-  });
-
-  Future<List<Map<String, dynamic>>> _latestUserAttachments();
 
   void _onCancelTask();
 

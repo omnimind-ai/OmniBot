@@ -12,8 +12,8 @@ import cn.com.omnimind.bot.agent.AgentAttachmentPromptSupport
  * - `_AgentPermissionModePayload` (adapters/agent_runtime_config_parser.dart)
  *   and the stored permission preference (`chat_page_agent.dart`)
  * - `agentModelSourceKey` / `selectAgentRequestModel`
- * - the user prompt text and attachment rules of `chat_dispatch_support.dart`
- *   and `chat_page_conversation_flow.dart`
+ * - the attachment rules of `chat_dispatch_support.dart` and
+ *   `chat_page_conversation_flow.dart`
  *
  * Terminal environment variables are not here: `OmnibotTerminalEnvironment.
  * loadUserVariables` already normalizes them with the same rules.
@@ -165,28 +165,31 @@ data class ChatTurnIds(val userMessageId: String, val taskId: String) {
 // ---------------------------------------------------------------------------
 
 /**
- * The text a model receives for one submission: workspace paths of
- * attachments the model reads itself, otherwise the names of non-image
- * attachments. Delegates to the adapter's [AgentAttachmentPromptSupport],
- * which matches Dart `_buildMessageTextForModel` (and also sanitizes broken
- * UTF-16 and recognizes `data:image/` URLs).
+ * The text sent with a submission: the typed text plus the workspace paths of
+ * attachments the model reads by itself (`sendToModel: false`).
  *
- * It is built from the submitted text and attachments. The Dart pure-chat
- * path re-read "the newest user message" after its awaits; the launcher
- * passes the submission instead (5d-0 fix).
+ * Forwarded attachments are described by the ACP adapter, not here: Xiaowan
+ * builds its hint from the attachments it receives
+ * (`AgentAttachmentPromptSupport` in `OmniAgentExecutor`), and other Harnesses
+ * get resource links. The Dart pure-chat and task-flow paths sent
+ * `latestUserUtterance()`, which already described every attachment, so
+ * Xiaowan saw each file twice, once by name and once by path (5d-0 fix; the
+ * Agent path already sent the raw text).
  */
-fun buildUserPromptText(text: String, attachments: List<Map<String, Any?>>): String =
-    AgentAttachmentPromptSupport.buildUserMessageText(text, attachments)
+fun buildUserPromptText(text: String, attachments: List<Map<String, Any?>>): String {
+    val excluded = attachments.filterNot(AgentAttachmentPromptSupport::shouldSendAttachmentToModel)
+    return if (excluded.isEmpty()) text else AgentAttachmentPromptSupport.buildUserMessageText(text, excluded)
+}
 
 /**
- * Attachments forwarded to the ACP prompt: a `sendToModel: false` file is
- * referenced by path in [buildUserPromptText] and must not also be sent as
- * content.
+ * Attachments forwarded as ACP prompt content: a `sendToModel: false` file
+ * is referenced by path in [buildUserPromptText] and must not also be sent.
  *
- * Dart applied this filter only on the pure-chat path; the task-flow path
- * forwarded every attachment, and the ACP adapter turns any attachment with a
- * readable path into a resource link, so an excluded file still reached the
- * model. The launcher filters every path (5d-0 fix).
+ * Dart filtered only on the pure-chat path; the Agent and task-flow paths
+ * forwarded every attachment, and `LocalAcpRuntime` turns any attachment with
+ * a readable path into a resource link (an image into an image block), so an
+ * excluded file still reached the model. The launcher filters every path
+ * (5d-0 fix).
  */
 fun modelAttachments(attachments: List<Map<String, Any?>>): List<Map<String, Any?>> =
     attachments.filter(AgentAttachmentPromptSupport::shouldSendAttachmentToModel)

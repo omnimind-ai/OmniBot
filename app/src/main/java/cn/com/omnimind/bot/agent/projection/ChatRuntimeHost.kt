@@ -65,47 +65,48 @@ object ChatRuntimeHost {
 
     private var dispatcherInstance: ChatPromptDispatcher? = null
 
+    /** The single native send orchestration (batch 5d-0b). */
+    val launcher: ChatTurnLauncher
+        get() = launcherInstance ?: ChatTurnLauncher(coordinator, dispatcher).also { launcherInstance = it }
+
+    private var launcherInstance: ChatTurnLauncher? = null
+
     /**
-     * Runs one prompt-admission intent from the UI. The reply carries the
-     * target runtime's current snapshot, so an awaiting caller reads a mirror
-     * that includes the outcome.
+     * The navigation generation each UI surface currently shows. A surface
+     * bumps it whenever it moves to another conversation or Harness, so a
+     * turn admitted for an older generation stops between its awaits. Read
+     * natively: the launcher never calls back into the UI mid-turn.
      */
-    fun handleDispatchCommand(
-        method: String,
-        args: Map<String, Any?>,
-        reply: (Result<Map<String, Any?>>) -> Unit,
-    ) {
+    private val surfaceGenerations = HashMap<String, Long>()
+
+    fun setSurfaceGeneration(surfaceId: String, generation: Long) {
+        surfaceGenerations[surfaceId] = generation
+    }
+
+    private fun isSurfaceGenerationCurrent(surfaceId: String, generation: Long): Boolean =
+        surfaceGenerations[surfaceId] == generation
+
+    /**
+     * Launches one turn for a UI submission. The reply carries the
+     * [ChatTurnOutcome] and the target runtime's current snapshot.
+     */
+    fun handleLaunchTurn(args: Map<String, Any?>, reply: (Result<Map<String, Any?>>) -> Unit) {
         scope.launch {
             val outcome = runCatching {
-                val target = ChatPromptDispatcher.TurnTarget(
-                    taskId = dartToString(args["taskId"]) ?: error("taskId is required"),
-                    conversationId = asInt(args["conversationId"]) ?: error("conversationId is required"),
-                    mode = dartToString(args["mode"]) ?: error("mode is required"),
-                )
-                val result: Any? = when (method) {
-                    "prepareTurnSession" -> dispatcher.prepareTurnSession(
-                        target,
-                        existingSessionId = dartToString(args["existingSessionId"]),
-                        sessionArgs = copyStringMap(args["sessionArgs"]).orEmpty(),
-                        clearThinkingOnFailure = args["clearThinkingOnFailure"] == true,
-                    )
-                    "releaseTurnSession" -> dispatcher.releaseTurnSession(
-                        target,
-                        closeSessionId = dartToString(args["closeSessionId"]),
-                    ).let { null }
-                    "submitTurnPrompt" -> dispatcher.submitTurnPrompt(
-                        target,
-                        promptArgs = copyStringMap(args["promptArgs"]).orEmpty(),
-                        fallbackSessionId = dartToString(args["fallbackSessionId"]),
-                        conversation = copyStringMap(args["conversation"]),
-                        clearThinkingOnFailure = args["clearThinkingOnFailure"] == true,
-                    ).let { encodeDispatchResult(it) }
-                    else -> throw UnsupportedOperationException("Unknown dispatch command: $method")
+                val request = turnRequestFromChannel(args)
+                val surfaceId = dartToString(args["surfaceId"])?.trim().orEmpty()
+                val generation = asLong(args["generation"])
+                val fenced = surfaceId.isNotEmpty() && generation != null
+                // A surface that has not reported a move yet shows this target.
+                if (fenced) surfaceGenerations.putIfAbsent(surfaceId, generation!!)
+                val isTargetCurrent: () -> Boolean = {
+                    !fenced || isSurfaceGenerationCurrent(surfaceId, generation!!)
                 }
+                val result = launcher.launchTurn(request, isTargetCurrent)
                 coordinator.publishDirtySnapshots()
-                val snapshot = coordinator.snapshotFor(target.conversationId, target.mode)
+                val snapshot = coordinator.snapshotFor(request.conversationId, request.mode)
                 linkedMapOf(
-                    "result" to result,
+                    "result" to result.toChannel(),
                     "sync" to listOf(syncBatch(listOfNotNull(snapshot), emptyMap())),
                 )
             }
@@ -113,10 +114,29 @@ object ChatRuntimeHost {
         }
     }
 
-    private fun encodeDispatchResult(result: Map<String, Any?>): Map<String, Any?> =
-        LinkedHashMap(result).apply {
-            (get("result") as? AgentReduceResult)?.let { put("result", reduceResultToChannel(it)) }
-        }
+    private fun turnRequestFromChannel(args: Map<String, Any?>): ChatTurnRequest {
+        fun str(key: String): String? = dartToString(args[key])?.trim()?.ifEmpty { null }
+        return ChatTurnRequest(
+            taskId = str("taskId") ?: error("taskId is required"),
+            conversationId = asInt(args["conversationId"]) ?: error("conversationId is required"),
+            mode = str("mode") ?: error("mode is required"),
+            text = dartToString(args["text"]).orEmpty(),
+            attachments = (args["attachments"] as? List<*>).orEmpty().mapNotNull { copyStringMap(it) },
+            userMessage = copyStringMap(args["userMessage"])?.let(ChatMessage::fromJson),
+            existingSessionId = str("existingSessionId"),
+            agentId = str("agentId"),
+            permission = AgentPermissionMode.fromPreference(str("permissionMode")),
+            model = str("model"),
+            effort = str("effort"),
+            collaborationMode = str("collaborationMode"),
+            conversationMode = str("conversationMode"),
+            terminalEnvironment = copyStringMap(args["terminalEnvironment"])
+                ?.mapNotNull { (key, value) -> dartToString(value)?.let { key to it } }
+                ?.toMap(LinkedHashMap()),
+            conversation = copyStringMap(args["conversation"]),
+            clearThinkingOnFailure = args["clearThinkingOnFailure"] == true,
+        )
+    }
 
     private fun createCoordinator(): ChatConversationRuntimeCoordinator {
         val context = checkNotNull(appContext) { "ChatRuntimeHost.initialize was not called" }
@@ -456,6 +476,7 @@ object ChatRuntimeHost {
             }
             "resync" -> resync(conversationId, mode).also { capture?.add(it) }.let { null }
             "invalidateVoiceAvailability" -> invalidateVoiceAvailability().let { null }
+            "setSurfaceGeneration" -> setSurfaceGeneration(str("surfaceId"), asLong(args["generation"]) ?: 0L).let { null }
             else -> throw UnsupportedOperationException("Unknown chat runtime command: $method")
         }
     }

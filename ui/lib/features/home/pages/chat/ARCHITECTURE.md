@@ -30,11 +30,14 @@ optional runtime through a read-only `ChatRuntimeView`.
    declarative `ChatRuntimeRoutingContext` (sent natively whenever it
    changes), and receive one `ChatRuntimeEventOutcome` per applied event.
    Never add event reduction or runtime state on the Dart side.
-   Prompt admission (batch 5b) goes through `ChatPromptDispatcher`
-   (`chat_prompt_dispatcher.dart`, native owner of the same name): pages
-   reserve the session with `prepareTurnSession`, check their own navigation
-   target, then `submitTurnPrompt`. Pages never call `session/new` or
-   `session/prompt` themselves.
+   Every chat send goes through `ChatPromptDispatcher.launchTurn`
+   (`chat_prompt_dispatcher.dart`; native `ChatTurnLauncher`, batch 5d-0b):
+   pages freeze their per-turn settings and pass the submitted text and
+   attachments; the launcher admits, persists, reserves the session and
+   prompts natively, and stops on its own when the page's navigation
+   generation (`setSurfaceGeneration`) moves on. Pages adopt the returned
+   pointers only when `targetCurrent` is true. Pages never call
+   `session/new` or `session/prompt` themselves.
 4. `adapters/` converts remote Agent/Codex payloads into app models. Raw
    protocol traversal and compatibility aliases belong there, not in widgets
    or page lifecycle code.

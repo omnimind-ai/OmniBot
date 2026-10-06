@@ -50,6 +50,17 @@ const String _kAgentPermissionFullAccessIconAsset =
 
 enum AgentPermissionMode { readOnly, defaultMode, autoReview, fullAccess }
 
+extension AgentPermissionModePreference on AgentPermissionMode {
+  /// Stored preference value, also how a turn names its permission to the
+  /// native launcher (`AgentPermissionMode.fromPreference` in Kotlin).
+  String get preferenceValue => switch (this) {
+    AgentPermissionMode.readOnly => 'read-only',
+    AgentPermissionMode.defaultMode => 'workspace-write',
+    AgentPermissionMode.autoReview => 'auto-review',
+    AgentPermissionMode.fullAccess => 'full-access',
+  };
+}
+
 typedef AgentRunSettingsChanged =
     FutureOr<void> Function({String? modelId, String? reasoningEffort});
 

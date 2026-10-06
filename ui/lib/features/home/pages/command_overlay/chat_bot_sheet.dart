@@ -101,6 +101,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   bool _closeRequested = false;
   bool _cancelRequested = false;
   bool _acpCloseStarted = false;
+  int _acpTurnGeneration = 0;
   ChatRuntimeEventHost? _acpRuntimeEventHost;
   final ChatConversationRuntimeCoordinator _runtimeCoordinator =
       ChatConversationRuntimeCoordinator.instance;
@@ -667,6 +668,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   void _onDialogClose() {
     _closeRequested = true;
+    _fenceAcpTurn();
     final hasLiveTurn = _hasLiveAcpTurn;
     unawaited(_closeAcpLifecycle());
     // Closing the presentation is not proof that an ACP turn completed. A
@@ -713,6 +715,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   @override
   void dispose() {
     _closeRequested = true;
+    _fenceAcpTurn();
     unawaited(_closeAcpLifecycle());
     WidgetsBinding.instance.removeObserver(this);
     HomeGreetingSettingsService.notifier.removeListener(
@@ -751,11 +754,18 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   /// state. If close races session creation, `_tryAgentFlow` repeats this
   /// check after `session/new` and closes the session there.
   Future<void> _closeAcpLifecycle() async {
-    final sessionId = _acpSessionId?.trim();
     final conversationId = _currentConversationId;
     if (conversationId == null) {
       return;
     }
+    // The native launcher binds the session before the prompt; the runtime
+    // knows it before this sheet does.
+    final sessionId =
+        _runtimeCoordinator
+            .runtimeFor(conversationId: conversationId, mode: _runtimeMode)
+            ?.activeAcpSessionId
+            ?.trim() ??
+        _acpSessionId?.trim();
     if (_acpCloseStarted) return;
     _acpCloseStarted = true;
     if (sessionId != null && sessionId.isNotEmpty) {
@@ -782,10 +792,16 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   /// state; the cancellation acknowledgement cannot end the turn.
   Future<void> _finishAcpCancellationPresentation() async {
     try {
+      final runtime = _currentConversationId == null
+          ? null
+          : _runtimeCoordinator.runtimeFor(
+              conversationId: _currentConversationId!,
+              mode: _runtimeMode,
+            );
       await AgentRuntimeService.cancelPrompt(
-        sessionId: _acpSessionId,
+        sessionId: runtime?.activeAcpSessionId ?? _acpSessionId,
         conversationId: _currentConversationId,
-        promptId: _acpPromptId,
+        promptId: runtime?.activeAcpTurnId ?? _acpPromptId,
         runId: _currentDispatchTurnId,
       );
     } catch (error) {
@@ -1182,13 +1198,14 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     }
 
     if (_openClawEnabled) {
-      _sendChatMessage(messageIds.aiMessageId);
+      _sendChatMessage(messageIds.aiMessageId, messageText, attachments);
       return;
     }
 
     final handled = await _handleExecutableTask(
       messageIds.aiMessageId,
-      messageIds.userMessageId,
+      messageText,
+      attachments,
     );
     if (!handled &&
         mounted &&
@@ -1292,53 +1309,55 @@ class _ChatBotSheetState extends State<ChatBotSheet>
 
   Future<bool> _handleExecutableTask(
     String aiMessageId,
-    String userMessageId,
+    String text,
+    List<Map<String, dynamic>> attachments,
   ) async {
     _isCheckingExecutableTask = true;
     try {
-      return await _tryAgentFlow(aiMessageId, userMessageId);
+      return await _tryAgentFlow(aiMessageId, text, attachments);
     } finally {
       _isCheckingExecutableTask = false;
     }
   }
 
-  // 新增：Agent 流程
-  Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId) async {
+  /// The command overlay's turn through the native launcher (batch 5d-0b).
+  /// The sheet's own runtime is ephemeral, so nothing is persisted here; the
+  /// launcher stops on its own when the sheet closes or cancels.
+  Future<bool> _tryAgentFlow(
+    String aiMessageId,
+    String text,
+    List<Map<String, dynamic>> attachments,
+  ) async {
     final conversationId = _currentConversationId;
+    if (conversationId == null) {
+      debugPrint('Agent flow error: conversationId is not ready');
+      return false;
+    }
+    setState(() => _currentDispatchTurnId = aiMessageId);
+    _cancelRequested = false;
+    // A stop before this turn released its own (absent) session; this run
+    // owns whatever session the launcher reserves.
+    _acpCloseStarted = false;
+    final generation = ++_acpTurnGeneration;
+    await ChatPromptDispatcher.instance.setSurfaceGeneration(
+      _acpSurfaceId,
+      generation,
+    );
+    _runtimeCoordinator.ensureEphemeralRuntime(
+      conversationId: conversationId,
+      mode: _runtimeMode,
+      initialMessages: _messages,
+      conversation: _currentConversation,
+    );
+    _runtimeCoordinator.replaceConversationSnapshot(
+      conversationId: conversationId,
+      mode: _runtimeMode,
+      messages: _messages,
+      conversation: _currentConversation,
+      isAiResponding: true,
+      currentDispatchTurnId: aiMessageId,
+    );
     try {
-      setState(() {
-        _currentDispatchTurnId = aiMessageId;
-      });
-      _cancelRequested = false;
-
-      final userMessage = _latestUserUtterance();
-      final attachments = _latestUserAgentAttachments();
-      if (conversationId == null) {
-        throw StateError('conversationId is not ready');
-      }
-      _runtimeCoordinator.ensureEphemeralRuntime(
-        conversationId: conversationId,
-        mode: _runtimeMode,
-        initialMessages: _messages,
-        conversation: _currentConversation,
-      );
-      _runtimeCoordinator.replaceConversationSnapshot(
-        conversationId: conversationId,
-        mode: _runtimeMode,
-        messages: _messages,
-        conversation: _currentConversation,
-        isAiResponding: true,
-        currentDispatchTurnId: aiMessageId,
-      );
-      // The command overlay is another ACP entry point, not a separate
-      // lifecycle. Admit the logical turn through the shared coordinator
-      // before any status/session await so early events and failure cleanup
-      // have one task binding.
-      _runtimeCoordinator.beginAcpTurn(
-        taskId: aiMessageId,
-        conversationId: conversationId,
-        mode: _runtimeMode,
-      );
       var status = await AgentRuntimeService.status();
       if (!_canContinueAcpTurn(aiMessageId)) return false;
       if (!status.connected) {
@@ -1354,113 +1373,75 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           .where((item) => item.sceneId == 'scene.dispatch.model')
           .firstOrNull;
       if (!_canContinueAcpTurn(aiMessageId)) return false;
-      // ACP separates session ownership from prompt execution. Reserve the
-      // session first so cancellation and late-event attribution have a
-      // stable official identity before the potentially long prompt call.
-      final prepared = await ChatPromptDispatcher.instance.prepareTurnSession(
+      final outcome = await ChatPromptDispatcher.instance.launchTurn(
         taskId: aiMessageId,
         conversationId: conversationId,
         mode: _runtimeMode,
-        existingSessionId: null,
-        sessionArgs: AgentRuntimeService.newSessionArguments(
-          conversationId: conversationId,
-          model: dispatchScene?.effectiveModel.trim(),
-          conversationMode: ConversationMode.agent.storageValue,
-        ),
-      );
-      if (!prepared.isReady) {
-        // `failed` is already projected as this run's PromptResponse;
-        // `abandoned` released (and closed) the reservation natively.
-        if (prepared.status == 'failed') {
-          _syncAcpRuntimePresentation(conversationId);
-        }
-        return false;
-      }
-      _acpSessionId = prepared.sessionId;
-      // A stop may have arrived while session/new was pending. Its earlier
-      // cleanup did not own this newly returned session.
-      _acpCloseStarted = false;
-      if (!_canContinueAcpTurn(aiMessageId)) {
-        await _closeAcpLifecycle();
-        return false;
-      }
-
-      final outcome = await ChatPromptDispatcher.instance.submitTurnPrompt(
-        taskId: aiMessageId,
-        conversationId: conversationId,
-        mode: _runtimeMode,
-        fallbackSessionId: _acpSessionId,
+        surfaceId: _acpSurfaceId,
+        generation: generation,
+        text: text,
+        attachments: attachments,
+        agentId: status.activeAgentId,
+        model: dispatchScene?.effectiveModel.trim(),
+        conversationMode: ConversationMode.agent.storageValue,
         conversation: _currentConversation,
-        promptArgs: AgentRuntimeService.promptSessionArguments(
-          sessionId: _acpSessionId,
-          conversationId: conversationId,
-          requestId: aiMessageId,
-          agentId: status.activeAgentId,
-          text: userMessage,
-          attachments: attachments,
-          model: dispatchScene?.effectiveModel.trim(),
-          conversationMode: ConversationMode.agent.storageValue,
-        ),
       );
-      final response = outcome.response;
-      final responseSessionId =
-          (response['sessionId'] ?? response['threadId'] ?? _acpSessionId)
-              ?.toString()
-              .trim();
-      final responsePromptId = (response['promptId'] ?? response['turnId'])
-          ?.toString()
-          .trim();
-      if (outcome.result.handled) {
-        if (outcome.completed) {
-          _acpSessionId = responseSessionId;
-          _acpPromptId = responsePromptId;
-        }
-        _syncAcpRuntimePresentation(conversationId);
+      if (outcome.targetCurrent) {
+        _acpSessionId = outcome.sessionId ?? _acpSessionId;
+        if (outcome.completed) _acpPromptId = outcome.turnId;
+      } else if (outcome.status == 'rejected') {
+        // The sheet closed or cancelled while the session was reserved.
+        await _closeAcpLifecycle();
       }
+      _syncAcpRuntimePresentation(conversationId);
       return outcome.completed;
     } catch (e) {
-      final conversationId = _currentConversationId;
-      final runtime = conversationId == null
-          ? null
-          : _runtimeCoordinator.runtimeFor(
-              conversationId: conversationId,
-              mode: _runtimeMode,
-            );
-      if (conversationId != null && runtime?.isAiResponding == true) {
-        final result = await _runtimeCoordinator.applyAcpPromptResponse(
+      final runtime = _runtimeCoordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: _runtimeMode,
+      );
+      if (runtime?.isAiResponding == true) {
+        await _runtimeCoordinator.applyAcpPromptResponse(
           taskId: aiMessageId,
           conversationId: conversationId,
           mode: _runtimeMode,
-          sessionId: runtime?.activeAcpSessionId ?? _acpSessionId,
-          turnId: runtime?.activeAcpTurnId ?? _acpPromptId,
+          sessionId: runtime?.activeAcpSessionId,
+          turnId: runtime?.activeAcpTurnId,
           stopReason: 'error',
           error: e.toString(),
           conversation: _currentConversation,
         );
-        if (result.handled) {
-          _syncAcpRuntimePresentation(conversationId);
-        }
+        _syncAcpRuntimePresentation(conversationId);
       }
       debugPrint('Agent flow error: $e');
       return false;
     } finally {
-      if (conversationId != null) {
-        // If preparation stopped before session/prompt, there is no ACP
-        // PromptResponse to await. Release only this host reservation. For
-        // submitted prompts, the response/error above has already reduced it.
-        // The presentation sync below reads the runtime: wait until the
-        // native owner's release is mirrored.
-        await _runtimeCoordinator.unregisterTask(
-          aiMessageId,
-          conversationId: conversationId,
-          mode: _runtimeMode,
-        );
-        if (_currentDispatchTurnId == aiMessageId) {
-          _syncAcpRuntimePresentation(conversationId);
-        }
+      // A run that stopped before its prompt has no PromptResponse to wait
+      // for; release only this host reservation (a no-op once the launcher
+      // or the response already did).
+      await _runtimeCoordinator.unregisterTask(
+        aiMessageId,
+        conversationId: conversationId,
+        mode: _runtimeMode,
+      );
+      if (_currentDispatchTurnId == aiMessageId) {
+        _syncAcpRuntimePresentation(conversationId);
       }
     }
   }
+
+  /// Fences the native launcher: any close or cancel moves the sheet off
+  /// the generation its turn was launched for.
+  void _fenceAcpTurn() {
+    unawaited(
+      ChatPromptDispatcher.instance.setSurfaceGeneration(
+        _acpSurfaceId,
+        ++_acpTurnGeneration,
+      ),
+    );
+  }
+
+  String get _acpSurfaceId => 'chat-bot-sheet-${identityHashCode(this)}';
 
   bool _canContinueAcpTurn(String taskId) =>
       mounted &&
@@ -1528,101 +1509,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     if (!runtime.isAiResponding) {
       unawaited(_saveConversationToDb());
     }
-  }
-
-  String _latestUserUtterance() {
-    for (final message in _messages) {
-      if (message.user == 1) {
-        final text = _buildMessageTextForModel(message);
-        if (text.isNotEmpty) {
-          return text;
-        }
-      }
-    }
-    return '';
-  }
-
-  List<Map<String, dynamic>> _latestUserAgentAttachments() {
-    for (final message in _messages) {
-      if (message.user != 1) continue;
-      final raw = message.content?['attachments'];
-      if (raw is! List) return const [];
-      return raw
-          .whereType<Map>()
-          .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
-          .where(_attachmentShouldSendToModel)
-          .toList();
-    }
-    return const [];
-  }
-
-  bool _attachmentShouldSendToModel(Map<String, dynamic> attachment) {
-    final raw = attachment['sendToModel'];
-    if (raw is bool) return raw;
-    if (raw is String) return raw.toLowerCase() != 'false';
-    return true;
-  }
-
-  String _buildMessageTextForModel(ChatMessageModel message) {
-    final text = message.content?['text'] as String? ?? '';
-    final attachments = _extractAttachmentList(message);
-    if (attachments.isEmpty) return text;
-
-    final pathHint = _buildAttachmentPathHint(attachments);
-    if (pathHint.isNotEmpty) {
-      if (text.trim().isEmpty) return pathHint;
-      return '$text\n$pathHint';
-    }
-
-    final names = attachments
-        .where((attachment) => !_isImageAttachmentMap(attachment))
-        .map(_resolveAttachmentName)
-        .where((name) => name.trim().isNotEmpty)
-        .map((name) => name.trim())
-        .toList();
-    if (names.isEmpty) return text;
-    final attachmentHint = '已附加附件：${names.join('、')}';
-    if (text.trim().isEmpty) return attachmentHint;
-    return '$text\n$attachmentHint';
-  }
-
-  List<Map<String, dynamic>> _extractAttachmentList(ChatMessageModel message) {
-    final raw = message.content?['attachments'];
-    if (raw is! List) return const [];
-    return raw
-        .whereType<Map>()
-        .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
-        .toList();
-  }
-
-  String _buildAttachmentPathHint(List<Map<String, dynamic>> attachments) {
-    final lines = attachments
-        .map((attachment) {
-          final promptPath = (attachment['promptPath'] as String? ?? '').trim();
-          if (promptPath.isEmpty) return '';
-          final name = _resolveAttachmentName(attachment);
-          return name.isEmpty ? '- $promptPath' : '- $name: $promptPath';
-        })
-        .where((line) => line.isNotEmpty)
-        .toList();
-    if (lines.isEmpty) return '';
-    return '已添加到 workspace，可通过以下路径读取：\n${lines.join('\n')}';
-  }
-
-  String _resolveAttachmentName(Map<String, dynamic> attachment) {
-    final name = (attachment['name'] as String? ?? '').trim();
-    if (name.isNotEmpty) return name;
-    final path = (attachment['path'] as String? ?? '').trim();
-    return path.isEmpty ? '' : _fileNameFromPath(path);
-  }
-
-  bool _isImageAttachmentMap(Map<String, dynamic> attachment) {
-    final explicit = attachment['isImage'];
-    if (explicit is bool && explicit) return true;
-    final mimeType = (attachment['mimeType'] as String? ?? '').toLowerCase();
-    if (mimeType.startsWith('image/')) return true;
-    final path = (attachment['path'] as String? ?? '').toLowerCase();
-    return _isImageFilePath(path, mimeType: mimeType);
   }
 
   Future<void> _pickAttachments() async {
@@ -1760,9 +1646,13 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     }
   }
 
-  void _sendChatMessage(String aiMessageId) {
+  void _sendChatMessage(
+    String aiMessageId,
+    String text,
+    List<Map<String, dynamic>> attachments,
+  ) {
     unawaited(
-      _tryAgentFlow(aiMessageId, '').then((success) {
+      _tryAgentFlow(aiMessageId, text, attachments).then((success) {
         if (!success &&
             mounted &&
             !_closeRequested &&
@@ -1803,6 +1693,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   void _onCancelTask() {
     if (_cancelRequested) return;
     _cancelRequested = true;
+    _fenceAcpTurn();
     unawaited(_finishAcpCancellationPresentation());
   }
 

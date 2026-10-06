@@ -1,60 +1,61 @@
 part of 'chat_conversation_runtime_coordinator.dart';
 
-/// Outcome of reserving the ACP session for an admitted local run.
-class ChatTurnSession {
-  const ChatTurnSession._(this.status, this.sessionId, this.created);
+/// Outcome of one native [ChatPromptDispatcher.launchTurn] (batch 5d-0b).
+class ChatTurnLaunchOutcome {
+  const ChatTurnLaunchOutcome._({
+    required this.status,
+    this.rejectedReason,
+    this.sessionId,
+    this.threadId,
+    this.turnId,
+    this.responseConversationId,
+    this.targetCurrent = false,
+  });
 
-  factory ChatTurnSession._fromChannel(dynamic raw) {
+  factory ChatTurnLaunchOutcome._fromChannel(dynamic raw) {
     final map = raw is Map ? raw : const <dynamic, dynamic>{};
-    final sessionId = map['sessionId']?.toString().trim();
-    return ChatTurnSession._(
-      map['status']?.toString() ?? 'failed',
-      sessionId == null || sessionId.isEmpty ? null : sessionId,
-      map['created'] == true,
+    String? text(String key) {
+      final value = map[key]?.toString().trim();
+      return value == null || value.isEmpty ? null : value;
+    }
+
+    final rawConversationId = map['responseConversationId'];
+    return ChatTurnLaunchOutcome._(
+      status: text('status') ?? 'failed',
+      rejectedReason: text('rejectedReason'),
+      sessionId: text('sessionId'),
+      threadId: text('threadId'),
+      turnId: text('turnId'),
+      responseConversationId: rawConversationId is num
+          ? rawConversationId.toInt()
+          : int.tryParse(rawConversationId?.toString() ?? ''),
+      targetCurrent: map['targetCurrent'] == true,
     );
   }
 
-  /// `ready`, `abandoned` (the run lost ownership) or `failed` (the error is
-  /// already applied to the runtime as this run's PromptResponse).
+  /// `completed`, `failed` (already projected as this run's PromptResponse)
+  /// or `rejected` (never sent; see [rejectedReason]).
   final String status;
+  final String? rejectedReason;
+
+  /// Pointers are null when the submitting target is no longer current.
   final String? sessionId;
+  final String? threadId;
+  final String? turnId;
+  final int? responseConversationId;
+  final bool targetCurrent;
 
-  /// Whether `session/new` created [sessionId] for this run.
-  final bool created;
-
-  bool get isReady => status == 'ready' && sessionId != null;
+  bool get completed => status == 'completed';
 }
 
-/// Outcome of one `session/prompt` handled by the native dispatcher.
-class ChatTurnPromptOutcome {
-  const ChatTurnPromptOutcome._(this.completed, this.response, this.result);
-
-  factory ChatTurnPromptOutcome._fromChannel(dynamic raw) {
-    final map = raw is Map ? raw : const <dynamic, dynamic>{};
-    final response = _ChatRuntimeMirror._asMap(map['response']);
-    return ChatTurnPromptOutcome._(
-      map['status'] == 'completed',
-      response ?? const <String, dynamic>{},
-      AgentReduceResult.fromChannel(map['result']),
-    );
-  }
-
-  /// False when the transport failed; the failure is already projected.
-  final bool completed;
-
-  /// The official PromptResponse payload (thread/session/turn pointers).
-  final Map<String, dynamic> response;
-  final AgentReduceResult result;
-}
-
-/// Flutter intents for the native prompt dispatcher (batch 5b).
+/// Flutter intents for the native prompt dispatcher.
 ///
-/// Prompt admission has one native entry: the dispatcher reserves the ACP
-/// session, sends `session/prompt` and applies the official PromptResponse
-/// or transport error through the native coordinator. Pages build the
-/// arguments, check their own navigation target between the two steps, and
-/// read the result from the runtime snapshot. They never call the ACP
-/// transport for prompts.
+/// Every chat send is one [launchTurn] (batch 5d-0b): the native turn
+/// launcher admits the run, persists the admission snapshot, reserves the ACP
+/// session, sends `session/prompt` and applies the PromptResponse or error
+/// through the native coordinator. Pages freeze their per-turn settings,
+/// publish their navigation generation ([setSurfaceGeneration]) and adopt
+/// the returned pointers. They never call the ACP transport for prompts.
 class ChatPromptDispatcher {
   ChatPromptDispatcher._(this._coordinator);
 
@@ -64,62 +65,60 @@ class ChatPromptDispatcher {
 
   final ChatConversationRuntimeCoordinator _coordinator;
 
-  Future<ChatTurnSession> prepareTurnSession({
-    required String taskId,
-    required int conversationId,
-    required String mode,
-    required String? existingSessionId,
-    required Map<String, dynamic> sessionArgs,
-    bool clearThinkingOnFailure = false,
-  }) async {
-    final result = await _coordinator._invoke(
-      'prepareTurnSession',
-      <String, dynamic>{
-        ..._coordinator._target(conversationId, mode),
-        'taskId': taskId,
-        'existingSessionId': existingSessionId,
-        'sessionArgs': sessionArgs,
-        'clearThinkingOnFailure': clearThinkingOnFailure,
-      },
-    );
-    return ChatTurnSession._fromChannel(result);
-  }
-
-  /// Releases a reservation whose page target moved on before its prompt;
-  /// closes [closeSessionId] when the reservation created it.
-  Future<void> releaseTurnSession({
-    required String taskId,
-    required int conversationId,
-    required String mode,
-    String? closeSessionId,
-  }) async {
-    await _coordinator._invoke('releaseTurnSession', <String, dynamic>{
-      ..._coordinator._target(conversationId, mode),
-      'taskId': taskId,
-      'closeSessionId': ?closeSessionId,
+  /// Publishes the navigation generation a surface shows. A turn launched
+  /// for an older generation stops natively between its awaits.
+  Future<void> setSurfaceGeneration(String surfaceId, int generation) async {
+    await _coordinator._invoke('setSurfaceGeneration', <String, dynamic>{
+      'surfaceId': surfaceId,
+      'generation': generation,
     });
   }
 
-  Future<ChatTurnPromptOutcome> submitTurnPrompt({
+  /// Sends one admitted submission through the native turn launcher
+  /// (batch 5d-0b): user row, admission, persistence, session reservation,
+  /// prompt and failure projection happen natively. The caller passes its
+  /// frozen per-turn settings and applies the returned pointers.
+  Future<ChatTurnLaunchOutcome> launchTurn({
     required String taskId,
     required int conversationId,
     required String mode,
-    required Map<String, dynamic> promptArgs,
-    String? fallbackSessionId,
+    required String text,
+    required String surfaceId,
+    required int generation,
+    List<Map<String, dynamic>> attachments = const <Map<String, dynamic>>[],
+    ChatMessageModel? userMessage,
+    String? existingSessionId,
+    String? agentId,
+    String? permissionMode,
+    String? model,
+    String? effort,
+    String? collaborationMode,
+    String? conversationMode,
+    Map<String, String>? terminalEnvironment,
     ConversationModel? conversation,
     bool clearThinkingOnFailure = false,
   }) async {
-    final result = await _coordinator._invoke(
-      'submitTurnPrompt',
-      <String, dynamic>{
-        ..._coordinator._target(conversationId, mode),
-        'taskId': taskId,
-        'promptArgs': promptArgs,
-        'fallbackSessionId': fallbackSessionId,
-        if (conversation != null) 'conversation': conversation.toJson(),
-        'clearThinkingOnFailure': clearThinkingOnFailure,
-      },
-    );
-    return ChatTurnPromptOutcome._fromChannel(result);
+    final result = await _coordinator._invoke('launchTurn', <String, dynamic>{
+      ..._coordinator._target(conversationId, mode),
+      'taskId': taskId,
+      'text': text,
+      'surfaceId': surfaceId,
+      'generation': generation,
+      if (attachments.isNotEmpty) 'attachments': attachments,
+      if (userMessage != null) 'userMessage': userMessage.toJson(),
+      'existingSessionId': ?existingSessionId,
+      'agentId': ?agentId,
+      'permissionMode': ?permissionMode,
+      'model': ?model,
+      'effort': ?effort,
+      'collaborationMode': ?collaborationMode,
+      'conversationMode': ?conversationMode,
+      if (terminalEnvironment != null && terminalEnvironment.isNotEmpty)
+        'terminalEnvironment': terminalEnvironment,
+      if (conversation != null) 'conversation': conversation.toJson(),
+      'clearThinkingOnFailure': clearThinkingOnFailure,
+    });
+    return ChatTurnLaunchOutcome._fromChannel(result);
   }
+
 }

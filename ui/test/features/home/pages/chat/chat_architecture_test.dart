@@ -176,12 +176,12 @@ void main() {
       final source = File(
         '$chatRoot/chat_page_conversation_flow.dart',
       ).readAsStringSync();
-      final send = source
-          .split('Future<void> _sendPureChatMessage(')
+      final launch = source
+          .split('Future<bool> _launchNormalTurn(')
           .last
-          .split('Future<bool> _handleExecutableTaskFlow(')
+          .split('\n  }\n')
           .first;
-      final handler = send.substring(send.lastIndexOf('} catch (error) {'));
+      final handler = launch.substring(launch.lastIndexOf('} catch (error) {'));
       expect(handler, contains('_runtimeCoordinator.applyAcpPromptResponse('));
       expect(handler, isNot(contains('_messages.insert(')));
       expect(handler, isNot(contains('ChatMessageModel(')));
@@ -328,23 +328,6 @@ void main() {
     },
   );
 
-  test('command overlay admits ACP turns through the shared coordinator', () {
-    final source = File(
-      'lib/features/home/pages/command_overlay/chat_bot_sheet.dart',
-    ).readAsStringSync();
-    final flowStart = source.indexOf(
-      'Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId)',
-    );
-    final flowEnd = source.indexOf(
-      '\n  ChatRuntimeRoutingContext? _acpRuntimeRoutingContext(',
-      flowStart,
-    );
-    expect(flowStart, greaterThanOrEqualTo(0));
-    expect(flowEnd, greaterThan(flowStart));
-    final flowBody = source.substring(flowStart, flowEnd);
-    expect(flowBody, contains('_runtimeCoordinator.beginAcpTurn('));
-  });
-
   test('new ACP entry points have one coordinator admission boundary', () {
     final agentSource = File(
       'lib/features/home/pages/chat/chat_page_agent.dart',
@@ -364,63 +347,11 @@ void main() {
     );
   });
 
-  test('command overlay reserves an ACP session before starting a prompt', () {
-    final source = File(
-      'lib/features/home/pages/command_overlay/chat_bot_sheet.dart',
-    ).readAsStringSync();
-    final flowStart = source.indexOf(
-      'Future<bool> _tryAgentFlow(String aiMessageId, String userMessageId)',
-    );
-    final flowEnd = source.indexOf(
-      '\n  ChatRuntimeRoutingContext? _acpRuntimeRoutingContext(',
-      flowStart,
-    );
-    expect(flowStart, greaterThanOrEqualTo(0));
-    expect(flowEnd, greaterThan(flowStart));
-    final flowBody = source.substring(flowStart, flowEnd);
-    final reserveIndex = flowBody.indexOf(
-      'ChatPromptDispatcher.instance.prepareTurnSession(',
-    );
-    final promptIndex = flowBody.indexOf(
-      'ChatPromptDispatcher.instance.submitTurnPrompt(',
-    );
-    expect(reserveIndex, greaterThanOrEqualTo(0));
-    expect(promptIndex, greaterThan(reserveIndex));
-    expect(
-      flowBody.substring(promptIndex),
-      contains('sessionId: _acpSessionId'),
-    );
-  });
-
-  test('main chat prompts reserve and bind ACP sessions before prompt', () {
-    final flowSource = File(
-      '$chatRoot/chat_page_conversation_flow.dart',
-    ).readAsStringSync();
-    final agentSource = File(
-      '$chatRoot/chat_page_agent.dart',
-    ).readAsStringSync();
-
-    expect(flowSource, contains('_prepareAcpSessionForTurn('));
-    expect(
-      flowSource,
-      contains('ChatPromptDispatcher.instance.prepareTurnSession('),
-    );
-    expect(
-      flowSource,
-      contains('ChatPromptDispatcher.instance.submitTurnPrompt('),
-    );
-    expect(flowSource, contains('sessionId: acpSessionId'));
-    expect(agentSource, contains('_prepareAcpSessionForTurn('));
-    expect(agentSource, contains('sessionId: acpSessionId'));
-    expect(flowSource, isNot(contains('sessionId: dispatchSessionId')));
-    expect(agentSource, isNot(contains('sessionId: dispatchSessionId')));
-  });
-
   test('Agent send reconciles a user item by id, never by repeated text', () {
     final source = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
     final sendStart = source.indexOf('Future<void> _sendAgentMessage(');
     final sendEnd = source.indexOf(
-      '// The preflight admission already owns this logical turn',
+      'ChatPromptDispatcher.instance.launchTurn(',
       sendStart,
     );
     expect(sendStart, greaterThanOrEqualTo(0));
@@ -431,6 +362,50 @@ void main() {
     expect(sendBody, contains('final expectedUserId = userMessageId.trim();'));
     expect(sendBody, contains('message.id == expectedUserId'));
     expect(sendBody, isNot(contains('message.text == messageText')));
+  });
+
+  test('every chat send goes through the native turn launcher (5d-0b)', () {
+    final surfaces = <String, String>{
+      'agent': File('$chatRoot/chat_page_agent.dart').readAsStringSync(),
+      'flow': File('$chatRoot/chat_page_conversation_flow.dart').readAsStringSync(),
+      'overlay': File(
+        'lib/features/home/pages/command_overlay/chat_bot_sheet.dart',
+      ).readAsStringSync(),
+    };
+    for (final entry in surfaces.entries) {
+      final source = entry.value;
+      expect(
+        source,
+        contains('ChatPromptDispatcher.instance.launchTurn('),
+        reason: '${entry.key} must send through the launcher',
+      );
+      for (final step in const <String>[
+        'ChatPromptDispatcher.instance.prepareTurnSession(',
+        'ChatPromptDispatcher.instance.submitTurnPrompt(',
+        'ChatPromptDispatcher.instance.releaseTurnSession(',
+        'AgentRuntimeService.promptSessionArguments(',
+        'AgentRuntimeService.newSessionArguments(',
+      ]) {
+        expect(
+          source,
+          isNot(contains(step)),
+          reason: '${entry.key} must not run the launcher steps itself: $step',
+        );
+      }
+      // Sends carry the submission; nothing re-reads "the newest user
+      // message" after an await (5d-0 fix).
+      expect(source, isNot(contains('latestUserUtterance()')));
+      expect(source, isNot(contains('_latestUserUtterance()')));
+    }
+    // Pointers are adopted only from a current launch outcome.
+    expect(
+      surfaces['agent'],
+      isNot(contains('_activeAgentThreadId = acpSessionId')),
+    );
+    expect(
+      surfaces['flow'],
+      isNot(contains('_normalAcpSessionId = acpSessionId')),
+    );
   });
 
   test(

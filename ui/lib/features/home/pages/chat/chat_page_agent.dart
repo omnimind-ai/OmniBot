@@ -1121,7 +1121,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     // starts with the selected mode.
     await _writeAgentPreference(
       _kAgentPermissionModePreferenceKey,
-      _agentPermissionModePreferenceValue(mode),
+      mode.preferenceValue,
     );
     try {
       await _setAgentConfigOption(configId: 'mode', value: value);
@@ -1593,7 +1593,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
     await _writeAgentPreference(
       _kAgentPermissionModePreferenceKey,
-      _agentPermissionModePreferenceValue(_agentPermissionMode),
+      _agentPermissionMode.preferenceValue,
     );
     final collaborationMode = _activeAgentCollaborationMode?.trim();
     if (collaborationMode != null && collaborationMode.isNotEmpty) {
@@ -1602,15 +1602,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         collaborationMode,
       );
     }
-  }
-
-  String _agentPermissionModePreferenceValue(AgentPermissionMode mode) {
-    return switch (mode) {
-      AgentPermissionMode.readOnly => 'read-only',
-      AgentPermissionMode.defaultMode => 'workspace-write',
-      AgentPermissionMode.autoReview => 'auto-review',
-      AgentPermissionMode.fullAccess => 'full-access',
-    };
   }
 
   AgentPermissionMode? _parseAgentPermissionMode(String? raw) {
@@ -1922,174 +1913,99 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       dispatchMessages = currentMessages;
       _syncRuntimeSnapshotForMode(dispatchMode, messages: dispatchMessages);
     }
-    // The preflight admission already owns this logical turn when the
-    // resolved conversation is unchanged. Only admit again when asynchronous
-    // conversation resolution actually moved the task to another runtime;
-    // beginAcpTurn is idempotent for same-identity callers as a second guard.
-    if (preflightConversationId != resolvedConversationId) {
-      _runtimeCoordinator.beginAcpTurn(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-      );
-    }
-    if (!isDispatchTargetCurrent()) {
+    // The preflight admission covered the visible runtime. When conversation
+    // resolution moved the turn (remote or newly created), release it there:
+    // the native launcher admits the run on its resolved runtime.
+    if (preflightConversationId != null &&
+        preflightConversationId != resolvedConversationId) {
       _runtimeCoordinator.unregisterTask(
         aiMessageId,
-        conversationId: resolvedConversationId,
+        conversationId: preflightConversationId,
         mode: dispatchModeKey,
       );
-      return;
     }
-    if (!remoteCodex) {
-      // The runtime coordinator is the single Agent snapshot writer. Keeping
-      // admission persistence on the same ordered tail as ACP updates avoids
-      // a late page/history write rolling the conversation behind the turn.
-      try {
-        await _runtimeCoordinator.persistRuntimeConversation(
-          conversationId: resolvedConversationId,
-          mode: dispatchModeKey,
-          persistMessages: true,
-        );
-      } catch (error) {
-        if (isDispatchTargetCurrent()) {
-          handleAgentError(
-            'Conversation persistence failed. Please retry. $error',
-          );
-        }
-        _runtimeCoordinator.unregisterTask(
-          aiMessageId,
-          conversationId: resolvedConversationId,
-          mode: dispatchModeKey,
-        );
-        return;
-      }
-    }
-    if (!isDispatchTargetCurrent()) {
-      _runtimeCoordinator.unregisterTask(
-        aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-      );
-      return;
-    }
-
+    final turnModel = selectAgentRequestModel(
+      status: status,
+      overrideModel: modelOverride,
+      activeModel: dispatchActiveModel,
+      activeModelSourceMatches:
+          dispatchLoadedModelSource == agentModelSourceKey(status),
+    );
+    // One native entry runs admission, persistence, the session reservation
+    // and the prompt (batch 5d-0b). The user row is already in the runtime.
+    final ChatTurnLaunchOutcome outcome;
     try {
-      final turnModel = selectAgentRequestModel(
-        status: status,
-        overrideModel: modelOverride,
-        activeModel: dispatchActiveModel,
-        activeModelSourceMatches:
-            dispatchLoadedModelSource == agentModelSourceKey(status),
-      );
-      final acpSessionId = await _prepareAcpSessionForTurn(
-        runtimeCoordinator: _runtimeCoordinator,
+      outcome = await ChatPromptDispatcher.instance.launchTurn(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
+        surfaceId: _chatPageSurfaceId,
+        generation: dispatchTargetGeneration,
+        text: messageText,
+        attachments: attachments,
         existingSessionId: dispatchSessionId,
-        isTargetCurrent: isDispatchTargetCurrent,
+        agentId: remoteCodex ? null : dispatchAgentId,
+        permissionMode: dispatchPermissionMode.preferenceValue,
         model: turnModel,
         effort: dispatchReasoningEffort,
         collaborationMode: dispatchCollaborationMode,
+        // The Agent page owns ConversationMode.agent, so built-in agents read
+        // the same durable history bucket this page writes.
         conversationMode: ConversationMode.agent.storageValue,
+        terminalEnvironment: dispatchTerminalEnvironment,
       );
-      if (acpSessionId == null) {
-        _runtimeCoordinator.unregisterTask(
-          aiMessageId,
-          conversationId: resolvedConversationId,
-          mode: dispatchModeKey,
-        );
-        return;
-      }
-      _activeAgentThreadId = acpSessionId;
-      final outcome = await ChatPromptDispatcher.instance.submitTurnPrompt(
-        taskId: aiMessageId,
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-        fallbackSessionId: acpSessionId,
-        promptArgs: AgentRuntimeService.promptSessionArguments(
-          conversationId: resolvedConversationId,
-          sessionId: acpSessionId,
-          // Keep the request id stable across a retry of this message. The ACP
-          // runtime uses it to return the original turn instead of replaying
-          // tool calls.
-          requestId: aiMessageId,
-          agentId: remoteCodex ? null : dispatchAgentId,
-          text: messageText,
-          attachments: attachments,
-          approvalPolicy: dispatchPermissionMode.approvalPolicy,
-          approvalsReviewer: dispatchPermissionMode.approvalsReviewer,
-          sandboxPolicy: dispatchPermissionMode.sandboxPolicy,
-          model: turnModel,
-          effort: dispatchReasoningEffort,
-          collaborationMode: dispatchCollaborationMode,
-          // The Agent page owns ConversationMode.agent. Keep the mode on the
-          // canonical ACP prompt so built-in agents read the same durable
-          // history bucket that this page writes.
-          conversationMode: ConversationMode.agent.storageValue,
-          terminalEnvironment: dispatchTerminalEnvironment,
-        ),
-      );
-      // A transport failure was already projected as this run's
-      // PromptResponse by the native dispatcher.
-      if (!outcome.completed) return;
-      final response = outcome.response;
-      final resolvedThreadId = _asAgentString(response['threadId']);
-      if (resolvedThreadId != null &&
-          remoteCodex &&
-          isDispatchTargetCurrent()) {
-        _activateRemoteCodexRuntimeForThread(resolvedThreadId);
-      }
-      if (isDispatchTargetCurrent()) {
-        _activeAgentThreadId = resolvedThreadId ?? acpSessionId;
-        _activeAgentTurnId = null;
-      }
-      final localConversationId = _asAgentInt(response['conversationId']);
-      if (isDispatchTargetCurrent() &&
-          !remoteCodex &&
-          localConversationId != null &&
-          localConversationId !=
-              _modeState(ChatPageMode.agent).currentConversationId) {
-        if (_modeState(ChatPageMode.agent).currentConversationId == null) {
-          _modeState(ChatPageMode.agent).currentConversationId =
-              localConversationId;
-          await _prepareConversationModeState(
-            ChatPageMode.agent,
-            ConversationThreadTarget.existing(
-              conversationId: localConversationId,
-              mode: ConversationMode.agent,
-            ),
-          );
-        } else {
-          debugPrint(
-            '[Agent] keeping active conversation ${_modeState(ChatPageMode.agent).currentConversationId} '
-            'instead of mismatched native conversation $localConversationId',
-          );
-        }
-      }
-      if (!remoteCodex) {
-        if (isDispatchTargetCurrent()) {
-          await _persistVisibleThreadTargetIfNeeded();
-        }
-      }
-      if (isDispatchTargetCurrent()) {
-        await _writeAgentCommandPreferencesForCurrentConversation();
-      }
     } catch (error) {
-      final activeRuntime = _runtimeCoordinator.runtimeFor(
-        conversationId: resolvedConversationId,
-        mode: dispatchModeKey,
-      );
+      // A channel failure before the launcher ran: end the run on its own
+      // runtime, never on whichever one is visible now.
       await _runtimeCoordinator.applyAcpPromptResponse(
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
-        sessionId: activeRuntime?.activeAcpSessionId,
-        turnId: activeRuntime?.activeAcpTurnId,
+        sessionId: null,
         stopReason: 'error',
         error: formatAgentRuntimeErrorForUser(error),
       );
+      return;
+    }
+    // Pointers arrive only while this target is still current.
+    if (!outcome.targetCurrent) return;
+    if (outcome.sessionId != null) {
+      _activeAgentThreadId = outcome.sessionId;
+    }
+    if (!outcome.completed) return;
+    final resolvedThreadId = outcome.threadId;
+    if (resolvedThreadId != null && remoteCodex) {
+      _activateRemoteCodexRuntimeForThread(resolvedThreadId);
+    }
+    _activeAgentThreadId = resolvedThreadId ?? outcome.sessionId;
+    _activeAgentTurnId = null;
+    final localConversationId = outcome.responseConversationId;
+    if (!remoteCodex &&
+        localConversationId != null &&
+        localConversationId !=
+            _modeState(ChatPageMode.agent).currentConversationId) {
+      if (_modeState(ChatPageMode.agent).currentConversationId == null) {
+        _modeState(ChatPageMode.agent).currentConversationId =
+            localConversationId;
+        await _prepareConversationModeState(
+          ChatPageMode.agent,
+          ConversationThreadTarget.existing(
+            conversationId: localConversationId,
+            mode: ConversationMode.agent,
+          ),
+        );
+      } else {
+        debugPrint(
+          '[Agent] keeping active conversation ${_modeState(ChatPageMode.agent).currentConversationId} '
+          'instead of mismatched native conversation $localConversationId',
+        );
+      }
+    }
+    if (!remoteCodex && isDispatchTargetCurrent()) {
+      await _persistVisibleThreadTargetIfNeeded();
+    }
+    if (isDispatchTargetCurrent()) {
+      await _writeAgentCommandPreferencesForCurrentConversation();
     }
   }
 

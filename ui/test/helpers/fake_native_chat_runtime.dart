@@ -28,6 +28,7 @@ class FakeNativeChatRuntime {
   /// Transport errors the dispatcher projected as a failed PromptResponse.
   final List<Object> failures = <Object>[];
   final Map<String, _FakeRuntime> _runtimes = <String, _FakeRuntime>{};
+  final Map<String, int> _surfaceGenerations = <String, int>{};
   int _revision = 0;
 
   static FakeNativeChatRuntime install() {
@@ -118,78 +119,13 @@ class FakeNativeChatRuntime {
         final owned = runtime!.boundTaskIds.contains(taskId);
         if (owned) runtime.release(taskId!);
         result = <String, dynamic>{'handled': owned};
-      case 'prepareTurnSession':
-        if (!runtime!.boundTaskIds.contains(taskId)) {
-          result = <String, dynamic>{'status': 'abandoned'};
-          break;
-        }
-        final existing = args['existingSessionId']?.toString().trim() ?? '';
-        if (existing.isNotEmpty) {
-          result = <String, dynamic>{
-            'status': 'ready',
-            'sessionId': existing,
-            'created': false,
-          };
-          break;
-        }
-        try {
-          final response = await _transport.invokeMethod<dynamic>(
-            'session/new',
-            args['sessionArgs'],
-          );
-          final sessionId = (response is Map
-                  ? response['sessionId'] ?? response['threadId']
-                  : null)
-              ?.toString();
-          if (!runtime.boundTaskIds.contains(taskId)) {
-            await _transport.invokeMethod<dynamic>('session/close', {
-              'sessionId': sessionId,
-              'conversationId': conversationId,
-            });
-            result = <String, dynamic>{'status': 'abandoned'};
-          } else {
-            result = <String, dynamic>{
-              'status': 'ready',
-              'sessionId': sessionId,
-              'created': true,
-            };
-          }
-        } catch (error) {
-          failures.add(error);
-          runtime.release(taskId!);
-          result = <String, dynamic>{'status': 'failed'};
-        }
-      case 'releaseTurnSession':
-        final closeSessionId = args['closeSessionId'];
-        if (closeSessionId != null) {
-          await _transport.invokeMethod<dynamic>('session/close', {
-            'sessionId': closeSessionId,
-            'conversationId': conversationId,
-          });
-        }
-        runtime!.release(taskId!);
-      case 'submitTurnPrompt':
-        try {
-          final response = await _transport.invokeMethod<dynamic>(
-            'session/prompt',
-            args['promptArgs'],
-          );
-          final owned = runtime!.boundTaskIds.contains(taskId);
-          if (owned) runtime.release(taskId!);
-          result = <String, dynamic>{
-            'status': 'completed',
-            'response': response,
-            'result': <String, dynamic>{'handled': owned},
-          };
-        } catch (error) {
-          failures.add(error);
-          final owned = runtime!.boundTaskIds.contains(taskId);
-          if (owned) runtime.release(taskId!);
-          result = <String, dynamic>{
-            'status': 'failed',
-            'result': <String, dynamic>{'handled': owned},
-          };
-        }
+      case 'setSurfaceGeneration':
+        _surfaceGenerations[args['surfaceId'].toString()] =
+            args['generation'] as int;
+      case 'launchTurn':
+        // Mirrors ChatTurnLauncher: admit, insert the user row, reserve the
+        // session, re-check the surface generation, prompt.
+        result = await _launchTurn(runtime!, taskId!, args);
       case 'clearConversationRuntimeSession':
         runtime!
           ..boundTaskIds.clear()
@@ -252,6 +188,127 @@ class FakeNativeChatRuntime {
     };
   }
 
+  Future<Map<String, dynamic>> _launchTurn(
+    _FakeRuntime runtime,
+    String taskId,
+    Map<String, dynamic> args,
+  ) async {
+    final surfaceId = args['surfaceId']?.toString() ?? '';
+    final generation = args['generation'] as int?;
+    if (surfaceId.isNotEmpty && generation != null) {
+      _surfaceGenerations.putIfAbsent(surfaceId, () => generation);
+    }
+    bool current() =>
+        surfaceId.isEmpty || _surfaceGenerations[surfaceId] == generation;
+    Map<String, dynamic> outcome(
+      String status, {
+      String? reason,
+      Map<dynamic, dynamic>? response,
+      String? sessionId,
+    }) {
+      final isCurrent = current();
+      return <String, dynamic>{
+        'status': status,
+        'rejectedReason': reason,
+        'sessionId': isCurrent
+            ? (response?['sessionId'] ?? response?['threadId'] ?? sessionId)
+            : null,
+        'threadId': isCurrent && status == 'completed'
+            ? (response?['threadId'])
+            : null,
+        'turnId': isCurrent ? (response?['promptId'] ?? response?['turnId']) : null,
+        'targetCurrent': isCurrent,
+      };
+    }
+
+    final text = args['text']?.toString() ?? '';
+    final attachments = args['attachments'];
+    if (text.isEmpty && (attachments is! List || attachments.isEmpty)) {
+      return outcome('rejected', reason: 'empty');
+    }
+    if (!current()) return outcome('rejected', reason: 'stale');
+    runtime
+      ..bind(taskId)
+      ..isAiResponding = true
+      ..lastAgentTurnId = taskId;
+    final userMessage = args['userMessage'];
+    if (userMessage is Map) {
+      _upsert(runtime, _maps(<dynamic>[userMessage]), atStart: true);
+    }
+    if (!current()) {
+      runtime.release(taskId);
+      return outcome('rejected', reason: 'stale');
+    }
+    var sessionId = args['existingSessionId']?.toString().trim() ?? '';
+    var created = false;
+    if (sessionId.isEmpty) {
+      try {
+        final response = await _transport.invokeMethod<dynamic>(
+          'session/new',
+          <String, dynamic>{
+            'conversationId': runtime.conversationId,
+            if (args['model'] != null) 'model': args['model'],
+            if (args['conversationMode'] != null)
+              'conversationMode': args['conversationMode'],
+          },
+        );
+        sessionId =
+            (response is Map
+                    ? response['sessionId'] ?? response['threadId']
+                    : null)
+                ?.toString() ??
+            '';
+        created = true;
+      } catch (error) {
+        failures.add(error);
+        runtime.release(taskId);
+        return outcome('failed');
+      }
+    }
+    if (current() && runtime.boundTaskIds.contains(taskId)) {
+      // The native dispatcher binds the session before the prompt.
+      runtime.activeAcpSessionId = sessionId;
+      _notify(runtime);
+    }
+    if (!current() || !runtime.boundTaskIds.contains(taskId)) {
+      if (created) {
+        await _transport.invokeMethod<dynamic>('session/close', {
+          'sessionId': sessionId,
+          'conversationId': runtime.conversationId,
+        });
+      }
+      runtime.release(taskId);
+      return outcome('rejected', reason: current() ? 'abandoned' : 'stale');
+    }
+    try {
+      final response = await _transport.invokeMethod<dynamic>(
+        'session/prompt',
+        <String, dynamic>{
+          'sessionId': sessionId,
+          'conversationId': runtime.conversationId,
+          'requestId': taskId,
+          if (args['agentId'] != null) 'agentId': args['agentId'],
+          if (args['model'] != null) 'model': args['model'],
+          if (args['conversationMode'] != null)
+            'conversationMode': args['conversationMode'],
+          'text': text,
+          if (attachments is List && attachments.isNotEmpty)
+            'attachments': attachments,
+        },
+      );
+      runtime.release(taskId);
+      return outcome(
+        'completed',
+        response: response is Map ? response : null,
+        sessionId: sessionId,
+      );
+    } catch (error) {
+      failures.add(error);
+      runtime.release(taskId);
+      return outcome('failed', sessionId: sessionId);
+    }
+  }
+
   void _upsert(
     _FakeRuntime runtime,
     List<Map<String, dynamic>> messages, {
@@ -267,6 +324,13 @@ class FakeNativeChatRuntime {
         runtime.messages.add(message);
       }
     }
+  }
+
+  /// Publishes a mid-command state change, like the native listener does.
+  void _notify(_FakeRuntime runtime) {
+    ChatConversationRuntimeCoordinator.instance.debugHandleNativeEvent(
+      _batch(runtime),
+    );
   }
 
   Map<String, dynamic> _batch(_FakeRuntime runtime) => <String, dynamic>{
@@ -293,6 +357,7 @@ class _FakeRuntime {
   bool isAiResponding = false;
   String? activeRunId;
   String? lastAgentTurnId;
+  String? activeAcpSessionId;
 
   void bind(String taskId) {
     boundTaskIds.add(taskId);
@@ -315,6 +380,7 @@ class _FakeRuntime {
     'isAiResponding': isAiResponding,
     'activeRunId': activeRunId,
     'lastAgentTurnId': lastAgentTurnId,
+    'activeAcpSessionId': activeAcpSessionId,
     'boundTaskIds': boundTaskIds.toList(),
     'isInputAreaVisible': true,
     'currentThinkingStage': 1,

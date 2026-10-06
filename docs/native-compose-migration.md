@@ -260,7 +260,7 @@ May stay in Flutter longer (they hold no lifecycle): CommandOverlay/ChatBotSheet
 hosts, the OpenClaw legacy surface, manual recording, and the embedded remote
 workspace browser panel — they interact through intents/routes only.
 
-## Batch 5d-0 plan: native turn launcher (2026-10-06; 5d-0a source complete)
+## Batch 5d-0 plan: native turn launcher (2026-10-06; 5d-0a and 5d-0b source complete)
 
 The 5b dispatcher takes ready-made `session/new` / `session/prompt`
 arguments. Building them is still Dart page code: three dispatch paths
@@ -284,9 +284,13 @@ Legacy defects fixed in the move (each covered by a Kotlin test):
    dispatch target. 5d-0b.
 3. Session pointers were written before submit without a target check, so
    a conversation switch could inherit the old session. 5d-0b.
-4. Pure chat re-read "the newest user message" after its awaits instead of
-   sending the submission. The launcher takes the submitted text and
-   attachments (`buildUserPromptText`). 5d-0a/b.
+4. Pure chat and the task flow re-read "the newest user message" instead of
+   sending the submission, and that text already described every
+   attachment, so Xiaowan's adapter (which builds the same hint from the
+   attachments it receives) showed each file to the model twice, once by
+   name and once by path. The launcher sends the submitted text; only
+   excluded files get a path hint (`buildUserPromptText`). Verified by
+   running `buildXiaowanPromptParts` on both inputs. 5d-0a/b.
 5. The task-flow path did not filter `sendToModel: false` attachments; the
    ACP adapter turns any readable path into a resource link, so excluded
    files still reached the model. `modelAttachments` filters every path.
@@ -310,6 +314,62 @@ Legacy defects fixed in the move (each covered by a Kotlin test):
   model cases of `agent_runtime_service_test` and the prompt text rules,
   plus fix 5); full `:app` unit suite 1491, 0 failures. Nothing calls the
   new code yet; no Dart edits.
+
+### 5d-0b checkpoint (source complete; device acceptance pending)
+
+- **Native**: `ChatTurnLauncher.launchTurn(request, isTargetCurrent)`
+  admits the run, inserts the user row by id, persists the admission
+  snapshot (non-ephemeral runtimes), reserves the session, re-checks the
+  target, prompts with `ChatTurnArguments`, and returns `ChatTurnOutcome`
+  (completed / failed / rejected + pointers only while the target is
+  current). `ChatRuntimeHost` exposes it as the `launchTurn` command and
+  holds a per-surface navigation generation (`setSurfaceGeneration`): the
+  page bumps it on every target change and on dispose, so a stale turn
+  stops between awaits without calling back into Dart. The step commands
+  (`prepareTurnSession` / `submitTurnPrompt` / `releaseTurnSession`) are no
+  longer on the channel; `ChatPromptDispatcher` keeps them as the
+  launcher's internals.
+- **Dart**: `_sendAgentMessage` keeps its status probe, remote/conversation
+  resolution and post-send adoption, and sends through `launchTurn`;
+  `_sendPureChatMessage` and `_handleExecutableTaskFlow` share one
+  `_launchNormalTurn` (they differed only in model selection, agent id and
+  thinking cleanup); the command overlay sheet does the same with its own
+  surface generation, fenced on close, cancel and dispose. Removed:
+  `_prepareAcpSessionForTurn`, `_tryAgentFlow` and its three caller-less
+  override parameters, `_latestUserAttachments`,
+  `_latestUserAgentAttachments`, `_buildPromptRequestId`, the overlay's
+  copy of the attachment hint helpers, the private permission-mapping
+  duplicate (now `AgentPermissionMode.preferenceValue`), and the
+  unreachable "统一 Agent 启动失败" fallback.
+- **Fixes landed here**: 2 (errors go to the run's own runtime), 3
+  (pointers only from a current outcome), 4 (submission, no double hint),
+  5 (every path filters `sendToModel: false`), 6 (dead fallback).
+  Remaining for 5d-0c: 1 (retry / edited resend barrier and lock),
+  `/review`, and the triple model-configuration check.
+- **Verification**: `ChatTurnLauncherTest` 11 (admission, reuse, submission
+  text, attachment filtering, empty, stale before reservation, stale during
+  `session/new` closes the session, no pointers after a move, persistence
+  failure stays on its runtime, `session/new` and prompt failures);
+  `ChatTurnArgumentsTest` 10; `:app` unit suite 1502, native-ui 53, 0
+  failures; androidTest compile and release resource merge succeeded.
+  `flutter test` 965 passed, 4 failed (the same 4 settings/background
+  tests fail without this change); `flutter analyze` 0 errors, no new
+  warnings in the chat/overlay libraries. The fake native runtime in
+  `ui/test/helpers` mirrors the launcher; the architecture test asserts
+  every chat surface sends through `launchTurn` and runs none of its steps.
+  No device run.
+
+Manual acceptance checklist:
+
+1. Agent, normal and pure chat each send and stream as before; a fresh
+   conversation is created on first send and appears in the drawer.
+2. Send, then switch conversation before the reply starts: the new
+   conversation shows no spinner and the old one finishes in history.
+3. Attach a file marked "add to workspace" (`sendToModel: false`) in
+   normal chat: the model reads it by path and the transcript does not
+   list it twice.
+4. Command overlay: send, close the sheet during "connecting": no prompt
+   is sent; stop during a reply ends it.
 
 ## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
 

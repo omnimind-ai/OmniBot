@@ -685,6 +685,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
   @override
   void dispose() {
+    // A disposed page shows no target: fence every turn it launched.
+    _beginConversationTargetRequest();
     unawaited(_clearVisibleChatConversation());
     unawaited(_conversationModelSelectorHandle?.dismiss());
     _conversationModelSelectorHandle = null;
