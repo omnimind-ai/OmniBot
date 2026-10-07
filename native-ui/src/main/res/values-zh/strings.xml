@@ -955,11 +955,11 @@
     <string name="omni_terminal_env_ssh_client">SSH 客户端</string>
     <string name="omni_terminal_env_sshpass">SSH 密码辅助工具</string>
     <string name="omni_terminal_env_sshd">OpenSSH 服务器</string>
-    <string name="omni_transcript_title">消息预览</string>
-    <string name="omni_transcript_live">原生预览 · 实时运行时</string>
-    <string name="omni_transcript_history">原生预览 · 历史记录</string>
+    <string name="omni_transcript_title">新对话</string>
+    <string name="omni_transcript_live">原生聊天 · 实时</string>
+    <string name="omni_transcript_history">原生聊天 · 历史记录</string>
     <string name="omni_transcript_empty">暂无消息</string>
-    <string name="omni_transcript_open">原生消息预览</string>
+    <string name="omni_transcript_open">在原生聊天中打开</string>
     <string name="omni_run_failed">执行失败</string>
     <string name="omni_run_cancelled">已取消</string>
     <string name="omni_diff_empty">暂无 diff</string>
@@ -1035,4 +1035,5 @@
     <string name="omni_slash_model_set">已切换到 %1$s</string>
     <string name="omni_slash_effort_set">已设置思考强度为 %1$s</string>
     <string name="omni_slash_failed">设置未生效，请重试</string>
+    <string name="omni_chat_loading_older">正在加载更早的消息…</string>
 </resources>

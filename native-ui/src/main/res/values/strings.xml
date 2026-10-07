@@ -955,11 +955,11 @@
     <string name="omni_terminal_env_ssh_client">SSH Client</string>
     <string name="omni_terminal_env_sshpass">SSH Password Helper</string>
     <string name="omni_terminal_env_sshd">OpenSSH Server</string>
-    <string name="omni_transcript_title">Message preview</string>
-    <string name="omni_transcript_live">Native preview · live runtime</string>
-    <string name="omni_transcript_history">Native preview · stored history</string>
+    <string name="omni_transcript_title">New conversation</string>
+    <string name="omni_transcript_live">Native chat · live</string>
+    <string name="omni_transcript_history">Native chat · stored history</string>
     <string name="omni_transcript_empty">No messages yet</string>
-    <string name="omni_transcript_open">Native message preview</string>
+    <string name="omni_transcript_open">Open in native chat</string>
     <string name="omni_run_failed">Failed</string>
     <string name="omni_run_cancelled">Cancelled</string>
     <string name="omni_diff_empty">No diff</string>
@@ -1035,4 +1035,5 @@
     <string name="omni_slash_model_set">Model set to %1$s</string>
     <string name="omni_slash_effort_set">Thinking effort set to %1$s</string>
     <string name="omni_slash_failed">Couldn\'t apply the setting. Try again.</string>
+    <string name="omni_chat_loading_older">Loading earlier messages…</string>
 </resources>

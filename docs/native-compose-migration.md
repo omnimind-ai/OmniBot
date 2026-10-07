@@ -416,7 +416,7 @@ chat working beside it.
 | Slice | Scope |
 | --- | --- |
 | 5e-1 | New conversation on the native page: the drawer's `+` opens it, the first send creates the conversation (title, Harness binding, permission) and launches through the 5d-0 launcher. |
-| 5e-2 | Open existing conversations natively from the drawer (replacing the preview entry), history paging, run/target restore after process death. |
+| 5e-2 | History paging, restore after process death, the preview entry becomes "Open in native chat". The drawer's primary tap stays on Flutter until the native page has message actions and the Harness switcher (5e-5), so switching it does not drop features. |
 | 5e-3 | App bar: title, Harness switcher (native `agent/select` + the 5d-0c switch barrier), new-conversation action, ACP config panel. |
 | 5e-4 | Empty-state greeting and quick prompts; Home's composer entry opens the native page. |
 | 5e-5 | User message actions (copy, edit, retry) and link previews on the native page. |
@@ -455,6 +455,30 @@ that appears in both drawers with the first text as title and streams the
 reply; leave during "connecting" on a second new page: nothing is sent and
 no empty conversation is left behind except the one created by the send;
 with remote Codex selected the page shows the "open in chat" hint.
+
+### 5e-2 checkpoint (source complete; device acceptance pending)
+
+- Stored history loads 50 rows at a time and the next page loads when the
+  list nears its top (Dart `loadMoreMessages`; the offset advances by what
+  was received). A live runtime never pages: it is seeded with the complete
+  history before its first send.
+- The route supplies the ViewModel key and the created conversation id is
+  kept in `SavedStateHandle`, so a new page whose first send created a
+  conversation reopens that conversation after process death instead of a
+  blank new page (which would create a second conversation on the next
+  send). Before, the key was a fresh `nanoTime` per composition.
+- Labels: the drawer menu entry is "Open in native chat"; the page subtitle
+  says native chat instead of preview; an untitled page says "New
+  conversation".
+- Verification: `:app` 1521, native-ui 65, 0 failures; androidTest compile
+  and release resource merge succeeded. No new unit tests (paging and saved
+  state are framework wiring); covered by the acceptance steps. No device run.
+
+Manual acceptance (5e-2): open a conversation with more than 50 messages
+from the drawer menu and scroll up: older pages load without gaps or
+duplicates; send from a new page, put the app in the background with
+"Don't keep activities" on, return: the same conversation is shown and the
+next send goes to it.
 
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 

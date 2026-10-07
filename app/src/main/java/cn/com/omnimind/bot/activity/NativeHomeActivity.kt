@@ -22,7 +22,6 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
@@ -257,11 +256,9 @@ class NativeHomeActivity : ComponentActivity() {
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
-                chatTranscript = { conversationId, mode, title, onBack ->
-                    // A new conversation gets its own ViewModel per entry: it fixes its id on first send.
-                    val key = rememberSaveable(conversationId, mode) {
-                        "transcript:$mode:${conversationId ?: "new-${System.nanoTime()}"}"
-                    }
+                chatTranscript = { conversationId, mode, title, key, onBack ->
+                    // The key comes from the route, so a new page finds its ViewModel (and the
+                    // conversation it created, kept in SavedStateHandle) after process death.
                     val transcriptViewModel = remember(key) {
                         ViewModelProvider(this@NativeHomeActivity,
                             NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title))[

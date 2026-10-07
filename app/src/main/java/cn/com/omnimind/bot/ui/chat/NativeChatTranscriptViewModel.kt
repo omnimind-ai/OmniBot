@@ -13,6 +13,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.SavedStateHandle
+import androidx.lifecycle.createSavedStateHandle
+import androidx.lifecycle.viewmodel.CreationExtras
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import android.net.Uri
@@ -78,12 +81,14 @@ internal class NativeChatTranscriptViewModel(
     initialConversationId: Long?,
     private val mode: String,
     title: String,
+    private val savedState: SavedStateHandle,
 ) : ViewModel() {
     /**
      * Null until the first send of a new conversation (5e-1) creates it;
-     * fixed afterwards. Read on the main thread only.
+     * fixed afterwards and kept in [savedState], so the page reopens that
+     * conversation after process death (5e-2). Main thread only.
      */
-    private var conversationIdOrNull: Long? = initialConversationId
+    private var conversationIdOrNull: Long? = initialConversationId ?: savedState.get<Long>(KEY_CONVERSATION_ID)
     private val conversationId: Long get() = checkNotNull(conversationIdOrNull)
     private var creatingConversation = false
     private val appContext = context.applicationContext
@@ -99,6 +104,8 @@ internal class NativeChatTranscriptViewModel(
             ?.let(::applySnapshot)
     }
     private var liveRevision = 0L
+    private var historyOffset = 0
+    private var historyLoading = false
     private var liveMode: String? = null
     private val cards = ChatCardCache()
     private var loaded = false
@@ -142,25 +149,52 @@ internal class NativeChatTranscriptViewModel(
             return
         }
         viewModelScope.launch {
-            val history = runCatching {
-                withContext(Dispatchers.IO) {
-                    val page = conversations.listConversationMessagesPaged(conversationId, mode, HISTORY_LIMIT, 0)
-                    val agentId = conversations.getConversationPayload(conversationId)?.get("agentId")?.toString()
-                    @Suppress("UNCHECKED_CAST")
-                    val rows = (page["messages"] as? List<Map<String, Any?>>).orEmpty()
-                    rows.mapNotNull { row -> runCatching { ChatMessage.fromJson(row).toUi(cards) }.getOrNull() } to agentId
-                }
-            }.onFailure { Log.w(TAG, "读取对话历史失败: ${it.message}") }.getOrNull()
-            // A live snapshot that arrived while history loaded wins.
-            if (liveRevision > 0L) return@launch
-            mutableState.update {
-                it.copy(
-                    messages = history?.first.orEmpty(),
-                    conversationAgentId = history?.second?.ifBlank { null },
-                    isLive = false,
-                    loading = false,
-                )
+            val agentId = runCatching {
+                withContext(Dispatchers.IO) { conversations.getConversationPayload(conversationId)?.get("agentId")?.toString() }
+            }.getOrNull()
+            mutableState.update { it.copy(conversationAgentId = agentId?.ifBlank { null }) }
+            loadHistoryPage()
+        }
+    }
+
+    /**
+     * Stored history, newest first, one page at a time (Dart
+     * `loadMoreMessages`). The offset advances by what was received, so a
+     * short page cannot leave a gap. A live runtime holds the complete
+     * history (it is seeded with every stored message), so it never pages.
+     */
+    fun loadOlderMessages() {
+        val state = mutableState.value
+        if (state.isLive || !state.hasMoreHistory || historyLoading || conversationIdOrNull == null) return
+        viewModelScope.launch { loadHistoryPage() }
+    }
+
+    private suspend fun loadHistoryPage() {
+        historyLoading = true
+        mutableState.update { it.copy(loadingMore = historyOffset > 0) }
+        val page = runCatching {
+            withContext(Dispatchers.IO) {
+                val result = conversations.listConversationMessagesPaged(conversationId, mode, HISTORY_PAGE, historyOffset)
+                @Suppress("UNCHECKED_CAST")
+                val rows = (result["messages"] as? List<Map<String, Any?>>).orEmpty()
+                rows.mapNotNull { row -> runCatching { ChatMessage.fromJson(row).toUi(cards) }.getOrNull() } to
+                    (result["hasMore"] == true)
             }
+        }.onFailure { Log.w(TAG, "读取对话历史失败: ${it.message}") }.getOrNull()
+        historyLoading = false
+        // A live snapshot that arrived while history loaded wins.
+        if (liveRevision > 0L) return
+        val (rows, hasMore) = page ?: (emptyList<ChatMessageUi>() to false)
+        historyOffset += rows.size
+        mutableState.update {
+            val known = it.messages.mapTo(HashSet()) { message -> message.id }
+            it.copy(
+                messages = it.messages + rows.filter { row -> row.id !in known },
+                hasMoreHistory = hasMore && rows.isNotEmpty(),
+                isLive = false,
+                loading = false,
+                loadingMore = false,
+            )
         }
     }
 
@@ -179,6 +213,8 @@ internal class NativeChatTranscriptViewModel(
                 conversationAgentId = snapshot.conversation?.get("agentId")?.toString()?.ifBlank { null },
                 isLive = true,
                 loading = false,
+                hasMoreHistory = false,
+                loadingMore = false,
             )
         }
         snapshot.conversation?.let { conversationPayload = it }
@@ -426,6 +462,7 @@ internal class NativeChatTranscriptViewModel(
             }.onFailure { Log.w(TAG, "创建对话失败: ${it.message}") }.getOrNull() ?: return null
             val id = (payload["id"] as? Number)?.toLong() ?: return null
             conversationIdOrNull = id
+            savedState[KEY_CONVERSATION_ID] = id
             conversationPayload = payload
             mutableState.update { it.copy(title = payload["title"]?.toString()?.ifBlank { null } ?: title) }
             if (target.showsPermission) {
@@ -791,13 +828,14 @@ internal class NativeChatTranscriptViewModel(
         private val appContext = context.applicationContext
 
         @Suppress("UNCHECKED_CAST")
-        override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            NativeChatTranscriptViewModel(appContext, conversationId, mode, title) as T
+        override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
+            NativeChatTranscriptViewModel(appContext, conversationId, mode, title, extras.createSavedStateHandle()) as T
     }
 
     private companion object {
         const val TAG = "NativeChatTranscript"
-        const val HISTORY_LIMIT = 200
+        const val HISTORY_PAGE = 50
+        const val KEY_CONVERSATION_ID = "conversationId"
         const val OVERRIDES_KEY = "flutter.conversation_model_overrides_v1"
         const val EFFORTS_KEY = "flutter.conversation_reasoning_efforts_v1"
 
@@ -905,6 +943,7 @@ internal fun NativeChatTranscriptRoute(
             onToolAction = onToolAction,
             onRespondToApproval = viewModel::respondToApproval,
             onStopTool = viewModel::stopActiveTool,
+            onLoadOlder = viewModel::loadOlderMessages,
         )
     }
     ChatTranscriptScreen(state, onBack, actions, composer, composerActions)

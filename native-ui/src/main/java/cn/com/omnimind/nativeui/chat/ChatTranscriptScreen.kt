@@ -21,6 +21,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.derivedStateOf
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
@@ -62,6 +64,9 @@ data class ChatTranscriptState(
     val respondingRequestIds: Set<String> = emptySet(),
     /** Tool card message id whose stop request is in flight. */
     val stoppingToolMessageId: String? = null,
+    /** Stored history has older pages (5e-2). */
+    val hasMoreHistory: Boolean = false,
+    val loadingMore: Boolean = false,
 )
 
 /** The preview page's few actions into the live runtime. */
@@ -71,6 +76,8 @@ class ChatTranscriptActions(
     val onRespondToApproval: (messageId: String, accepted: Boolean) -> Unit = { _, _ -> },
     /** Cancels the active turn from the activity strip; null on stored history. */
     val onStopTool: ((messageId: String) -> Unit)? = null,
+    /** Loads the next older history page when the list nears its top. */
+    val onLoadOlder: () -> Unit = {},
 )
 
 /**
@@ -159,6 +166,16 @@ fun ChatMessageList(
     var anchorsExpanded by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    // reverseLayout: the oldest entry is the last index, drawn at the top.
+    val nearTop by remember(entries.size) {
+        derivedStateOf {
+            val last = listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
+            entries.isNotEmpty() && last >= entries.size - 3
+        }
+    }
+    LaunchedEffect(nearTop, state.hasMoreHistory, state.loadingMore) {
+        if (nearTop && state.hasMoreHistory && !state.loadingMore) actions.onLoadOlder()
+    }
 
     Box(modifier) {
         Column(Modifier.fillMaxSize()) {
@@ -185,6 +202,13 @@ fun ChatMessageList(
                             handlers = itemHandlers,
                             context = itemContext,
                         )
+                    }
+                }
+                if (state.loadingMore) {
+                    item(key = "history-loading") {
+                        Box(Modifier.fillMaxWidth().padding(vertical = 12.dp), contentAlignment = Alignment.Center) {
+                            Text(stringResource(R.string.omni_chat_loading_older), color = LocalOmniPalette.current.tertiaryText, fontSize = 11.sp)
+                        }
                     }
                 }
             }

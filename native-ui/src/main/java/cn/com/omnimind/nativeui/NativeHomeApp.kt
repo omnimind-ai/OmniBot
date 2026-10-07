@@ -103,8 +103,9 @@ fun NativeHomeApp(
     openWith: @Composable (onBack: () -> Unit) -> Unit,
     background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
     pet: @Composable (onBack: () -> Unit) -> Unit,
-    chatTranscript: @Composable (conversationId: Long?, mode: String, title: String, onBack: () -> Unit) -> Unit =
-        { _, _, _, _ -> },
+    /** [instanceKey] identifies the page across rotation and process death. */
+    chatTranscript: @Composable (conversationId: Long?, mode: String, title: String, instanceKey: String, onBack: () -> Unit) -> Unit =
+        { _, _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -238,10 +239,12 @@ fun NativeHomeApp(
             entry<HomeRoute.ExecutionHistory> { executionHistory { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
             entry<HomeRoute.ChatTranscriptPreview> { key ->
-                chatTranscript(key.conversationId, key.mode, key.title) { backStack.removeLastOrNull() }
+                chatTranscript(key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}") {
+                    backStack.removeLastOrNull()
+                }
             }
-            entry<HomeRoute.NativeNewChat> {
-                chatTranscript(null, "agent", "") { backStack.removeLastOrNull() }
+            entry<HomeRoute.NativeNewChat> { key ->
+                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}") { backStack.removeLastOrNull() }
             }
         }
     }
