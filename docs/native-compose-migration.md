@@ -408,6 +408,54 @@ Manual acceptance checklist:
 6. Run `/review` from the slash panel and by typing it: the reply streams
    and the composer returns to idle when it ends.
 
+## Batch 5e plan: chat page shell (2026-10-08)
+
+Split from the 5e row of the batch 5 table; each slice keeps the Flutter
+chat working beside it.
+
+| Slice | Scope |
+| --- | --- |
+| 5e-1 | New conversation on the native page: the drawer's `+` opens it, the first send creates the conversation (title, Harness binding, permission) and launches through the 5d-0 launcher. |
+| 5e-2 | Open existing conversations natively from the drawer (replacing the preview entry), history paging, run/target restore after process death. |
+| 5e-3 | App bar: title, Harness switcher (native `agent/select` + the 5d-0c switch barrier), new-conversation action, ACP config panel. |
+| 5e-4 | Empty-state greeting and quick prompts; Home's composer entry opens the native page. |
+| 5e-5 | User message actions (copy, edit, retry) and link previews on the native page. |
+| 5e-6 | Remote Codex, OpenClaw, browser overlay, workspace panel and manual recording entries (or explicit Flutter hand-offs). |
+| 5e-7 | Lifecycle: startup conversation preference, shared-open drafts, voice, pet overlay, tablet layout; retire `/home/chat`. |
+
+### 5e-1 checkpoint (source complete; device acceptance pending)
+
+- `HomeRoute.NativeNewChat` opens the native chat page with no
+  conversation; the drawer's `+` (which only closed the drawer before) now
+  opens it. Home's composer entry and quick prompts still open the Flutter
+  chat until 5e-4.
+- `NativeChatTranscriptViewModel` takes a nullable conversation id. A new
+  page resolves its target from the selected Harness
+  (`AcpAgentProfileStore.selected()`; remote Codex keeps the Flutter hint).
+  The first send creates the conversation through
+  `ConversationDomainService.createConversation` (title = first user text
+  cut at 20 characters, as in Dart `persistConversationSnapshot`; the
+  Harness bound by the service), stores the permission choice for the new
+  id, seeds the runtime and launches. The native drawer refreshes from the
+  Room flow and the Flutter list from `FlutterChatSyncBridge`.
+- The page's navigation fence now follows the route (`attach` / `detach`
+  from a `DisposableEffect`, kept across rotation). Before, the fence was
+  closed only in `onCleared`, which for these activity-scoped ViewModels
+  runs when the activity finishes, so leaving a page never stopped a turn
+  still preparing.
+- Not yet: plan mode and `/effort` need an existing conversation (they are
+  session or conversation settings) and are ignored before the first send.
+- Verification: `NativeChatComposerTargetTest` +1 (title rule); `:app`
+  1521, native-ui 65, 0 failures; androidTest compile and release resource
+  merge succeeded. No device run.
+
+Manual acceptance (5e-1): drawer `+` → native page shows the composer
+with the selected Harness's permission; first send creates a conversation
+that appears in both drawers with the first text as title and streams the
+reply; leave during "connecting" on a second new page: nothing is sent and
+no empty conversation is left behind except the one created by the send;
+with remote Codex selected the page shows the "open in chat" hint.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |

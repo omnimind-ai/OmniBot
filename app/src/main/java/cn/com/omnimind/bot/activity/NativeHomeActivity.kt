@@ -22,6 +22,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
@@ -257,10 +258,14 @@ class NativeHomeActivity : ComponentActivity() {
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
                 chatTranscript = { conversationId, mode, title, onBack ->
-                    val transcriptViewModel = remember(conversationId, mode) {
+                    // A new conversation gets its own ViewModel per entry: it fixes its id on first send.
+                    val key = rememberSaveable(conversationId, mode) {
+                        "transcript:$mode:${conversationId ?: "new-${System.nanoTime()}"}"
+                    }
+                    val transcriptViewModel = remember(key) {
                         ViewModelProvider(this@NativeHomeActivity,
                             NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title))[
-                                "transcript:$mode:$conversationId", NativeChatTranscriptViewModel::class.java]
+                                key, NativeChatTranscriptViewModel::class.java]
                     }
                     NativeChatTranscriptRoute(transcriptViewModel, ::openTranscriptLink, ::runTranscriptToolAction, onBack)
                 },

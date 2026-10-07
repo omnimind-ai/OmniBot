@@ -6,6 +6,8 @@ import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -43,6 +45,9 @@ import cn.com.omnimind.nativeui.chat.ChatSlashSubmit
 import cn.com.omnimind.nativeui.chat.resolveSubmit
 import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
+import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
+import cn.com.omnimind.bot.agent.runtime.CodexRemoteBridgeConfigStore
+import cn.com.omnimind.bot.agent.projection.ConversationModes
 import org.json.JSONObject
 import cn.com.omnimind.nativeui.chat.ChatTranscriptActions
 import cn.com.omnimind.nativeui.chat.contextUsageRing
@@ -70,10 +75,17 @@ import kotlinx.coroutines.withContext
  */
 internal class NativeChatTranscriptViewModel(
     context: Context,
-    private val conversationId: Long,
+    initialConversationId: Long?,
     private val mode: String,
     title: String,
 ) : ViewModel() {
+    /**
+     * Null until the first send of a new conversation (5e-1) creates it;
+     * fixed afterwards. Read on the main thread only.
+     */
+    private var conversationIdOrNull: Long? = initialConversationId
+    private val conversationId: Long get() = checkNotNull(conversationIdOrNull)
+    private var creatingConversation = false
     private val appContext = context.applicationContext
     private val conversations by lazy { ConversationDomainService(appContext) }
     private val mutableState = MutableStateFlow(ChatTranscriptState(title = title))
@@ -81,7 +93,8 @@ internal class NativeChatTranscriptViewModel(
 
     private val coordinator: ChatConversationRuntimeCoordinator
     private val listener = ChatConversationRuntimeCoordinator.Listener { snapshots, _ ->
-        snapshots.filter { it.conversationId.toLong() == conversationId }
+        val id = conversationIdOrNull ?: return@Listener
+        snapshots.filter { it.conversationId.toLong() == id }
             .maxByOrNull { it.revision }
             ?.let(::applySnapshot)
     }
@@ -114,6 +127,11 @@ internal class NativeChatTranscriptViewModel(
         viewModelScope.launch {
             val avatar = withContext(Dispatchers.IO) { loadAgentAvatarPreview(appContext) }
             mutableState.update { it.copy(agentAvatar = avatar) }
+        }
+        if (conversationIdOrNull == null) {
+            viewModelScope.launch { resolveNewConversationTarget() }
+            mutableState.update { it.copy(loading = false) }
+            return
         }
         val live = coordinator.allSnapshots()
             .filter { it.conversationId.toLong() == conversationId && it.messages.isNotEmpty() }
@@ -201,8 +219,10 @@ internal class NativeChatTranscriptViewModel(
         }
     }
 
-    private fun liveSnapshot(): ChatRuntimeSnapshot? =
-        liveMode?.let { coordinator.snapshotFor(conversationId.toInt(), it) }
+    private fun liveSnapshot(): ChatRuntimeSnapshot? {
+        val id = conversationIdOrNull ?: return null
+        return liveMode?.let { coordinator.snapshotFor(id.toInt(), it) }
+    }
 
     /** Values of a select option, flattening grouped options (Dart `_loadAgentCollaborationModes`). */
     private fun optionValues(option: Map<String, Any?>): List<String> =
@@ -223,24 +243,44 @@ internal class NativeChatTranscriptViewModel(
             agentId = payload["agentId"]?.toString(),
             liveRuntimeMode = liveMode,
         ) ?: return
+        applyComposerTarget(resolved, payload)
+    }
+
+    /**
+     * A new conversation is an Agent conversation on the selected Harness
+     * (Dart `agentIdForNewConversation`). A remote Codex selection keeps its
+     * Flutter flow, so the composer shows the "open in chat" hint.
+     */
+    private suspend fun resolveNewConversationTarget() {
+        val harness = withContext(Dispatchers.IO) {
+            runCatching {
+                if (CodexRemoteBridgeConfigStore(appContext).read().enabled) null
+                else AcpAgentProfileStore(appContext).selected().id
+            }.getOrNull()
+        } ?: return
+        val resolved = NativeChatComposerTarget.resolve(ConversationModes.AGENT, harness, liveRuntimeMode = null) ?: return
+        applyComposerTarget(resolved, payload = null)
+    }
+
+    private suspend fun applyComposerTarget(resolved: NativeChatComposerTarget, payload: Map<String, Any?>?) {
         target = resolved
         if (resolved.showsPermission) {
-            val stored = preferences.turnSettings(conversationId.toInt(), modelSource(resolved)).permission
+            val stored = preferences.turnSettings(conversationIdOrNull?.toInt(), modelSource(resolved)).permission
             permission = stored.forLocalHarness()
         }
         if (resolved.showsPermission) {
             modelCatalog = withContext(Dispatchers.IO) { runCatching { models.load() }.getOrDefault(modelCatalog) }
         }
-        val effort = if (resolved.showsPermission) null else pureChatReasoningEffort(
-            flutterPreferences().getString(EFFORTS_KEY, null), conversationId,
-        )
+        val effort = if (resolved.showsPermission) null else conversationIdOrNull?.let {
+            pureChatReasoningEffort(flutterPreferences().getString(EFFORTS_KEY, null), it)
+        }
         mutableComposer.update {
             it.copy(
                 slash = it.slash.copy(agent = resolved.showsPermission, selectedEffort = effort),
                 available = true,
                 permission = if (resolved.showsPermission) permission.toComposer() else null,
                 permissionChoices = if (resolved.showsPermission) LOCAL_PERMISSION_CHOICES else emptyList(),
-            ).withContextUsage(payload)
+            ).let { state -> payload?.let { state.withContextUsage(it) } ?: state }
         }
         refreshSlash()
     }
@@ -296,56 +336,66 @@ internal class NativeChatTranscriptViewModel(
         if (text.isEmpty() && attachments.isEmpty()) return false
         if (sending || mutableComposer.value.isProcessing) return false
         sending = true
+        // Frozen before the first await, like the Flutter page's dispatch.
         val ids = ChatTurnIds.forSubmission(System.currentTimeMillis())
         val attachmentMaps = attachments.map { it.toMap() }
-        val userContent = linkedMapOf<String, Any?>("text" to (display ?: text), "id" to ids.userMessageId)
+        val userText = display ?: text
+        val userContent = linkedMapOf<String, Any?>("text" to userText, "id" to ids.userMessageId)
         if (attachmentMaps.isNotEmpty()) userContent["attachments"] = attachmentMaps
         val userRow = ChatMessage(id = ids.userMessageId, type = 1, user = 1, content = userContent)
-        val runtimeConversationId = conversationId.toInt()
-        val settings = if (target.showsPermission) {
-            preferences.turnSettings(runtimeConversationId, modelSource(target))
-        } else {
-            null
-        }
-        val overrides = flutterPreferences()
-        val request = ChatTurnRequest(
-            taskId = ids.taskId,
-            conversationId = runtimeConversationId,
-            mode = target.runtimeMode,
-            text = text,
-            attachments = attachmentMaps,
-            userMessage = userRow,
-            agentId = target.agentId,
-            permission = if (target.showsPermission) permission else AgentPermissionMode.FullAccess,
-            // Every local Harness runs on the shared dispatch binding (Dart
-            // `_usesSharedProviderModel`); its model is the bound one, never a
-            // stored per-Harness id that may have left the catalog.
-            model = if (target.showsPermission) {
-                modelCatalog.selected
-            } else {
-                pureChatModelOverride(overrides.getString(OVERRIDES_KEY, null), conversationId)
-            },
-            effort = if (target.showsPermission) {
-                settings?.reasoningEffort
-            } else {
-                pureChatReasoningEffort(overrides.getString(EFFORTS_KEY, null), conversationId)
-            },
-            collaborationMode = collaborationMode ?: settings?.collaborationMode,
-            conversationMode = target.conversationMode,
-            terminalEnvironment = OmnibotTerminalEnvironment.loadUserVariables(appContext).ifEmpty { null },
-            conversation = conversationPayload,
-            clearThinkingOnFailure = !target.showsPermission,
-        )
+        val frozenPermission = if (target.showsPermission) permission else AgentPermissionMode.FullAccess
+        val frozenModel = modelCatalog.selected
+        val terminalEnvironment = OmnibotTerminalEnvironment.loadUserVariables(appContext).ifEmpty { null }
         mutableComposer.update { it.copy(attachments = emptyList(), isProcessing = true) }
         viewModelScope.launch {
+            fun restore(message: String) {
+                sending = false
+                mutableComposer.update { it.copy(isProcessing = false, attachments = attachments) }
+                toast(message)
+            }
+            // A new conversation is created by its first send (5e-1).
+            val conversationId = conversationIdOrNull ?: createConversation(userText, target)
+                ?: return@launch restore(
+                    if (AppLocaleManager.isEnglish()) "Couldn't create the conversation. Try again." else "无法创建对话，请重试",
+                )
             val seeded = runCatching { seedRuntime(target.runtimeMode) }
                 .onFailure { Log.w(TAG, "加载完整历史失败: ${it.message}") }.isSuccess
             if (!seeded) {
-                sending = false
-                mutableComposer.update { it.copy(isProcessing = false, attachments = attachments) }
-                toast(if (AppLocaleManager.isEnglish()) "Couldn't load this conversation. Try again." else "无法加载对话，请重试")
-                return@launch
+                return@launch restore(
+                    if (AppLocaleManager.isEnglish()) "Couldn't load this conversation. Try again." else "无法加载对话，请重试",
+                )
             }
+            val runtimeConversationId = conversationId.toInt()
+            val settings = if (target.showsPermission) preferences.turnSettings(runtimeConversationId, modelSource(target)) else null
+            val overrides = flutterPreferences()
+            val request = ChatTurnRequest(
+                taskId = ids.taskId,
+                conversationId = runtimeConversationId,
+                mode = target.runtimeMode,
+                text = text,
+                attachments = attachmentMaps,
+                userMessage = userRow,
+                agentId = target.agentId,
+                permission = frozenPermission,
+                // Every local Harness runs on the shared dispatch binding (Dart
+                // `_usesSharedProviderModel`); its model is the bound one, never a
+                // stored per-Harness id that may have left the catalog.
+                model = if (target.showsPermission) {
+                    frozenModel
+                } else {
+                    pureChatModelOverride(overrides.getString(OVERRIDES_KEY, null), conversationId)
+                },
+                effort = if (target.showsPermission) {
+                    settings?.reasoningEffort
+                } else {
+                    pureChatReasoningEffort(overrides.getString(EFFORTS_KEY, null), conversationId)
+                },
+                collaborationMode = collaborationMode ?: settings?.collaborationMode,
+                conversationMode = target.conversationMode,
+                terminalEnvironment = terminalEnvironment,
+                conversation = conversationPayload,
+                clearThinkingOnFailure = !target.showsPermission,
+            )
             liveMode = target.runtimeMode
             ChatRuntimeHost.launchTurnDetached(request, isTargetCurrent = { surfaceOpen }) { outcome ->
                 sending = false
@@ -355,6 +405,36 @@ internal class NativeChatTranscriptViewModel(
             }
         }
         return true
+    }
+
+    /**
+     * Creates the conversation for a first send (Dart
+     * `persistConversationSnapshot` with no id: title from the first user
+     * text, the Agent's Harness bound to it). The drawer picks it up from
+     * the database flow. The permission choice is stored for the new id, as
+     * the Flutter page does after its first send.
+     */
+    private suspend fun createConversation(firstText: String, target: NativeChatComposerTarget): Long? {
+        if (creatingConversation) return null
+        creatingConversation = true
+        try {
+            val title = newConversationTitle(firstText)
+            val payload = runCatching {
+                withContext(Dispatchers.IO) {
+                    conversations.createConversation(title = title, mode = target.conversationMode, agentId = target.agentId)
+                }
+            }.onFailure { Log.w(TAG, "创建对话失败: ${it.message}") }.getOrNull() ?: return null
+            val id = (payload["id"] as? Number)?.toLong() ?: return null
+            conversationIdOrNull = id
+            conversationPayload = payload
+            mutableState.update { it.copy(title = payload["title"]?.toString()?.ifBlank { null } ?: title) }
+            if (target.showsPermission) {
+                preferences.write(AgentCommandPreferences.Kind.PermissionMode, permission.preferenceValue, id.toInt(), modelSource(target))
+            }
+            return id
+        } finally {
+            creatingConversation = false
+        }
     }
 
     /**
@@ -425,6 +505,8 @@ internal class NativeChatTranscriptViewModel(
      */
     private fun setPlanMode(enable: Boolean, then: String?) {
         val target = target ?: return
+        // Plan mode is a session option; a new conversation has no session yet.
+        if (conversationIdOrNull == null) return
         val slash = mutableComposer.value.slash
         val value = if (enable) slash.planMode else defaultCollaborationMode()
         if (value == null || applyingSetting) return
@@ -483,6 +565,7 @@ internal class NativeChatTranscriptViewModel(
 
     /** `/effort` for pure chat: the conversation's entry in the Flutter effort map. */
     private fun setEffort(effort: String) {
+        if (conversationIdOrNull == null) return
         val preferences = flutterPreferences()
         val map = runCatching { JSONObject(preferences.getString(EFFORTS_KEY, null) ?: "{}") }.getOrElse { JSONObject() }
         map.put(conversationId.toString(), effort)
@@ -506,6 +589,7 @@ internal class NativeChatTranscriptViewModel(
 
     /** Cancels the running turn; its PromptResponse ends it through the reducer. */
     fun cancel() {
+        if (conversationIdOrNull == null) return
         val mode = liveMode ?: return
         val snapshot = coordinator.snapshotFor(conversationId.toInt(), mode) ?: return
         if (!snapshot.isAiResponding || mutableComposer.value.cancelling) return
@@ -530,7 +614,7 @@ internal class NativeChatTranscriptViewModel(
         preferences.write(
             AgentCommandPreferences.Kind.PermissionMode,
             permission.preferenceValue,
-            conversationId.toInt(),
+            conversationIdOrNull?.toInt(),
             modelSource(target),
         )
         mutableComposer.update { it.copy(permission = choice) }
@@ -584,6 +668,7 @@ internal class NativeChatTranscriptViewModel(
      * persists the message like the composer's user-input answer.
      */
     fun respondToApproval(messageId: String, accepted: Boolean) {
+        if (conversationIdOrNull == null) return
         val mode = liveMode ?: return
         val runtimeConversationId = conversationId.toInt()
         val message = coordinator.snapshotFor(runtimeConversationId, mode)?.messages
@@ -641,6 +726,7 @@ internal class NativeChatTranscriptViewModel(
      * PromptResponse that follows ends the turn through the reducer.
      */
     fun stopActiveTool(messageId: String) {
+        if (conversationIdOrNull == null) return
         val mode = liveMode ?: return
         if (state.value.stoppingToolMessageId != null) return
         val runtimeConversationId = conversationId.toInt()
@@ -674,16 +760,31 @@ internal class NativeChatTranscriptViewModel(
     private fun requestConversationId(value: Any?): Int? =
         (value as? Number)?.toInt() ?: value?.toString()?.toIntOrNull()
 
+    /** The route is visible again (re-entered from the drawer or after a configuration change). */
+    fun attach() {
+        surfaceOpen = true
+    }
+
+    /**
+     * The user left the route. A turn whose launch has not reached
+     * `session/prompt` stops; one already prompting keeps running and ends
+     * through its PromptResponse. The ViewModel is activity-scoped, so this
+     * is called by the route, not [onCleared] (which runs only when the
+     * activity finishes).
+     */
+    fun detach() {
+        surfaceOpen = false
+    }
+
     override fun onCleared() {
-        // A turn whose launch has not reached session/prompt stops here; one
-        // already prompting keeps running and ends through its PromptResponse.
         surfaceOpen = false
         coordinator.removeListener(listener)
     }
 
     class Factory(
         context: Context,
-        private val conversationId: Long,
+        /** Null opens a new conversation (5e-1). */
+        private val conversationId: Long?,
         private val mode: String,
         private val title: String,
     ) : ViewModelProvider.Factory {
@@ -779,6 +880,12 @@ internal fun NativeChatTranscriptRoute(
     val state by viewModel.state.collectAsStateWithLifecycle()
     val composer by viewModel.composer.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
+    val activity = LocalContext.current as? android.app.Activity
+    DisposableEffect(viewModel) {
+        viewModel.attach()
+        // A rotation recomposes the same route; only leaving it closes the fence.
+        onDispose { if (activity?.isChangingConfigurations != true) viewModel.detach() }
+    }
     // Any document; the runtime copies it into the workspace at send time.
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         viewModel.addAttachments(uris)

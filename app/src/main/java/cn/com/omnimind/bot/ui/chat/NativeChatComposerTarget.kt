@@ -105,3 +105,9 @@ private fun jsonEntry(json: String?, conversationId: Long): Any? {
 }
 
 private val SUPPORTED_EFFORTS = setOf("none", "low", "medium", "high", "xhigh", "max")
+
+/** Dart `persistConversationSnapshot`: the first user text, cut at 20 characters. */
+internal fun newConversationTitle(firstText: String): String {
+    val text = firstText.trim().ifEmpty { return "新对话" }
+    return if (text.length > 20) "${text.substring(0, 20)}..." else text
+}

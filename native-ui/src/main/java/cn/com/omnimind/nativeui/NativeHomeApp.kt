@@ -67,6 +67,8 @@ internal sealed interface HomeRoute : NavKey {
         val mode: String,
         val title: String,
     ) : HomeRoute
+    /** A new conversation on the native chat page; created by its first send (5e-1). */
+    @Serializable data class NativeNewChat(val requestKey: Long) : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -101,7 +103,7 @@ fun NativeHomeApp(
     openWith: @Composable (onBack: () -> Unit) -> Unit,
     background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
     pet: @Composable (onBack: () -> Unit) -> Unit,
-    chatTranscript: @Composable (conversationId: Long, mode: String, title: String, onBack: () -> Unit) -> Unit =
+    chatTranscript: @Composable (conversationId: Long?, mode: String, title: String, onBack: () -> Unit) -> Unit =
         { _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
@@ -110,6 +112,7 @@ fun NativeHomeApp(
         val openTranscript: (ConversationSummary) -> Unit = { conversation ->
             backStack.add(HomeRoute.ChatTranscriptPreview(conversation.id, conversation.mode, conversation.title))
         }
+        val openNativeNewChat: () -> Unit = { backStack.add(HomeRoute.NativeNewChat(System.currentTimeMillis())) }
         LaunchedEffect(state.pendingDestination) {
             when (val destination = state.pendingDestination) {
                 LegacyDestination.Page.ModelProviders -> {
@@ -147,6 +150,7 @@ fun NativeHomeApp(
                     onPlugins = { backStack.add(HomeRoute.Plugins) },
                     onMemory = { backStack.add(HomeRoute.Memory) },
                     onTranscript = openTranscript,
+                    onNativeNewChat = openNativeNewChat,
                     actions = actions,
                 )
             }
@@ -236,6 +240,9 @@ fun NativeHomeApp(
             entry<HomeRoute.ChatTranscriptPreview> { key ->
                 chatTranscript(key.conversationId, key.mode, key.title) { backStack.removeLastOrNull() }
             }
+            entry<HomeRoute.NativeNewChat> {
+                chatTranscript(null, "agent", "") { backStack.removeLastOrNull() }
+            }
         }
     }
 }
@@ -255,6 +262,7 @@ private fun HomeWithDrawer(
     onPlugins: () -> Unit,
     onMemory: () -> Unit,
     onTranscript: (ConversationSummary) -> Unit,
+    onNativeNewChat: () -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -284,7 +292,8 @@ private fun HomeWithDrawer(
                             state = state,
                             onSettings = { navigate(onSettings) },
                             onArchive = { navigate(onArchive) },
-                            onNewConversation = { scope.launch { drawer.close() } },
+                            // The native chat page (5e-1); the composer entry on Home keeps the Flutter chat.
+                            onNewConversation = { navigate(onNativeNewChat) },
                             onScheduledTasks = { navigate(onScheduledTasks) },
                             onExecutionHistory = { navigate(onExecutionHistory) },
                             onSkills = { navigate(onSkills) },

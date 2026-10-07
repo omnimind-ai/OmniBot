@@ -61,4 +61,11 @@ class NativeChatComposerTargetTest {
         assertEquals("medium", pureChatReasoningEffort(efforts, 8))
         assertNull(pureChatReasoningEffort(efforts, 9))
     }
+
+    @Test
+    fun `a new conversation is titled by its first user text like the Dart page`() {
+        assertEquals("你好", newConversationTitle(" 你好 "))
+        assertEquals("12345678901234567890...", newConversationTitle("1234567890123456789012"))
+        assertEquals("新对话", newConversationTitle("  "))
+    }
 }
