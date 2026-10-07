@@ -1003,4 +1003,16 @@
     <string name="omni_tool_stop_failed">Couldn\'t stop the tool call. Try again later.</string>
     <string name="omni_anchor_open">Message anchors</string>
     <string name="omni_anchor_working">Working…</string>
+    <string name="omni_chat_composer_hint">Type your message</string>
+    <string name="omni_composer_send">Send</string>
+    <string name="omni_composer_stop">Stop</string>
+    <string name="omni_composer_add_attachment">Add attachment</string>
+    <string name="omni_composer_remove_attachment">Remove %1$s</string>
+    <string name="omni_composer_permission">Agent permissions</string>
+    <string name="omni_composer_permission_read_only">Read only</string>
+    <string name="omni_composer_permission_default">Workspace write</string>
+    <string name="omni_composer_permission_auto_review">Auto review</string>
+    <string name="omni_composer_permission_full_access">Full access</string>
+    <string name="omni_composer_context_usage">Context usage</string>
+    <string name="omni_composer_history_only">Open this conversation in chat to continue it.</string>
 </resources>

@@ -114,6 +114,24 @@ object ChatRuntimeHost {
         }
     }
 
+    /**
+     * Launches a turn for a native surface (batch 5d-1b). The turn runs in
+     * the host scope, not the caller's: closing the page must not cancel a
+     * turn between admission and its PromptResponse, which would strand the
+     * runtime as responding. [isTargetCurrent] still fences navigation.
+     */
+    fun launchTurnDetached(
+        request: ChatTurnRequest,
+        isTargetCurrent: () -> Boolean,
+        onOutcome: (ChatTurnOutcome) -> Unit = {},
+    ) {
+        scope.launch {
+            val outcome = launcher.launchTurn(request, isTargetCurrent)
+            coordinator.publishDirtySnapshots()
+            onOutcome(outcome)
+        }
+    }
+
     private fun turnRequestFromChannel(args: Map<String, Any?>): ChatTurnRequest {
         fun str(key: String): String? = dartToString(args[key])?.trim()?.ifEmpty { null }
         return ChatTurnRequest(

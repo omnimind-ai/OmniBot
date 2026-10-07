@@ -3,6 +3,8 @@ package cn.com.omnimind.bot.ui.chat
 import android.content.Context
 import android.util.Log
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,7 +13,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
+import android.net.Uri
+import android.provider.OpenableColumns
+import cn.com.omnimind.bot.agent.projection.AgentCommandPreferences
+import cn.com.omnimind.bot.agent.projection.AgentPermissionMode
 import cn.com.omnimind.bot.agent.projection.ChatConversationRuntimeCoordinator
+import cn.com.omnimind.bot.agent.projection.ChatTurnIds
+import cn.com.omnimind.bot.agent.projection.ChatTurnOutcome
+import cn.com.omnimind.bot.agent.projection.ChatTurnRequest
+import cn.com.omnimind.bot.agent.projection.agentModelSourceKey
 import cn.com.omnimind.bot.agent.projection.ChatMessage
 import cn.com.omnimind.bot.agent.projection.ChatRuntimeHost
 import cn.com.omnimind.bot.agent.projection.ChatRuntimeSnapshot
@@ -24,7 +34,13 @@ import cn.com.omnimind.nativeui.chat.AgentToolCardUi
 import cn.com.omnimind.nativeui.chat.DeepThinkingCardUi
 import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.nativeui.chat.ChatMessageUi
+import cn.com.omnimind.nativeui.chat.ChatComposerActions
+import cn.com.omnimind.nativeui.chat.ChatComposerAttachment
+import cn.com.omnimind.nativeui.chat.ChatComposerPermission
+import cn.com.omnimind.nativeui.chat.ChatComposerState
 import cn.com.omnimind.nativeui.chat.ChatTranscriptActions
+import cn.com.omnimind.nativeui.chat.contextUsageRing
+import com.rk.libcommons.OmnibotTerminalEnvironment
 import cn.com.omnimind.nativeui.chat.ChatTranscriptScreen
 import cn.com.omnimind.nativeui.chat.ChatTranscriptState
 import kotlinx.coroutines.Dispatchers
@@ -35,11 +51,16 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Native transcript preview (batch 5c). Mirrors the live runtime snapshot of
- * [conversationId] when the native coordinator holds one, and falls back to
- * stored history otherwise. Its only write is answering a live approval
- * request (5c-3) through the 5b [ChatRuntimeHost.dispatcher] entry; prompts
- * and everything else stay with the Flutter chat page until 5e.
+ * Native chat page for one conversation (batch 5c transcript, 5d-1b
+ * composer). Mirrors the live runtime snapshot of [conversationId] when the
+ * native coordinator holds one, and falls back to stored history otherwise.
+ *
+ * Writes go through the native entries only: approvals and stop through the
+ * 5b [ChatRuntimeHost.dispatcher], prompts through the 5d-0 launcher
+ * ([ChatRuntimeHost.launchTurnDetached]) with settings read natively
+ * ([AgentCommandPreferences]). Sending seeds the runtime with the complete
+ * stored history first, so the admission snapshot can never replace the
+ * conversation with the preview's partial page.
  */
 internal class NativeChatTranscriptViewModel(
     context: Context,
@@ -62,6 +83,15 @@ internal class NativeChatTranscriptViewModel(
     private var liveMode: String? = null
     private val cards = ChatCardCache()
     private var loaded = false
+    private val preferences = AgentCommandPreferences.forContext(appContext)
+    private val mutableComposer = MutableStateFlow(ChatComposerState())
+    val composer = mutableComposer.asStateFlow()
+    private var target: NativeChatComposerTarget? = null
+    private var conversationPayload: Map<String, Any?>? = null
+    private var permission: AgentPermissionMode = AgentPermissionMode.FullAccess
+    /** This page's navigation fence: bumped when it closes, so a queued turn never prompts. */
+    @Volatile private var surfaceOpen = true
+    private var sending = false
 
     init {
         ChatRuntimeHost.initialize(appContext)
@@ -79,6 +109,7 @@ internal class NativeChatTranscriptViewModel(
         val live = coordinator.allSnapshots()
             .filter { it.conversationId.toLong() == conversationId && it.messages.isNotEmpty() }
             .maxByOrNull { it.revision }
+        viewModelScope.launch { resolveComposerTarget(live?.mode) }
         if (live != null) {
             applySnapshot(live)
             return
@@ -123,7 +154,218 @@ internal class NativeChatTranscriptViewModel(
                 loading = false,
             )
         }
+        snapshot.conversation?.let { conversationPayload = it }
+        mutableComposer.update {
+            it.copy(
+                // A send still seeding its runtime publishes an idle snapshot first.
+                isProcessing = snapshot.isAiResponding || sending,
+                cancelling = it.cancelling && snapshot.isAiResponding,
+            ).withContextUsage(snapshot.conversation)
+        }
     }
+
+    private suspend fun resolveComposerTarget(liveMode: String?) {
+        val payload = runCatching {
+            withContext(Dispatchers.IO) { conversations.getConversationPayload(conversationId) }
+        }.getOrNull() ?: return
+        conversationPayload = payload
+        val resolved = NativeChatComposerTarget.resolve(
+            storedMode = payload["mode"]?.toString(),
+            agentId = payload["agentId"]?.toString(),
+            liveRuntimeMode = liveMode,
+        ) ?: return
+        target = resolved
+        if (resolved.showsPermission) {
+            val stored = preferences.turnSettings(conversationId.toInt(), modelSource(resolved)).permission
+            permission = stored.forLocalHarness()
+        }
+        mutableComposer.update {
+            it.copy(
+                available = true,
+                permission = if (resolved.showsPermission) permission.toComposer() else null,
+                permissionChoices = if (resolved.showsPermission) LOCAL_PERMISSION_CHOICES else emptyList(),
+            ).withContextUsage(payload)
+        }
+    }
+
+    private fun ChatComposerState.withContextUsage(conversation: Map<String, Any?>?): ChatComposerState {
+        conversation ?: return this
+        fun long(key: String) = (conversation[key] as? Number)?.toLong() ?: conversation[key]?.toString()?.toLongOrNull()
+        val used = long("latestPromptTokens") ?: 0L
+        val threshold = long("promptTokenThreshold") ?: 128_000L
+        val ring = contextUsageRing(used, threshold, long("latestPromptTokensUpdatedAt") ?: 0L)
+        return copy(contextUsage = ring, contextUsageLabel = ring?.let { "$used / $threshold tokens" })
+    }
+
+    private fun modelSource(target: NativeChatComposerTarget): String =
+        agentModelSourceKey(runtime = "local", remoteEnabled = false, activeAgentId = target.agentId)
+
+    // ---------------------------------------------------------------------
+    // Composer (batch 5d-1b)
+    // ---------------------------------------------------------------------
+
+    /**
+     * Sends one submission. Returns false when it was not admitted (the
+     * composer then keeps the draft). Settings are frozen here, before any
+     * await, like the Flutter page's dispatch.
+     */
+    fun send(text: String): Boolean {
+        val target = target ?: return false
+        val attachments = mutableComposer.value.attachments
+        if (text.isEmpty() && attachments.isEmpty()) return false
+        if (sending || mutableComposer.value.isProcessing) return false
+        sending = true
+        val ids = ChatTurnIds.forSubmission(System.currentTimeMillis())
+        val attachmentMaps = attachments.map { it.toMap() }
+        val userContent = linkedMapOf<String, Any?>("text" to text, "id" to ids.userMessageId)
+        if (attachmentMaps.isNotEmpty()) userContent["attachments"] = attachmentMaps
+        val userRow = ChatMessage(id = ids.userMessageId, type = 1, user = 1, content = userContent)
+        val runtimeConversationId = conversationId.toInt()
+        val settings = if (target.showsPermission) {
+            preferences.turnSettings(runtimeConversationId, modelSource(target))
+        } else {
+            null
+        }
+        val overrides = appContext.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val request = ChatTurnRequest(
+            taskId = ids.taskId,
+            conversationId = runtimeConversationId,
+            mode = target.runtimeMode,
+            text = text,
+            attachments = attachmentMaps,
+            userMessage = userRow,
+            agentId = target.agentId,
+            permission = if (target.showsPermission) permission else AgentPermissionMode.FullAccess,
+            model = settings?.model
+                ?: pureChatModelOverride(overrides.getString("flutter.conversation_model_overrides_v1", null), conversationId)
+                    .takeIf { !target.showsPermission },
+            effort = settings?.reasoningEffort
+                ?: pureChatReasoningEffort(overrides.getString("flutter.conversation_reasoning_efforts_v1", null), conversationId)
+                    .takeIf { !target.showsPermission },
+            collaborationMode = settings?.collaborationMode,
+            conversationMode = target.conversationMode,
+            terminalEnvironment = OmnibotTerminalEnvironment.loadUserVariables(appContext).ifEmpty { null },
+            conversation = conversationPayload,
+            clearThinkingOnFailure = !target.showsPermission,
+        )
+        mutableComposer.update { it.copy(attachments = emptyList(), isProcessing = true) }
+        viewModelScope.launch {
+            val seeded = runCatching { seedRuntime(target.runtimeMode) }
+                .onFailure { Log.w(TAG, "加载完整历史失败: ${it.message}") }.isSuccess
+            if (!seeded) {
+                sending = false
+                mutableComposer.update { it.copy(isProcessing = false, attachments = attachments) }
+                toast(if (AppLocaleManager.isEnglish()) "Couldn't load this conversation. Try again." else "无法加载对话，请重试")
+                return@launch
+            }
+            liveMode = target.runtimeMode
+            ChatRuntimeHost.launchTurnDetached(request, isTargetCurrent = { surfaceOpen }) { outcome ->
+                sending = false
+                if (outcome.status == ChatTurnOutcome.Status.Rejected) {
+                    mutableComposer.update { it.copy(isProcessing = false) }
+                }
+            }
+        }
+        return true
+    }
+
+    /**
+     * Admission persists the runtime's messages as the conversation, so a
+     * runtime created from the preview's partial page would drop older
+     * history. Seed it with every stored message (Dart `onConversationLoaded`
+     * reads the whole history the same way) unless a live runtime exists.
+     */
+    private suspend fun seedRuntime(mode: String) {
+        val runtimeConversationId = conversationId.toInt()
+        if (coordinator.snapshotFor(runtimeConversationId, mode) != null) return
+        val messages = withContext(Dispatchers.IO) {
+            val storageMode = target?.conversationMode ?: mode
+            conversations.listConversationMessages(conversationId, storageMode).mapNotNull { row ->
+                runCatching { ChatMessage.fromJson(row) }.getOrNull()
+            }
+        }
+        if (coordinator.snapshotFor(runtimeConversationId, mode) != null) return
+        coordinator.ensureRuntime(
+            runtimeConversationId,
+            mode,
+            initialMessages = messages,
+            conversation = conversationPayload,
+            initialChatIslandDisplayLayer = null,
+        )
+        coordinator.publishDirtySnapshots()
+    }
+
+    /** Cancels the running turn; its PromptResponse ends it through the reducer. */
+    fun cancel() {
+        val mode = liveMode ?: return
+        val snapshot = coordinator.snapshotFor(conversationId.toInt(), mode) ?: return
+        if (!snapshot.isAiResponding || mutableComposer.value.cancelling) return
+        val args = linkedMapOf<String, Any?>("conversationId" to conversationId.toInt())
+        snapshot.activeAcpSessionId?.let { args["sessionId"] = it }
+        snapshot.activeAcpTurnId?.let { args["promptId"] = it }
+        mutableComposer.update { it.copy(cancelling = true) }
+        viewModelScope.launch {
+            val cancelled = runCatching { ChatRuntimeHost.dispatcher.cancelTurn(args) }
+                .onFailure { Log.w(TAG, "取消回合失败: ${it.message}") }.isSuccess
+            if (!cancelled) {
+                mutableComposer.update { it.copy(cancelling = false) }
+                toast(if (AppLocaleManager.isEnglish()) "Couldn't stop the reply. Try again." else "停止回复失败，请重试")
+            }
+        }
+    }
+
+    /** Stores the choice on the Flutter keys, so both composers stay in sync. */
+    fun selectPermission(choice: ChatComposerPermission) {
+        val target = target ?: return
+        permission = choice.toAgent()
+        preferences.write(
+            AgentCommandPreferences.Kind.PermissionMode,
+            permission.preferenceValue,
+            conversationId.toInt(),
+            modelSource(target),
+        )
+        mutableComposer.update { it.copy(permission = choice) }
+    }
+
+    /** Adds picked documents; a path already attached is skipped (Dart `_pickAttachments`). */
+    fun addAttachments(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            val picked = withContext(Dispatchers.IO) { uris.mapNotNull(::describeAttachment) }
+            mutableComposer.update { state ->
+                val known = state.attachments.map { it.path }.toMutableSet()
+                state.copy(attachments = state.attachments + picked.filter { known.add(it.path) })
+            }
+        }
+    }
+
+    fun removeAttachment(id: String) {
+        mutableComposer.update { state -> state.copy(attachments = state.attachments.filterNot { it.id == id }) }
+    }
+
+    private fun describeAttachment(uri: Uri): ChatComposerAttachment? = runCatching {
+        val resolver = appContext.contentResolver
+        var name: String? = null
+        var size: Long? = null
+        resolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                name = cursor.getString(0)
+                size = if (cursor.isNull(1)) null else cursor.getLong(1)
+            }
+        }
+        val mimeType = resolver.getType(uri)
+        val path = uri.toString()
+        ChatComposerAttachment(
+            id = "${path}_${System.nanoTime() / 1000}",
+            name = name?.trim()?.ifEmpty { null } ?: uri.lastPathSegment ?: "attachment",
+            path = path,
+            size = size,
+            mimeType = mimeType,
+            isImage = mimeType?.startsWith("image/") == true,
+        )
+    }.onFailure { Log.w(TAG, "读取附件失败: ${it.message}") }.getOrNull()
+
+    private fun toast(text: String) = Toast.makeText(appContext, text, Toast.LENGTH_SHORT).show()
 
     /**
      * Answers a pending approval (Flutter `AgentRequestNotice._respond`). The
@@ -224,6 +466,9 @@ internal class NativeChatTranscriptViewModel(
         (value as? Number)?.toInt() ?: value?.toString()?.toIntOrNull()
 
     override fun onCleared() {
+        // A turn whose launch has not reached session/prompt stops here; one
+        // already prompting keeps running and ends through its PromptResponse.
+        surfaceOpen = false
         coordinator.removeListener(listener)
     }
 
@@ -309,7 +554,21 @@ internal fun NativeChatTranscriptRoute(
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    val composer by viewModel.composer.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
+    // Any document; the runtime copies it into the workspace at send time.
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        viewModel.addAttachments(uris)
+    }
+    val composerActions = remember(viewModel) {
+        ChatComposerActions(
+            onSend = viewModel::send,
+            onCancel = viewModel::cancel,
+            onPickAttachment = { picker.launch(arrayOf("*/*")) },
+            onRemoveAttachment = viewModel::removeAttachment,
+            onSelectPermission = viewModel::selectPermission,
+        )
+    }
     val actions = remember(viewModel, onOpenLink, onToolAction) {
         ChatTranscriptActions(
             onOpenLink = onOpenLink,
@@ -318,5 +577,5 @@ internal fun NativeChatTranscriptRoute(
             onStopTool = viewModel::stopActiveTool,
         )
     }
-    ChatTranscriptScreen(state, onBack, actions)
+    ChatTranscriptScreen(state, onBack, actions, composer, composerActions)
 }

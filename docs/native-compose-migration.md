@@ -408,7 +408,7 @@ Manual acceptance checklist:
 6. Run `/review` from the slash panel and by typing it: the reply streams
    and the composer returns to idle when it ends.
 
-## Batch 5d-1 plan: Compose composer (2026-10-07)
+## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a and 5d-1b source complete)
 
 | Slice | Scope |
 | --- | --- |
@@ -433,6 +433,59 @@ Flutter composer behind their entries until 5f.
   fallback never ran; reading it natively would revive values the page had
   cleared (verified against `StorageService.getString`).
 - Verification: `AgentCommandPreferencesTest` 7. Nothing calls it yet.
+
+### 5d-1b checkpoint (source complete; device acceptance pending)
+
+- **Compose**: `chat/ChatComposer.kt` (Miuix `TextField`, three lines then
+  scroll; attachment chips; `+` picker; permission menu on Miuix
+  `OverlayListPopup` + `DropdownImpl`; context ring; send/stop button) and
+  `ChatComposerModels.kt` (primary action, attachment payload, ring
+  thresholds 85% / 100%, permission choices). `ChatTranscriptScreen` hosts
+  it as the bottom bar with IME and navigation-bar insets.
+- **ViewModel** (`NativeChatTranscriptViewModel`): resolves the send target
+  (`NativeChatComposerTarget`: Agent conversations through their own
+  Harness on the Agent runtime, pure chat with no Harness on the normal
+  runtime; a live runtime keeps its mode; OpenClaw, Sub Agent and remote
+  Codex stay Flutter-only and show a hint instead). Settings come from
+  `AgentCommandPreferences` (Agent) or the conversation override and effort
+  (pure chat), terminal variables from `OmnibotTerminalEnvironment`.
+  Sending inserts the user row and launches through the new
+  `ChatRuntimeHost.launchTurnDetached`, which runs in the host scope so
+  leaving the page never cancels a turn between admission and its
+  PromptResponse; the page's fence (`surfaceOpen`) stops a turn that has
+  not prompted yet. Stop goes through `dispatcher.cancelTurn`. Permission
+  choices are written on the Flutter keys. Attachments come from the system
+  document picker as `content://` uris, which the runtime already copies
+  into the workspace.
+- **Guarded here**: the preview loads only 200 history rows, and admission
+  persists the runtime's messages as the conversation; a runtime created
+  from that page would have replaced older history. `seedRuntime` builds it
+  from every stored message first (as the Flutter page's
+  `onConversationLoaded` does). Covered by a launcher test that admission
+  appends to seeded history.
+- **Found by the new test**: `ChatComposerAttachment.toMap` first used
+  `linkedMapOf().apply { size?.let { put("size", it) } }`, where `size` is
+  the map's own entry count, so every attachment reported a size of 3.
+- **Verification**: `ChatComposerModelsTest` 5, `NativeChatComposerTargetTest`
+  6, `ChatTurnLauncherTest` +1; `:app` unit suite 1518, native-ui 58, 0
+  failures; androidTest compile and release resource merge succeeded. No
+  Dart changes. No device run.
+- Not verified: the stored Agent model is sent as-is (the Flutter page
+  validates it against the loaded catalog first); a stale stored model id
+  would reach the Harness. The model picker and slash panel are 5d-1c.
+
+Manual acceptance checklist (5d-1b):
+
+1. Open an Agent conversation from the drawer's native preview: send a
+   message, watch it stream, stop it; the Flutter chat shows the same turn.
+2. Open a long conversation (over 200 messages), send once, reopen it in
+   Flutter: older messages are still there.
+3. Pure-chat conversation: sends with its model override and no
+   permission menu; OpenClaw and remote Codex show the "open in chat" hint.
+4. Change permission natively, then open the conversation in Flutter: the
+   same choice is selected.
+5. Attach an image and a file; send; leave the page mid-reply: the reply
+   finishes and the spinner clears in Flutter.
 
 ## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
 

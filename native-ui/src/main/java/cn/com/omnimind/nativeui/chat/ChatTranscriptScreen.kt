@@ -10,6 +10,8 @@ import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -72,23 +74,30 @@ class ChatTranscriptActions(
 )
 
 /**
- * Compose rendering of one conversation, fed by native runtime snapshots.
- * Used to compare the migrated message surfaces with the Flutter chat on a
- * device until the chat page itself moves (batch 5e). Its only actions into
- * the runtime are answering a live approval request and stopping the live
- * tool from the activity strip.
+ * Compose rendering of one conversation, fed by native runtime snapshots,
+ * with the native composer (5d-1b) below it. Used to compare the migrated
+ * surfaces with the Flutter chat on a device until the chat page itself
+ * moves (batch 5e).
  */
 @Composable
 fun ChatTranscriptScreen(
     state: ChatTranscriptState,
     onBack: () -> Unit,
     actions: ChatTranscriptActions = ChatTranscriptActions(),
+    composer: ChatComposerState = ChatComposerState(),
+    composerActions: ChatComposerActions = ChatComposerActions(),
 ) {
     val palette = LocalOmniPalette.current
     val subtitle = stringResource(
         if (state.isLive) R.string.omni_transcript_live else R.string.omni_transcript_history,
     )
-    OmniPage(title = state.title.ifBlank { stringResource(R.string.omni_transcript_title) }, onBack = onBack) { padding ->
+    OmniPage(
+        title = state.title.ifBlank { stringResource(R.string.omni_transcript_title) },
+        onBack = onBack,
+        bottomBar = {
+            ChatComposer(composer, composerActions, Modifier.navigationBarsPadding().imePadding())
+        },
+    ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
             Text(
                 subtitle,

@@ -237,6 +237,19 @@ class ChatTurnLauncherTest {
         assertFalse(runtime().isAiResponding)
     }
 
+    @Test
+    fun `a native composer submission keeps the seeded history it was admitted on`() = runBlocking {
+        // 5d-1b: the composer seeds the runtime with the stored history before
+        // launching; admission must append to it, never replace it.
+        val older = ChatMessage(id = "0-user", type = 1, user = 1, content = linkedMapOf("text" to "旧消息", "id" to "0-user"))
+        coordinator.insertRuntimeMessage(CONVERSATION, CHAT_RUNTIME_MODE_AGENT, older)
+        launcher.launchTurn(request())
+        val ids = runtime().messages.filter { it.user == 1 }.map { it.id }
+        assertEquals(listOf("1-user", "0-user"), ids)
+        val persisted = fixture.history.callsTo("replaceConversationMessages").first()
+        assertTrue(persisted.toString().contains("0-user"))
+    }
+
     private companion object {
         const val CONVERSATION = 501
         const val OTHER = 502

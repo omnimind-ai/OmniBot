@@ -1003,4 +1003,16 @@
     <string name="omni_tool_stop_failed">停止工具调用失败，请稍后重试</string>
     <string name="omni_anchor_open">消息锚点</string>
     <string name="omni_anchor_working">思考中…</string>
+    <string name="omni_chat_composer_hint">请输入内容</string>
+    <string name="omni_composer_send">发送</string>
+    <string name="omni_composer_stop">停止</string>
+    <string name="omni_composer_add_attachment">添加附件</string>
+    <string name="omni_composer_remove_attachment">移除 %1$s</string>
+    <string name="omni_composer_permission">Agent 权限</string>
+    <string name="omni_composer_permission_read_only">只读</string>
+    <string name="omni_composer_permission_default">工作区读写</string>
+    <string name="omni_composer_permission_auto_review">自动审查</string>
+    <string name="omni_composer_permission_full_access">完全访问权限</string>
+    <string name="omni_composer_context_usage">上下文用量</string>
+    <string name="omni_composer_history_only">在聊天中打开此对话即可继续。</string>
 </resources>
