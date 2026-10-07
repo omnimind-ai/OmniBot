@@ -107,9 +107,13 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     if (isOpen) {
       _dismissChatInputFocus();
       _composerLiftIntentTracker.reset();
+      // The drawer opens with its in-memory list; refreshing it rebuilds every
+      // visible row and starts image-preview history reads, so wait until the
+      // open animation has settled (see HomeDrawerState.reloadAfterSettle).
       _embeddedDrawerKey.currentState?.reloadConversations();
-      _drawerKey.currentState?.reloadConversations();
+      _drawerKey.currentState?.reloadAfterSettle();
     } else {
+      _drawerKey.currentState?.cancelSettledReload();
       _isHomeDrawerSearchFocused = false;
       _composerLiftIntentTracker.reset();
       checkAndHandleDeletedConversation();
@@ -2068,6 +2072,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                         onSearchFocusChanged:
                             _handleHomeDrawerSearchFocusChanged,
                         searchFieldKey: _drawerSearchFieldKey,
+                        deferInitialLoad: true,
                       ),
                 onDrawerChanged: isHdPadLandscape
                     ? null

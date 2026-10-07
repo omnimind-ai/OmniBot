@@ -17,12 +17,26 @@ extension _HomeDrawerActions on HomeDrawerState {
       widget.onThreadTargetSelected!(target);
       return;
     }
-    _maybeCloseDrawer();
-    GoRouterManager.push(
-      '/home/chat',
-      extra: target,
-      queryParams: _threadTargetQueryParams(target),
-    );
+    final queryParams = _threadTargetQueryParams(target);
+    void open() => GoRouterManager.push('/home/chat', extra: target, queryParams: queryParams);
+    if (!_closeDrawerForNavigation()) {
+      open();
+      return;
+    }
+    // Switching the chat target rebuilds the whole chat page (history load,
+    // message list, composer). Doing it in the frames of the close slide made
+    // every close stutter, so it runs once the drawer has settled. The drawer
+    // state is gone by then; the router does not need it.
+    Future<void>.delayed(HomeDrawerState.drawerSettleDelay, open);
+  }
+
+  /// Pops a modal drawer. Returns false when there was nothing to close.
+  bool _closeDrawerForNavigation() {
+    if (!_shouldCloseOnNavigate || !Navigator.of(context).canPop()) {
+      return false;
+    }
+    Navigator.pop(context);
+    return true;
   }
 
   Map<String, dynamic> _threadTargetQueryParams(

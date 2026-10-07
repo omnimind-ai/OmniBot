@@ -208,6 +208,12 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
           ? targets.length
           : index + _kConversationImagePreviewPreloadBatchSize;
       final batch = targets.sublist(index, end);
+      // Each preview read decodes a whole conversation history on the UI
+      // isolate. Never start one while the drawer slides.
+      await _waitForDrawerToSettle();
+      if (!mounted) {
+        return;
+      }
       await Future.wait(
         batch.map(
           (conversation) =>
@@ -216,6 +222,27 @@ extension _HomeDrawerImagePreviews on HomeDrawerState {
       );
     }
     _rememberConversationImagePreviewCacheSnapshot();
+  }
+
+  /// Yields frames while the enclosing drawer is mid-slide. Other running
+  /// animations (the composer's looping border) must not hold previews back,
+  /// so this reads the drawer's own route animation, not the frame scheduler.
+  Future<void> _waitForDrawerToSettle() async {
+    for (var frame = 0; frame < 60 && mounted && _isDrawerSliding(); frame++) {
+      await SchedulerBinding.instance.endOfFrame;
+    }
+  }
+
+  bool _isDrawerSliding() {
+    if (widget.embedded) return false;
+    final scaffold = Scaffold.maybeOf(context);
+    if (scaffold == null || !scaffold.hasDrawer) return false;
+    // Scaffold exposes no drawer animation; the drawer is settled when its
+    // open state matches a full-width layout of this widget.
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize || !box.attached) return false;
+    final left = box.localToGlobal(Offset.zero).dx;
+    return scaffold.isDrawerOpen ? left.abs() > 0.5 : true;
   }
 
   void _hydrateConversationImagePreviewSnapshotsFromDecoded(

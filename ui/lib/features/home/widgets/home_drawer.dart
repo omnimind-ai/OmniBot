@@ -2,7 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart' show setEquals, visibleForTesting;
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart' show SchedulerBinding;
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
@@ -108,6 +110,7 @@ class HomeDrawer extends ConsumerStatefulWidget {
     this.onThreadTargetSelected,
     this.onSearchFocusChanged,
     this.searchFieldKey,
+    this.deferInitialLoad = false,
   });
 
   final int? memoryCount;
@@ -117,6 +120,12 @@ class HomeDrawer extends ConsumerStatefulWidget {
   final ValueChanged<ConversationThreadTarget>? onThreadTargetSelected;
   final ValueChanged<bool>? onSearchFocusChanged;
   final GlobalKey? searchFieldKey;
+
+  /// A Scaffold drawer is unmounted whenever it is closed, so this state is
+  /// created again on every open, on the first frame of the slide. When true
+  /// it renders the in-memory snapshot and leaves the refresh to the host's
+  /// [HomeDrawerState.reloadAfterSettle], instead of loading mid-animation.
+  final bool deferInitialLoad;
 
   @override
   ConsumerState<HomeDrawer> createState() => HomeDrawerState();
@@ -193,6 +202,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
   void initState() {
     super.initState();
     _runtimeCoordinator.ensureInitialized();
+    _activeConversationIds = _runtimeCoordinator.activeAgentConversationIds;
     _runtimeCoordinator.addListener(_handleRuntimeCoordinatorChanged);
     _searchController.addListener(_handleSearchQueryChanged);
     _searchFocusNode.addListener(_handleSearchFocusChanged);
@@ -212,6 +222,14 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     _scheduledTasksChangedSubscription = ScheduledTaskStorageService
         .scheduledTasksChangedStream
         .listen(_handleScheduledTasksChanged);
+    // Without a snapshot there is nothing to show; load at once. The host's
+    // open callback runs before this state exists (Scaffold builds the drawer
+    // on the next frame), so the deferred refresh is scheduled here.
+    if (widget.deferInitialLoad && HomeDrawerState._hasConversationSnapshotCache) {
+      isLoadingConversations = false;
+      reloadAfterSettle();
+      return;
+    }
     _loadConversations();
     unawaited(_loadWebQuickActions());
   }
@@ -219,6 +237,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
   @override
   void dispose() {
     _searchDebounceTimer?.cancel();
+    _settledReloadTimer?.cancel();
     _conversationListChangedSubscription?.cancel();
     _sidebarPolicyChangedSubscription?.cancel();
     _scheduledTasksChangedSubscription?.cancel();
@@ -239,11 +258,19 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     super.dispose();
   }
 
+  /// Conversation ids that show the running dot, as of the last rebuild.
+  Set<int> _activeConversationIds = const <int>{};
+
   void _handleRuntimeCoordinatorChanged() {
     if (!mounted) return;
-    // Runtime state is already canonical; rebuilding is enough. Do not reload
-    // the conversation list or derive a second event state in the drawer.
-    setState(() {});
+    // The coordinator notifies on every streamed snapshot of every runtime
+    // (dozens per second while a reply streams). The drawer reads only which
+    // conversations are running, so rebuild when that set changes; an
+    // unconditional setState rebuilt the whole list per token, including
+    // during the drawer's open and close animations.
+    final active = _runtimeCoordinator.activeAgentConversationIds;
+    if (setEquals(active, _activeConversationIds)) return;
+    setState(() => _activeConversationIds = active);
   }
 
   void _handleScheduledTasksChanged(List<ScheduledTask> tasks) {
@@ -261,6 +288,28 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
   void reloadConversations() {
     _loadConversations();
     unawaited(_loadWebQuickActions());
+  }
+
+  /// Settle time of the Material drawer (`_kBaseSettleDuration`, 246 ms) with
+  /// a margin, so a refresh never lands inside the open animation.
+  static const Duration drawerSettleDelay = Duration(milliseconds: 320);
+  Timer? _settledReloadTimer;
+
+  /// Refreshes once the open animation has finished. The list already shows
+  /// the in-memory snapshot, so nothing is lost by waiting; refreshing during
+  /// the slide rebuilt every visible row mid-animation and started the
+  /// image-preview history reads, which dropped frames on every open.
+  void reloadAfterSettle() {
+    _settledReloadTimer?.cancel();
+    _settledReloadTimer = Timer(drawerSettleDelay, () {
+      if (mounted) reloadConversations();
+    });
+  }
+
+  /// A drawer closed before it settled must not refresh during its close.
+  void cancelSettledReload() {
+    _settledReloadTimer?.cancel();
+    _settledReloadTimer = null;
   }
 
   Future<void> _loadWebQuickActions() async {
@@ -351,8 +400,16 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     _searchFocusNode.unfocus();
   }
 
+  /// Rebuilds of this drawer, for the frame-budget tests.
+  @visibleForTesting
+  static int debugBuildCount = 0;
+
   @override
   Widget build(BuildContext context) {
+    assert(() {
+      debugBuildCount++;
+      return true;
+    }());
     final backgroundColor = _drawerBackgroundColor;
     final content = ColoredBox(
       color: backgroundColor,

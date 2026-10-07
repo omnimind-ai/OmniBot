@@ -408,6 +408,38 @@ Manual acceptance checklist:
 6. Run `/review` from the slash panel and by typing it: the reply streams
    and the composer returns to idle when it ends.
 
+## Fix: Flutter home drawer drops frames on open and close (2026-10-08)
+
+The shipped home drawer is the Flutter `HomeDrawer` in `ChatPage`'s
+Scaffold (native Home is opt-in, `omnibot.nativeHome=false`). No device was
+attached, so the causes were found by reading the code; each is pinned by a
+test that fails when the fix is reverted.
+
+1. **Rebuild per streamed token.** The drawer listened to the runtime
+   coordinator and called `setState` on every notification, which fires on
+   every native snapshot of every runtime. While a reply streamed, the whole
+   list rebuilt dozens of times a second, including during the slide. It now
+   rebuilds only when the set of running conversations changes (the only
+   runtime fact it renders). Test: 30 streamed snapshots, 0 rebuilds.
+2. **Reload on the first frame of the open.** A Scaffold drawer is
+   unmounted when closed, so its `initState` (`_loadConversations` with two
+   `setState`s, plus the image-preview pass that reads and decodes whole
+   conversation histories on the UI isolate) ran on the first frame of every
+   open, and `_handleHomeDrawerChanged` started a second reload on top. With
+   a snapshot cached the drawer now opens on it and refreshes once the slide
+   has settled (`deferInitialLoad`, `reloadAfterSettle`, cancelled on close).
+   Image-preview batches also wait while the drawer slides. Test: no
+   `getConversations` during the slide, exactly one after it.
+3. **Chat page rebuilt during the close.** Tapping a conversation popped the
+   drawer and switched `/home/chat` in the same frame, so the chat page's
+   history load and full rebuild ran in the frames of the close slide. The
+   switch now runs after the close settles.
+
+Verification: `flutter test` 974 passed, 4 failed (the same 4 baseline
+settings/background tests); `flutter analyze` 0 errors. Device check: open
+and close the drawer while a reply streams, and tap a conversation; the
+slide should stay smooth in both directions.
+
 ## Batch 5e plan: chat page shell (2026-10-08)
 
 Split from the 5e row of the batch 5 table; each slice keeps the Flutter

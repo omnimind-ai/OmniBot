@@ -18,6 +18,7 @@ import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_c
 import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/habitual_hand.dart';
@@ -1514,6 +1515,113 @@ void main() {
       expect(find.byTooltip('小万 · 已完成'), findsOneWidget);
     },
   );
+
+  group('drawer animation frame budget', () {
+    testWidgets('streamed runtime snapshots do not rebuild the drawer', (
+      tester,
+    ) async {
+      final coordinator = ChatConversationRuntimeCoordinator.instance;
+      coordinator.resetForTest();
+      final nativeRuntime = FakeNativeChatRuntime.install();
+      addTearDown(nativeRuntime.uninstall);
+      coordinator.ensureInitialized();
+      addTearDown(coordinator.resetForTest);
+      nativeConversations = <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 70, 'title': '流式中', 'mode': ConversationMode.agent.storageValue,
+          'status': 0, 'messageCount': 0, 'createdAt': 1, 'updatedAt': 2,
+        },
+      ];
+      coordinator.beginAcpTurn(taskId: 't-70', conversationId: 70, mode: kChatRuntimeModeAgent);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: DefaultAssetBundle(
+            bundle: _SvgTestAssetBundle(),
+            child: _buildProviderScope(
+              child: const Scaffold(body: SizedBox(width: 360, height: 720, child: HomeDrawer())),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('home-drawer-running-agent:70')), findsOneWidget);
+
+      // Thirty streamed snapshots of the same running turn: the drawer only
+      // shows which conversations run, so none of them rebuilds it.
+      HomeDrawerState.debugBuildCount = 0;
+      for (var token = 0; token < 30; token++) {
+        nativeRuntime.project(
+          conversationId: 70,
+          mode: kChatRuntimeModeAgent,
+          upsert: <ChatMessageModel>[
+            ChatMessageModel(id: 't-70-text', type: 1, user: 2, content: <String, dynamic>{'text': 'token $token'}),
+          ],
+        );
+        await tester.pump();
+      }
+      expect(HomeDrawerState.debugBuildCount, 0);
+
+      // The turn ends: the running dot goes away with one rebuild.
+      await coordinator.applyAcpPromptResponse(
+        taskId: 't-70', conversationId: 70, mode: kChatRuntimeModeAgent, sessionId: null, stopReason: 'end_turn',
+      );
+      await tester.pump();
+      expect(HomeDrawerState.debugBuildCount, greaterThan(0));
+      expect(find.byKey(const ValueKey('home-drawer-running-agent:70')), findsNothing);
+    });
+
+    testWidgets('a Scaffold drawer opens on its snapshot and refreshes after the slide', (
+      tester,
+    ) async {
+      final loads = <String>[];
+      nativeConversations = <Map<String, Object?>>[
+        <String, Object?>{
+          'id': 80, 'title': '快照', 'mode': ConversationMode.agent.storageValue,
+          'status': 0, 'messageCount': 0, 'createdAt': 1, 'updatedAt': 2,
+        },
+      ];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(assistCoreChannel, (call) async {
+            loads.add(call.method);
+            if (call.method == 'getConversations') return nativeConversations;
+            return null;
+          });
+      final scaffoldKey = GlobalKey<ScaffoldState>();
+      final drawerKey = GlobalKey<HomeDrawerState>();
+      Widget app() => MaterialApp(
+        home: DefaultAssetBundle(
+          bundle: _SvgTestAssetBundle(),
+          child: _buildProviderScope(
+            child: Scaffold(
+              key: scaffoldKey,
+              drawer: HomeDrawer(key: drawerKey, deferInitialLoad: true),
+              body: const SizedBox.expand(),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(app());
+      // First open builds the snapshot cache.
+      scaffoldKey.currentState!.openDrawer();
+      await tester.pumpAndSettle();
+      await tester.pump(HomeDrawerState.drawerSettleDelay);
+      await tester.pumpAndSettle();
+      scaffoldKey.currentState!.closeDrawer();
+      await tester.pumpAndSettle();
+
+      loads.clear();
+      scaffoldKey.currentState!.openDrawer();
+      // Every frame of the open slide: no conversation reload yet.
+      for (var frame = 0; frame < 15; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+        expect(loads.where((m) => m == 'getConversations'), isEmpty, reason: 'frame $frame');
+      }
+      expect(find.text('快照'), findsOneWidget);
+      await tester.pump(HomeDrawerState.drawerSettleDelay);
+      await tester.pumpAndSettle();
+      expect(loads.where((m) => m == 'getConversations'), hasLength(1));
+    });
+  });
 }
 
 Widget _buildProviderScope({required Widget child}) {
