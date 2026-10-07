@@ -134,6 +134,11 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         .map((runtime) => runtime.conversationId),
   );
 
+  /// True while any runtime, in any mode, has live work. A shared Provider
+  /// model change reconnects the ACP runtime and would end those turns.
+  bool get hasAnyInFlightTask =>
+      _mirrors.values.any((runtime) => runtime.hasInFlightTask);
+
   bool isAgentConversationActive(int conversationId) {
     return runtimeFor(
           conversationId: conversationId,

@@ -26,6 +26,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -61,7 +62,8 @@ import top.yukonga.miuix.kmp.overlay.OverlayListPopup
  * [ChatComposerState] and emits [ChatComposerActions] only.
  *
  * The draft lives here (saveable), not in the ViewModel: the composer is the
- * only writer, and [ChatComposerActions.onSend] returning true clears it.
+ * only writer, and [ChatComposerActions.onSend] returns the next draft. A
+ * leading slash opens the command panel above the field (5d-1c).
  */
 @Composable
 fun ChatComposer(
@@ -81,11 +83,20 @@ fun ChatComposer(
         return
     }
     val primary = chatComposerPrimaryAction(state.isProcessing, draft, state.attachments.isNotEmpty())
-    fun submit() {
-        if (primary == ChatComposerPrimaryAction.Send && actions.onSend(draft.trim())) draft = ""
+    fun submit(text: String) {
+        actions.onSend(text)?.let { draft = it }
+    }
+    // The panel follows the draft: a leading slash lists the commands.
+    val slashEntries = remember(draft, state.slash) { state.slash.entries(draft) }
+    Column(modifier.fillMaxWidth()) {
+    if (slashEntries.isNotEmpty()) {
+        ChatSlashPanel(slashEntries, onPick = { entry ->
+            entry.fillText?.let { draft = it }
+            entry.submitText?.let(::submit)
+        })
     }
     Column(
-        modifier
+        Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp)
             .clip(RoundedCornerShape(22.dp))
@@ -129,8 +140,9 @@ fun ChatComposer(
             }
             Spacer(Modifier.weight(1f))
             state.contextUsage?.let { ContextRing(it, state.contextUsageLabel) }
-            PrimaryButton(primary, state.cancelling, onSend = ::submit, onCancel = actions.onCancel)
+            PrimaryButton(primary, state.cancelling, onSend = { submit(draft.trim()) }, onCancel = actions.onCancel)
         }
+    }
     }
 }
 

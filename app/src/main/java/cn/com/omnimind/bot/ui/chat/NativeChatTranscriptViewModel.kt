@@ -38,6 +38,12 @@ import cn.com.omnimind.nativeui.chat.ChatComposerActions
 import cn.com.omnimind.nativeui.chat.ChatComposerAttachment
 import cn.com.omnimind.nativeui.chat.ChatComposerPermission
 import cn.com.omnimind.nativeui.chat.ChatComposerState
+import cn.com.omnimind.nativeui.chat.ChatAdvertisedCommand
+import cn.com.omnimind.nativeui.chat.ChatSlashSubmit
+import cn.com.omnimind.nativeui.chat.resolveSubmit
+import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
+import org.json.JSONObject
 import cn.com.omnimind.nativeui.chat.ChatTranscriptActions
 import cn.com.omnimind.nativeui.chat.contextUsageRing
 import com.rk.libcommons.OmnibotTerminalEnvironment
@@ -92,6 +98,9 @@ internal class NativeChatTranscriptViewModel(
     /** This page's navigation fence: bumped when it closes, so a queued turn never prompts. */
     @Volatile private var surfaceOpen = true
     private var sending = false
+    private val models = NativeChatModelCatalog(appContext)
+    private var modelCatalog = NativeChatModelCatalog.Catalog(null, emptyList(), null)
+    private var applyingSetting = false
 
     init {
         ChatRuntimeHost.initialize(appContext)
@@ -162,7 +171,47 @@ internal class NativeChatTranscriptViewModel(
                 cancelling = it.cancelling && snapshot.isAiResponding,
             ).withContextUsage(snapshot.conversation)
         }
+        refreshSlash(snapshot)
     }
+
+    /** Commands, plan mode and the config lock follow the live snapshot. */
+    private fun refreshSlash(snapshot: ChatRuntimeSnapshot? = liveSnapshot()) {
+        val target = target ?: return
+        val commands = snapshot?.availableAcpCommands.orEmpty().mapNotNull { command ->
+            val name = command["name"]?.toString()?.trim()?.ifEmpty { null } ?: return@mapNotNull null
+            ChatAdvertisedCommand(name, command["description"]?.toString().orEmpty())
+        }
+        val collaboration = snapshot?.acpConfigOptions.orEmpty()
+            .firstOrNull { (it["id"] ?: it["configId"])?.toString() == "collaboration_mode" }
+        val planMode = collaboration?.let(::optionValues)?.firstOrNull { it.trim().equals("plan", ignoreCase = true) }
+        mutableComposer.update {
+            it.copy(
+                slash = it.slash.copy(
+                    agent = target.showsPermission,
+                    advertisedCommands = if (target.showsPermission) commands else emptyList(),
+                    models = modelCatalog.models,
+                    selectedModel = modelCatalog.selected,
+                    planMode = planMode,
+                    planActive = planMode != null &&
+                        collaboration?.get("currentValue")?.toString()?.equals(planMode, ignoreCase = true) == true,
+                    // Any running turn: the dispatch model is shared by every conversation.
+                    configLocked = coordinator.allSnapshots().any { s -> s.isAiResponding } || applyingSetting,
+                ),
+            )
+        }
+    }
+
+    private fun liveSnapshot(): ChatRuntimeSnapshot? =
+        liveMode?.let { coordinator.snapshotFor(conversationId.toInt(), it) }
+
+    /** Values of a select option, flattening grouped options (Dart `_loadAgentCollaborationModes`). */
+    private fun optionValues(option: Map<String, Any?>): List<String> =
+        (option["options"] as? List<*>).orEmpty().flatMap { entry ->
+            val map = entry as? Map<*, *> ?: return@flatMap emptyList()
+            val nested = map["options"] as? List<*>
+            if (nested != null) nested.mapNotNull { (it as? Map<*, *>)?.get("value")?.toString() }
+            else listOfNotNull(map["value"]?.toString())
+        }.filter { it.isNotEmpty() }
 
     private suspend fun resolveComposerTarget(liveMode: String?) {
         val payload = runCatching {
@@ -179,14 +228,25 @@ internal class NativeChatTranscriptViewModel(
             val stored = preferences.turnSettings(conversationId.toInt(), modelSource(resolved)).permission
             permission = stored.forLocalHarness()
         }
+        if (resolved.showsPermission) {
+            modelCatalog = withContext(Dispatchers.IO) { runCatching { models.load() }.getOrDefault(modelCatalog) }
+        }
+        val effort = if (resolved.showsPermission) null else pureChatReasoningEffort(
+            flutterPreferences().getString(EFFORTS_KEY, null), conversationId,
+        )
         mutableComposer.update {
             it.copy(
+                slash = it.slash.copy(agent = resolved.showsPermission, selectedEffort = effort),
                 available = true,
                 permission = if (resolved.showsPermission) permission.toComposer() else null,
                 permissionChoices = if (resolved.showsPermission) LOCAL_PERMISSION_CHOICES else emptyList(),
             ).withContextUsage(payload)
         }
+        refreshSlash()
     }
+
+    private fun flutterPreferences() =
+        appContext.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
 
     private fun ChatComposerState.withContextUsage(conversation: Map<String, Any?>?): ChatComposerState {
         conversation ?: return this
@@ -205,11 +265,32 @@ internal class NativeChatTranscriptViewModel(
     // ---------------------------------------------------------------------
 
     /**
+     * Routes a submitted draft through the slash rules (5d-1c) and returns
+     * the next draft: "" clears it, other text replaces it, null keeps it.
+     */
+    fun submit(draft: String): String? {
+        if (target == null) return null
+        val slash = mutableComposer.value.slash
+        // Attachments always travel with a prompt, never with a command.
+        val intent = if (draft.isEmpty()) ChatSlashSubmit.Send("") else slash.resolveSubmit(draft, AGENT_INIT_PROMPT)
+        return when (intent) {
+            is ChatSlashSubmit.Send ->
+                if (send(intent.text, display = intent.display, collaborationMode = intent.collaborationMode)) "" else null
+            is ChatSlashSubmit.FillText -> intent.text
+            is ChatSlashSubmit.SelectModel -> { selectModel(intent.modelId); "" }
+            ChatSlashSubmit.TogglePlan -> { setPlanMode(!slash.planActive, then = null); "" }
+            is ChatSlashSubmit.StartPlan -> { setPlanMode(true, then = intent.prompt); "" }
+            is ChatSlashSubmit.SetEffort -> { setEffort(intent.effort); "" }
+            is ChatSlashSubmit.Notice -> { toast(noticeText(intent.reason)); null }
+        }
+    }
+
+    /**
      * Sends one submission. Returns false when it was not admitted (the
      * composer then keeps the draft). Settings are frozen here, before any
      * await, like the Flutter page's dispatch.
      */
-    fun send(text: String): Boolean {
+    private fun send(text: String, display: String? = null, collaborationMode: String? = null): Boolean {
         val target = target ?: return false
         val attachments = mutableComposer.value.attachments
         if (text.isEmpty() && attachments.isEmpty()) return false
@@ -217,7 +298,7 @@ internal class NativeChatTranscriptViewModel(
         sending = true
         val ids = ChatTurnIds.forSubmission(System.currentTimeMillis())
         val attachmentMaps = attachments.map { it.toMap() }
-        val userContent = linkedMapOf<String, Any?>("text" to text, "id" to ids.userMessageId)
+        val userContent = linkedMapOf<String, Any?>("text" to (display ?: text), "id" to ids.userMessageId)
         if (attachmentMaps.isNotEmpty()) userContent["attachments"] = attachmentMaps
         val userRow = ChatMessage(id = ids.userMessageId, type = 1, user = 1, content = userContent)
         val runtimeConversationId = conversationId.toInt()
@@ -226,7 +307,7 @@ internal class NativeChatTranscriptViewModel(
         } else {
             null
         }
-        val overrides = appContext.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val overrides = flutterPreferences()
         val request = ChatTurnRequest(
             taskId = ids.taskId,
             conversationId = runtimeConversationId,
@@ -236,13 +317,20 @@ internal class NativeChatTranscriptViewModel(
             userMessage = userRow,
             agentId = target.agentId,
             permission = if (target.showsPermission) permission else AgentPermissionMode.FullAccess,
-            model = settings?.model
-                ?: pureChatModelOverride(overrides.getString("flutter.conversation_model_overrides_v1", null), conversationId)
-                    .takeIf { !target.showsPermission },
-            effort = settings?.reasoningEffort
-                ?: pureChatReasoningEffort(overrides.getString("flutter.conversation_reasoning_efforts_v1", null), conversationId)
-                    .takeIf { !target.showsPermission },
-            collaborationMode = settings?.collaborationMode,
+            // Every local Harness runs on the shared dispatch binding (Dart
+            // `_usesSharedProviderModel`); its model is the bound one, never a
+            // stored per-Harness id that may have left the catalog.
+            model = if (target.showsPermission) {
+                modelCatalog.selected
+            } else {
+                pureChatModelOverride(overrides.getString(OVERRIDES_KEY, null), conversationId)
+            },
+            effort = if (target.showsPermission) {
+                settings?.reasoningEffort
+            } else {
+                pureChatReasoningEffort(overrides.getString(EFFORTS_KEY, null), conversationId)
+            },
+            collaborationMode = collaborationMode ?: settings?.collaborationMode,
             conversationMode = target.conversationMode,
             terminalEnvironment = OmnibotTerminalEnvironment.loadUserVariables(appContext).ifEmpty { null },
             conversation = conversationPayload,
@@ -294,6 +382,127 @@ internal class NativeChatTranscriptViewModel(
         )
         coordinator.publishDirtySnapshots()
     }
+
+    /**
+     * `/model <id>`: rebinds the dispatch model (Dart `_selectAgentModel`).
+     * Refused while any turn runs: a Provider change reconnects the shared
+     * ACP runtime, and Dart then called `disconnect`, which cancels every
+     * running turn in every conversation (5d-1c fix).
+     */
+    private fun selectModel(modelId: String) {
+        if (applyingSetting) return
+        applyingSetting = true
+        refreshSlash()
+        viewModelScope.launch {
+            val chosen = runCatching {
+                modelCatalog = withContext(Dispatchers.IO) { models.load() }
+                if (coordinator.allSnapshots().any { it.isAiResponding }) error("busy")
+                val selected = withContext(Dispatchers.IO) { models.select(modelCatalog, modelId) }
+                // An existing session keeps the model in its own configuration;
+                // move it explicitly instead of reconnecting every Harness.
+                if (selected != null) setSessionConfig("model", selected)
+                selected
+            }.onFailure { Log.w(TAG, "切换模型失败: ${it.message}") }
+            applyingSetting = false
+            when {
+                chosen.exceptionOrNull()?.message == "busy" -> toast(noticeText(ChatSlashSubmit.Reason.Busy))
+                chosen.isFailure -> toast(string(cn.com.omnimind.nativeui.R.string.omni_slash_failed))
+                chosen.getOrNull() == null -> toast(string(cn.com.omnimind.nativeui.R.string.omni_slash_model_unavailable))
+                else -> {
+                    modelCatalog = modelCatalog.copy(selected = chosen.getOrNull())
+                    toast(string(cn.com.omnimind.nativeui.R.string.omni_slash_model_set, chosen.getOrNull()!!))
+                }
+            }
+            refreshSlash()
+        }
+    }
+
+    /**
+     * `/plan` (Dart `_activateAgentPlanMode` / `_deactivateAgentPlanMode`):
+     * the advertised `collaboration_mode` value through
+     * `session/set_config_option`, stored on the Flutter key. A prompt after
+     * `/plan` is sent once plan mode is on.
+     */
+    private fun setPlanMode(enable: Boolean, then: String?) {
+        val target = target ?: return
+        val slash = mutableComposer.value.slash
+        val value = if (enable) slash.planMode else defaultCollaborationMode()
+        if (value == null || applyingSetting) return
+        if (enable && slash.planActive && then != null) {
+            send(then, display = "/plan $then", collaborationMode = value)
+            return
+        }
+        applyingSetting = true
+        refreshSlash()
+        viewModelScope.launch {
+            val applied = runCatching { check(setSessionConfig("collaboration_mode", value)) { "no session" } }
+                .onFailure { Log.w(TAG, "切换 Plan 模式失败: ${it.message}") }.isSuccess
+            applyingSetting = false
+            if (applied) {
+                val source = modelSource(target)
+                if (enable) {
+                    preferences.write(AgentCommandPreferences.Kind.CollaborationMode, value, conversationId.toInt(), source)
+                } else {
+                    preferences.clear(AgentCommandPreferences.Kind.CollaborationMode, conversationId.toInt(), source)
+                }
+                mutableComposer.update { it.copy(slash = it.slash.copy(planActive = enable)) }
+                if (then != null) send(then, display = "/plan $then", collaborationMode = value)
+            } else {
+                toast(string(cn.com.omnimind.nativeui.R.string.omni_slash_failed))
+            }
+            refreshSlash()
+        }
+    }
+
+    /**
+     * `session/set_config_option` on this conversation's bound session. False
+     * when it has none yet: the stored preference applies at `session/new`
+     * (Dart `_setAgentConfigOption`).
+     */
+    private suspend fun setSessionConfig(configId: String, value: String): Boolean {
+        val target = target ?: return false
+        val sessionId = withContext(Dispatchers.IO) {
+            DatabaseHelper.getAgentSessionBindingByConversationId(conversationId)?.threadId
+        } ?: return false
+        AgentRuntimeManager.getInstance(appContext).handleMethod(
+            "session/set_config_option",
+            linkedMapOf(
+                "sessionId" to sessionId,
+                "conversationId" to conversationId.toInt(),
+                "agentId" to target.agentId,
+                "configId" to configId,
+                "value" to value,
+            ),
+        )
+        return true
+    }
+
+    private fun defaultCollaborationMode(): String? = liveSnapshot()?.acpConfigOptions.orEmpty()
+        .firstOrNull { (it["id"] ?: it["configId"])?.toString() == "collaboration_mode" }
+        ?.let(::optionValues)?.firstOrNull { it.equals("default", ignoreCase = true) }
+
+    /** `/effort` for pure chat: the conversation's entry in the Flutter effort map. */
+    private fun setEffort(effort: String) {
+        val preferences = flutterPreferences()
+        val map = runCatching { JSONObject(preferences.getString(EFFORTS_KEY, null) ?: "{}") }.getOrElse { JSONObject() }
+        map.put(conversationId.toString(), effort)
+        preferences.edit().putString(EFFORTS_KEY, map.toString()).apply()
+        mutableComposer.update { it.copy(slash = it.slash.copy(selectedEffort = effort)) }
+        toast(string(cn.com.omnimind.nativeui.R.string.omni_slash_effort_set, effort))
+    }
+
+    private fun noticeText(reason: ChatSlashSubmit.Reason): String = string(
+        when (reason) {
+            ChatSlashSubmit.Reason.Unsupported -> cn.com.omnimind.nativeui.R.string.omni_slash_unsupported
+            ChatSlashSubmit.Reason.ReviewUnavailable -> cn.com.omnimind.nativeui.R.string.omni_slash_review_unavailable
+            ChatSlashSubmit.Reason.PlanUnavailable -> cn.com.omnimind.nativeui.R.string.omni_slash_plan_unavailable
+            ChatSlashSubmit.Reason.InvalidEffort -> cn.com.omnimind.nativeui.R.string.omni_slash_invalid_effort
+            ChatSlashSubmit.Reason.OpenInChat -> cn.com.omnimind.nativeui.R.string.omni_slash_open_in_chat
+            ChatSlashSubmit.Reason.Busy -> cn.com.omnimind.nativeui.R.string.omni_slash_busy
+        },
+    )
+
+    private fun string(id: Int, vararg args: Any): String = appContext.getString(id, *args)
 
     /** Cancels the running turn; its PromptResponse ends it through the reducer. */
     fun cancel() {
@@ -488,6 +697,20 @@ internal class NativeChatTranscriptViewModel(
     private companion object {
         const val TAG = "NativeChatTranscript"
         const val HISTORY_LIMIT = 200
+        const val OVERRIDES_KEY = "flutter.conversation_model_overrides_v1"
+        const val EFFORTS_KEY = "flutter.conversation_reasoning_efforts_v1"
+
+        /** Dart `_kAgentInitPrompt`, sent for `/init` (shown as `/init`). */
+        const val AGENT_INIT_PROMPT = """Please analyze this repository and create or update an AGENTS.md file that acts as a contributor guide for future coding agents.
+
+Include concise, repository-specific guidance for:
+- project structure and where important code lives
+- build, test, lint, and development commands
+- coding conventions and architectural patterns visible in the repo
+- testing expectations and any important setup notes
+
+Keep the file practical and avoid generic advice. If AGENTS.md already exists, preserve useful existing guidance and update it with what you learn from the current repository.
+"""
     }
 }
 
@@ -562,7 +785,7 @@ internal fun NativeChatTranscriptRoute(
     }
     val composerActions = remember(viewModel) {
         ChatComposerActions(
-            onSend = viewModel::send,
+            onSend = viewModel::submit,
             onCancel = viewModel::cancel,
             onPickAttachment = { picker.launch(arrayOf("*/*")) },
             onRemoveAttachment = viewModel::removeAttachment,

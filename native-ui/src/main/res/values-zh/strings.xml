@@ -1015,4 +1015,24 @@
     <string name="omni_composer_permission_full_access">完全访问权限</string>
     <string name="omni_composer_context_usage">上下文用量</string>
     <string name="omni_composer_history_only">在聊天中打开此对话即可继续。</string>
+    <string name="omni_slash_model">选择模型</string>
+    <string name="omni_slash_model_current">当前模型：%1$s</string>
+    <string name="omni_slash_review">审查当前工作区改动</string>
+    <string name="omni_slash_init">生成或更新 AGENTS.md</string>
+    <string name="omni_slash_plan_on">当前已启用 Plan 模式</string>
+    <string name="omni_slash_plan_off">当前未启用 Plan 模式</string>
+    <string name="omni_slash_acp_command">通过当前 ACP 会话运行</string>
+    <string name="omni_slash_models_empty">没有匹配的模型</string>
+    <string name="omni_slash_effort">思考强度：%1$s</string>
+    <string name="omni_slash_effort_default">默认</string>
+    <string name="omni_slash_unsupported">不支持的 Agent 命令</string>
+    <string name="omni_slash_review_unavailable">当前 Agent 未提供 /review 命令</string>
+    <string name="omni_slash_plan_unavailable">当前 Agent 未提供 Plan 模式</string>
+    <string name="omni_slash_invalid_effort">可用思考强度：none、low、medium、high、xhigh、max</string>
+    <string name="omni_slash_open_in_chat">该命令需在聊天中运行，请在聊天里打开此对话。</string>
+    <string name="omni_slash_busy">请等待当前回复结束再修改设置</string>
+    <string name="omni_slash_model_unavailable">当前 Provider 不提供该模型</string>
+    <string name="omni_slash_model_set">已切换到 %1$s</string>
+    <string name="omni_slash_effort_set">已设置思考强度为 %1$s</string>
+    <string name="omni_slash_failed">设置未生效，请重试</string>
 </resources>

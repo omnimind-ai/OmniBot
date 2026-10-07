@@ -1015,4 +1015,24 @@
     <string name="omni_composer_permission_full_access">Full access</string>
     <string name="omni_composer_context_usage">Context usage</string>
     <string name="omni_composer_history_only">Open this conversation in chat to continue it.</string>
+    <string name="omni_slash_model">Choose a model</string>
+    <string name="omni_slash_model_current">Current model: %1$s</string>
+    <string name="omni_slash_review">Review changes in the current workspace</string>
+    <string name="omni_slash_init">Generate or update AGENTS.md</string>
+    <string name="omni_slash_plan_on">Plan mode is active</string>
+    <string name="omni_slash_plan_off">Plan mode is off</string>
+    <string name="omni_slash_acp_command">Run through the active ACP session</string>
+    <string name="omni_slash_models_empty">No matching models</string>
+    <string name="omni_slash_effort">Thinking effort: %1$s</string>
+    <string name="omni_slash_effort_default">default</string>
+    <string name="omni_slash_unsupported">Unsupported Agent command</string>
+    <string name="omni_slash_review_unavailable">This Agent does not advertise /review</string>
+    <string name="omni_slash_plan_unavailable">This Agent does not advertise Plan mode</string>
+    <string name="omni_slash_invalid_effort">Efforts: none, low, medium, high, xhigh, max</string>
+    <string name="omni_slash_open_in_chat">This command runs in chat. Open the conversation there.</string>
+    <string name="omni_slash_busy">Wait for the current reply to finish before changing settings</string>
+    <string name="omni_slash_model_unavailable">The model is not available from the configured Provider</string>
+    <string name="omni_slash_model_set">Model set to %1$s</string>
+    <string name="omni_slash_effort_set">Thinking effort set to %1$s</string>
+    <string name="omni_slash_failed">Couldn\'t apply the setting. Try again.</string>
 </resources>

@@ -874,6 +874,17 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         !_agentRuntimeStatus.remoteEnabled) {
       return;
     }
+    // Changing the shared model disconnects the ACP runtime below, which
+    // cancels every running turn in every conversation (5d-1c fix).
+    if (_runtimeCoordinator.hasAnyInFlightTask) {
+      showToast(
+        LegacyTextLocalizer.isEnglish
+            ? 'Wait for the current reply to finish before changing settings'
+            : '请先等待当前回复结束再修改设置',
+        type: ToastType.warning,
+      );
+      return;
+    }
     final sharedSelection = _activeDispatchSceneSelection;
     final sharedAgent = _usesSharedProviderModel(
       (_agentRuntimeStatus.activeAgentId ?? _activeAcpAgentId)?.trim(),

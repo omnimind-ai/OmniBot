@@ -365,6 +365,15 @@ void main() {
     expect(sendBody, isNot(contains('message.text == messageText')));
   });
 
+  test('the shared model never changes under a running turn (5d-1c)', () {
+    final agent = File('$chatRoot/chat_page_agent.dart').readAsStringSync();
+    final select = agent.split('Future<void> _selectAgentModel(').last
+        .split('Future<bool> _selectAgent(').first;
+    final guard = select.indexOf('_runtimeCoordinator.hasAnyInFlightTask');
+    expect(guard, greaterThanOrEqualTo(0));
+    expect(guard, lessThan(select.indexOf('AgentRuntimeService.disconnect()')));
+  });
+
   test('retry, edited resend and the composer share one submit gate (5d-0c)', () {
     final flow = File('$chatRoot/chat_page_conversation_flow.dart').readAsStringSync();
     final actions = File('$chatRoot/chat_page_user_message_actions.dart').readAsStringSync();

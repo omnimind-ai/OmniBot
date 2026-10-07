@@ -104,11 +104,18 @@ data class ChatComposerState(
     /** "used / threshold tokens" shown when the ring is tapped. */
     val contextUsageLabel: String? = null,
     val cancelling: Boolean = false,
+    /** Slash commands of this conversation (5d-1c). */
+    val slash: ChatSlashContext = ChatSlashContext(),
 )
 
 /** Intents the composer emits; the ViewModel owns every effect. */
 class ChatComposerActions(
-    val onSend: (text: String) -> Boolean = { false },
+    /**
+     * Submits the draft (typed or a panel row). Returns the next draft: ""
+     * clears it, other text replaces it (a command awaiting arguments), and
+     * null keeps it (not admitted).
+     */
+    val onSend: (text: String) -> String? = { null },
     val onCancel: () -> Unit = {},
     val onPickAttachment: () -> Unit = {},
     val onRemoveAttachment: (id: String) -> Unit = {},

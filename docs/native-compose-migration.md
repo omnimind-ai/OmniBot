@@ -408,13 +408,13 @@ Manual acceptance checklist:
 6. Run `/review` from the slash panel and by typing it: the reply streams
    and the composer returns to idle when it ends.
 
-## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a and 5d-1b source complete)
+## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |
 | --- | --- |
 | 5d-1a | Native reader/writer of the Agent command preferences (`AgentCommandPreferences`), on the Flutter keys. |
 | 5d-1b | Composer state machine and the Compose composer (text field, attachments, primary action, context ring, permission menu), hosted on the native transcript page; sends through `ChatTurnLauncher` with settings from 5d-1a. |
-| 5d-1c | Slash command panel (built-in + advertised ACP commands, `/model`, `/effort`) and the ACP config panel. |
+| 5d-1c | Slash command panel (built-in + advertised ACP commands, `/model`, `/plan`, `/init`, `/effort`). The free-form ACP config panel moves with the page shell (5e). |
 
 Manual recording, OmniFlow tooling and the command overlay sheet keep the
 Flutter composer behind their entries until 5f.
@@ -486,6 +486,44 @@ Manual acceptance checklist (5d-1b):
    same choice is selected.
 5. Attach an image and a file; send; leave the page mid-reply: the reply
    finishes and the spinner clears in Flutter.
+
+### 5d-1c checkpoint (source complete; device acceptance pending)
+
+- **Pure rules** (`chat/ChatSlashCommands.kt`): `resolveSubmit` ports
+  `resolveAgentSlashSubmitIntent` and `_tryHandleSlashCommand`; `entries`
+  ports the panel cards (built-ins, then advertised commands without
+  duplicates, prefix filter; `/model` route by substring with the selected
+  model first; pure-chat `/effort` stops). `ChatSlashPanel` renders the rows
+  above the composer; a row fills the draft or submits through the same path
+  as typing it. Manual recording, `/compact` and `/openclaw` stay Flutter
+  flows and show an "open in chat" notice.
+- **ViewModel**: `submit` routes the draft. `/model` rebinds
+  `scene.dispatch.model` through `SceneModelSettingsRepository` (catalog in
+  `NativeChatModelCatalog`: bound Provider's discovered + manual models) and
+  moves the live session with `session/set_config_option`; `/plan` sets the
+  advertised `collaboration_mode` value and stores it on the Flutter key;
+  `/init` sends the AGENTS.md prompt shown as `/init`; pure-chat `/effort`
+  writes the conversation's effort map. Agent turns now send the bound
+  dispatch model instead of a stored per-Harness id, which closes the 5d-1b
+  "stale model id" gap.
+- **Fix 8** (Flutter and native): `/model` on a shared-Provider Agent called
+  `AgentRuntimeService.disconnect()` with no running-turn check, and
+  disconnect cancels every in-flight turn in every conversation. Both
+  composers now refuse configuration changes while any turn runs
+  (`configLocked`, Dart `hasAnyInFlightTask`). Verified from
+  `AgentRuntimeManager.disconnect` / `LocalAcpRuntime.disconnectLocked`.
+- **Verification**: `ChatSlashCommandsTest` 7, `NativeChatModelCatalogTest`
+  2, Dart architecture test for the guard. `:app` 1520, native-ui 65, 0
+  failures; androidTest compile and release resource merge succeeded.
+  `flutter test` 972 passed, 4 failed (the same baseline tests); `flutter
+  analyze` 0 errors. No device run.
+
+Manual acceptance (5d-1c): type `/` in a native Agent conversation (rows
+match the Flutter panel, advertised commands appear); `/model` lists the
+Provider's models and switching changes the next reply's model in both
+composers; `/model` while another conversation is replying shows the busy
+notice and that reply continues; `/plan` toggles and `/plan <prompt>` sends
+in plan mode; `/init` shows as `/init`; pure chat `/effort high` applies.
 
 ## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
 
