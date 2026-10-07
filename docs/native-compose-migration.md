@@ -408,6 +408,32 @@ Manual acceptance checklist:
 6. Run `/review` from the slash panel and by typing it: the reply streams
    and the composer returns to idle when it ends.
 
+## Batch 5d-1 plan: Compose composer (2026-10-07)
+
+| Slice | Scope |
+| --- | --- |
+| 5d-1a | Native reader/writer of the Agent command preferences (`AgentCommandPreferences`), on the Flutter keys. |
+| 5d-1b | Composer state machine and the Compose composer (text field, attachments, primary action, context ring, permission menu), hosted on the native transcript page; sends through `ChatTurnLauncher` with settings from 5d-1a. |
+| 5d-1c | Slash command panel (built-in + advertised ACP commands, `/model`, `/effort`) and the ACP config panel. |
+
+Manual recording, OmniFlow tooling and the command overlay sheet keep the
+Flutter composer behind their entries until 5f.
+
+### 5d-1a checkpoint (source complete, unwired)
+
+- `projection/AgentCommandPreferences.kt`: read (conversation value, else
+  global), write (global plus conversation scope), clear, and
+  `turnSettings` (effort normalized, permission defaults to full access);
+  `normalizeAgentReasoningEffort` ports the Dart normalizer. Keys are the
+  Flutter `chat_agent_command_preference.*` keys under `flutter.`, so both
+  composers share values while both exist; the model key carries its model
+  source.
+- Not ported: the legacy `chat_codex_command_preference` fallback. Dart
+  called `getString(key, defaultValue: '') ?? getString(legacyKey)`, so the
+  fallback never ran; reading it natively would revive values the page had
+  cleared (verified against `StorageService.getString`).
+- Verification: `AgentCommandPreferencesTest` 7. Nothing calls it yet.
+
 ## Batch 5c-4 checkpoint: run groups, tool activity strip and message anchors (source complete; device acceptance pending)
 
 - **Content** (all native-ui `chat/`; no app-side presenter needed):
