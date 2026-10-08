@@ -177,3 +177,24 @@ internal fun compactionStatus(result: Map<String, Any?>?, failed: Boolean): Stri
         else -> "failed"
     }
 }
+
+/**
+ * A shared draft's files as composer attachments (Dart
+ * `_applyStagedSharedDraftIfNeeded`): id and name fall back to the path, and
+ * a file the user kept out of the model stays `sendToModel: false`.
+ */
+internal fun sharedDraftAttachments(pending: Map<String, Any?>): List<cn.com.omnimind.nativeui.chat.ChatComposerAttachment> =
+    (pending["attachments"] as? List<*>).orEmpty().mapNotNull { item ->
+        val map = item as? Map<*, *> ?: return@mapNotNull null
+        val path = map["path"]?.toString()?.takeIf { it.isNotBlank() } ?: return@mapNotNull null
+        cn.com.omnimind.nativeui.chat.ChatComposerAttachment(
+            id = map["id"]?.toString()?.ifBlank { null } ?: path,
+            name = map["name"]?.toString()?.ifBlank { null } ?: path.substringAfterLast('/'),
+            path = path,
+            size = (map["size"] as? Number)?.toLong(),
+            mimeType = map["mimeType"]?.toString()?.ifBlank { null },
+            isImage = map["isImage"] == true,
+            promptPath = map["promptPath"]?.toString()?.ifBlank { null },
+            sendToModel = map["sendToModel"] != false,
+        )
+    }

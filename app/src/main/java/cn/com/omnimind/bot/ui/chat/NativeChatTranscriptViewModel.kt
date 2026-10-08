@@ -98,6 +98,8 @@ internal class NativeChatTranscriptViewModel(
     private val savedState: SavedStateHandle,
     /** Text a new page starts with (a Home quick prompt or Home's draft); never sent by itself. */
     private val initialDraft: String? = null,
+    /** A pending draft shared in from another app (5e-7); adopted once, then cleared. */
+    private val sharedDraftKey: String? = null,
 ) : ViewModel() {
     /**
      * Null until the first send of a new conversation (5e-1) creates it;
@@ -163,6 +165,7 @@ internal class NativeChatTranscriptViewModel(
             // Adopted once: SavedStateHandle remembers it across recreation.
             if (savedState.get<Boolean>(KEY_DRAFT_ADOPTED) != true) {
                 initialDraft?.trim()?.takeIf { it.isNotEmpty() }?.let(::fillComposer)
+                sharedDraftKey?.takeIf { it.isNotBlank() }?.let(::adoptSharedDraft)
                 savedState[KEY_DRAFT_ADOPTED] = true
             }
             return
@@ -738,6 +741,22 @@ internal class NativeChatTranscriptViewModel(
             },
             pinnedPromptIds = saved.home.pinnedIds,
         )
+    }
+
+    /**
+     * Adopts a draft another app shared in (Dart `_applyStagedSharedDraftIfNeeded`):
+     * its text fills the composer and its files become pending attachments,
+     * then the pending draft is cleared so the Flutter page does not apply it
+     * again. A draft whose key no longer matches (a newer share replaced it)
+     * is left for its own page.
+     */
+    private fun adoptSharedDraft(requestKey: String) {
+        val pending = runCatching { cn.com.omnimind.bot.share.SharedOpenDraftStore.getPending(appContext) }.getOrNull() ?: return
+        if (pending["requestKey"]?.toString() != requestKey) return
+        val attachments = sharedDraftAttachments(pending)
+        mutableComposer.update { it.copy(attachments = attachments) }
+        pending["text"]?.toString()?.let(::fillComposer)
+        cn.com.omnimind.bot.share.SharedOpenDraftStore.clearPending(appContext)
     }
 
     /** Fills the composer (Dart `_applyHomeQuickPrompt`): no turn is admitted. */
@@ -1397,12 +1416,15 @@ internal class NativeChatTranscriptViewModel(
         private val mode: String,
         private val title: String,
         private val draft: String? = null,
+        private val sharedDraftKey: String? = null,
     ) : ViewModelProvider.Factory {
         private val appContext = context.applicationContext
 
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
-            NativeChatTranscriptViewModel(appContext, conversationId, mode, title, extras.createSavedStateHandle(), draft) as T
+            NativeChatTranscriptViewModel(
+                appContext, conversationId, mode, title, extras.createSavedStateHandle(), draft, sharedDraftKey,
+            ) as T
     }
 
     private companion object {

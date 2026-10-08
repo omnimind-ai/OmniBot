@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.activity
 
+import android.content.Intent
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import cn.com.omnimind.nativeui.ConversationSummary
@@ -159,6 +160,8 @@ class NativeHomeActivity : ComponentActivity() {
         runCatching { RecentTasksVisibility.applySaved(this) }
             .onFailure { OmniLog.w("NativeHomeActivity", "Unable to apply recent-task visibility") }
         viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(this))[NativeHomeViewModel::class.java]
+        // A recreated activity already handled its launch intent.
+        if (savedInstanceState == null) consumeSharedDraftIntent(intent)
         val about = ViewModelProvider(this, NativeAboutViewModel.Factory(this))[NativeAboutViewModel::class.java]
         val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
         val preferences = ViewModelProvider(this, NativePreferencesViewModel.Factory(this))[NativePreferencesViewModel::class.java]
@@ -263,12 +266,14 @@ class NativeHomeActivity : ComponentActivity() {
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
-                chatTranscript = { conversationId, mode, title, key, draft, onNewConversation, onBack ->
+                chatTranscript = { conversationId, mode, title, key, draft, sharedDraftKey, onNewConversation, onBack ->
                     // The key comes from the route, so a new page finds its ViewModel (and the
                     // conversation it created, kept in SavedStateHandle) after process death.
                     val transcriptViewModel = remember(key) {
                         ViewModelProvider(this@NativeHomeActivity,
-                            NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title, draft))[
+                            NativeChatTranscriptViewModel.Factory(
+                                this@NativeHomeActivity, conversationId, mode, title, draft, sharedDraftKey,
+                            ))[
                                 key, NativeChatTranscriptViewModel::class.java]
                     }
                     NativeChatTranscriptRoute(
@@ -305,6 +310,19 @@ class NativeHomeActivity : ComponentActivity() {
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        consumeSharedDraftIntent(intent)
+    }
+
+    /** A share from another app opens a native page with the pending draft (5e-7). */
+    private fun consumeSharedDraftIntent(intent: Intent?) {
+        val key = intent?.getStringExtra(EXTRA_SHARED_DRAFT_KEY)?.trim()?.takeIf { it.isNotEmpty() } ?: return
+        intent.removeExtra(EXTRA_SHARED_DRAFT_KEY)
+        viewModel.requestDestination(LegacyDestination.SharedDraft(key))
     }
 
     override fun onResume() {
@@ -383,5 +401,10 @@ class NativeHomeActivity : ComponentActivity() {
         val uri = runCatching { android.net.Uri.parse(link) }.getOrNull() ?: return
         if (uri.scheme !in setOf("http", "https")) return
         runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri)) }
+    }
+
+    companion object {
+        /** The request key of a pending `SharedOpenDraftStore` draft to open natively. */
+        const val EXTRA_SHARED_DRAFT_KEY = "native_shared_draft_key"
     }
 }

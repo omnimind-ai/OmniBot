@@ -657,6 +657,26 @@ the answer and the turn continues; pure chat `/compact`: marker card, then
 "Context compressed"; `/record`: the Flutter chat opens on the same
 conversation; an OpenClaw conversation from the archive: "Open in chat".
 
+### 5e-7a checkpoint: shared drafts (source complete; device acceptance pending)
+
+- A share from another app (`McpFileReceiverActivity`) opens the native
+  chat page when native Home is enabled: it starts `NativeHomeActivity`
+  with the draft's request key (`EXTRA_SHARED_DRAFT_KEY`, read on create
+  and on new intents), Home routes to `NativeNewChat(sharedDraftKey)`, and
+  the page adopts the pending `SharedOpenDraftStore` draft once (text into
+  the composer, files as attachments via `sharedDraftAttachments`,
+  `sendToModel: false` kept), then clears it, as Dart
+  `_applyStagedSharedDraftIfNeeded` does. A draft replaced by a newer share
+  is left alone. With native Home off the Flutter route is unchanged.
+- Verification: `NativeChatComposerTargetTest` +1; `:app` 1539, native-ui
+  78, 0 failures; androidTest compile and release resource merge
+  succeeded. No device run.
+
+Manual acceptance (5e-7a), with `-Pomnibot.nativeHome=true`: share text and
+an image from the gallery to Omnibot: a native new page opens with the text
+and image in the composer and nothing sent; share again while the app is
+open: a second page opens with the new draft.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |

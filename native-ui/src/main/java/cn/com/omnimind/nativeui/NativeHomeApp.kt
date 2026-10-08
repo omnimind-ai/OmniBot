@@ -68,7 +68,12 @@ internal sealed interface HomeRoute : NavKey {
         val title: String,
     ) : HomeRoute
     /** A new conversation on the native chat page; created by its first send (5e-1). */
-    @Serializable data class NativeNewChat(val requestKey: Long, val draft: String = "") : HomeRoute
+    /** [sharedDraftKey] names a pending shared draft the page adopts once (5e-7). */
+    @Serializable data class NativeNewChat(
+        val requestKey: Long,
+        val draft: String = "",
+        val sharedDraftKey: String = "",
+    ) : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -109,8 +114,8 @@ fun NativeHomeApp(
      */
     chatTranscript: @Composable (
         conversationId: Long?, mode: String, title: String, instanceKey: String, draft: String,
-        onNewConversation: () -> Unit, onBack: () -> Unit,
-    ) -> Unit = { _, _, _, _, _, _, _ -> },
+        sharedDraftKey: String, onNewConversation: () -> Unit, onBack: () -> Unit,
+    ) -> Unit = { _, _, _, _, _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -133,6 +138,10 @@ fun NativeHomeApp(
                     actions.consumeDestination()
                     backStack.add(HomeRoute.Terminal(
                         destination.packageId.ifBlank { null }))
+                }
+                is LegacyDestination.SharedDraft -> {
+                    actions.consumeDestination()
+                    backStack.add(HomeRoute.NativeNewChat(System.currentTimeMillis(), sharedDraftKey = destination.requestKey))
                 }
                 else -> Unit
             }
@@ -263,12 +272,12 @@ fun NativeHomeApp(
             }
             entry<HomeRoute.ChatTranscriptPreview> { key ->
                 chatTranscript(
-                    key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}", "",
+                    key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}", "", "",
                     replaceWithNewChat,
                 ) { backStack.removeLastOrNull() }
             }
             entry<HomeRoute.NativeNewChat> { key ->
-                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}", key.draft, replaceWithNewChat) {
+                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}", key.draft, key.sharedDraftKey, replaceWithNewChat) {
                     backStack.removeLastOrNull()
                 }
             }

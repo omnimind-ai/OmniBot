@@ -98,6 +98,12 @@ sealed interface LegacyDestination {
     /** [draft] only fills the Flutter composer (`nativeDraft`); it is never sent by itself. */
     data class Conversation(val id: Long, val mode: String, val agentId: String? = null, val draft: String = "") : LegacyDestination
     data class NewConversation(val draft: String = "") : LegacyDestination
+
+    /**
+     * A draft another app shared in (`SharedOpenDraftStore`). The native page
+     * fills its composer with the text and attachments; nothing is sent.
+     */
+    data class SharedDraft(val requestKey: String) : LegacyDestination
     data class TerminalPackage(val packageId: String) : LegacyDestination
 
     /** Plugin-declared in-app route; validated to stay an app-internal path. */

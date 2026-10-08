@@ -22,6 +22,11 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 .appendQueryParameter("conversationId", "new")
                 .appendQueryParameter("requestKey", UUID.randomUUID().toString())
                 .appendQueryParameter("nativeDraft", destination.draft).build().toString()
+            // Flutter applies the pending shared draft itself (`_applyStagedSharedDraftIfNeeded`).
+            is LegacyDestination.SharedDraft -> Uri.Builder().path("/home/chat")
+                .appendQueryParameter("conversationId", "new")
+                .appendQueryParameter("mode", "normal")
+                .appendQueryParameter("requestKey", destination.requestKey).build().toString()
             is LegacyDestination.TerminalPackage -> Uri.Builder().path("/home/termux_setting")
                 .apply { if (destination.packageId.isNotBlank()) appendQueryParameter("focus", destination.packageId) }
                 .build().toString()

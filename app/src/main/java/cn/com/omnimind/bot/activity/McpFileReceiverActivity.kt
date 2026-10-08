@@ -9,6 +9,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.mcp.McpFileInbox
 import cn.com.omnimind.bot.share.SharedOpenPreferenceStore
 import cn.com.omnimind.bot.share.SharedOpenDraftStore
@@ -98,6 +99,27 @@ class McpFileReceiverActivity : ComponentActivity() {
         handleFileTransfer(fileTransferUris, mimeTypeHint)
     }
 
+    /**
+     * Opens the shared draft in a new conversation: the native chat page when
+     * native Home is enabled (5e-7), otherwise the Flutter chat route, which
+     * applies the pending draft itself. Either way nothing is sent.
+     */
+    private fun openSharedDraft(requestKey: String) {
+        if (BuildConfig.NATIVE_HOME_ENABLED) {
+            startActivity(
+                Intent(this, NativeHomeActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    .putExtra(NativeHomeActivity.EXTRA_SHARED_DRAFT_KEY, requestKey),
+            )
+            return
+        }
+        TaskCompletionNavigator.navigateToMainRoute(
+            context = this,
+            route = "/home/chat?conversationId=new&mode=normal&requestKey=${Uri.encode(requestKey)}",
+            needClear = false,
+        )
+    }
+
     private fun handleDraftShare(
         sharedText: String?,
         imageUris: List<Uri>,
@@ -112,13 +134,7 @@ class McpFileReceiverActivity : ComponentActivity() {
             )
             withContext(Dispatchers.Main) {
                 if (draft != null) {
-                    val route =
-                        "/home/chat?conversationId=new&mode=normal&requestKey=${Uri.encode(draft.requestKey)}"
-                    TaskCompletionNavigator.navigateToMainRoute(
-                        context = this@McpFileReceiverActivity,
-                        route = route,
-                        needClear = false,
-                    )
+                    openSharedDraft(draft.requestKey)
                     Toast.makeText(
                         this@McpFileReceiverActivity,
                         "已填入新对话，请确认后发送",
@@ -150,13 +166,7 @@ class McpFileReceiverActivity : ComponentActivity() {
             )
             withContext(Dispatchers.Main) {
                 if (draft != null) {
-                    val route =
-                        "/home/chat?conversationId=new&mode=normal&requestKey=${Uri.encode(draft.requestKey)}"
-                    TaskCompletionNavigator.navigateToMainRoute(
-                        context = this@McpFileReceiverActivity,
-                        route = route,
-                        needClear = false,
-                    )
+                    openSharedDraft(draft.requestKey)
                     Toast.makeText(
                         this@McpFileReceiverActivity,
                         "已添加到 Workspace，请确认后发送",
@@ -192,13 +202,7 @@ class McpFileReceiverActivity : ComponentActivity() {
             )
             withContext(Dispatchers.Main) {
                 if (draft != null) {
-                    val route =
-                        "/home/chat?conversationId=new&mode=normal&requestKey=${Uri.encode(draft.requestKey)}"
-                    TaskCompletionNavigator.navigateToMainRoute(
-                        context = this@McpFileReceiverActivity,
-                        route = route,
-                        needClear = false,
-                    )
+                    openSharedDraft(draft.requestKey)
                     val message = when {
                         workspaceUris.isNotEmpty() && receivedFileCount > 0 ->
                             "已添加到 Workspace，并接收 ${receivedFileCount} 个文件"

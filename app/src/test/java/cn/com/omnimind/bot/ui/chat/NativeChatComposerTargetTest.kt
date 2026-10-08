@@ -101,4 +101,22 @@ class NativeChatComposerTargetTest {
         assertEquals("failed", compactionStatus(mapOf("reason" to "model_error"), failed = false))
         assertEquals("failed", compactionStatus(null, failed = true))
     }
+
+    @Test
+    fun `a shared draft's files become composer attachments`() {
+        val attachments = sharedDraftAttachments(mapOf(
+            "attachments" to listOf(
+                mapOf("id" to "", "name" to "", "path" to "/data/shared/photo.jpg", "size" to 12, "isImage" to true),
+                mapOf("id" to "w1", "name" to "report.pdf", "path" to "/w/report.pdf", "promptPath" to "/workspace/report.pdf", "sendToModel" to false),
+                mapOf("name" to "no path"),
+            ),
+        ))
+        assertEquals(listOf("/data/shared/photo.jpg", "w1"), attachments.map { it.id })
+        assertEquals("photo.jpg", attachments[0].name)
+        assertEquals(12L, attachments[0].size)
+        assertEquals(true, attachments[0].isImage)
+        assertEquals(false, attachments[1].sendToModel)
+        assertEquals("/workspace/report.pdf", attachments[1].promptPath)
+        assertEquals(emptyList<Any>(), sharedDraftAttachments(emptyMap()))
+    }
 }

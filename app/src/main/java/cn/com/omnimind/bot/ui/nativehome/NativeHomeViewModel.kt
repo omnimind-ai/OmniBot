@@ -165,6 +165,11 @@ internal class NativeHomeViewModel(
 
     fun consumeDestination() { mutableState.update { it.copy(pendingDestination = null) } }
 
+    /** An entry from outside Home (a share from another app) asks for a page. */
+    fun requestDestination(destination: LegacyDestination) {
+        mutableState.update { it.copy(pendingDestination = destination) }
+    }
+
     private fun showMessage(resource: Int) {
         val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
         val locale = resolveNativeHomeLocale(preferences.getString("flutter.language_option", "system"))
