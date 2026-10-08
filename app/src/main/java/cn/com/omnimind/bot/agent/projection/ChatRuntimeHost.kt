@@ -47,6 +47,23 @@ object ChatRuntimeHost {
     @Volatile
     var voiceSpeaker: ((messageId: String, text: String, enqueue: Boolean) -> Boolean)? = null
 
+    /**
+     * Autoplay for native pages when no Flutter engine bound [voiceSpeaker]
+     * (native Home running alone, 5e-7). Without it, assistant replies on the
+     * native page were never spoken: the speaker existed only once the
+     * Flutter chat had attached its channel. Created on first use.
+     */
+    private var nativeVoice: cn.com.omnimind.bot.voice.SceneVoicePlaybackManager? = null
+
+    private fun speak(messageId: String, text: String, enqueue: Boolean): Boolean {
+        voiceSpeaker?.let { return it(messageId, text, enqueue) }
+        val context = appContext ?: return false
+        val voice = nativeVoice ?: cn.com.omnimind.bot.voice.SceneVoicePlaybackManager(context).also { nativeVoice = it }
+        return runCatching { voice.speakText(messageId, text, enqueue, preferStreaming = true) }
+            .onFailure { Log.w(TAG, "原生语音播报失败: ${it.message}") }
+            .getOrDefault(false)
+    }
+
     private var voiceAvailabilityCheckedAt = 0L
     private var voiceAutoplayAvailable = false
 
@@ -159,7 +176,7 @@ object ChatRuntimeHost {
     private fun createCoordinator(): ChatConversationRuntimeCoordinator {
         val context = checkNotNull(appContext) { "ChatRuntimeHost.initialize was not called" }
         val voice = ChatRuntimeVoiceAutoplay(autoplayEnabled = ::isVoiceAutoplayEnabled) { id, text, enqueue ->
-            voiceSpeaker?.invoke(id, text, enqueue) ?: false
+            speak(id, text, enqueue)
         }
         return ChatConversationRuntimeCoordinator(
             persistence = NativeChatRuntimeHistoryStore(context),

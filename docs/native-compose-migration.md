@@ -677,6 +677,23 @@ an image from the gallery to Omnibot: a native new page opens with the text
 and image in the composer and nothing sent; share again while the app is
 open: a second page opens with the new draft.
 
+### 5e-7b checkpoint: voice autoplay without Flutter (source complete; device acceptance pending)
+
+- Assistant-reply autoplay is decided natively (`ChatRuntimeVoiceAutoplay`),
+  but its speaker (`ChatRuntimeHost.voiceSpeaker`) was bound only by the
+  Flutter `VoicePlaybackChannel`. With native Home running and no Flutter
+  engine attached, replies on the native page were never spoken even with
+  autoplay on. `ChatRuntimeHost.speak` now uses the Flutter-bound speaker
+  when present and otherwise a host-owned `SceneVoicePlaybackManager`, so
+  each reply is spoken by exactly one player.
+- Verification: `:app` 1539, native-ui 78, 0 failures. Playback itself is
+  device-only. No device run.
+
+Manual acceptance (5e-7b), with `-Pomnibot.nativeHome=true` and voice
+autoplay on: send from the native page without ever opening the Flutter
+chat; the reply is spoken once. Then open the Flutter chat and send there:
+still spoken once.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |
