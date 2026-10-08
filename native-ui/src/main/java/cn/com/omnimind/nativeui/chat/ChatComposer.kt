@@ -5,6 +5,13 @@ import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import top.yukonga.miuix.kmp.basic.ButtonDefaults
+import top.yukonga.miuix.kmp.overlay.OverlayBottomSheet
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -167,7 +174,9 @@ fun ChatComposer(
                 PermissionMenu(current, state.permissionChoices, actions.onSelectPermission)
             }
             Spacer(Modifier.weight(1f))
-            state.contextUsage?.let { ContextRing(it, state.contextUsageLabel) }
+            state.contextUsage?.let {
+                ContextRing(it, state.contextUsageLabel, state.contextThreshold, actions.onSaveContextThreshold)
+            }
             PrimaryButton(primary, state.cancelling, onSend = { submit(draft.trim()) }, onCancel = actions.onCancel)
         }
     }
@@ -263,9 +272,15 @@ private fun permissionIcon(permission: ChatComposerPermission): Int = when (perm
 }
 
 @Composable
-private fun ContextRing(ring: ContextUsageRing, label: String?) {
+private fun ContextRing(
+    ring: ContextUsageRing,
+    label: String?,
+    threshold: Int?,
+    onSaveThreshold: (Int) -> Unit,
+) {
     val palette = LocalOmniPalette.current
     var showLabel by rememberSaveable { mutableStateOf(false) }
+    var editThreshold by rememberSaveable { mutableStateOf(false) }
     val progress by animateFloatAsState(ring.progress, tween(220), label = "contextUsage")
     val color = when (ring.level) {
         ContextUsageLevel.Full -> if (palette.dark) Color(0xFFB97862) else Color(0xFFD65A3A)
@@ -279,7 +294,11 @@ private fun ContextRing(ring: ContextUsageRing, label: String?) {
             Modifier
                 .size(48.dp)
                 .clip(CircleShape)
-                .clickable { showLabel = !showLabel }
+                // Long press edits the compression threshold (Dart `_handleContextUsageRingLongPress`).
+                .combinedClickable(
+                    onClick = { showLabel = !showLabel },
+                    onLongClick = if (threshold != null) ({ editThreshold = true }) else null,
+                )
                 .semantics { contentDescription = label ?: description },
             contentAlignment = Alignment.Center,
         ) {
@@ -292,6 +311,88 @@ private fun ContextRing(ring: ContextUsageRing, label: String?) {
         if (showLabel && label != null) {
             OverlayListPopup(show = true, minWidth = 160.dp, onDismissRequest = { showLabel = false }) {
                 Text(label, fontSize = 12.sp, color = palette.text, modifier = Modifier.padding(12.dp))
+            }
+        }
+    }
+    if (threshold != null) {
+        ContextThresholdSheet(
+            show = editThreshold,
+            threshold = threshold,
+            onDismiss = { editThreshold = false },
+            onSave = { value ->
+                editThreshold = false
+                if (value != threshold) onSaveThreshold(value)
+            },
+        )
+    }
+}
+
+/**
+ * The compression threshold editor (Dart `_ContextThresholdSheet`): preset
+ * chips and a typed positive integer. Saved on confirm instead of the Dart
+ * sheet's 320 ms autosave, so a half-typed number never reaches the store.
+ */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ContextThresholdSheet(show: Boolean, threshold: Int, onDismiss: () -> Unit, onSave: (Int) -> Unit) {
+    val palette = LocalOmniPalette.current
+    var text by rememberSaveable(threshold, show) { mutableStateOf(threshold.toString()) }
+    var error by rememberSaveable(show) { mutableStateOf<ThresholdInputError?>(null) }
+    OverlayBottomSheet(show = show, title = stringResource(R.string.omni_threshold_title), onDismissRequest = onDismiss) {
+        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text(stringResource(R.string.omni_threshold_summary), color = palette.secondaryText, fontSize = 13.sp)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                CONTEXT_THRESHOLD_PRESETS.forEach { preset ->
+                    val selected = text.trim() == preset.toString()
+                    Text(
+                        if (preset >= 1_000_000) "${preset / 1_000_000}M" else "${preset / 1_000}K",
+                        fontSize = 13.sp,
+                        color = if (selected) palette.accent else palette.text,
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(if (selected) palette.accent.copy(alpha = .14f) else palette.secondarySurface)
+                            .clickable(role = Role.Button) {
+                                text = preset.toString()
+                                error = null
+                            }
+                            .padding(horizontal = 14.dp, vertical = 8.dp),
+                    )
+                }
+            }
+            TextField(
+                value = text,
+                onValueChange = { text = it; error = null },
+                modifier = Modifier.fillMaxWidth(),
+                label = stringResource(R.string.omni_threshold_label),
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+            )
+            error?.let {
+                Text(
+                    stringResource(
+                        when (it) {
+                            ThresholdInputError.Empty -> R.string.omni_threshold_empty
+                            ThresholdInputError.NotInteger -> R.string.omni_threshold_not_integer
+                            ThresholdInputError.NotPositive -> R.string.omni_threshold_not_positive
+                        },
+                    ),
+                    color = Color(0xFFE05252),
+                    fontSize = 12.sp,
+                )
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                TextButton(stringResource(R.string.omni_cancel), onDismiss, Modifier.weight(1f))
+                TextButton(
+                    stringResource(R.string.omni_save),
+                    {
+                        parseContextThreshold(text).fold(
+                            onSuccess = onSave,
+                            onFailure = { failure -> error = (failure as? ThresholdInputException)?.error },
+                        )
+                    },
+                    Modifier.weight(1f),
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
             }
         }
     }

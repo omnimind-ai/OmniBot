@@ -103,6 +103,8 @@ data class ChatComposerState(
     val contextUsage: ContextUsageRing? = null,
     /** "used / threshold tokens" shown when the ring is tapped. */
     val contextUsageLabel: String? = null,
+    /** The conversation's compression threshold; null hides the long-press editor (no conversation yet). */
+    val contextThreshold: Int? = null,
     val cancelling: Boolean = false,
     /** Slash commands of this conversation (5d-1c). */
     val slash: ChatSlashContext = ChatSlashContext(),
@@ -142,6 +144,8 @@ class ChatComposerActions(
     val onCancelEdit: () -> Unit = {},
     /** Opens this conversation in the Flutter chat (5e-6). */
     val onOpenInChat: () -> Unit = {},
+    /** Saves the conversation's compression threshold (the ViewModel reports the result). */
+    val onSaveContextThreshold: (Int) -> Unit = {},
 )
 
 /** What a long press on a user message offers (Dart `_UserMessageQuickAction`, 5e-5). */
@@ -182,3 +186,20 @@ fun retriedRoundRemovalCount(messageIds: List<String>, userMessageId: String, ke
     if (index < 0) return 0
     return index + if (keepUserMessage) 0 else 1
 }
+
+/** Dart `_ContextThresholdSheet._presets`: the chips offered for the compression threshold. */
+val CONTEXT_THRESHOLD_PRESETS = listOf(32_000, 64_000, 128_000, 256_000, 512_000, 1_000_000)
+
+/** Why a typed threshold was refused (Dart `_parseInput`). */
+enum class ThresholdInputError { Empty, NotInteger, NotPositive }
+
+/** Parses the typed threshold: a positive integer, digits only after trimming. */
+fun parseContextThreshold(raw: String): Result<Int> {
+    val text = raw.trim()
+    if (text.isEmpty()) return Result.failure(ThresholdInputException(ThresholdInputError.Empty))
+    val value = text.toIntOrNull() ?: return Result.failure(ThresholdInputException(ThresholdInputError.NotInteger))
+    if (value <= 0) return Result.failure(ThresholdInputException(ThresholdInputError.NotPositive))
+    return Result.success(value)
+}
+
+class ThresholdInputException(val error: ThresholdInputError) : IllegalArgumentException(error.name)

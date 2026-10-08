@@ -1054,4 +1054,13 @@
     <string name="omni_compact_noop">No context to compress yet</string>
     <string name="omni_compact_failed">Context compression failed</string>
     <string name="omni_open_in_chat">Open in chat</string>
+    <string name="omni_threshold_title">Compression threshold</string>
+    <string name="omni_threshold_summary">Context is compressed automatically once this conversation\'s prompt reaches this many tokens.</string>
+    <string name="omni_threshold_label">Threshold (tokens)</string>
+    <string name="omni_threshold_empty">Please enter a threshold</string>
+    <string name="omni_threshold_not_integer">Threshold must be an integer</string>
+    <string name="omni_threshold_not_positive">Threshold must be positive</string>
+    <string name="omni_threshold_saved">Threshold saved</string>
+    <string name="omni_threshold_failed">Couldn\'t save the threshold. Try again.</string>
+    <string name="omni_save">Save</string>
 </resources>

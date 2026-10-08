@@ -1054,4 +1054,13 @@
     <string name="omni_compact_noop">当前暂无可压缩的上下文</string>
     <string name="omni_compact_failed">上下文压缩失败</string>
     <string name="omni_open_in_chat">在聊天中打开</string>
+    <string name="omni_threshold_title">压缩阈值</string>
+    <string name="omni_threshold_summary">本对话的提示词达到该 token 数时会自动压缩上下文。</string>
+    <string name="omni_threshold_label">阈值（tokens）</string>
+    <string name="omni_threshold_empty">请输入阈值</string>
+    <string name="omni_threshold_not_integer">阈值必须是整数</string>
+    <string name="omni_threshold_not_positive">阈值必须为正整数</string>
+    <string name="omni_threshold_saved">阈值已保存</string>
+    <string name="omni_threshold_failed">阈值保存失败，请重试</string>
+    <string name="omni_save">保存</string>
 </resources>

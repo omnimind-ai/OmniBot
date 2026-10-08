@@ -375,7 +375,11 @@ internal class NativeChatTranscriptViewModel(
         val used = long("latestPromptTokens") ?: 0L
         val threshold = long("promptTokenThreshold") ?: 128_000L
         val ring = contextUsageRing(used, threshold, long("latestPromptTokensUpdatedAt") ?: 0L)
-        return copy(contextUsage = ring, contextUsageLabel = ring?.let { "$used / $threshold tokens" })
+        return copy(
+            contextUsage = ring,
+            contextUsageLabel = ring?.let { "$used / $threshold tokens" },
+            contextThreshold = threshold.toInt().takeIf { conversationIdOrNull != null && it > 0 },
+        )
     }
 
     private fun modelSource(target: NativeChatComposerTarget): String =
@@ -902,6 +906,32 @@ internal class NativeChatTranscriptViewModel(
     // ---------------------------------------------------------------------
     // Manual compaction and the Flutter hand-off (batch 5e-6)
     // ---------------------------------------------------------------------
+
+    /**
+     * Saves the conversation's compression threshold (Dart
+     * `_handleContextUsageRingLongPress` → `updateConversationPromptTokenThreshold`)
+     * and refreshes the ring from the stored conversation.
+     */
+    fun saveContextThreshold(threshold: Int) {
+        val conversationId = conversationIdOrNull ?: return
+        if (threshold <= 0) return
+        viewModelScope.launch {
+            val updated = runCatching {
+                withContext(Dispatchers.IO) { conversations.updateConversationPromptTokenThreshold(conversationId, threshold) }
+            }.onFailure { Log.w(TAG, "更新压缩阈值失败: ${it.message}") }.getOrNull()
+            if (updated == null) {
+                toast(string(cn.com.omnimind.nativeui.R.string.omni_threshold_failed))
+                return@launch
+            }
+            conversationPayload = updated
+            liveMode?.let { mode ->
+                coordinator.setRuntimeConversation(conversationId.toInt(), mode, updated)
+                coordinator.publishDirtySnapshots()
+            }
+            mutableComposer.update { it.withContextUsage(updated) }
+            toast(string(cn.com.omnimind.nativeui.R.string.omni_threshold_saved))
+        }
+    }
 
     /** One-shot request for the route to open this conversation in the Flutter chat. */
     private val mutableOpenInChat = MutableStateFlow<ChatHandoff?>(null)
@@ -1484,6 +1514,7 @@ internal fun NativeChatTranscriptRoute(
             onSelectPermission = viewModel::selectPermission,
             onCancelEdit = viewModel::cancelEdit,
             onOpenInChat = { viewModel.openInChat() },
+            onSaveContextThreshold = viewModel::saveContextThreshold,
         )
     }
     val actions = remember(viewModel, onOpenLink, onToolAction) {

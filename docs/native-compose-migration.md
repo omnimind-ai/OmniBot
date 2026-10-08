@@ -631,6 +631,12 @@ natively, an OpenClaw one opens in Flutter.
   updated, `NativeChatComposerTargetTest` +1 (compaction status); `:app`
   1528, native-ui 76, 0 failures; androidTest compile and release resource
   merge succeeded. No Dart changes. No device run.
+- **Compression threshold**: a long press on the context ring opens a
+  Miuix sheet (Dart `_ContextThresholdSheet`: presets 32K to 1M and a typed
+  positive integer, `parseContextThreshold`). It saves on confirm through
+  `ConversationDomainService.updateConversationPromptTokenThreshold`; the
+  Dart sheet autosaved 320 ms after each keystroke, so a half-typed number
+  could reach the store. `ContextThresholdTest` 2.
 - Still Flutter: the browser overlay, the workspace panel, the remote Codex
   runtime and OpenClaw themselves (reached through the hand-off).
 
