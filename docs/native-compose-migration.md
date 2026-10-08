@@ -637,6 +637,17 @@ natively, an OpenClaw one opens in Flutter.
   `ConversationDomainService.updateConversationPromptTokenThreshold`; the
   Dart sheet autosaved 320 ms after each keystroke, so a half-typed number
   could reach the store. `ContextThresholdTest` 2.
+- **Link previews** (`ui/chat/LinkPreviewService.kt`, a port of
+  `services/link_preview_service.dart`): the same URL extraction (explicit
+  and bare domains with the common-suffix list, Markdown punctuation
+  trimmed, `omnibot://` resources and image links skipped, at most three),
+  Open Graph > Twitter Card > page title order, an 8 s OkHttp fetch with one
+  request per URL and a process cache. A native send stores loading
+  placeholders in `content.linkPreviews` (the Flutter shape) and fills each
+  one when its fetch returns, then persists. Cards render under user and
+  assistant messages; a tap opens the link. `LinkPreviewServiceTest` 10
+  (the five Dart cases, punctuation and dedup, stored previews kept, HTML
+  parsing, a MockWebServer fetch with caching, the write-back).
 - Still Flutter: the browser overlay, the workspace panel, the remote Codex
   runtime and OpenClaw themselves (reached through the hand-off).
 

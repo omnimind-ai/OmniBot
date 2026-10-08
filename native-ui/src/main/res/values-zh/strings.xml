@@ -1063,4 +1063,6 @@
     <string name="omni_threshold_saved">阈值已保存</string>
     <string name="omni_threshold_failed">阈值保存失败，请重试</string>
     <string name="omni_save">保存</string>
+    <string name="omni_link_preview_loading">加载预览中</string>
+    <string name="omni_link_preview_failed">预览暂不可用</string>
 </resources>

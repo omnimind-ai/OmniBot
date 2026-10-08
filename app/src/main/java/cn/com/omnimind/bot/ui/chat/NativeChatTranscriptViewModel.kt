@@ -456,6 +456,11 @@ internal class NativeChatTranscriptViewModel(
         val userText = display ?: text
         val userContent = linkedMapOf<String, Any?>("text" to userText, "id" to ids.userMessageId)
         if (attachmentMaps.isNotEmpty()) userContent["attachments"] = attachmentMaps
+        // Link previews start as loading placeholders and fill in later (Dart `_syncUserMessageLinkPreviews`).
+        val previews = if (retained != null) emptyList() else {
+            LinkPreviewExtractor.reconcile(userText, existing = null, cached = LinkPreviewLoader.shared::cached)
+        }
+        if (previews.isNotEmpty()) userContent["linkPreviews"] = previews.map { it.toMap() }
         // A retained row is already in the runtime; the launcher must not insert a second one.
         val userRow = if (retained != null) null else ChatMessage(id = ids.userMessageId, type = 1, user = 1, content = userContent)
         val frozenPermission = if (target.showsPermission) permission else AgentPermissionMode.FullAccess
@@ -515,6 +520,9 @@ internal class NativeChatTranscriptViewModel(
                 clearThinkingOnFailure = !target.showsPermission,
             )
             liveMode = target.runtimeMode
+            previews.filter { it.status == LinkPreviewStatus.LOADING }.forEach { preview ->
+                resolveLinkPreview(runtimeConversationId, target.runtimeMode, ids.userMessageId, preview.url)
+            }
             ChatRuntimeHost.launchTurnDetached(request, isTargetCurrent = { surfaceOpen }) { outcome ->
                 sending = false
                 if (outcome.status == ChatTurnOutcome.Status.Rejected) {
@@ -901,6 +909,23 @@ internal class NativeChatTranscriptViewModel(
 
     fun consumeOpenNewConversation() {
         mutableOpenNew.value = 0L
+    }
+
+    /**
+     * Fetches one preview and writes it into the user row, then persists
+     * (Dart `_resolveUserMessageLinkPreview`). Runs in the ViewModel scope:
+     * a page closed mid-fetch keeps the loading placeholder, as Flutter does.
+     */
+    private fun resolveLinkPreview(conversationId: Int, mode: String, messageId: String, url: String) {
+        viewModelScope.launch {
+            val resolved = LinkPreviewLoader.shared.load(url)
+            val current = coordinator.snapshotFor(conversationId, mode)?.messages?.firstOrNull { it.id == messageId } ?: return@launch
+            val content = contentWithResolvedPreview(current.content ?: return@launch, url, resolved) ?: return@launch
+            if (coordinator.replaceRuntimeMessage(conversationId, mode, messageId, current.copy(content = content))) {
+                coordinator.publishDirtySnapshots()
+                coordinator.schedulePersistRuntimeConversation(conversationId, mode, persistMessages = true)
+            }
+        }
     }
 
     // ---------------------------------------------------------------------

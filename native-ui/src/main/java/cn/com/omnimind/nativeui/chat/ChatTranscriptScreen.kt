@@ -1,6 +1,8 @@
 package cn.com.omnimind.nativeui.chat
 
 import androidx.compose.foundation.background
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.border
 import top.yukonga.miuix.kmp.basic.PopupPositionProvider
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
 import top.yukonga.miuix.kmp.basic.ListPopupColumn
@@ -342,6 +344,7 @@ private fun UserBubble(message: ChatMessageUi, handlers: ChatItemHandlers) {
                     attachments.forEach { name ->
                         Text("📎 $name", color = palette.secondaryText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
+                    LinkPreviewCards(message, handlers.onOpenLink, Modifier.padding(top = 6.dp))
                 }
                 OverlayListPopup(
                     show = menuActions.isNotEmpty(),
@@ -387,6 +390,52 @@ private fun AssistantText(message: ChatMessageUi, onOpenLink: (String) -> Unit) 
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp, end = 18.dp),
         onOpenLink = onOpenLink,
     )
+    LinkPreviewCards(message, onOpenLink, Modifier.padding(top = 8.dp))
+}
+
+/**
+ * Link previews stored under a message (`content.linkPreviews`, Flutter
+ * `_buildLinkPreviewList`): site, title and description, or a loading or
+ * unavailable label. A tap opens the link.
+ */
+@Composable
+private fun LinkPreviewCards(message: ChatMessageUi, onOpenLink: (String) -> Unit, modifier: Modifier = Modifier) {
+    val previews = (message.content?.get("linkPreviews") as? List<*>).orEmpty().mapNotNull { it as? Map<*, *> }
+    if (previews.isEmpty()) return
+    val palette = LocalOmniPalette.current
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        previews.forEach { preview ->
+            fun str(key: String) = preview[key]?.toString()?.trim().orEmpty()
+            val url = str("url")
+            val site = str("siteName").ifEmpty { str("domain") }
+            val title = str("title")
+            val description = str("description")
+            val status = when (str("status")) {
+                "loading" -> stringResource(R.string.omni_link_preview_loading)
+                "failed" -> stringResource(R.string.omni_link_preview_failed)
+                else -> ""
+            }
+            Column(
+                Modifier
+                    .widthIn(max = 360.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(palette.surface)
+                    .border(1.dp, palette.border, RoundedCornerShape(14.dp))
+                    .clickable(enabled = url.isNotEmpty(), role = Role.Button) { onOpenLink(url) }
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                if (site.isNotEmpty()) {
+                    Text(site, color = palette.secondaryText, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(title.ifEmpty { url }, color = palette.text, fontSize = 13.sp, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                if (description.isNotEmpty()) {
+                    Text(description, color = palette.secondaryText, fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                }
+                if (status.isNotEmpty()) Text(status, color = palette.tertiaryText, fontSize = 11.sp)
+            }
+        }
+    }
 }
 
 /** Markers rendered straight from card data; other kinds keep a labelled placeholder. */
