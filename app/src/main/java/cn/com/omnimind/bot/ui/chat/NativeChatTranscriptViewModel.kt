@@ -43,6 +43,11 @@ import cn.com.omnimind.nativeui.chat.ChatComposerActions
 import cn.com.omnimind.nativeui.chat.ChatComposerAttachment
 import cn.com.omnimind.nativeui.chat.ChatComposerPermission
 import cn.com.omnimind.nativeui.chat.ChatComposerState
+import cn.com.omnimind.nativeui.chat.ChatHarnessOption
+import cn.com.omnimind.nativeui.chat.ChatPageBarState
+import cn.com.omnimind.nativeui.chat.AcpConfigPanelState
+import cn.com.omnimind.nativeui.chat.parseAcpConfigOptions
+import cn.com.omnimind.bot.agent.NativeAgentsRepository
 import cn.com.omnimind.nativeui.chat.ChatAdvertisedCommand
 import cn.com.omnimind.nativeui.chat.ChatSlashSubmit
 import cn.com.omnimind.nativeui.chat.resolveSubmit
@@ -53,6 +58,7 @@ import cn.com.omnimind.bot.agent.runtime.CodexRemoteBridgeConfigStore
 import cn.com.omnimind.bot.agent.projection.ConversationModes
 import org.json.JSONObject
 import cn.com.omnimind.nativeui.chat.ChatTranscriptActions
+import cn.com.omnimind.nativeui.chat.ChatPageBarActions
 import cn.com.omnimind.nativeui.chat.contextUsageRing
 import com.rk.libcommons.OmnibotTerminalEnvironment
 import cn.com.omnimind.nativeui.chat.ChatTranscriptScreen
@@ -121,6 +127,12 @@ internal class NativeChatTranscriptViewModel(
     private val models = NativeChatModelCatalog(appContext)
     private var modelCatalog = NativeChatModelCatalog.Catalog(null, emptyList(), null)
     private var applyingSetting = false
+    private val agents = NativeAgentsRepository(appContext)
+    private val mutableBar = MutableStateFlow(ChatPageBarState())
+    val bar = mutableBar.asStateFlow()
+    /** One-shot request for the route to open a new conversation on the chosen Harness. */
+    private val mutableOpenNew = MutableStateFlow(0L)
+    val openNewConversation = mutableOpenNew.asStateFlow()
 
     init {
         ChatRuntimeHost.initialize(appContext)
@@ -226,6 +238,9 @@ internal class NativeChatTranscriptViewModel(
             ).withContextUsage(snapshot.conversation)
         }
         refreshSlash(snapshot)
+        if (mutableBar.value.config?.readOnly != snapshot.isAiResponding) {
+            updateConfig { it.copy(readOnly = snapshot.isAiResponding) }
+        }
     }
 
     /** Commands, plan mode and the config lock follow the live snapshot. */
@@ -300,6 +315,7 @@ internal class NativeChatTranscriptViewModel(
 
     private suspend fun applyComposerTarget(resolved: NativeChatComposerTarget, payload: Map<String, Any?>?) {
         target = resolved
+        viewModelScope.launch { loadHarnessChoices(resolved) }
         if (resolved.showsPermission) {
             val stored = preferences.turnSettings(conversationIdOrNull?.toInt(), modelSource(resolved)).permission
             permission = stored.forLocalHarness()
@@ -624,6 +640,170 @@ internal class NativeChatTranscriptViewModel(
 
     private fun string(id: Int, vararg args: Any): String = appContext.getString(id, *args)
 
+    // ---------------------------------------------------------------------
+    // App bar (batch 5e-3)
+    // ---------------------------------------------------------------------
+
+    /** Enabled Harnesses for the switcher; remote Codex keeps its Flutter flow. */
+    private suspend fun loadHarnessChoices(target: NativeChatComposerTarget) {
+        val agentId = target.agentId ?: return
+        val catalog = runCatching { withContext(Dispatchers.IO) { agents.listAgents(refresh = false) } }
+            .onFailure { Log.w(TAG, "读取 Agent 列表失败: ${it.message}") }.getOrNull()
+        val choices = catalog?.agents.orEmpty().filter { it.enabled }
+            .map { ChatHarnessOption(it.id, it.name.ifBlank { it.id }) }
+        val current = choices.firstOrNull { it.id == agentId } ?: ChatHarnessOption(agentId, agentId)
+        mutableBar.update {
+            it.copy(
+                harness = current,
+                harnessChoices = choices.ifEmpty { listOf(current) },
+                config = it.config ?: AcpConfigPanelState(),
+            )
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // ACP config panel (batch 5e-3, Flutter `_buildAcpConfigButton`)
+    // ---------------------------------------------------------------------
+
+    private fun updateConfig(change: (AcpConfigPanelState) -> AcpConfigPanelState) =
+        mutableBar.update { bar -> bar.copy(config = change(bar.config ?: AcpConfigPanelState())) }
+
+    /**
+     * Opens the panel and reads the session's declared options
+     * (`session/load` without history). Settings belong to the conversation's
+     * session, so a new page asks for a first send instead of creating an
+     * empty conversation just to read them.
+     */
+    fun openConfig() {
+        if (conversationIdOrNull == null) {
+            toast(string(cn.com.omnimind.nativeui.R.string.omni_acp_config_needs_conversation))
+            return
+        }
+        updateConfig { it.copy(visible = true, error = null) }
+        loadConfig(refresh = false)
+    }
+
+    fun dismissConfig() = updateConfig { it.copy(visible = false) }
+
+    fun refreshConfig() = loadConfig(refresh = true)
+
+    private fun loadConfig(refresh: Boolean) {
+        val target = target ?: return
+        val conversationId = conversationIdOrNull ?: return
+        updateConfig { it.copy(loading = true, readOnly = thisTurnRunning()) }
+        viewModelScope.launch {
+            val result = runCatching {
+                AgentRuntimeManager.getInstance(appContext).handleMethod(
+                    "session/load",
+                    linkedMapOf<String, Any?>(
+                        "conversationId" to conversationId.toInt(),
+                        "agentId" to target.agentId,
+                        "conversationMode" to target.runtimeMode,
+                        "includeHistory" to false,
+                    ).apply { if (refresh) put("refreshConfig", true) },
+                ) as? Map<*, *>
+            }.onFailure { Log.w(TAG, "读取 ACP 参数失败: ${it.message}") }
+            val options = result.getOrNull()?.get("configOptions")
+            updateConfig {
+                it.copy(
+                    loading = false,
+                    options = if (result.isSuccess) parseAcpConfigOptions(options, AppLocaleManager.isEnglish()) else it.options,
+                    error = result.exceptionOrNull()?.let { error -> error.message ?: string(cn.com.omnimind.nativeui.R.string.omni_slash_failed) },
+                )
+            }
+        }
+    }
+
+    /** `session/set_config_option`; the complete response replaces the list (dependent options included). */
+    fun setConfig(configId: String, value: Any) {
+        val target = target ?: return
+        val conversationId = conversationIdOrNull ?: return
+        val config = mutableBar.value.config ?: return
+        if (config.saving || config.loading) return
+        // Only this conversation's session changes; the runtime refuses it while that session runs.
+        if (thisTurnRunning()) {
+            updateConfig { it.copy(readOnly = true) }
+            toast(noticeText(ChatSlashSubmit.Reason.Busy))
+            return
+        }
+        updateConfig { it.copy(saving = true, error = null) }
+        viewModelScope.launch {
+            val result = runCatching {
+                val sessionId = withContext(Dispatchers.IO) {
+                    DatabaseHelper.getAgentSessionBindingByConversationId(conversationId)?.threadId
+                } ?: error(string(cn.com.omnimind.nativeui.R.string.omni_acp_config_needs_conversation))
+                AgentRuntimeManager.getInstance(appContext).handleMethod(
+                    "session/set_config_option",
+                    linkedMapOf(
+                        "sessionId" to sessionId,
+                        "conversationId" to conversationId.toInt(),
+                        "agentId" to target.agentId,
+                        "configId" to configId,
+                        "value" to value,
+                    ),
+                ) as? Map<*, *>
+            }.onFailure { Log.w(TAG, "写入 ACP 参数失败: ${it.message}") }
+            updateConfig {
+                it.copy(
+                    saving = false,
+                    options = result.getOrNull()?.get("configOptions")
+                        ?.let { options -> parseAcpConfigOptions(options, AppLocaleManager.isEnglish()) } ?: it.options,
+                    error = result.exceptionOrNull()?.let { error -> error.message ?: string(cn.com.omnimind.nativeui.R.string.omni_slash_failed) },
+                )
+            }
+        }
+    }
+
+    /** A shared setting (Harness, dispatch model) must wait for every turn. */
+    private fun anyTurnRunning(): Boolean = coordinator.allSnapshots().any { it.isAiResponding } || sending
+
+    private fun thisTurnRunning(): Boolean = liveSnapshot()?.isAiResponding == true || sending
+
+    /**
+     * Chooses a Harness (Flutter `_handleAcpAgentModeShortcutTap`). A
+     * conversation keeps the Harness it was created with, so on a page that
+     * already has one the choice opens a new conversation there
+     * (`buildHarnessSwitchTarget`); on a new page it only changes which
+     * Harness the first send uses. Refused while any turn runs: the switch
+     * barrier on the Flutter page exists for the same reason.
+     */
+    fun selectHarness(agentId: String) {
+        val target = target ?: return
+        if (mutableBar.value.switching) return
+        val plan = planHarnessSwitch(
+            currentAgentId = target.agentId,
+            requestedAgentId = agentId,
+            hasConversation = conversationIdOrNull != null,
+            anyTurnRunning = anyTurnRunning(),
+        )
+        when (plan) {
+            HarnessSwitchPlan.Ignore -> return
+            HarnessSwitchPlan.Busy -> return toast(noticeText(ChatSlashSubmit.Reason.Busy))
+            HarnessSwitchPlan.ReplaceTarget, HarnessSwitchPlan.OpenNewConversation -> Unit
+        }
+        mutableBar.update { it.copy(switching = true) }
+        viewModelScope.launch {
+            val selected = runCatching { withContext(Dispatchers.IO) { agents.selectAgent(agentId) } }
+                .onFailure { Log.w(TAG, "切换 Agent 失败: ${it.message}") }.isSuccess
+            mutableBar.update { it.copy(switching = false) }
+            if (!selected) {
+                toast(string(cn.com.omnimind.nativeui.R.string.omni_slash_failed))
+                return@launch
+            }
+            if (plan == HarnessSwitchPlan.OpenNewConversation) {
+                // The route opens a new page; this one keeps its conversation.
+                mutableOpenNew.value = System.currentTimeMillis()
+                return@launch
+            }
+            val next = NativeChatComposerTarget.resolve(ConversationModes.AGENT, agentId, liveRuntimeMode = null) ?: return@launch
+            applyComposerTarget(next, payload = null)
+        }
+    }
+
+    fun consumeOpenNewConversation() {
+        mutableOpenNew.value = 0L
+    }
+
     /** Cancels the running turn; its PromptResponse ends it through the reducer. */
     fun cancel() {
         if (conversationIdOrNull == null) return
@@ -913,11 +1093,30 @@ internal fun NativeChatTranscriptRoute(
     viewModel: NativeChatTranscriptViewModel,
     onOpenLink: (String) -> Unit,
     onToolAction: (AgentToolActionUi) -> Unit,
+    onNewConversation: () -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val composer by viewModel.composer.collectAsStateWithLifecycle()
+    val bar by viewModel.bar.collectAsStateWithLifecycle()
+    val openNew by viewModel.openNewConversation.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { viewModel.load() }
+    LaunchedEffect(openNew) {
+        if (openNew != 0L) {
+            viewModel.consumeOpenNewConversation()
+            onNewConversation()
+        }
+    }
+    val barActions = remember(viewModel, onNewConversation) {
+        ChatPageBarActions(
+            onSelectHarness = viewModel::selectHarness,
+            onNewConversation = onNewConversation,
+            onOpenConfig = viewModel::openConfig,
+            onDismissConfig = viewModel::dismissConfig,
+            onRefreshConfig = viewModel::refreshConfig,
+            onSetConfig = viewModel::setConfig,
+        )
+    }
     val activity = LocalContext.current as? android.app.Activity
     DisposableEffect(viewModel) {
         viewModel.attach()
@@ -946,5 +1145,5 @@ internal fun NativeChatTranscriptRoute(
             onLoadOlder = viewModel::loadOlderMessages,
         )
     }
-    ChatTranscriptScreen(state, onBack, actions, composer, composerActions)
+    ChatTranscriptScreen(state, onBack, actions, composer, composerActions, bar, barActions)
 }

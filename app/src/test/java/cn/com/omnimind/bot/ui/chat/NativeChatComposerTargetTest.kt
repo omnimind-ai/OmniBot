@@ -68,4 +68,13 @@ class NativeChatComposerTargetTest {
         assertEquals("12345678901234567890...", newConversationTitle("1234567890123456789012"))
         assertEquals("新对话", newConversationTitle("  "))
     }
+
+    @Test
+    fun `a conversation keeps its Harness, a new page is retargeted, a running turn refuses`() {
+        assertEquals(HarnessSwitchPlan.OpenNewConversation, planHarnessSwitch("xiaowan-acp", "codex-acp", hasConversation = true, anyTurnRunning = false))
+        assertEquals(HarnessSwitchPlan.ReplaceTarget, planHarnessSwitch("xiaowan-acp", "codex-acp", hasConversation = false, anyTurnRunning = false))
+        assertEquals(HarnessSwitchPlan.Busy, planHarnessSwitch("xiaowan-acp", "codex-acp", hasConversation = false, anyTurnRunning = true))
+        assertEquals(HarnessSwitchPlan.Ignore, planHarnessSwitch("codex-acp", "codex-acp", hasConversation = true, anyTurnRunning = true))
+        assertEquals(HarnessSwitchPlan.Ignore, planHarnessSwitch("codex-acp", " ", hasConversation = false, anyTurnRunning = false))
+    }
 }

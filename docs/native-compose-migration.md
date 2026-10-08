@@ -512,6 +512,37 @@ duplicates; send from a new page, put the app in the background with
 "Don't keep activities" on, return: the same conversation is shown and the
 next send goes to it.
 
+### 5e-3 checkpoint (source complete; device acceptance pending)
+
+- **App bar** (`chat/ChatPageBar.kt`): Harness chip with brand icon and a
+  Miuix list popup of enabled Harnesses, the ACP config button, and a
+  new-conversation button that replaces the current page with
+  `NativeNewChat`.
+- **Harness switch** (`planHarnessSwitch`): a conversation keeps the
+  Harness it was created with, so choosing another on a page that has one
+  selects it (`agent/select`, configuration only, running sessions keep
+  their Harness) and opens a new conversation, as Flutter's
+  `buildHarnessSwitchTarget` does; on a new page it only retargets the first
+  send. Refused while any turn runs (the Flutter switch barrier exists for
+  the same reason). Remote Codex is not offered; it keeps its Flutter flow.
+- **ACP config panel** (`AcpConfigModels.kt`, `AcpConfigPanel.kt`): every
+  declared option (`session/load` without history), selects open their
+  choices, booleans toggle, unknown types are shown read-only; labels port
+  `acpConfigLabel` and the effort value names. Writes use
+  `session/set_config_option` and the full response replaces the list.
+  Read-only while this conversation's turn runs; a new page asks for a first
+  send instead of creating an empty conversation to read settings.
+- **Verification**: `AcpConfigModelsTest` 2, `NativeChatComposerTargetTest`
+  +1 (switch plan); `:app` 1522, native-ui 67, 0 failures; androidTest
+  compile and release resource merge succeeded. No device run.
+
+Manual acceptance (5e-3): switch Harness on a new page, send: the turn runs
+on the chosen Harness; switch on a page with a conversation: a new page
+opens on that Harness and the old conversation keeps its own; switching
+while any reply streams shows the busy notice; the config panel lists the
+same options as the Flutter slider panel and a change applies to the next
+reply.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |

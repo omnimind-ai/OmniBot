@@ -256,7 +256,7 @@ class NativeHomeActivity : ComponentActivity() {
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
-                chatTranscript = { conversationId, mode, title, key, onBack ->
+                chatTranscript = { conversationId, mode, title, key, onNewConversation, onBack ->
                     // The key comes from the route, so a new page finds its ViewModel (and the
                     // conversation it created, kept in SavedStateHandle) after process death.
                     val transcriptViewModel = remember(key) {
@@ -264,7 +264,9 @@ class NativeHomeActivity : ComponentActivity() {
                             NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title))[
                                 key, NativeChatTranscriptViewModel::class.java]
                     }
-                    NativeChatTranscriptRoute(transcriptViewModel, ::openTranscriptLink, ::runTranscriptToolAction, onBack)
+                    NativeChatTranscriptRoute(
+                        transcriptViewModel, ::openTranscriptLink, ::runTranscriptToolAction, onNewConversation, onBack,
+                    )
                 },
                 terminal = { focusPackageId, onBack ->
                     val terminalViewModel = remember(focusPackageId) {

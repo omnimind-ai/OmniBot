@@ -93,6 +93,8 @@ fun ChatTranscriptScreen(
     actions: ChatTranscriptActions = ChatTranscriptActions(),
     composer: ChatComposerState = ChatComposerState(),
     composerActions: ChatComposerActions = ChatComposerActions(),
+    bar: ChatPageBarState = ChatPageBarState(),
+    barActions: ChatPageBarActions = ChatPageBarActions(),
 ) {
     val palette = LocalOmniPalette.current
     val subtitle = stringResource(
@@ -101,6 +103,7 @@ fun ChatTranscriptScreen(
     OmniPage(
         title = state.title.ifBlank { stringResource(R.string.omni_transcript_title) },
         onBack = onBack,
+        actions = { ChatPageBarActionsRow(bar, barActions, state.agentAvatar) },
         bottomBar = {
             ChatComposer(composer, composerActions, Modifier.navigationBarsPadding().imePadding())
         },

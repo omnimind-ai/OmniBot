@@ -103,9 +103,14 @@ fun NativeHomeApp(
     openWith: @Composable (onBack: () -> Unit) -> Unit,
     background: @Composable (onBack: () -> Unit, onPet: () -> Unit) -> Unit,
     pet: @Composable (onBack: () -> Unit) -> Unit,
-    /** [instanceKey] identifies the page across rotation and process death. */
-    chatTranscript: @Composable (conversationId: Long?, mode: String, title: String, instanceKey: String, onBack: () -> Unit) -> Unit =
-        { _, _, _, _, _ -> },
+    /**
+     * [instanceKey] identifies the page across rotation and process death;
+     * [onNewConversation] replaces the page with a new conversation (5e-3).
+     */
+    chatTranscript: @Composable (
+        conversationId: Long?, mode: String, title: String, instanceKey: String,
+        onNewConversation: () -> Unit, onBack: () -> Unit,
+    ) -> Unit = { _, _, _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -238,13 +243,21 @@ fun NativeHomeApp(
             }
             entry<HomeRoute.ExecutionHistory> { executionHistory { backStack.removeLastOrNull() } }
             entry<HomeRoute.Permissions> { permissions { backStack.removeLastOrNull() } }
+            // A new conversation replaces the current chat page instead of stacking on it.
+            val replaceWithNewChat: () -> Unit = {
+                backStack.removeLastOrNull()
+                openNativeNewChat()
+            }
             entry<HomeRoute.ChatTranscriptPreview> { key ->
-                chatTranscript(key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}") {
-                    backStack.removeLastOrNull()
-                }
+                chatTranscript(
+                    key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}",
+                    replaceWithNewChat,
+                ) { backStack.removeLastOrNull() }
             }
             entry<HomeRoute.NativeNewChat> { key ->
-                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}") { backStack.removeLastOrNull() }
+                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}", replaceWithNewChat) {
+                    backStack.removeLastOrNull()
+                }
             }
         }
     }

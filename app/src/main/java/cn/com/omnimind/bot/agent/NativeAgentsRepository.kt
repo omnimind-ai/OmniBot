@@ -155,6 +155,14 @@ internal class NativeAgentsRepository(context: Context) {
         return parseConfig(runtime().handleMethod("agent/config/write", args))
     }
 
+    /**
+     * Selects the Harness new conversations use (`agent/select`). Selection
+     * only changes the stored profile; running sessions keep their own
+     * Harness (`LocalAcpRuntime.selectAgent`).
+     */
+    suspend fun selectAgent(agentId: String): NativeAgentCatalog =
+        parseCatalog(runtime().handleMethod("agent/select", mapOf("agentId" to agentId.trim())))
+
     /** Existing runtime teardown owner; the next ACP start reconnects from the saved binding. */
     suspend fun disconnectRuntime() {
         runtime().disconnect()

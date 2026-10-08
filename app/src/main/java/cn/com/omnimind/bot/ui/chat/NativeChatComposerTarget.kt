@@ -111,3 +111,24 @@ internal fun newConversationTitle(firstText: String): String {
     val text = firstText.trim().ifEmpty { return "新对话" }
     return if (text.length > 20) "${text.substring(0, 20)}..." else text
 }
+
+/** What choosing a Harness on the chat page does (5e-3). */
+internal enum class HarnessSwitchPlan { Ignore, Busy, ReplaceTarget, OpenNewConversation }
+
+/**
+ * A conversation keeps the Harness it was created with (Flutter
+ * `buildHarnessSwitchTarget` always starts a new conversation), so a page that
+ * already has one opens a new conversation; a new page only retargets its
+ * first send. Any running turn refuses the switch.
+ */
+internal fun planHarnessSwitch(
+    currentAgentId: String?,
+    requestedAgentId: String,
+    hasConversation: Boolean,
+    anyTurnRunning: Boolean,
+): HarnessSwitchPlan = when {
+    requestedAgentId.isBlank() || requestedAgentId == currentAgentId -> HarnessSwitchPlan.Ignore
+    anyTurnRunning -> HarnessSwitchPlan.Busy
+    hasConversation -> HarnessSwitchPlan.OpenNewConversation
+    else -> HarnessSwitchPlan.ReplaceTarget
+}

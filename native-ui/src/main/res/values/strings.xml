@@ -1036,4 +1036,9 @@
     <string name="omni_slash_effort_set">Thinking effort set to %1$s</string>
     <string name="omni_slash_failed">Couldn\'t apply the setting. Try again.</string>
     <string name="omni_chat_loading_older">Loading earlier messages…</string>
+    <string name="omni_acp_config_title">Model &amp; settings</string>
+    <string name="omni_acp_config_loading">Loading settings…</string>
+    <string name="omni_acp_config_empty">This Agent declares no settings.</string>
+    <string name="omni_acp_config_refresh">Refresh</string>
+    <string name="omni_acp_config_needs_conversation">Send a message first. Settings belong to this conversation\'s session.</string>
 </resources>

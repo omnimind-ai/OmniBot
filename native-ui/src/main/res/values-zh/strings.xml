@@ -1036,4 +1036,9 @@
     <string name="omni_slash_effort_set">已设置思考强度为 %1$s</string>
     <string name="omni_slash_failed">设置未生效，请重试</string>
     <string name="omni_chat_loading_older">正在加载更早的消息…</string>
+    <string name="omni_acp_config_title">模型与参数</string>
+    <string name="omni_acp_config_loading">正在读取参数…</string>
+    <string name="omni_acp_config_empty">当前 Agent 未声明可调参数。</string>
+    <string name="omni_acp_config_refresh">刷新</string>
+    <string name="omni_acp_config_needs_conversation">请先发送一条消息，参数属于本对话的会话。</string>
 </resources>
