@@ -555,6 +555,7 @@ internal class NativeChatTranscriptViewModel(
             }.onFailure { Log.w(TAG, "创建对话失败: ${it.message}") }.getOrNull() ?: return null
             val id = (payload["id"] as? Number)?.toLong() ?: return null
             conversationIdOrNull = id
+            publishVisibleConversation()
             savedState[KEY_CONVERSATION_ID] = id
             conversationPayload = payload
             mutableState.update { it.copy(title = payload["title"]?.toString()?.ifBlank { null } ?: title) }
@@ -1391,6 +1392,24 @@ internal class NativeChatTranscriptViewModel(
     /** The route is visible again (re-entered from the drawer or after a configuration change). */
     fun attach() {
         surfaceOpen = true
+        publishVisibleConversation()
+    }
+
+    /**
+     * Tells the task runtime which conversation this page shows (Dart
+     * `_syncVisibleChatConversation`), so a completion notification for it
+     * is not posted while it is on screen and stale ones are cleared. Only
+     * the Flutter page reported it before, so the native page showed a
+     * notification for the reply the user was watching.
+     */
+    private fun publishVisibleConversation() {
+        if (!surfaceOpen) return
+        cn.com.omnimind.bot.util.TaskRuntimeSettings.setVisibleConversation(
+            appContext,
+            conversationIdOrNull,
+            target?.conversationMode ?: conversationPayload?.get("mode")?.toString() ?: mode,
+            visible = true,
+        )
     }
 
     /**
@@ -1402,6 +1421,7 @@ internal class NativeChatTranscriptViewModel(
      */
     fun detach() {
         surfaceOpen = false
+        cn.com.omnimind.bot.util.TaskRuntimeSettings.setVisibleConversation(appContext, null, mode, visible = false)
     }
 
     override fun onCleared() {

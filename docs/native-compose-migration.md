@@ -694,6 +694,24 @@ autoplay on: send from the native page without ever opening the Flutter
 chat; the reply is spoken once. Then open the Flutter chat and send there:
 still spoken once.
 
+### 5e-7c checkpoint: visible conversation (source complete; device acceptance pending)
+
+- The task runtime suppresses completion notifications for the
+  conversation on screen and clears stale ones when it opens
+  (`TaskRuntimeSettings.setVisibleConversation`). Only the Flutter page
+  reported it (`_syncVisibleChatConversation`), so a reply finishing on the
+  native page also posted a notification for it. The native page now
+  reports itself on attach, on the first send that creates its
+  conversation, and clears it on detach (kept across rotation).
+- Pet overlay toggling already lives in the native Home top bar; the chat
+  page has no pet control of its own to port.
+- Verification: `:app` 1539, native-ui 78, 0 failures. Notification
+  behavior is device-only. No device run.
+
+Manual acceptance (5e-7c): send from the native page and keep it open
+until the reply ends: no completion notification; leave the page before it
+ends: the notification appears.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |
