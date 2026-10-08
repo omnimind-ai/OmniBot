@@ -1,6 +1,13 @@
 package cn.com.omnimind.nativeui.chat
 
 import androidx.compose.foundation.background
+import top.yukonga.miuix.kmp.basic.PopupPositionProvider
+import top.yukonga.miuix.kmp.overlay.OverlayListPopup
+import top.yukonga.miuix.kmp.basic.ListPopupColumn
+import top.yukonga.miuix.kmp.basic.DropdownImpl
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -83,6 +90,9 @@ class ChatTranscriptActions(
     val onLoadOlder: () -> Unit = {},
     /** Fills the composer with a greeting quick prompt. */
     val onQuickPrompt: (String) -> Unit = {},
+    /** Actions a long press on a user message offers; empty disables the menu (5e-5). */
+    val userMessageActions: (messageId: String) -> List<UserMessageAction> = { emptyList() },
+    val onUserMessageAction: (messageId: String, UserMessageAction) -> Unit = { _, _ -> },
 )
 
 /**
@@ -160,7 +170,13 @@ fun ChatMessageList(
     var detailMessageId by remember { mutableStateOf<String?>(null) }
     val detail = detailMessageId?.let { id -> state.messages.firstOrNull { it.id == id }?.toolCard?.detail }
     val itemHandlers = remember(actions) {
-        ChatItemHandlers(actions.onOpenLink, actions.onRespondToApproval) { messageId -> detailMessageId = messageId }
+        ChatItemHandlers(
+            actions.onOpenLink,
+            actions.onRespondToApproval,
+            onOpenToolDetail = { messageId -> detailMessageId = messageId },
+            userMessageActions = actions.userMessageActions,
+            onUserMessageAction = actions.onUserMessageAction,
+        )
     }
     val itemContext = ChatItemContext(state.agentAvatar, state.isLive, state.respondingRequestIds)
 
@@ -258,6 +274,8 @@ private class ChatItemHandlers(
     val onOpenLink: (String) -> Unit,
     val onRespondToApproval: (messageId: String, accepted: Boolean) -> Unit,
     val onOpenToolDetail: (messageId: String) -> Unit,
+    val userMessageActions: (messageId: String) -> List<UserMessageAction>,
+    val onUserMessageAction: (messageId: String, UserMessageAction) -> Unit,
 )
 
 /** Per-snapshot values every row reads. */
@@ -293,29 +311,67 @@ private fun ChatMessageItem(
             )
         }
         message.type == 2 -> ChatSmallCard(message)
-        message.user == 1 -> UserBubble(message)
+        message.user == 1 -> UserBubble(message, handlers)
         else -> AssistantText(message, handlers.onOpenLink)
     }
 }
 
 /** User text: right-aligned bubble, at most 78% of the row (Flutter parity). */
 @Composable
-private fun UserBubble(message: ChatMessageUi) {
+private fun UserBubble(message: ChatMessageUi, handlers: ChatItemHandlers) {
     val palette = LocalOmniPalette.current
+    var menuActions by remember { mutableStateOf<List<UserMessageAction>>(emptyList()) }
+    val attachments = (message.content?.get("attachments") as? List<*>).orEmpty()
+        .mapNotNull { (it as? Map<*, *>)?.get("name")?.toString()?.takeIf(String::isNotBlank) }
     BoxWithConstraints(Modifier.fillMaxWidth().padding(top = 24.dp, bottom = 16.dp)) {
         val bubbleMaxWidth = maxWidth * 0.78f
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Box(
-                Modifier
-                    .widthIn(max = bubbleMaxWidth)
-                    .background(if (palette.dark) palette.secondarySurface else UserBubbleLight, RoundedCornerShape(4.dp))
-                    .padding(horizontal = 16.dp, vertical = 6.dp),
-            ) {
-                Text(message.text.orEmpty(), color = palette.text, fontSize = 15.sp)
+            Box {
+                Column(
+                    Modifier
+                        .widthIn(max = bubbleMaxWidth)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(if (palette.dark) palette.secondarySurface else UserBubbleLight)
+                        // Long press opens the message actions (Dart `_handleUserMessageLongPressStart`).
+                        .combinedClickable(onClick = {}, onLongClick = {
+                            menuActions = handlers.userMessageActions(message.id)
+                        })
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                ) {
+                    message.text?.takeIf { it.isNotBlank() }?.let { Text(it, color = palette.text, fontSize = 15.sp) }
+                    attachments.forEach { name ->
+                        Text("📎 $name", color = palette.secondaryText, fontSize = 12.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                OverlayListPopup(
+                    show = menuActions.isNotEmpty(),
+                    minWidth = 160.dp,
+                    alignment = PopupPositionProvider.Align.End,
+                    onDismissRequest = { menuActions = emptyList() },
+                ) {
+                    val labels = menuActions.map { userMessageActionLabel(it) }
+                    ListPopupColumn {
+                        menuActions.forEachIndexed { index, action ->
+                            DropdownImpl(labels[index], menuActions.size, false, index, onSelectedIndexChange = {
+                                menuActions = emptyList()
+                                handlers.onUserMessageAction(message.id, action)
+                            })
+                        }
+                    }
+                }
             }
         }
     }
 }
+
+@Composable
+private fun userMessageActionLabel(action: UserMessageAction): String = stringResource(
+    when (action) {
+        UserMessageAction.Copy -> R.string.omni_message_copy
+        UserMessageAction.Edit -> R.string.omni_message_edit
+        UserMessageAction.Retry -> R.string.omni_message_retry
+    },
+)
 
 /** Assistant text: Markdown without a bubble; failed replies use the error tone. */
 @Composable

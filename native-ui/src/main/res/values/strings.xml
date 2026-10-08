@@ -1041,4 +1041,10 @@
     <string name="omni_acp_config_empty">This Agent declares no settings.</string>
     <string name="omni_acp_config_refresh">Refresh</string>
     <string name="omni_acp_config_needs_conversation">Send a message first. Settings belong to this conversation\'s session.</string>
+    <string name="omni_message_copy">Copy</string>
+    <string name="omni_message_edit">Edit</string>
+    <string name="omni_message_retry">Retry</string>
+    <string name="omni_message_copied">Message copied</string>
+    <string name="omni_message_editing">Editing the latest message</string>
+    <string name="omni_message_cancel_edit">Cancel editing</string>
 </resources>

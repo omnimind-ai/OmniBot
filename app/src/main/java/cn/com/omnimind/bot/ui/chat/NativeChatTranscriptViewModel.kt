@@ -48,6 +48,9 @@ import cn.com.omnimind.nativeui.chat.ChatPageBarState
 import cn.com.omnimind.nativeui.chat.ChatGreetingState
 import cn.com.omnimind.nativeui.chat.ChatQuickPrompt
 import cn.com.omnimind.nativeui.chat.InjectedDraft
+import cn.com.omnimind.nativeui.chat.UserMessageAction
+import cn.com.omnimind.nativeui.chat.userMessageActions
+import cn.com.omnimind.nativeui.chat.retriedRoundRemovalCount
 import cn.com.omnimind.bot.preferences.UiPreferencesStore
 import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
 import cn.com.omnimind.nativeui.chat.AcpConfigPanelState
@@ -377,6 +380,8 @@ internal class NativeChatTranscriptViewModel(
         if (target == null) return null
         val slash = mutableComposer.value.slash
         // Attachments always travel with a prompt, never with a command.
+        // An edit resends the latest user message (Dart `_saveAndResendEditedUserMessage`).
+        mutableComposer.value.editingMessageId?.let { editing -> return if (resendEdited(editing, draft.trim())) "" else null }
         val intent = if (draft.isEmpty()) ChatSlashSubmit.Send("") else slash.resolveSubmit(draft, AGENT_INIT_PROMPT)
         return when (intent) {
             is ChatSlashSubmit.Send ->
@@ -395,19 +400,31 @@ internal class NativeChatTranscriptViewModel(
      * composer then keeps the draft). Settings are frozen here, before any
      * await, like the Flutter page's dispatch.
      */
-    private fun send(text: String, display: String? = null, collaborationMode: String? = null): Boolean {
+    private fun send(
+        text: String,
+        display: String? = null,
+        collaborationMode: String? = null,
+        /** A retry keeps its user row; its id and attachments are reused (Dart `retainedUserMessageId`). */
+        retained: ChatMessage? = null,
+        /** Attachments of a retried or edited message; the composer's pending ones otherwise. */
+        attachmentOverride: List<Map<String, Any?>>? = null,
+        /** Removes the previous round once the runtime holds the full history (retry and edit). */
+        beforeLaunch: (suspend (conversationId: Int, mode: String) -> Boolean)? = null,
+    ): Boolean {
         val target = target ?: return false
-        val attachments = mutableComposer.value.attachments
-        if (text.isEmpty() && attachments.isEmpty()) return false
+        val attachments = if (attachmentOverride == null) mutableComposer.value.attachments else emptyList()
+        val attachmentMaps = attachmentOverride ?: attachments.map { it.toMap() }
+        if (text.isEmpty() && attachmentMaps.isEmpty()) return false
         if (sending || mutableComposer.value.isProcessing) return false
         sending = true
         // Frozen before the first await, like the Flutter page's dispatch.
-        val ids = ChatTurnIds.forSubmission(System.currentTimeMillis())
-        val attachmentMaps = attachments.map { it.toMap() }
+        val now = System.currentTimeMillis()
+        val ids = retained?.let { ChatTurnIds.forRetry(it.id, now) } ?: ChatTurnIds.forSubmission(now)
         val userText = display ?: text
         val userContent = linkedMapOf<String, Any?>("text" to userText, "id" to ids.userMessageId)
         if (attachmentMaps.isNotEmpty()) userContent["attachments"] = attachmentMaps
-        val userRow = ChatMessage(id = ids.userMessageId, type = 1, user = 1, content = userContent)
+        // A retained row is already in the runtime; the launcher must not insert a second one.
+        val userRow = if (retained != null) null else ChatMessage(id = ids.userMessageId, type = 1, user = 1, content = userContent)
         val frozenPermission = if (target.showsPermission) permission else AgentPermissionMode.FullAccess
         val frozenModel = modelCatalog.selected
         val terminalEnvironment = OmnibotTerminalEnvironment.loadUserVariables(appContext).ifEmpty { null }
@@ -431,6 +448,9 @@ internal class NativeChatTranscriptViewModel(
                 )
             }
             val runtimeConversationId = conversationId.toInt()
+            if (beforeLaunch != null && !beforeLaunch(runtimeConversationId, target.runtimeMode)) {
+                return@launch restore(string(cn.com.omnimind.nativeui.R.string.omni_slash_failed))
+            }
             val settings = if (target.showsPermission) preferences.turnSettings(runtimeConversationId, modelSource(target)) else null
             val overrides = flutterPreferences()
             val request = ChatTurnRequest(
@@ -850,6 +870,109 @@ internal class NativeChatTranscriptViewModel(
         mutableOpenNew.value = 0L
     }
 
+    // ---------------------------------------------------------------------
+    // User message actions (batch 5e-5)
+    // ---------------------------------------------------------------------
+
+    fun userMessageActions(messageId: String): List<UserMessageAction> = userMessageActions(
+        messages = mutableState.value.messages,
+        messageId = messageId,
+        isProcessing = mutableComposer.value.isProcessing,
+        canSend = target != null && mutableComposer.value.available,
+    )
+
+    fun onUserMessageAction(messageId: String, action: UserMessageAction) {
+        val message = mutableState.value.messages.firstOrNull { it.id == messageId && it.user == 1 } ?: return
+        when (action) {
+            UserMessageAction.Copy -> copyText(message.text.orEmpty())
+            UserMessageAction.Edit -> startEditing(message)
+            UserMessageAction.Retry -> retry(message)
+        }
+    }
+
+    private fun copyText(text: String) {
+        val clipboard = appContext.getSystemService(Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager ?: return
+        clipboard.setPrimaryClip(android.content.ClipData.newPlainText("message", text))
+        // Android 13+ shows its own confirmation.
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) {
+            toast(string(cn.com.omnimind.nativeui.R.string.omni_message_copied))
+        }
+    }
+
+    /** Dart `_startEditingLatestUserMessage`: the composer takes the text; send resends. */
+    private fun startEditing(message: ChatMessageUi) {
+        mutableComposer.update {
+            it.copy(
+                editingMessageId = message.id,
+                attachments = emptyList(),
+                injectedDraft = InjectedDraft(System.nanoTime(), message.text.orEmpty()),
+            )
+        }
+    }
+
+    fun cancelEdit() = mutableComposer.update { it.copy(editingMessageId = null) }
+
+    /**
+     * Dart `_saveAndResendEditedUserMessage`: the round from the edited
+     * message on is removed (history included) and the edited text is sent
+     * as a fresh message with the original attachments.
+     */
+    private fun resendEdited(messageId: String, text: String): Boolean {
+        val message = mutableState.value.messages.firstOrNull { it.id == messageId && it.user == 1 }
+        val attachments = message?.attachmentMaps().orEmpty()
+        if (message == null || UserMessageAction.Edit !in userMessageActions(messageId)) {
+            cancelEdit()
+            toast(noticeText(ChatSlashSubmit.Reason.Busy))
+            return false
+        }
+        if (text.isEmpty() && attachments.isEmpty()) return false
+        val sent = send(text, attachmentOverride = attachments, beforeLaunch = { id, mode ->
+            removeRound(id, mode, messageId, keepUserMessage = false)
+        })
+        if (sent) cancelEdit()
+        return sent
+    }
+
+    /**
+     * Dart `_retryUserMessage`: the reply after the latest user message is
+     * removed and the same submission runs again as a new run, keeping its
+     * user row and attachments.
+     */
+    private fun retry(message: ChatMessageUi) {
+        if (UserMessageAction.Retry !in userMessageActions(message.id)) return
+        val retained = ChatMessage(id = message.id, type = 1, user = 1, content = message.content)
+        send(
+            message.text.orEmpty(),
+            retained = retained,
+            attachmentOverride = message.attachmentMaps(),
+            beforeLaunch = { id, mode -> removeRound(id, mode, message.id, keepUserMessage = true) },
+        )
+    }
+
+    /**
+     * Removes the retried round from the runtime and the stored history
+     * (Dart `_clearRetriedMessageRound`: `persistConversationMessageSnapshot`
+     * with history removal). The runtime is idle here: a retry is refused
+     * while a turn runs.
+     */
+    private suspend fun removeRound(conversationId: Int, mode: String, userMessageId: String, keepUserMessage: Boolean): Boolean {
+        val snapshot = coordinator.snapshotFor(conversationId, mode) ?: return false
+        if (snapshot.isAiResponding) return false
+        val count = retriedRoundRemovalCount(snapshot.messages.map { it.id }, userMessageId, keepUserMessage)
+        if (count <= 0) return false
+        val remaining = snapshot.messages.drop(count)
+        return runCatching {
+            coordinator.persistConversationMessageSnapshot(
+                conversationId, mode, remaining, conversation = conversationPayload, allowHistoryRemoval = true,
+            ).await()
+        }.onFailure { Log.w(TAG, "清除重试轮次失败: ${it.message}") }.isSuccess
+    }
+
+    private fun ChatMessageUi.attachmentMaps(): List<Map<String, Any?>> =
+        (content?.get("attachments") as? List<*>).orEmpty().mapNotNull { item ->
+            (item as? Map<*, *>)?.entries?.associate { (key, value) -> key.toString() to value }
+        }
+
     /** Cancels the running turn; its PromptResponse ends it through the reducer. */
     fun cancel() {
         if (conversationIdOrNull == null) return
@@ -1182,6 +1305,7 @@ internal fun NativeChatTranscriptRoute(
             onPickAttachment = { picker.launch(arrayOf("*/*")) },
             onRemoveAttachment = viewModel::removeAttachment,
             onSelectPermission = viewModel::selectPermission,
+            onCancelEdit = viewModel::cancelEdit,
         )
     }
     val actions = remember(viewModel, onOpenLink, onToolAction) {
@@ -1192,6 +1316,8 @@ internal fun NativeChatTranscriptRoute(
             onStopTool = viewModel::stopActiveTool,
             onLoadOlder = viewModel::loadOlderMessages,
             onQuickPrompt = viewModel::fillComposer,
+            userMessageActions = viewModel::userMessageActions,
+            onUserMessageAction = viewModel::onUserMessageAction,
         )
     }
     ChatTranscriptScreen(state, onBack, actions, composer, composerActions, bar, barActions)

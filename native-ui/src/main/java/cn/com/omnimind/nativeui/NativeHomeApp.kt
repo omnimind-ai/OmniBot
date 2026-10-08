@@ -166,7 +166,15 @@ fun NativeHomeApp(
                 )
             }
             entry<HomeRoute.Archive> {
-                ConversationArchiveScreen(state, actions.copy(previewTranscript = openTranscript)) {
+                ConversationArchiveScreen(state, actions.copy(
+                    previewTranscript = openTranscript,
+                    open = { destination ->
+                        val native = (destination as? LegacyDestination.Conversation)
+                            ?.let { target -> state.conversations.firstOrNull { it.id == target.id && it.mode == target.mode } }
+                            ?.takeIf(::opensNatively)
+                        if (native != null) openTranscript(native) else actions.open(destination)
+                    },
+                )) {
                     backStack.removeLastOrNull()
                 }
             }
@@ -322,7 +330,17 @@ private fun HomeWithDrawer(
                             onPlugins = { navigate(onPlugins) },
                             onMemory = { navigate(onMemory) },
                             actions = actions.copy(
-                                open = { destination -> navigate { actions.open(destination) } },
+                                open = { destination ->
+                                    navigate {
+                                        // The native page has the composer, message actions and the
+                                        // Harness switcher (5e-5), so the drawer opens it for every
+                                        // conversation it can send to; the rest keep their Flutter flows.
+                                        val native = (destination as? LegacyDestination.Conversation)
+                                            ?.let { target -> state.conversations.firstOrNull { it.id == target.id && it.mode == target.mode } }
+                                            ?.takeIf(::opensNatively)
+                                        if (native != null) onTranscript(native) else actions.open(destination)
+                                    }
+                                },
                                 previewTranscript = { conversation -> navigate { onTranscript(conversation) } },
                             ),
                         )
@@ -346,4 +364,19 @@ private fun HomeWithDrawer(
             }
         }
     }
+}
+
+/**
+ * Conversations the native chat page sends to (its composer target rules,
+ * `NativeChatComposerTarget`): Agent and pure-chat conversations on a local
+ * Harness. OpenClaw, scheduled Sub Agent runs and remote Codex sessions keep
+ * their Flutter pages.
+ */
+internal fun opensNatively(conversation: ConversationSummary): Boolean {
+    val mode = conversation.mode.trim().lowercase()
+    val agentMode = mode in setOf("agent", "codex", "acp", "coding", "normal", "")
+    val chatOnly = mode in setOf("chat_only", "chat", "chatonly", "chat-only")
+    if (!agentMode && !chatOnly) return false
+    if (conversation.parentId != null || conversation.scheduledTaskId != null) return false
+    return conversation.agentId?.trim() != "codex-remote"
 }

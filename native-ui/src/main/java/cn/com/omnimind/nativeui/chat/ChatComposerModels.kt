@@ -112,6 +112,8 @@ data class ChatComposerState(
      * it by itself (5e-4).
      */
     val injectedDraft: InjectedDraft? = null,
+    /** Non-null while the latest user message is being edited; send resends it. */
+    val editingMessageId: String? = null,
 )
 
 @Immutable
@@ -129,4 +131,44 @@ class ChatComposerActions(
     val onPickAttachment: () -> Unit = {},
     val onRemoveAttachment: (id: String) -> Unit = {},
     val onSelectPermission: (ChatComposerPermission) -> Unit = {},
+    val onCancelEdit: () -> Unit = {},
 )
+
+/** What a long press on a user message offers (Dart `_UserMessageQuickAction`, 5e-5). */
+enum class UserMessageAction { Copy, Edit, Retry }
+
+/**
+ * Dart `_canEditUserMessage` / `_canRetryUserMessage`: only the latest user
+ * message, and never while a reply runs (the active turn stays authoritative
+ * until its PromptResponse). Copy needs text; a message with only
+ * attachments can still be retried.
+ */
+fun userMessageActions(
+    messages: List<ChatMessageUi>,
+    messageId: String,
+    isProcessing: Boolean,
+    canSend: Boolean,
+): List<UserMessageAction> {
+    val message = messages.firstOrNull { it.id == messageId && it.user == 1 } ?: return emptyList()
+    val hasText = message.text.orEmpty().isNotBlank()
+    val hasAttachments = (message.content?.get("attachments") as? List<*>).orEmpty().isNotEmpty()
+    if (!hasText && !hasAttachments) return emptyList()
+    // `messages` is newest first: the latest user row is the first user row.
+    val latest = messages.firstOrNull { it.user == 1 }?.id == messageId
+    val conversationAction = canSend && latest && !isProcessing
+    return buildList {
+        if (conversationAction && hasText) add(UserMessageAction.Edit)
+        if (hasText) add(UserMessageAction.Copy)
+        if (conversationAction) add(UserMessageAction.Retry)
+    }
+}
+
+/**
+ * Dart `retriedMessageRoundRemovalCount`: the rows newer than the user
+ * message (newest first), plus the user row itself unless it is kept.
+ */
+fun retriedRoundRemovalCount(messageIds: List<String>, userMessageId: String, keepUserMessage: Boolean): Int {
+    val index = messageIds.indexOf(userMessageId)
+    if (index < 0) return 0
+    return index + if (keepUserMessage) 0 else 1
+}

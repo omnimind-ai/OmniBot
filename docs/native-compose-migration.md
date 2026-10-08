@@ -570,6 +570,41 @@ last conversation opens natively; with "new conversation": an empty page
 with the greeting; tap a quick prompt: the composer is filled and nothing
 is sent; turn the greeting off: an empty page shows no greeting.
 
+### 5e-5 checkpoint (source complete; device acceptance pending)
+
+- **Message actions**: a long press on a user bubble opens a Miuix list
+  popup. `userMessageActions` ports `_canEditUserMessage` /
+  `_canRetryUserMessage`: edit and retry only on the latest user message,
+  never while a reply runs or on a page that cannot send; copy needs text;
+  an attachment-only message can be retried. Bubbles list their attachment
+  names.
+- **Copy** uses the system clipboard (Android 13+ shows its own
+  confirmation). **Edit** moves the text into the composer with an editing
+  banner and a cancel button; send removes the round from the edited message
+  on (runtime and history, `allowHistoryRemoval`) and sends the edited text
+  with the original attachments. **Retry** keeps the user row (same id,
+  `ChatTurnIds.forRetry`), removes the reply after it, and runs the same
+  submission again. Both go through `send`, so they share the submit lock,
+  the runtime seeding and the launcher; the round is removed only after the
+  runtime holds the complete history (`beforeLaunch`).
+- **Drawer and archive taps now open the native page** for every
+  conversation it can send to (`opensNatively`: Agent and pure chat on a
+  local Harness); OpenClaw, scheduled Sub Agent runs and remote Codex keep
+  their Flutter pages.
+- **Verification**: `UserMessageActionsTest` 4, `OpensNativelyTest` 2,
+  `ChatTurnLauncherTest` +1 (retry round removal); `:app` 1524, native-ui
+  76, 0 failures; androidTest compile and release resource merge succeeded.
+  No device run.
+- Not ported yet: link previews under user messages, the Agent user-input
+  answer from the composer (`_respondToPendingAgentUserInput`), and the
+  context-threshold sheet on long press of the ring.
+
+Manual acceptance (5e-5): long press the latest user message: edit, copy,
+retry; long press an older one: copy only; retry: the reply is replaced and
+the user message stays once; edit and send: the old round disappears in
+both the native page and Flutter; tap a drawer conversation: it opens
+natively, an OpenClaw one opens in Flutter.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |

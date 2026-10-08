@@ -250,6 +250,30 @@ class ChatTurnLauncherTest {
         assertTrue(persisted.toString().contains("0-user"))
     }
 
+    @Test
+    fun `a retried round is removed from runtime and history before the new run`() = runBlocking {
+        // 5e-5: the native page removes the old reply, then retries the kept user row.
+        val user = userRow("你好")
+        val oldReply = ChatMessage(id = "1-ai-text", type = 1, user = 2, content = linkedMapOf("text" to "旧回答", "id" to "1-ai-text"))
+        coordinator.insertRuntimeMessage(CONVERSATION, CHAT_RUNTIME_MODE_AGENT, user)
+        coordinator.insertRuntimeMessage(CONVERSATION, CHAT_RUNTIME_MODE_AGENT, oldReply)
+        val remaining = runtime().messages.drop(1)
+        coordinator.persistConversationMessageSnapshot(
+            CONVERSATION, CHAT_RUNTIME_MODE_AGENT, remaining, allowHistoryRemoval = true,
+        ).await()
+        assertEquals(listOf("1-user"), runtime().messages.map { it.id })
+        val removal = fixture.history.callsTo("replaceConversationMessages").last()
+        assertEquals(true, removal.arguments["allowHistoryRemoval"])
+        @Suppress("UNCHECKED_CAST")
+        val rows = removal.arguments["messages"] as List<Map<String, Any?>>
+        assertEquals(listOf("1-user"), rows.map { it["id"] })
+
+        launcher.launchTurn(request(userMessage = null).copy(taskId = ChatTurnIds.forRetry("1-user", 2L).taskId))
+        assertEquals(1, runtime().messages.count { it.user == 1 })
+        assertFalse(runtime().messages.any { it.id == "1-ai-text" })
+        assertFalse(runtime().isAiResponding)
+    }
+
     private companion object {
         const val CONVERSATION = 501
         const val OTHER = 502

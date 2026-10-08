@@ -1041,4 +1041,10 @@
     <string name="omni_acp_config_empty">当前 Agent 未声明可调参数。</string>
     <string name="omni_acp_config_refresh">刷新</string>
     <string name="omni_acp_config_needs_conversation">请先发送一条消息，参数属于本对话的会话。</string>
+    <string name="omni_message_copy">复制</string>
+    <string name="omni_message_edit">编辑</string>
+    <string name="omni_message_retry">重试</string>
+    <string name="omni_message_copied">已复制消息内容</string>
+    <string name="omni_message_editing">正在编辑最新一条消息</string>
+    <string name="omni_message_cancel_edit">取消编辑</string>
 </resources>

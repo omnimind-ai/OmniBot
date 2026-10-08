@@ -113,6 +113,17 @@ fun ChatComposer(
             .animateContentSize(tween(220))
             .padding(horizontal = 6.dp, vertical = 6.dp),
     ) {
+        if (state.editingMessageId != null) {
+            Row(Modifier.fillMaxWidth().padding(start = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                OmniIcon(R.drawable.omni_pencil, tint = palette.accent, size = 14.dp)
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.omni_message_editing), Modifier.weight(1f), color = palette.secondaryText, fontSize = 12.sp)
+                OmniIconButton(R.drawable.omni_x, stringResource(R.string.omni_message_cancel_edit), {
+                    draft = ""
+                    actions.onCancelEdit()
+                }, size = 14.dp, tint = palette.tertiaryText)
+            }
+        }
         if (state.attachments.isNotEmpty()) {
             ComposerAttachments(state.attachments, actions.onRemoveAttachment)
             Spacer(Modifier.height(6.dp))
