@@ -106,7 +106,16 @@ data class ChatComposerState(
     val cancelling: Boolean = false,
     /** Slash commands of this conversation (5d-1c). */
     val slash: ChatSlashContext = ChatSlashContext(),
+    /**
+     * A draft pushed into the composer (a quick prompt, Home's draft) with a
+     * key that changes per push; the composer adopts it once and never sends
+     * it by itself (5e-4).
+     */
+    val injectedDraft: InjectedDraft? = null,
 )
+
+@Immutable
+data class InjectedDraft(val key: Long, val text: String)
 
 /** Intents the composer emits; the ViewModel owns every effect. */
 class ChatComposerActions(

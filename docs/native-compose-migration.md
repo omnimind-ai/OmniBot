@@ -543,6 +543,33 @@ while any reply streams shows the busy notice; the config panel lists the
 same options as the Flutter slider panel and a change applies to the next
 reply.
 
+### 5e-4 checkpoint (source complete; device acceptance pending)
+
+- **Greeting** (`chat/ChatEmptyGreeting.kt`): an empty native page shows
+  the Flutter greeting: headline with the Harness name, the keyword rotating
+  every 1.8 s (never repeating the current word), and up to two quick
+  prompts (`selectGreetingPrompts`: pinned first, else a random pair,
+  untitled prompts never offered). Off when the Home greeting setting is
+  off. A prompt only fills the composer (`InjectedDraft`, adopted once);
+  nothing is sent until the user taps send, like Dart `_applyHomeQuickPrompt`.
+- **Home entries now open the native page**: the composer entry and its
+  `+` / mic buttons resolve the startup target like the Flutter page's
+  bootstrap (`resolveChatStartupTarget`: "new conversation" preference, else
+  the last visible conversation if it still exists and is not archived,
+  OpenClaw or remote; otherwise a new page). Home quick prompts open a new
+  native page with the prompt as its draft (kept in `SavedStateHandle`, so
+  recreation does not re-fill it).
+- **Verification**: `ChatEmptyGreetingTest` 3, `NativeChatComposerTargetTest`
+  +1 (startup target); `:app` 1523, native-ui 70, 0 failures; androidTest
+  compile and release resource merge succeeded. No device run.
+- Still Flutter from native Home: the drawer's primary tap on a
+  conversation (5e-5) and the workspace entry.
+
+Manual acceptance (5e-4): with "resume last" on, tap Home's composer: the
+last conversation opens natively; with "new conversation": an empty page
+with the greeting; tap a quick prompt: the composer is filled and nothing
+is sent; turn the greeting off: an empty page shows no greeting.
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |

@@ -29,6 +29,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.BiasAlignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.graphics.Color
@@ -67,6 +68,8 @@ data class ChatTranscriptState(
     /** Stored history has older pages (5e-2). */
     val hasMoreHistory: Boolean = false,
     val loadingMore: Boolean = false,
+    /** Shown on an empty page; null when the greeting is turned off (5e-4). */
+    val greeting: ChatGreetingState? = null,
 )
 
 /** The preview page's few actions into the live runtime. */
@@ -78,6 +81,8 @@ class ChatTranscriptActions(
     val onStopTool: ((messageId: String) -> Unit)? = null,
     /** Loads the next older history page when the list nears its top. */
     val onLoadOlder: () -> Unit = {},
+    /** Fills the composer with a greeting quick prompt. */
+    val onQuickPrompt: (String) -> Unit = {},
 )
 
 /**
@@ -116,8 +121,13 @@ fun ChatTranscriptScreen(
                 modifier = Modifier.padding(horizontal = 18.dp, vertical = 4.dp),
             )
             if (!state.loading && state.messages.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text(stringResource(R.string.omni_transcript_empty), color = palette.secondaryText)
+                Box(Modifier.fillMaxSize(), contentAlignment = BiasAlignment(0f, -.18f)) {
+                    val greeting = state.greeting
+                    if (greeting != null) {
+                        ChatEmptyGreeting(greeting, actions.onQuickPrompt)
+                    } else {
+                        Text(stringResource(R.string.omni_transcript_empty), color = palette.secondaryText)
+                    }
                 }
             } else {
                 ChatMessageList(state, actions, Modifier.fillMaxSize())

@@ -45,6 +45,11 @@ import cn.com.omnimind.nativeui.chat.ChatComposerPermission
 import cn.com.omnimind.nativeui.chat.ChatComposerState
 import cn.com.omnimind.nativeui.chat.ChatHarnessOption
 import cn.com.omnimind.nativeui.chat.ChatPageBarState
+import cn.com.omnimind.nativeui.chat.ChatGreetingState
+import cn.com.omnimind.nativeui.chat.ChatQuickPrompt
+import cn.com.omnimind.nativeui.chat.InjectedDraft
+import cn.com.omnimind.bot.preferences.UiPreferencesStore
+import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
 import cn.com.omnimind.nativeui.chat.AcpConfigPanelState
 import cn.com.omnimind.nativeui.chat.parseAcpConfigOptions
 import cn.com.omnimind.bot.agent.NativeAgentsRepository
@@ -88,6 +93,8 @@ internal class NativeChatTranscriptViewModel(
     private val mode: String,
     title: String,
     private val savedState: SavedStateHandle,
+    /** Text a new page starts with (a Home quick prompt or Home's draft); never sent by itself. */
+    private val initialDraft: String? = null,
 ) : ViewModel() {
     /**
      * Null until the first send of a new conversation (5e-1) creates it;
@@ -149,9 +156,15 @@ internal class NativeChatTranscriptViewModel(
         }
         if (conversationIdOrNull == null) {
             viewModelScope.launch { resolveNewConversationTarget() }
-            mutableState.update { it.copy(loading = false) }
+            mutableState.update { it.copy(loading = false, greeting = readGreeting()) }
+            // Adopted once: SavedStateHandle remembers it across recreation.
+            if (savedState.get<Boolean>(KEY_DRAFT_ADOPTED) != true) {
+                initialDraft?.trim()?.takeIf { it.isNotEmpty() }?.let(::fillComposer)
+                savedState[KEY_DRAFT_ADOPTED] = true
+            }
             return
         }
+        mutableState.update { it.copy(greeting = readGreeting()) }
         val live = coordinator.allSnapshots()
             .filter { it.conversationId.toLong() == conversationId && it.messages.isNotEmpty() }
             .maxByOrNull { it.revision }
@@ -641,6 +654,38 @@ internal class NativeChatTranscriptViewModel(
     private fun string(id: Int, vararg args: Any): String = appContext.getString(id, *args)
 
     // ---------------------------------------------------------------------
+    // Empty-page greeting (batch 5e-4)
+    // ---------------------------------------------------------------------
+
+    /**
+     * The greeting the Flutter page shows on an empty conversation (the Home
+     * greeting setting and its quick prompts, localized like native Home);
+     * null when the user turned it off.
+     */
+    private fun readGreeting(): ChatGreetingState? {
+        val saved = runCatching { UiPreferencesStore.get(appContext).read() }.getOrNull() ?: return null
+        if (!saved.home.greetingEnabled) return null
+        val english = resolveNativeHomeLocale(saved.language).language == "en"
+        return ChatGreetingState(
+            agentName = mutableBar.value.harness?.name.orEmpty(),
+            quickPrompts = saved.home.prompts.map { prompt ->
+                ChatQuickPrompt(
+                    prompt.id,
+                    if (english) prompt.titleEn ?: prompt.title else prompt.title,
+                    if (english) prompt.promptEn ?: prompt.prompt else prompt.prompt,
+                )
+            },
+            pinnedPromptIds = saved.home.pinnedIds,
+        )
+    }
+
+    /** Fills the composer (Dart `_applyHomeQuickPrompt`): no turn is admitted. */
+    fun fillComposer(text: String) {
+        val value = text.trim().ifEmpty { return }
+        mutableComposer.update { it.copy(injectedDraft = InjectedDraft(System.nanoTime(), value)) }
+    }
+
+    // ---------------------------------------------------------------------
     // App bar (batch 5e-3)
     // ---------------------------------------------------------------------
 
@@ -659,6 +704,7 @@ internal class NativeChatTranscriptViewModel(
                 config = it.config ?: AcpConfigPanelState(),
             )
         }
+        mutableState.update { state -> state.copy(greeting = state.greeting?.copy(agentName = current.name)) }
     }
 
     // ---------------------------------------------------------------------
@@ -1004,18 +1050,20 @@ internal class NativeChatTranscriptViewModel(
         private val conversationId: Long?,
         private val mode: String,
         private val title: String,
+        private val draft: String? = null,
     ) : ViewModelProvider.Factory {
         private val appContext = context.applicationContext
 
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>, extras: CreationExtras): T =
-            NativeChatTranscriptViewModel(appContext, conversationId, mode, title, extras.createSavedStateHandle()) as T
+            NativeChatTranscriptViewModel(appContext, conversationId, mode, title, extras.createSavedStateHandle(), draft) as T
     }
 
     private companion object {
         const val TAG = "NativeChatTranscript"
         const val HISTORY_PAGE = 50
         const val KEY_CONVERSATION_ID = "conversationId"
+        const val KEY_DRAFT_ADOPTED = "draftAdopted"
         const val OVERRIDES_KEY = "flutter.conversation_model_overrides_v1"
         const val EFFORTS_KEY = "flutter.conversation_reasoning_efforts_v1"
 
@@ -1143,6 +1191,7 @@ internal fun NativeChatTranscriptRoute(
             onRespondToApproval = viewModel::respondToApproval,
             onStopTool = viewModel::stopActiveTool,
             onLoadOlder = viewModel::loadOlderMessages,
+            onQuickPrompt = viewModel::fillComposer,
         )
     }
     ChatTranscriptScreen(state, onBack, actions, composer, composerActions, bar, barActions)

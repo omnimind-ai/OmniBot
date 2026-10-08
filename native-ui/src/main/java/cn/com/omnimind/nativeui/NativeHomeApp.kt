@@ -68,7 +68,7 @@ internal sealed interface HomeRoute : NavKey {
         val title: String,
     ) : HomeRoute
     /** A new conversation on the native chat page; created by its first send (5e-1). */
-    @Serializable data class NativeNewChat(val requestKey: Long) : HomeRoute
+    @Serializable data class NativeNewChat(val requestKey: Long, val draft: String = "") : HomeRoute
 }
 
 /** Miuix owns the saved page stack, transitions, and predictive back; Android owns back-to-home. */
@@ -108,9 +108,9 @@ fun NativeHomeApp(
      * [onNewConversation] replaces the page with a new conversation (5e-3).
      */
     chatTranscript: @Composable (
-        conversationId: Long?, mode: String, title: String, instanceKey: String,
+        conversationId: Long?, mode: String, title: String, instanceKey: String, draft: String,
         onNewConversation: () -> Unit, onBack: () -> Unit,
-    ) -> Unit = { _, _, _, _, _, _ -> },
+    ) -> Unit = { _, _, _, _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -119,6 +119,10 @@ fun NativeHomeApp(
             backStack.add(HomeRoute.ChatTranscriptPreview(conversation.id, conversation.mode, conversation.title))
         }
         val openNativeNewChat: () -> Unit = { backStack.add(HomeRoute.NativeNewChat(System.currentTimeMillis())) }
+        // Home's composer and quick prompts open the native page (5e-4); a draft only fills it.
+        val openNativeChatWithDraft: (String) -> Unit = { draft ->
+            backStack.add(HomeRoute.NativeNewChat(System.currentTimeMillis(), draft))
+        }
         LaunchedEffect(state.pendingDestination) {
             when (val destination = state.pendingDestination) {
                 LegacyDestination.Page.ModelProviders -> {
@@ -157,6 +161,7 @@ fun NativeHomeApp(
                     onMemory = { backStack.add(HomeRoute.Memory) },
                     onTranscript = openTranscript,
                     onNativeNewChat = openNativeNewChat,
+                    onNativeChatWithDraft = openNativeChatWithDraft,
                     actions = actions,
                 )
             }
@@ -250,12 +255,12 @@ fun NativeHomeApp(
             }
             entry<HomeRoute.ChatTranscriptPreview> { key ->
                 chatTranscript(
-                    key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}",
+                    key.conversationId, key.mode, key.title, "transcript:${key.mode}:${key.conversationId}", "",
                     replaceWithNewChat,
                 ) { backStack.removeLastOrNull() }
             }
             entry<HomeRoute.NativeNewChat> { key ->
-                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}", replaceWithNewChat) {
+                chatTranscript(null, "agent", "", "new-chat:${key.requestKey}", key.draft, replaceWithNewChat) {
                     backStack.removeLastOrNull()
                 }
             }
@@ -279,6 +284,7 @@ private fun HomeWithDrawer(
     onMemory: () -> Unit,
     onTranscript: (ConversationSummary) -> Unit,
     onNativeNewChat: () -> Unit,
+    onNativeChatWithDraft: (String) -> Unit,
     actions: NativeHomeActions,
 ) {
     val palette = LocalOmniPalette.current
@@ -323,8 +329,20 @@ private fun HomeWithDrawer(
                     }
                 },
             ) {
+                // Home's composer entry and quick prompts open the native chat page (5e-4).
+                // The untargeted entry follows the startup preference like the Flutter chat;
+                // a draft only fills the composer.
+                val openHome: (LegacyDestination) -> Unit = { destination ->
+                    when (destination) {
+                        LegacyDestination.Page.Chat -> scope.launch {
+                            actions.resolveStartupChat()?.let(onTranscript) ?: onNativeNewChat()
+                        }
+                        is LegacyDestination.NewConversation -> onNativeChatWithDraft(destination.draft)
+                        else -> actions.open(destination)
+                    }
+                }
                 HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } },
-                    onPet, onAgents, onTerminal, actions.open)
+                    onPet, onAgents, onTerminal, openHome)
             }
         }
     }

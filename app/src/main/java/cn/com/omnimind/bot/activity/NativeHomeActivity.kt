@@ -1,5 +1,11 @@
 package cn.com.omnimind.bot.activity
 
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
+import cn.com.omnimind.nativeui.ConversationSummary
+import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.bot.ui.chat.ChatStartupTarget
+import cn.com.omnimind.bot.ui.chat.resolveChatStartupTarget
 import cn.com.omnimind.nativeui.chat.AgentToolActionUi
 import cn.com.omnimind.bot.ui.chat.NativeChatTranscriptRoute
 import cn.com.omnimind.bot.ui.chat.NativeChatTranscriptViewModel
@@ -163,6 +169,7 @@ class NativeHomeActivity : ComponentActivity() {
         val permissionAccess = AppPermissionAccess(applicationContext)
         val navigator = LegacyHomeNavigator(this)
         val actions = NativeHomeActions(
+            resolveStartupChat = ::resolveStartupChat,
             open = navigator::open,
             consumeDestination = viewModel::consumeDestination,
             setLocalServiceEnabled = viewModel::setLocalServiceEnabled,
@@ -256,12 +263,12 @@ class NativeHomeActivity : ComponentActivity() {
                 scheduledTasks = { onBack -> NativeScheduledTasksRoute(scheduledTasksViewModel, onBack) },
                 skills = { onBack -> NativeSkillStoreRoute(skillStoreViewModel, onBack) },
                 memory = { onBack -> NativeMemoryCenterRoute(memoryCenterViewModel, onBack) },
-                chatTranscript = { conversationId, mode, title, key, onNewConversation, onBack ->
+                chatTranscript = { conversationId, mode, title, key, draft, onNewConversation, onBack ->
                     // The key comes from the route, so a new page finds its ViewModel (and the
                     // conversation it created, kept in SavedStateHandle) after process death.
                     val transcriptViewModel = remember(key) {
                         ViewModelProvider(this@NativeHomeActivity,
-                            NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title))[
+                            NativeChatTranscriptViewModel.Factory(this@NativeHomeActivity, conversationId, mode, title, draft))[
                                 key, NativeChatTranscriptViewModel::class.java]
                     }
                     NativeChatTranscriptRoute(
@@ -345,6 +352,21 @@ class NativeHomeActivity : ComponentActivity() {
                 this, cn.com.omnimind.nativeui.R.string.omni_tool_action_flutter_only, Toast.LENGTH_SHORT,
             ).show()
             target.isNotEmpty() -> openTranscriptLink(target)
+        }
+    }
+
+    /** Home's untargeted chat entry, resolved like the Flutter chat page's bootstrap (5e-4). */
+    private suspend fun resolveStartupChat(): ConversationSummary? = withContext(Dispatchers.IO) {
+        val preferences = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        val target = resolveChatStartupTarget(
+            preferences.getString("flutter.chat_startup_behavior", null),
+            preferences.getString("flutter.last_visible_conversation_target", null),
+        ) { id -> DatabaseHelper.getConversationById(id)?.takeIf { !it.isArchived }?.title?.ifBlank { " " } }
+        (target as? ChatStartupTarget.Existing)?.let {
+            ConversationSummary(
+                id = it.conversationId, title = it.title.trim(), preview = "", mode = it.mode,
+                updatedAt = 0L, pinned = false,
+            )
         }
     }
 

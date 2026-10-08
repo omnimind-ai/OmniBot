@@ -80,6 +80,12 @@ data class NativeHomeActions(
     val refresh: () -> Unit,
     /** Opens the read-only native transcript preview (batch 5c); set by the home navigation. */
     val previewTranscript: (ConversationSummary) -> Unit = {},
+    /**
+     * Resolves an untargeted chat entry (startup preference, then the last
+     * visible conversation) and returns the conversation to open, or null for
+     * a new one (5e-4). Suspends: it reads the database.
+     */
+    val resolveStartupChat: suspend () -> ConversationSummary? = { null },
 )
 
 @Immutable

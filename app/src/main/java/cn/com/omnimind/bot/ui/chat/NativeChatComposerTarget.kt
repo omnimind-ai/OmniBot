@@ -132,3 +132,35 @@ internal fun planHarnessSwitch(
     hasConversation -> HarnessSwitchPlan.OpenNewConversation
     else -> HarnessSwitchPlan.ReplaceTarget
 }
+
+/** What an untargeted chat entry opens (Dart `_resolveInitialThreadTarget`, 5e-4). */
+internal sealed interface ChatStartupTarget {
+    data object NewConversation : ChatStartupTarget
+    data class Existing(val conversationId: Long, val mode: String, val title: String) : ChatStartupTarget
+}
+
+/**
+ * The startup preference (`chat_startup_behavior`) then the last visible
+ * thread target (`last_visible_conversation_target`, the Flutter page's JSON).
+ * A target the native page cannot open (OpenClaw, remote session, a deleted
+ * conversation) falls back to a new conversation; [exists] answers whether
+ * the id is still a stored conversation and gives its title.
+ */
+internal suspend fun resolveChatStartupTarget(
+    startupBehavior: String?,
+    lastVisibleTargetJson: String?,
+    exists: suspend (Long) -> String?,
+): ChatStartupTarget {
+    if (startupBehavior == "new_conversation") return ChatStartupTarget.NewConversation
+    val target = runCatching { DartJson.decode(lastVisibleTargetJson ?: return ChatStartupTarget.NewConversation) }
+        .getOrNull() as? Map<*, *> ?: return ChatStartupTarget.NewConversation
+    if (target["isNewConversation"] == true) return ChatStartupTarget.NewConversation
+    val mode = conversationModeFromStorageValue(target["mode"]?.toString())
+    if (mode == ConversationModes.OPENCLAW) return ChatStartupTarget.NewConversation
+    if ((target["agentRuntime"] ?: target["codexRuntime"])?.toString() == "remote") return ChatStartupTarget.NewConversation
+    val id = (target["conversationId"] as? Number)?.toLong()
+        ?: target["conversationId"]?.toString()?.toLongOrNull()
+        ?: return ChatStartupTarget.NewConversation
+    val title = exists(id) ?: return ChatStartupTarget.NewConversation
+    return ChatStartupTarget.Existing(id, mode, title)
+}

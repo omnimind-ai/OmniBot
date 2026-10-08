@@ -73,6 +73,14 @@ fun ChatComposer(
 ) {
     val palette = LocalOmniPalette.current
     var draft by rememberSaveable { mutableStateOf("") }
+    var adoptedDraftKey by rememberSaveable { mutableStateOf(0L) }
+    // Filling the field does not admit a turn; only the send button does.
+    state.injectedDraft?.let { injected ->
+        if (injected.key != adoptedDraftKey) {
+            adoptedDraftKey = injected.key
+            draft = injected.text
+        }
+    }
     if (!state.available) {
         Text(
             stringResource(R.string.omni_composer_history_only),

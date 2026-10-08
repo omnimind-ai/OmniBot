@@ -77,4 +77,19 @@ class NativeChatComposerTargetTest {
         assertEquals(HarnessSwitchPlan.Ignore, planHarnessSwitch("codex-acp", "codex-acp", hasConversation = true, anyTurnRunning = true))
         assertEquals(HarnessSwitchPlan.Ignore, planHarnessSwitch("codex-acp", " ", hasConversation = false, anyTurnRunning = false))
     }
+
+    @Test
+    fun `an untargeted entry resumes the last visible conversation unless the user chose new`() = kotlinx.coroutines.runBlocking {
+        val last = """{"conversationId":42,"mode":"agent","isNewConversation":false,"agentId":"codex-acp"}"""
+        val stored = mapOf(42L to "旧对话")
+        assertEquals(ChatStartupTarget.Existing(42, "agent", "旧对话"), resolveChatStartupTarget("resume_last", last, { stored[it] }))
+        assertEquals(ChatStartupTarget.Existing(42, "agent", "旧对话"), resolveChatStartupTarget(null, last, { stored[it] }))
+        assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("new_conversation", last, { stored[it] }))
+        // Deleted, OpenClaw, remote and new targets open a new conversation.
+        assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", last) { null })
+        assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", """{"conversationId":42,"mode":"openclaw"}""", { stored[it] }))
+        assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", """{"conversationId":42,"mode":"agent","agentRuntime":"remote"}""", { stored[it] }))
+        assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", """{"isNewConversation":true,"mode":"agent"}""", { stored[it] }))
+        assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", "broken", { stored[it] }))
+    }
 }
