@@ -16,6 +16,7 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 .appendQueryParameter("conversationId", destination.id.toString())
                 .appendQueryParameter("mode", destination.mode)
                 .apply { destination.agentId?.let { appendQueryParameter("agentId", it) } }
+                .apply { if (destination.draft.isNotBlank()) appendQueryParameter("nativeDraft", destination.draft) }
                 .appendQueryParameter("requestKey", UUID.randomUUID().toString()).build().toString()
             is LegacyDestination.NewConversation -> Uri.Builder().path("/home/chat")
                 .appendQueryParameter("conversationId", "new")

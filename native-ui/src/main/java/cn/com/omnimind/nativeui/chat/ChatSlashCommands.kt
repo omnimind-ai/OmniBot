@@ -50,7 +50,7 @@ data class ChatSlashEntry(
     /** Non-null: tapping submits it through the same path as typing it. */
     val submitText: String? = null,
 ) {
-    enum class Kind { Model, Review, Init, Plan, AcpCommand, ModelOption, ModelsEmpty, Effort, EffortOption }
+    enum class Kind { Model, Review, Init, Plan, AcpCommand, ModelOption, ModelsEmpty, Effort, EffortOption, Compact, Record }
 }
 
 /** What a submitted draft does. */
@@ -62,6 +62,8 @@ sealed interface ChatSlashSubmit {
     data object TogglePlan : ChatSlashSubmit
     data class StartPlan(val prompt: String) : ChatSlashSubmit
     data class SetEffort(val effort: String) : ChatSlashSubmit
+    /** Pure chat `/compact`: manual context compaction (Dart `_executeManualContextCompactionCommand`). */
+    data object Compact : ChatSlashSubmit
     data class Notice(val reason: Reason) : ChatSlashSubmit
 
     enum class Reason { Unsupported, ReviewUnavailable, PlanUnavailable, InvalidEffort, OpenInChat, Busy }
@@ -85,9 +87,13 @@ fun normalizeChatEffort(raw: String?): String? {
     return canonical.takeIf { it in SUPPORTED_EFFORTS }
 }
 
-/** Manual recording stays a Flutter flow (`ManualRecordingFlowController.isCommand`). */
+/**
+ * Manual recording and the OpenClaw gateway stay Flutter flows
+ * (`ManualRecordingFlowController.isCommand`); the page hands the
+ * conversation to the Flutter chat for them.
+ */
 private val FLUTTER_ONLY_COMMANDS = setOf(
-    "/record", "/compact", "/openclaw", "手动录制", "开始手动录制", "人工录制", "录制轨迹",
+    "/record", "/openclaw", "手动录制", "开始手动录制", "人工录制", "录制轨迹",
     "开始录制轨迹", "轨迹录制", "manual recording", "manual record",
 )
 
@@ -109,9 +115,11 @@ fun ChatSlashContext.resolveSubmit(draft: String, initPrompt: String): ChatSlash
     val text = draft.trim()
     val lower = text.lowercase()
     if (!agent) {
-        if (lower in FLUTTER_ONLY_COMMANDS || lower.startsWith("/compact ") || lower.startsWith("/openclaw ")) {
+        if (lower in FLUTTER_ONLY_COMMANDS || lower.startsWith("/openclaw ")) {
             return ChatSlashSubmit.Notice(ChatSlashSubmit.Reason.OpenInChat)
         }
+        // Only this conversation's turn blocks it; the page checks that (Dart `_executeManualContextCompactionCommand`).
+        if (lower == "/compact" || lower.startsWith("/compact ")) return ChatSlashSubmit.Compact
         if (lower == "/effort") return ChatSlashSubmit.FillText("/effort ")
         if (lower.startsWith("/effort ")) {
             val effort = normalizeChatEffort(text.substring("/effort".length))
@@ -171,7 +179,10 @@ fun ChatSlashContext.entries(draft: String): List<ChatSlashEntry> {
                 )
             }
         }
+        // Dart `_buildSlashCommandCards` for the normal page: /record, /compact, /effort.
         return listOf(
+            ChatSlashEntry("record", "/record", ChatSlashEntry.Kind.Record, submitText = "/record"),
+            ChatSlashEntry("compact", "/compact", ChatSlashEntry.Kind.Compact, submitText = "/compact"),
             ChatSlashEntry("effort", "/effort", ChatSlashEntry.Kind.Effort, detail = selectedEffort.orEmpty(), fillText = "/effort "),
         ).filter { it.title.startsWith(lower) }
     }

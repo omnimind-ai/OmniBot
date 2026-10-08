@@ -58,9 +58,12 @@ class ChatSlashCommandsTest {
         assertEquals(ChatSlashSubmit.SetEffort("medium"), chat.submit("/effort MED"))
         assertEquals(ChatSlashSubmit.Notice(Reason.InvalidEffort), chat.submit("/effort ultra"))
         assertEquals(ChatSlashSubmit.FillText("/effort "), chat.submit("/effort"))
-        for (command in listOf("/record", "/compact", "/openclaw", "手动录制")) {
+        for (command in listOf("/record", "/openclaw", "手动录制")) {
             assertEquals(ChatSlashSubmit.Notice(Reason.OpenInChat), chat.submit(command))
         }
+        assertEquals(ChatSlashSubmit.Compact, chat.submit("/compact"))
+        // Another conversation's reply does not block it; the page checks its own turn.
+        assertEquals(ChatSlashSubmit.Compact, chat.copy(configLocked = true).submit("/compact"))
         // Any other slash text is an ordinary chat message.
         assertEquals(ChatSlashSubmit.Send("/what"), chat.submit("/what"))
     }
@@ -91,7 +94,8 @@ class ChatSlashCommandsTest {
         val rows = chat.entries("/effort")
         assertEquals(CHAT_EFFORT_OPTIONS, rows.map { it.title })
         assertEquals("high", rows.single { it.selected }.title)
-        assertEquals(listOf("/effort"), chat.entries("/").map { it.title })
+        assertEquals(listOf("/record", "/compact", "/effort"), chat.entries("/").map { it.title })
+        assertEquals(listOf("/compact"), chat.entries("/c").map { it.title })
         assertNull(normalizeChatEffort("ultra"))
     }
 }

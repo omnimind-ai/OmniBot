@@ -114,6 +114,14 @@ data class ChatComposerState(
     val injectedDraft: InjectedDraft? = null,
     /** Non-null while the latest user message is being edited; send resends it. */
     val editingMessageId: String? = null,
+    /** The Agent asked a question; the next send is its answer (5e-6). */
+    val awaitingAnswer: Boolean = false,
+    /**
+     * The native page cannot send here (OpenClaw, Sub Agent runs, remote
+     * Codex); the composer offers to open the conversation in the Flutter
+     * chat instead (5e-6). False while the target is still resolving.
+     */
+    val handoffToChat: Boolean = false,
 )
 
 @Immutable
@@ -132,6 +140,8 @@ class ChatComposerActions(
     val onRemoveAttachment: (id: String) -> Unit = {},
     val onSelectPermission: (ChatComposerPermission) -> Unit = {},
     val onCancelEdit: () -> Unit = {},
+    /** Opens this conversation in the Flutter chat (5e-6). */
+    val onOpenInChat: () -> Unit = {},
 )
 
 /** What a long press on a user message offers (Dart `_UserMessageQuickAction`, 5e-5). */

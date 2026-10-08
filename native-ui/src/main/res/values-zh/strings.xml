@@ -1047,4 +1047,11 @@
     <string name="omni_message_copied">已复制消息内容</string>
     <string name="omni_message_editing">正在编辑最新一条消息</string>
     <string name="omni_message_cancel_edit">取消编辑</string>
+    <string name="omni_composer_answer_hint">回复 Agent 的问题</string>
+    <string name="omni_slash_compact">手动压缩当前对话上下文</string>
+    <string name="omni_slash_record">手动录制可复用的操作流程（在聊天中打开）</string>
+    <string name="omni_compact_done">上下文已压缩</string>
+    <string name="omni_compact_noop">当前暂无可压缩的上下文</string>
+    <string name="omni_compact_failed">上下文压缩失败</string>
+    <string name="omni_open_in_chat">在聊天中打开</string>
 </resources>

@@ -95,7 +95,8 @@ enum class ThemePreference { System, Light, Dark }
 
 /** Typed hand-off to pages whose existing implementation still owns their behavior. */
 sealed interface LegacyDestination {
-    data class Conversation(val id: Long, val mode: String, val agentId: String? = null) : LegacyDestination
+    /** [draft] only fills the Flutter composer (`nativeDraft`); it is never sent by itself. */
+    data class Conversation(val id: Long, val mode: String, val agentId: String? = null, val draft: String = "") : LegacyDestination
     data class NewConversation(val draft: String = "") : LegacyDestination
     data class TerminalPackage(val packageId: String) : LegacyDestination
 

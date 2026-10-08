@@ -92,4 +92,13 @@ class NativeChatComposerTargetTest {
         assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", """{"isNewConversation":true,"mode":"agent"}""", { stored[it] }))
         assertEquals(ChatStartupTarget.NewConversation, resolveChatStartupTarget("resume_last", "broken", { stored[it] }))
     }
+
+    @Test
+    fun `a compaction result maps to the marker status like the Dart page`() {
+        assertEquals("completed", compactionStatus(mapOf("compacted" to true), failed = false))
+        assertEquals("noop", compactionStatus(mapOf("compacted" to false, "reason" to "no_candidate"), failed = false))
+        assertEquals("noop", compactionStatus(mapOf("reason" to " no_prompt_messages "), failed = false))
+        assertEquals("failed", compactionStatus(mapOf("reason" to "model_error"), failed = false))
+        assertEquals("failed", compactionStatus(null, failed = true))
+    }
 }

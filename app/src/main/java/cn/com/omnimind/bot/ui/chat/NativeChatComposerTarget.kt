@@ -164,3 +164,16 @@ internal suspend fun resolveChatStartupTarget(
     val title = exists(id) ?: return ChatStartupTarget.NewConversation
     return ChatStartupTarget.Existing(id, mode, title)
 }
+
+/** A request to continue a conversation in the Flutter chat (5e-6). */
+internal data class ChatHandoff(val conversationId: Long?, val mode: String, val agentId: String?, val draft: String)
+
+/** Dart `_executeManualContextCompactionCommand`'s marker status for a compaction result. */
+internal fun compactionStatus(result: Map<String, Any?>?, failed: Boolean): String {
+    if (failed || result == null) return "failed"
+    if (result["compacted"] == true) return "completed"
+    return when (result["reason"]?.toString()?.trim()) {
+        "no_candidate", "no_prompt_messages" -> "noop"
+        else -> "failed"
+    }
+}

@@ -51,6 +51,7 @@ import cn.com.omnimind.nativeui.theme.LocalOmniPalette
 import top.yukonga.miuix.kmp.basic.ListPopupColumn
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextField
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.basic.TextFieldDefaults
 import top.yukonga.miuix.kmp.basic.DropdownImpl
 import top.yukonga.miuix.kmp.overlay.OverlayListPopup
@@ -82,12 +83,20 @@ fun ChatComposer(
         }
     }
     if (!state.available) {
-        Text(
-            stringResource(R.string.omni_composer_history_only),
-            color = palette.tertiaryText,
-            fontSize = 12.sp,
-            modifier = modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
-        )
+        if (state.handoffToChat) {
+            Row(
+                modifier.fillMaxWidth().padding(start = 24.dp, end = 12.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    stringResource(R.string.omni_composer_history_only),
+                    Modifier.weight(1f),
+                    color = palette.tertiaryText,
+                    fontSize = 12.sp,
+                )
+                TextButton(text = stringResource(R.string.omni_open_in_chat), onClick = actions.onOpenInChat)
+            }
+        }
         return
     }
     val primary = chatComposerPrimaryAction(state.isProcessing, draft, state.attachments.isNotEmpty())
@@ -132,7 +141,7 @@ fun ChatComposer(
             value = draft,
             onValueChange = { draft = it },
             modifier = Modifier.fillMaxWidth(),
-            label = stringResource(R.string.omni_chat_composer_hint),
+            label = stringResource(if (state.awaitingAnswer) R.string.omni_composer_answer_hint else R.string.omni_chat_composer_hint),
             useLabelAsPlaceholder = true,
             colors = TextFieldDefaults.textFieldColors(
                 backgroundColor = Color.Transparent,

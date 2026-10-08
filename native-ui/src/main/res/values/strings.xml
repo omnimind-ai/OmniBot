@@ -1047,4 +1047,11 @@
     <string name="omni_message_copied">Message copied</string>
     <string name="omni_message_editing">Editing the latest message</string>
     <string name="omni_message_cancel_edit">Cancel editing</string>
+    <string name="omni_composer_answer_hint">Answer the Agent</string>
+    <string name="omni_slash_compact">Manually compress conversation context</string>
+    <string name="omni_slash_record">Manually record a reusable operation flow (opens chat)</string>
+    <string name="omni_compact_done">Context compressed</string>
+    <string name="omni_compact_noop">No context to compress yet</string>
+    <string name="omni_compact_failed">Context compression failed</string>
+    <string name="omni_open_in_chat">Open in chat</string>
 </resources>

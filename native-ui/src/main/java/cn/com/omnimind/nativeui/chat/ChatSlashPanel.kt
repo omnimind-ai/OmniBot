@@ -92,6 +92,8 @@ private fun entrySummary(entry: ChatSlashEntry): String = when (entry.kind) {
     ChatSlashEntry.Kind.Effort -> entry.detail.ifEmpty { stringResource(R.string.omni_slash_effort_default) }
         .let { stringResource(R.string.omni_slash_effort, it) }
     ChatSlashEntry.Kind.EffortOption -> ""
+    ChatSlashEntry.Kind.Compact -> stringResource(R.string.omni_slash_compact)
+    ChatSlashEntry.Kind.Record -> stringResource(R.string.omni_slash_record)
 }
 
 private fun entryIcon(kind: ChatSlashEntry.Kind): Int = when (kind) {
@@ -101,4 +103,6 @@ private fun entryIcon(kind: ChatSlashEntry.Kind): Int = when (kind) {
     ChatSlashEntry.Kind.Plan -> R.drawable.omni_route
     ChatSlashEntry.Kind.AcpCommand -> R.drawable.omni_square_terminal
     ChatSlashEntry.Kind.Effort, ChatSlashEntry.Kind.EffortOption -> R.drawable.omni_brain
+    ChatSlashEntry.Kind.Compact -> R.drawable.omni_archive
+    ChatSlashEntry.Kind.Record -> R.drawable.omni_circle_dot
 }

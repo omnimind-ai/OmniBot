@@ -272,7 +272,16 @@ class NativeHomeActivity : ComponentActivity() {
                                 key, NativeChatTranscriptViewModel::class.java]
                     }
                     NativeChatTranscriptRoute(
-                        transcriptViewModel, ::openTranscriptLink, ::runTranscriptToolAction, onNewConversation, onBack,
+                        transcriptViewModel, ::openTranscriptLink, ::runTranscriptToolAction, onNewConversation,
+                        onOpenInChat = { handoff ->
+                            // The Flutter chat owns these flows until they move (5e-6).
+                            navigator.open(
+                                handoff.conversationId?.let { id ->
+                                    LegacyDestination.Conversation(id, handoff.mode, handoff.agentId, handoff.draft)
+                                } ?: LegacyDestination.NewConversation(handoff.draft),
+                            )
+                        },
+                        onBack = onBack,
                     )
                 },
                 terminal = { focusPackageId, onBack ->

@@ -605,6 +605,41 @@ the user message stays once; edit and send: the old round disappears in
 both the native page and Flutter; tap a drawer conversation: it opens
 natively, an OpenClaw one opens in Flutter.
 
+### 5e-6 checkpoint (source complete; device acceptance pending)
+
+- **Fix of a 5e-5 regression**: since drawer taps open the native page, a
+  conversation whose Agent asked a question (`user_input` / elicitation) had
+  no way to answer it. The composer now takes its text as the answer while
+  a request is pending (`pendingUserInputCard`, `userInputResponseArgs`, a
+  port of `_respondToPendingAgentUserInput` and
+  `_singleComposerElicitationContent`: the single schema field is typed as
+  integer, number, boolean or array). The send goes through the 5b
+  `respondToServerRequest` entry and the card is marked submitted with the
+  answer; on failure the text returns to the composer. While a question is
+  pending the composer is not "processing", as on the Flutter page.
+- **`/compact`** on pure chat: listed in the panel with `/record`, runs the
+  native compactor (`ConversationDomainService.compactConversationContext`)
+  with the conversation's model override, shows the compaction marker and
+  maps the result like Dart (`compactionStatus`). Only this conversation's
+  running turn blocks it.
+- **Flutter hand-offs instead of dead ends**: OpenClaw, Sub Agent runs and
+  remote Codex pages show "Open in chat"; `/record` and `/openclaw` open the
+  Flutter chat on this conversation with the typed text as its draft
+  (`LegacyDestination.Conversation.draft` → `nativeDraft`, never sent by
+  itself). The hint no longer flashes while a target is still resolving.
+- **Verification**: `AgentUserInputAnswerTest` 3, `ChatSlashCommandsTest`
+  updated, `NativeChatComposerTargetTest` +1 (compaction status); `:app`
+  1528, native-ui 76, 0 failures; androidTest compile and release resource
+  merge succeeded. No Dart changes. No device run.
+- Still Flutter: the browser overlay, the workspace panel, the remote Codex
+  runtime and OpenClaw themselves (reached through the hand-off).
+
+Manual acceptance (5e-6): an Agent that asks a question (Codex plan
+questions, an MCP elicitation): type the answer and send, the card shows
+the answer and the turn continues; pure chat `/compact`: marker card, then
+"Context compressed"; `/record`: the Flutter chat opens on the same
+conversation; an OpenClaw conversation from the archive: "Open in chat".
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |

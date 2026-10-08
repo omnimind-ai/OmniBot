@@ -246,10 +246,14 @@ internal class NativeChatTranscriptViewModel(
             )
         }
         snapshot.conversation?.let { conversationPayload = it }
+        val question = pendingUserInputCard(snapshot.messages)
         mutableComposer.update {
             it.copy(
                 // A send still seeding its runtime publishes an idle snapshot first.
-                isProcessing = snapshot.isAiResponding || sending,
+                // A pending question is answered from the composer, so it is not "processing"
+                // (Dart `isProcessing` excludes `_hasPendingAgentUserInputRequest`).
+                isProcessing = (snapshot.isAiResponding && question == null) || sending,
+                awaitingAnswer = question != null,
                 cancelling = it.cancelling && snapshot.isAiResponding,
             ).withContextUsage(snapshot.conversation)
         }
@@ -309,7 +313,12 @@ internal class NativeChatTranscriptViewModel(
             storedMode = payload["mode"]?.toString(),
             agentId = payload["agentId"]?.toString(),
             liveRuntimeMode = liveMode,
-        ) ?: return
+        )
+        if (resolved == null) {
+            // OpenClaw, Sub Agent runs and remote Codex keep their Flutter flows (5e-6).
+            mutableComposer.update { it.copy(handoffToChat = true) }
+            return
+        }
         applyComposerTarget(resolved, payload)
     }
 
@@ -324,8 +333,12 @@ internal class NativeChatTranscriptViewModel(
                 if (CodexRemoteBridgeConfigStore(appContext).read().enabled) null
                 else AcpAgentProfileStore(appContext).selected().id
             }.getOrNull()
-        } ?: return
-        val resolved = NativeChatComposerTarget.resolve(ConversationModes.AGENT, harness, liveRuntimeMode = null) ?: return
+        }
+        val resolved = harness?.let { NativeChatComposerTarget.resolve(ConversationModes.AGENT, it, liveRuntimeMode = null) }
+        if (resolved == null) {
+            mutableComposer.update { it.copy(handoffToChat = true) }
+            return
+        }
         applyComposerTarget(resolved, payload = null)
     }
 
@@ -382,6 +395,12 @@ internal class NativeChatTranscriptViewModel(
         // Attachments always travel with a prompt, never with a command.
         // An edit resends the latest user message (Dart `_saveAndResendEditedUserMessage`).
         mutableComposer.value.editingMessageId?.let { editing -> return if (resendEdited(editing, draft.trim())) "" else null }
+        // A pending Agent question takes the text as its answer (Dart `_respondToPendingAgentUserInput`).
+        liveSnapshot()?.let(ChatRuntimeSnapshot::messages)?.let(::pendingUserInputCard)?.let { card ->
+            val answer = draft.trim()
+            if (answer.isEmpty()) return null
+            return if (answerUserInput(card, answer)) "" else null
+        }
         val intent = if (draft.isEmpty()) ChatSlashSubmit.Send("") else slash.resolveSubmit(draft, AGENT_INIT_PROMPT)
         return when (intent) {
             is ChatSlashSubmit.Send ->
@@ -391,7 +410,17 @@ internal class NativeChatTranscriptViewModel(
             ChatSlashSubmit.TogglePlan -> { setPlanMode(!slash.planActive, then = null); "" }
             is ChatSlashSubmit.StartPlan -> { setPlanMode(true, then = intent.prompt); "" }
             is ChatSlashSubmit.SetEffort -> { setEffort(intent.effort); "" }
-            is ChatSlashSubmit.Notice -> { toast(noticeText(intent.reason)); null }
+            ChatSlashSubmit.Compact -> { compactContext(); "" }
+            is ChatSlashSubmit.Notice -> {
+                if (intent.reason == ChatSlashSubmit.Reason.OpenInChat) {
+                    // Manual recording and OpenClaw run in the Flutter chat; take the draft along.
+                    openInChat(draft.trim())
+                    ""
+                } else {
+                    toast(noticeText(intent.reason))
+                    null
+                }
+            }
         }
     }
 
@@ -871,6 +900,107 @@ internal class NativeChatTranscriptViewModel(
     }
 
     // ---------------------------------------------------------------------
+    // Manual compaction and the Flutter hand-off (batch 5e-6)
+    // ---------------------------------------------------------------------
+
+    /** One-shot request for the route to open this conversation in the Flutter chat. */
+    private val mutableOpenInChat = MutableStateFlow<ChatHandoff?>(null)
+    val openInChatRequest = mutableOpenInChat.asStateFlow()
+
+    /**
+     * Opens this conversation (or a new one) in the Flutter chat with [draft]
+     * in its composer. The draft only fills the field; the user sends it.
+     */
+    fun openInChat(draft: String = "") {
+        mutableOpenInChat.value = ChatHandoff(
+            conversationId = conversationIdOrNull,
+            mode = conversationPayload?.get("mode")?.toString() ?: mode,
+            agentId = conversationPayload?.get("agentId")?.toString()?.ifBlank { null },
+            draft = draft,
+        )
+    }
+
+    fun consumeOpenInChat() {
+        mutableOpenInChat.value = null
+    }
+
+    /**
+     * `/compact` (Dart `_executeManualContextCompactionCommand`): the stored
+     * history is summarized by the native compactor while a marker card shows
+     * progress. Refused while this conversation's turn runs. Pure chat sends
+     * its conversation override; an Agent turn uses the dispatch binding.
+     */
+    private fun compactContext() {
+        val target = target ?: return
+        val conversationId = conversationIdOrNull
+        if (conversationId == null) {
+            toast(string(cn.com.omnimind.nativeui.R.string.omni_compact_noop))
+            return
+        }
+        if (thisTurnRunning()) {
+            toast(if (AppLocaleManager.isEnglish()) "Wait for the current task to finish before compressing" else "请等待当前任务结束后再压缩")
+            return
+        }
+        val mode = liveMode ?: target.runtimeMode
+        val runtimeConversationId = conversationId.toInt()
+        viewModelScope.launch {
+            // The marker lives in the runtime, so make sure there is one holding the full history.
+            if (runCatching { seedRuntime(mode) }.isFailure) {
+                toast(string(cn.com.omnimind.nativeui.R.string.omni_compact_failed))
+                return@launch
+            }
+            liveMode = mode
+            val usage = conversationPayload
+            fun int(key: String) = (usage?.get(key) as? Number)?.toInt()
+            coordinator.beginContextCompaction(
+                runtimeConversationId, mode, trigger = "manual",
+                latestPromptTokens = int("latestPromptTokens"), promptTokenThreshold = int("promptTokenThreshold"),
+            )
+            coordinator.publishDirtySnapshots()
+            val result = runCatching {
+                withContext(Dispatchers.IO) {
+                    conversations.compactConversationContext(
+                        conversationId = conversationId,
+                        conversationMode = target.conversationMode,
+                        modelOverride = if (target.showsPermission) null else pureChatCompactionOverride(),
+                    )
+                }
+            }.onFailure { Log.w(TAG, "手动压缩上下文失败: ${it.message}") }
+            val payload = result.getOrNull()
+            (payload?.get("conversation") as? Map<*, *>)?.let { updated ->
+                @Suppress("UNCHECKED_CAST")
+                val conversation = updated as Map<String, Any?>
+                conversationPayload = conversation
+                coordinator.setRuntimeConversation(runtimeConversationId, mode, conversation)
+            }
+            val status = compactionStatus(payload, result.isFailure)
+            coordinator.finishContextCompaction(
+                runtimeConversationId, mode, status = status,
+                latestPromptTokens = int("latestPromptTokens"), promptTokenThreshold = int("promptTokenThreshold"),
+            )
+            coordinator.publishDirtySnapshots()
+            toast(string(when (status) {
+                "completed" -> cn.com.omnimind.nativeui.R.string.omni_compact_done
+                "noop" -> cn.com.omnimind.nativeui.R.string.omni_compact_noop
+                else -> cn.com.omnimind.nativeui.R.string.omni_compact_failed
+            }))
+        }
+    }
+
+    /** The pure-chat conversation override as the compactor's model (Dart `_buildChatModelOverridePayload`). */
+    private fun pureChatCompactionOverride(): cn.com.omnimind.bot.agent.AgentModelOverride? {
+        val raw = flutterPreferences().getString(OVERRIDES_KEY, null) ?: return null
+        val entry = runCatching { cn.com.omnimind.bot.agent.projection.DartJson.decode(raw) }.getOrNull()
+            ?.let { (it as? Map<*, *>)?.get(conversationIdOrNull.toString()) as? Map<*, *> } ?: return null
+        val profileId = entry["providerProfileId"]?.toString()?.trim().orEmpty()
+        val modelId = entry["modelId"]?.toString()?.trim().orEmpty()
+        if (profileId.isEmpty() || modelId.isEmpty()) return null
+        val profile = cn.com.omnimind.baselib.llm.ModelProviderConfigStore.getProfile(profileId)
+            ?.takeIf { it.isConfigured() } ?: return null
+        return cn.com.omnimind.bot.agent.AgentModelOverride.fromProviderProfile(profile = profile, modelId = modelId)
+    }
+
+    // ---------------------------------------------------------------------
     // User message actions (batch 5e-5)
     // ---------------------------------------------------------------------
 
@@ -1087,14 +1217,52 @@ internal class NativeChatTranscriptViewModel(
     }
 
     /** Re-reads the message: the reducer may have replaced it while the reply was in flight. */
-    private fun markRequestAnswered(conversationId: Int, mode: String, messageId: String, status: String) {
+    private var answeringRequest = false
+
+    /**
+     * Answers a pending `user_input` request through the 5b
+     * `respondToServerRequest` entry, then marks the card submitted with the
+     * answer (Dart `_markPendingAgentUserInputAnswered`). Returns false while
+     * an answer is in flight.
+     */
+    private fun answerUserInput(card: Map<String, Any?>, answer: String): Boolean {
+        val mode = liveMode ?: return false
+        if (answeringRequest) return false
+        val runtimeConversationId = conversationIdOrNull?.toInt() ?: return false
+        val messageId = coordinator.snapshotFor(runtimeConversationId, mode)?.messages
+            ?.firstOrNull { it.cardData?.get("requestId") == card["requestId"] }?.id ?: return false
+        answeringRequest = true
+        viewModelScope.launch {
+            val acknowledged = runCatching {
+                val result = ChatRuntimeHost.dispatcher.respondToServerRequest(userInputResponseArgs(card, answer)) as? Map<*, *>
+                check(result?.get("ok") == true) { "ACP server request was not acknowledged" }
+            }.onFailure { Log.w(TAG, "回复 Agent 提问失败: ${it.message}") }.isSuccess
+            answeringRequest = false
+            if (acknowledged) {
+                markRequestAnswered(runtimeConversationId, mode, messageId, "submitted", listOf(answer))
+            } else {
+                toast(if (AppLocaleManager.isEnglish()) "Unable to submit the Agent response" else "无法提交 Agent 的输入回复")
+                // The composer cleared optimistically; give the answer back.
+                fillComposer(answer)
+            }
+        }
+        return true
+    }
+
+    private fun markRequestAnswered(
+        conversationId: Int,
+        mode: String,
+        messageId: String,
+        status: String,
+        answers: List<String> = emptyList(),
+    ) {
         val current = coordinator.snapshotFor(conversationId, mode)?.messages
             ?.firstOrNull { it.id == messageId } ?: return
         val cardData = LinkedHashMap(current.cardData ?: return)
         // A terminal status the reducer applied meanwhile (cancelled, expired) wins.
         if (requestCardStatus(cardData) != "pending") return
         cardData["status"] = status
-        cardData["submittedAnswers"] = emptyList<String>()
+        cardData["submittedAnswers"] = answers
         val content = LinkedHashMap(current.content ?: emptyMap()).apply {
             put("cardData", cardData)
             put("id", messageId)
@@ -1265,6 +1433,8 @@ internal fun NativeChatTranscriptRoute(
     onOpenLink: (String) -> Unit,
     onToolAction: (AgentToolActionUi) -> Unit,
     onNewConversation: () -> Unit,
+    /** Continues a conversation in the Flutter chat (5e-6). */
+    onOpenInChat: (ChatHandoff) -> Unit,
     onBack: () -> Unit,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
@@ -1276,6 +1446,13 @@ internal fun NativeChatTranscriptRoute(
         if (openNew != 0L) {
             viewModel.consumeOpenNewConversation()
             onNewConversation()
+        }
+    }
+    val handoff by viewModel.openInChatRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(handoff) {
+        handoff?.let {
+            viewModel.consumeOpenInChat()
+            onOpenInChat(it)
         }
     }
     val barActions = remember(viewModel, onNewConversation) {
@@ -1306,6 +1483,7 @@ internal fun NativeChatTranscriptRoute(
             onRemoveAttachment = viewModel::removeAttachment,
             onSelectPermission = viewModel::selectPermission,
             onCancelEdit = viewModel::cancelEdit,
+            onOpenInChat = { viewModel.openInChat() },
         )
     }
     val actions = remember(viewModel, onOpenLink, onToolAction) {
