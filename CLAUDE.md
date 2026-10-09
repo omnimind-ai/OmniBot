@@ -21,10 +21,10 @@ OmnibotApp is an AI-powered intelligent robot assistant application for Android.
 ./gradlew build
 
 # Build debug APK (develop flavor)
-./gradlew assembleDevelopDebug
+./gradlew :app:assembleDevelopStandardDebug
 
 # Build release APK (production flavor)
-./gradlew assembleProductionRelease
+./gradlew :app:assembleProductionStandardRelease
 
 # Run tests
 ./gradlew test
@@ -36,7 +36,7 @@ OmnibotApp is an AI-powered intelligent robot assistant application for Android.
 ./gradlew lint
 
 # Install debug APK to connected device
-./gradlew installDevelopDebug
+./gradlew :app:installDevelopStandardDebug
 ```
 
 ### Flutter Commands (for ui/ module)

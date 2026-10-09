@@ -786,6 +786,13 @@ a Flutter compatibility page (e.g. Account) after stopping the task: it does
 not restart. Rotate a phone on Home: stays portrait. Background the app past
 the token lifetime and return: still signed in.
 
+### Installing for acceptance
+
+The variants carry an edition dimension, so the install task is
+`./gradlew :app:installDevelopStandardDebug -Pomnibot.nativeHome=true`
+(`installDevelopDebug` is ambiguous). Earlier hand-offs named the wrong
+task.
+
 ### 5e-7f checkpoint: notifications open native chats (source complete; device acceptance pending)
 
 - Task-completion and scheduled Sub Agent notifications build
