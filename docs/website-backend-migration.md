@@ -13,7 +13,10 @@ is labelled “小万官网” / “Omnibot website”.
   caches and their stale-cache fallback are retained.
 - `/feedback/?source=android&lang=zh|en`: shared feedback form. Both Settings
   feedback and About → Send feedback open the browser to support the Android
-  file picker. Only app version metadata is attached automatically.
+  file picker. App version metadata and the signed-in account email are attached
+  automatically. Email is carried in the URL fragment (outside HTTP access logs),
+  removed by the page after load, and stored separately from editable contact
+  details. Signed-out/offline users can fill contact details manually.
 - The official VLM operation cache migrates the old product Worker origin to
   the website origin and preserves the URL path. Custom model Provider profiles
   are separate and are not rewritten.
