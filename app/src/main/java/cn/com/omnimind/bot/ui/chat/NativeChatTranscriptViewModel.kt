@@ -64,6 +64,7 @@ import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 import cn.com.omnimind.bot.agent.runtime.CodexRemoteBridgeConfigStore
 import cn.com.omnimind.bot.agent.projection.ConversationModes
+import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import org.json.JSONObject
 import cn.com.omnimind.nativeui.chat.ChatTranscriptActions
 import cn.com.omnimind.nativeui.chat.ChatPageBarActions
@@ -506,10 +507,14 @@ internal class NativeChatTranscriptViewModel(
                 // Every local Harness runs on the shared dispatch binding (Dart
                 // `_usesSharedProviderModel`); its model is the bound one, never a
                 // stored per-Harness id that may have left the catalog.
-                model = if (target.showsPermission) {
-                    frozenModel
-                } else {
-                    pureChatModelOverride(overrides.getString(OVERRIDES_KEY, null), conversationId)
+                model = when {
+                    target.showsPermission -> frozenModel
+                    // A Sub Agent run follows the Xiaowan task flow (Dart `_handleExecutableTaskFlow`):
+                    // the dispatch scene binding, never a pure-chat override.
+                    target.conversationMode == ConversationModes.SUBAGENT ->
+                        SceneModelBindingStore.getBinding(NativeChatModelCatalog.DISPATCH_SCENE)
+                            ?.takeIf { it.providerProfileId.isNotBlank() }?.modelId?.trim()?.ifEmpty { null }
+                    else -> pureChatModelOverride(overrides.getString(OVERRIDES_KEY, null), conversationId)
                 },
                 effort = if (target.showsPermission) {
                     settings?.reasoningEffort
@@ -520,7 +525,8 @@ internal class NativeChatTranscriptViewModel(
                 conversationMode = target.conversationMode,
                 terminalEnvironment = terminalEnvironment,
                 conversation = conversationPayload,
-                clearThinkingOnFailure = !target.showsPermission,
+                // Dart passes it for pure chat only (`_sendPureChatMessage`).
+                clearThinkingOnFailure = target.conversationMode == ConversationModes.CHAT_ONLY,
             )
             liveMode = target.runtimeMode
             previews.filter { it.status == LinkPreviewStatus.LOADING }.forEach { preview ->

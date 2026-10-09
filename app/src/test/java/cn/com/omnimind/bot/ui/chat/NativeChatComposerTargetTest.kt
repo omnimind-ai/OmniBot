@@ -38,7 +38,6 @@ class NativeChatComposerTargetTest {
     @Test
     fun `surfaces with their own Flutter flows are not sent from here`() {
         assertNull(NativeChatComposerTarget.resolve("openclaw", null, null))
-        assertNull(NativeChatComposerTarget.resolve("subagent", null, null))
         assertNull(NativeChatComposerTarget.resolve("agent", "codex-remote", null))
     }
 
@@ -118,5 +117,15 @@ class NativeChatComposerTargetTest {
         assertEquals(false, attachments[1].sendToModel)
         assertEquals("/workspace/report.pdf", attachments[1].promptPath)
         assertEquals(emptyList<Any>(), sharedDraftAttachments(emptyMap()))
+    }
+
+    /** 5e-9: a Sub Agent run continues on the normal runtime with Xiaowan, no permission menu, its mode kept. */
+    @Test fun subAgentRunsContinueLikeTheXiaowanTaskFlow() {
+        val target = NativeChatComposerTarget.resolve("subagent", null, null)!!
+        assertEquals("normal", target.runtimeMode)
+        assertEquals("subagent", target.conversationMode)
+        assertEquals("xiaowan-acp", target.agentId)
+        assertEquals(false, target.showsPermission)
+        assertEquals("agent", NativeChatComposerTarget.resolve("subagent", null, liveRuntimeMode = "agent")!!.runtimeMode)
     }
 }

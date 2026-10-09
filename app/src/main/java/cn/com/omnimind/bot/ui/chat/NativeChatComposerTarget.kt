@@ -29,11 +29,14 @@ internal data class NativeChatComposerTarget(
         private const val REMOTE_AGENT_ID = "codex-remote"
 
         /**
-         * Null when the native composer cannot send here yet: OpenClaw,
-         * scheduled Sub Agent runs and remote Codex sessions keep their
-         * Flutter flows until 5e. A live runtime keeps the mode it already
-         * runs on, so a turn never lands on a second runtime of the same
-         * conversation.
+         * Null when the native composer cannot send here yet: OpenClaw and
+         * remote Codex sessions keep their Flutter flows. A live runtime
+         * keeps the mode it already runs on, so a turn never lands on a
+         * second runtime of the same conversation.
+         *
+         * A scheduled Sub Agent run (5e-9) continues like the Flutter page's
+         * normal-page dispatch: the Xiaowan Harness on the normal runtime,
+         * the scene model and no permission menu, with its durable mode kept.
          */
         fun resolve(storedMode: String?, agentId: String?, liveRuntimeMode: String?): NativeChatComposerTarget? {
             val mode = conversationModeFromStorageValue(storedMode)
@@ -44,6 +47,12 @@ internal data class NativeChatComposerTarget(
                     runtimeMode = liveRuntimeMode ?: CHAT_RUNTIME_MODE_NORMAL,
                     conversationMode = ConversationModes.CHAT_ONLY,
                     agentId = null,
+                    showsPermission = false,
+                )
+                mode == ConversationModes.SUBAGENT -> NativeChatComposerTarget(
+                    runtimeMode = liveRuntimeMode ?: CHAT_RUNTIME_MODE_NORMAL,
+                    conversationMode = ConversationModes.SUBAGENT,
+                    agentId = XIAOWAN_AGENT_ID,
                     showsPermission = false,
                 )
                 mode == ConversationModes.AGENT -> NativeChatComposerTarget(

@@ -519,15 +519,17 @@ private fun HomeDrawerContent(
 
 /**
  * Conversations the native chat page sends to (its composer target rules,
- * `NativeChatComposerTarget`): Agent and pure-chat conversations on a local
- * Harness. OpenClaw, scheduled Sub Agent runs and remote Codex sessions keep
+ * `NativeChatComposerTarget`): Agent, pure-chat and scheduled Sub Agent
+ * conversations on a local Harness. OpenClaw and remote Codex sessions keep
  * their Flutter pages.
  */
 internal fun opensNatively(conversation: ConversationSummary): Boolean {
     val mode = conversation.mode.trim().lowercase()
+    if (conversation.agentId?.trim() == "codex-remote") return false
+    // Scheduled Sub Agent runs open natively since 5e-9; they carry a parent and a task id.
+    if (mode == "subagent") return true
     val agentMode = mode in setOf("agent", "codex", "acp", "coding", "normal", "")
     val chatOnly = mode in setOf("chat_only", "chat", "chatonly", "chat-only")
     if (!agentMode && !chatOnly) return false
-    if (conversation.parentId != null || conversation.scheduledTaskId != null) return false
-    return conversation.agentId?.trim() != "codex-remote"
+    return conversation.parentId == null && conversation.scheduledTaskId == null
 }

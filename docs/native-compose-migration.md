@@ -793,6 +793,27 @@ The variants carry an edition dimension, so the install task is
 (`installDevelopDebug` is ambiguous). Earlier hand-offs named the wrong
 task.
 
+### 5e-9 checkpoint: Sub Agent conversations open natively (source complete; turn not device-verified)
+
+- Scheduled Sub Agent runs (`mode = subagent`, with a parent and a task id)
+  now open on the native page from the drawer, the archive and their
+  completion notifications (5e-7f), instead of handing off to Flutter.
+- A follow-up message continues the run the way the Flutter page did
+  (`_dispatchUserMessage` on the normal page → `_handleExecutableTaskFlow`):
+  the normal runtime, the Xiaowan Harness, the dispatch scene model (never a
+  pure-chat override), no permission menu, and `conversationMode` stays
+  `subagent`. Thinking is cleared on failure only for pure chat, as in Dart.
+- Still Flutter: OpenClaw and remote Codex.
+- Verification: `NativeChatComposerTargetTest` and `OpensNativelyTest`
+  updated; `:app` 1561, native-ui 97, 0 failures. On the emulator a seeded
+  Sub Agent conversation opens natively with the composer and no permission
+  button; no model provider was configured, so no turn was sent.
+
+Manual acceptance (5e-9): let a scheduled Sub Agent task run, open it from
+the drawer and from its notification: native page, history shown; send a
+follow-up: it runs with Xiaowan on the scene model and the conversation stays
+in the Sub Agent section.
+
 ### First emulator pass (2026-10-10)
 
 The first run of native Home on a device: Pixel 10 Pro emulator, API 37.1,
