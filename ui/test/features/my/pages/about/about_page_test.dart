@@ -13,6 +13,7 @@ void main() {
 
   const deviceChannel = MethodChannel('device_info');
   const updateChannel = MethodChannel('cn.com.omnimind.bot/app_update');
+  const urlChannel = MethodChannel('plugins.flutter.io/url_launcher');
 
   tearDown(() async {
     AppUpdateService.betaOptInNotifier.value = false;
@@ -23,6 +24,8 @@ void main() {
         .setMockMethodCallHandler(deviceChannel, null);
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(updateChannel, null);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(urlChannel, null);
   });
 
   testWidgets('renders version and update hint from services', (tester) async {
@@ -86,7 +89,7 @@ void main() {
     expect(find.text('加入 beta 测试'), findsOneWidget);
     expect(find.text('安装包下载源'), findsOneWidget);
     expect(find.textContaining('同意我们的隐私政策'), findsOneWidget);
-    expect(find.text('Cloudflare R2'), findsWidgets);
+    expect(find.text('小万官网'), findsWidgets);
     expect(find.textContaining('发现新版本'), findsOneWidget);
     expect(find.text('查看新版本'), findsOneWidget);
 
@@ -97,7 +100,7 @@ void main() {
     await tester.tap(downloadSourceDropdown);
     await tester.pumpAndSettle();
 
-    expect(find.text('通过更新 Worker 分发'), findsOneWidget);
+    expect(find.text('通过小万官网分发'), findsOneWidget);
     expect(find.text('官方 Release'), findsOneWidget);
   });
 
@@ -193,5 +196,25 @@ void main() {
     expect(find.text('检查更新'), findsOneWidget);
     expect(find.text('请求日志'), findsOneWidget);
     expect(find.text('使用手册'), findsOneWidget);
+    expect(find.text('我要反馈'), findsOneWidget);
+
+    MethodCall? launchCall;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(urlChannel, (call) async {
+          launchCall = call;
+          return true;
+        });
+    final feedbackButton = find.text('我要反馈');
+    await tester.ensureVisible(feedbackButton);
+    await tester.tap(feedbackButton);
+    await tester.pumpAndSettle();
+    expect(launchCall?.method, 'launch');
+    final args = launchCall!.arguments as Map;
+    final feedbackUri = Uri.parse(args['url'] as String);
+    expect(feedbackUri.host, 'omnibot.omnimind.com.cn');
+    expect(feedbackUri.path, '/feedback/');
+    expect(feedbackUri.queryParameters['source'], 'android');
+    expect(feedbackUri.queryParameters['versionName'], '0.0.1');
+    expect(args['useWebView'], false);
   });
 }

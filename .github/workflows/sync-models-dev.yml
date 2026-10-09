@@ -1,9 +1,8 @@
 name: Sync models.dev catalog
 
 on:
-  schedule:
-    # Avoid the start-of-hour GitHub Actions scheduling peak.
-    - cron: '37 * * * *'
+  # Website repository owns hourly synchronization after backend cutover.
+  # Keep this Android workflow available for manual recovery only.
   workflow_dispatch:
     inputs:
       force:
@@ -24,13 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
-      AWS_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION: auto
-      AWS_REGION: auto
-      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-      CLOUDFLARE_R2_BUCKET_NAME: ${{ vars.CLOUDFLARE_R2_BUCKET_NAME }}
-      CLOUDFLARE_R2_ENDPOINT: ${{ vars.CLOUDFLARE_R2_ENDPOINT }}
+      MODELS_DEV_STORAGE: backend
+      OMNIBOT_BACKEND_URL: ${{ vars.OMNIBOT_BACKEND_URL || 'https://omnibot.omnimind.com.cn' }}
+      APP_UPDATE_WORKER_TOKEN: ${{ secrets.APP_UPDATE_WORKER_TOKEN }}
       MODELS_DEV_UPSTREAM_URL: https://models.dev/api.json
       MODELS_DEV_R2_PREFIX: metadata/models-dev
       MODELS_DEV_MIN_BYTES: '100000'
@@ -52,32 +47,19 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Verify R2 tooling and configuration
+      - name: Verify website backend configuration
         shell: bash
         run: |
           set -euo pipefail
-          aws --version
-
-          required_names=(
-            AWS_ACCESS_KEY_ID
-            AWS_SECRET_ACCESS_KEY
-            CLOUDFLARE_ACCOUNT_ID
-            CLOUDFLARE_R2_BUCKET_NAME
-          )
-          for name in "${required_names[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Missing GitHub Actions configuration: ${name}" >&2
-              exit 1
-            fi
-          done
+          if [[ -z "${APP_UPDATE_WORKER_TOKEN:-}" ]]; then
+            echo "APP_UPDATE_WORKER_TOKEN is required to publish the catalog to the website backend." >&2
+            exit 1
+          fi
 
       - name: Fetch, validate, and publish models.dev catalog
         run: node scripts/sync_models_dev_catalog.mjs
 
       - name: Verify public mirror
-        if: ${{ vars.MODELS_DEV_PUBLIC_URL != '' }}
-        env:
-          MODELS_DEV_PUBLIC_URL: ${{ vars.MODELS_DEV_PUBLIC_URL }}
         shell: bash
         run: |
           set -euo pipefail
@@ -86,7 +68,7 @@ jobs:
             --retry 3 \
             --retry-all-errors \
             --output "${RUNNER_TEMP}/models-dev-public.json" \
-            "${MODELS_DEV_PUBLIC_URL}"
+            "${OMNIBOT_BACKEND_URL%/}/catalog/models-dev/api.json"
           node -e '
             const fs = require("node:fs");
             const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));

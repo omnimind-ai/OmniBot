@@ -356,6 +356,10 @@ class AccountService {
 
   static Future<void> logout() => _channel.invokeMethod<void>('logout');
 
+  /// Reads only the current user's email; does not provision AI services.
+  static Future<String> getFeedbackEmail() async =>
+      (await _channel.invokeMethod<String>('getFeedbackEmail'))?.trim() ?? '';
+
   static Future<AccountOverview> getOverview() async {
     final result = await _requiredMap('getOverview');
     return AccountOverview.fromMap(result);

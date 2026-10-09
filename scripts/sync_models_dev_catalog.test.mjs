@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   modelsDevKeys,
   syncModelsDevCatalog,
+  syncModelsDevCatalogToBackend,
+  loadConfig,
   validateModelsDevCatalog,
 } from "./sync_models_dev_catalog.mjs";
 
@@ -210,4 +212,103 @@ test("snapshot cleanup keeps the configured newest snapshots and current", async
 
   assert.equal(r2.objects.has(keys.snapshot("oldest")), false);
   assert.equal(r2.objects.has(keys.snapshot("middle")), false);
+});
+
+
+function backendConfig(overrides = {}) {
+  return config({
+    backendUrl: "https://backend.example",
+    backendToken: "test-admin-token",
+    ...overrides,
+  });
+}
+
+function apiJson(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status, headers: { "content-type": "application/json" },
+  });
+}
+
+test("website publishing validates catalog and sends auth only to admin API", async () => {
+  const calls = [];
+  const result = await syncModelsDevCatalogToBackend({
+    config: backendConfig(),
+    fetchImpl: async (url, init) => {
+      calls.push({ url, init });
+      if (url === "https://models.dev/api.json") {
+        assert.equal(init.headers.authorization, undefined);
+        return upstreamResponse();
+      }
+      assert.equal(init.headers.authorization, "Bearer test-admin-token");
+      if (init.method === "POST") return apiJson({ ok: true });
+      return apiJson({ current: null, refresh: null });
+    },
+    now: () => 1_700_000_000_000,
+  });
+  assert.equal(result.changed, true);
+  const post = calls.find(({ init }) => init.method === "POST");
+  assert.equal(post.url, "https://backend.example/api/admin/models-dev");
+  assert.equal(post.init.body, CATALOG);
+  assert.equal(post.init.headers["x-models-dev-provider-count"], "1");
+  assert.equal(post.init.headers["x-models-dev-model-count"], "1");
+  assert.equal(post.init.headers["x-models-dev-sha256"], result.sha256);
+});
+
+test("website conditional sync writes refresh status without replacing catalog", async () => {
+  let status;
+  const result = await syncModelsDevCatalogToBackend({
+    config: backendConfig(),
+    fetchImpl: async (url, init) => {
+      if (url === "https://models.dev/api.json") {
+        assert.equal(init.headers["if-none-match"], '"upstream-v1"');
+        return new Response(null, { status: 304 });
+      }
+      assert.notEqual(init.method, "POST");
+      if (init.method === "PUT") {
+        assert.equal(url, "https://backend.example/api/admin/models-dev/status");
+        status = JSON.parse(init.body);
+        return apiJson({ ok: true });
+      }
+      return apiJson({
+        current: { sha256: "last-good", providerCount: 1, modelCount: 1, upstreamEtag: '"upstream-v1"' },
+        refresh: { upstreamUrl: "https://models.dev/api.json", lastSuccessfulAt: 100 },
+      });
+    },
+    now: () => 1_700_000_000_000,
+  });
+  assert.equal(result.notModified, true);
+  assert.equal(status.changed, false);
+  assert.equal(status.sha256, "last-good");
+  assert.equal(status.lastSuccessfulAt, 1_700_000_000_000);
+});
+
+test("website sync rejects invalid catalog and records failure preserving good state", async () => {
+  let status;
+  await assert.rejects(syncModelsDevCatalogToBackend({
+    config: backendConfig(),
+    fetchImpl: async (url, init) => {
+      if (url === "https://models.dev/api.json") return upstreamResponse("{}");
+      assert.notEqual(init.method, "POST");
+      if (init.method === "PUT") {
+        status = JSON.parse(init.body);
+        return apiJson({ ok: true });
+      }
+      return apiJson({ current: { sha256: "last-good", providerCount: 1, modelCount: 1 }, refresh: {} });
+    },
+  }), /provider|model/i);
+  assert.equal(status.sha256, "last-good");
+  assert.equal(status.consecutiveFailures, 1);
+  assert.ok(status.lastError);
+});
+
+test("default catalog configuration selects website despite legacy R2 variables", () => {
+  const value = loadConfig({
+    APP_UPDATE_WORKER_TOKEN: "test-admin-token",
+    APP_UPDATE_WORKER_URL: "https://legacy-worker.example",
+    CLOUDFLARE_ACCOUNT_ID: "legacy-account",
+    CLOUDFLARE_R2_BUCKET_NAME: "legacy-bucket",
+  });
+  assert.equal(value.storage, "backend");
+  assert.equal(value.backendUrl, "https://omnibot.omnimind.com.cn");
+  assert.equal(value.bucket, "");
 });

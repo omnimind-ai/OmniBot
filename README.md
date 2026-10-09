@@ -190,9 +190,11 @@ Flutter Web is not part of this workflow.
 
 ### Build and install
 
-Release APK builds use `OMNIBOT_UPDATE_WORKER_URL` as the default GUI VLM proxy
-and receive the Gelab route from the update Worker. The upstream Gelab key stays
-in the Worker. Debug APK builds use the OpenAI-compatible LLM API configured by
+Android builds use `OMNIBOT_UPDATE_WORKER_URL` for the website backend's update
+checks, anonymous statistics, cloud policy, and official VLM proxy configuration.
+It defaults to `https://omnibot.omnimind.com.cn`; upstream proxy credentials stay
+on the backend. See [the integration notes](docs/website-backend-migration.md).
+Debug APK builds use the OpenAI-compatible LLM API configured by
 `LLMTHU_API_BASE`, `LLMTHU_API_KEY`, and `LLMTHU_MODEL` for normal LLM requests,
 context compaction, and `scene.vlm.operation.primary`.
 For local acceptance testing, Release builds can explicitly enable
@@ -242,7 +244,7 @@ Special thanks to these open-source projects:
 <table align="center">
   <tr>
     <td align="center">
-      <img src="https://omni.1775885.xyz/community/wechat-qr" alt="WeChat Group" width="220"/><br/>
+      <img src="https://omnibot.omnimind.com.cn/community/wechat-qr" alt="WeChat Group" width="220"/><br/>
       <b>WeChat Group</b><br/>
       <a href="https://discord.gg/WnBvBXgykD">Join the Discord community</a>
     </td>

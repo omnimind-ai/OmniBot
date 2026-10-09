@@ -237,6 +237,8 @@ class _AboutPageState extends State<AboutPage> {
     );
   }
 
+  void _openFeedback() => GoRouterManager.push('/my/feedback');
+
   String _downloadSourceLabel(AppUpdateDownloadSource source) {
     switch (source) {
       case AppUpdateDownloadSource.worker:
@@ -394,6 +396,13 @@ class _AboutPageState extends State<AboutPage> {
           label: context.trLegacy('使用手册'),
           compact: compact,
           onPressed: _openUserGuide,
+        ),
+        SizedBox(height: compact ? 6 : 8),
+        _buildAboutActionButton(
+          icon: LucideIcons.messageSquare,
+          label: context.trLegacy('我要反馈'),
+          compact: compact,
+          onPressed: _openFeedback,
         ),
       ],
     );

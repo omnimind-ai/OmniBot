@@ -190,8 +190,11 @@ Android 构建会自动处理 WebUI：Gradle 使用锁文件安装依赖、执�
 
 ### 构建并安装
 
-Release APK 默认使用 `OMNIBOT_UPDATE_WORKER_URL` 作为 GUI VLM 代理地址，
-并从更新 Worker 获取 Gelab 线路；Gelab 的上游 Key 只保存在 Worker。
+安卓版本通过 `OMNIBOT_UPDATE_WORKER_URL` 访问网站后端，统一完成更新检查、
+匿名统计、云服务门禁和官方视觉模型代理配置。默认地址为
+`https://omnibot.omnimind.com.cn`，上游代理 Key 只保存在后端。
+设置 → 关于小万 → 我要反馈使用同一网站表单，支持选择附件和可选联系方式；
+迁移与发布配置见[集成说明](docs/website-backend-migration.md)。
 Debug APK 统一使用 `LLMTHU_API_BASE`、`LLMTHU_API_KEY` 和
 `LLMTHU_MODEL` 配置的 OpenAI-compatible LLM API，覆盖普通 LLM、上下文压缩
 和 `scene.vlm.operation.primary`。
@@ -237,7 +240,7 @@ OpenOmniBot/
 <table align="center">
   <tr>
     <td align="center">
-      <img src="https://omni.1775885.xyz/community/wechat-qr" alt="WeChat Group" width="220"/><br/>
+      <img src="https://omnibot.omnimind.com.cn/community/wechat-qr" alt="WeChat Group" width="220"/><br/>
       <b>WeChat Group</b><br/>
       <a href="https://discord.gg/WnBvBXgykD">加入 Discord 社区</a>
     </td>

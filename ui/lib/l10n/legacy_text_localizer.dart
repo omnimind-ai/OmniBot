@@ -131,6 +131,8 @@ class LegacyTextLocalizer {
         'Non-photo files start the file server and create a LAN link',
     '默认': 'Default',
     '关于小万': 'About Omnibot',
+    '我要反馈': 'Send feedback',
+    '无法打开反馈页面': 'Unable to open the feedback page',
     '背景来源': 'Background Source',
     '效果预览': 'Preview',
     '效果调整': 'Adjustments',

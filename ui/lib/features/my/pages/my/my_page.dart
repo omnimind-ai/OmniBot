@@ -163,9 +163,7 @@ class MyPageState extends State<MyPage> {
                           children: [
                             SettingTile(
                               title: '意见反馈',
-                              onTap: () {
-                                GoRouterManager.push('/my/feedback');
-                              },
+                              onTap: () => GoRouterManager.push('/my/feedback'),
                             ),
                             SettingTile(
                               title: '关于小万',

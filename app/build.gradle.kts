@@ -27,6 +27,7 @@ val omnibotImageModel = prop("OMNIBOT_IMAGE_MODEL")
 val omnibotImageApiKey = prop("OMNIBOT_IMAGE_API_KEY")
 val omnibotBaseUrl = prop("OMNIBOT_BASE_URL")
 val appUpdateWorkerUrl = prop("OMNIBOT_UPDATE_WORKER_URL")
+    .ifBlank { "https://omnibot.omnimind.com.cn" }
 val llmThuApiBase = prop("LLMTHU_API_BASE")
     .ifBlank { "https://llmapi.paratera.com" }
 val llmThuApiKey = prop("LLMTHU_API_KEY")

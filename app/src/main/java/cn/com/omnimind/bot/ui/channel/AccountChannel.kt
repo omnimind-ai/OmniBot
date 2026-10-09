@@ -154,6 +154,13 @@ class AccountChannel {
                 null
             }
 
+            "getFeedbackEmail" -> launch(result) {
+                if (!OmniAccount.isConfigured()) return@launch ""
+                val repository = OmniAccount.repository()
+                if (!repository.isSignedIn()) return@launch ""
+                repository.currentUser().email
+            }
+
             "getOverview" -> launch(result) {
                 val repository = OmniAccount.repository()
                 val user = repository.currentUser()

@@ -7,7 +7,7 @@ cd "$ROOT_DIR"
 NDK_VERSION="${NDK_VERSION:-28.2.13676358}"
 FLUTTER_DIR="$ROOT_DIR/ui"
 ARTIFACT_DIR="$ROOT_DIR/app/build/outputs/release-artifacts"
-DEFAULT_WORKER_URL="https://omni.1775885.xyz"
+DEFAULT_WORKER_URL="https://omnibot.omnimind.com.cn"
 
 INSTALL_APK=0
 SKIP_FLUTTER=0
@@ -21,7 +21,7 @@ PUBLISH_GITHUB=0
 PUBLISH_WORKER=0
 GITHUB_REPO="${GITHUB_REPOSITORY:-}"
 GITHUB_TARGET=""
-WORKER_URL="${APP_UPDATE_WORKER_URL:-$DEFAULT_WORKER_URL}"
+WORKER_URL="${OMNIBOT_BACKEND_URL:-${APP_UPDATE_WORKER_URL:-$DEFAULT_WORKER_URL}}"
 RELEASE_TRACK=""
 RELEASE_DRAFT=""
 RELEASE_PRERELEASE=""
@@ -69,7 +69,8 @@ Publishing credentials are read from environment variables only, to avoid
 leaking tokens through shell history or process listings:
   GH_TOKEN or GITHUB_TOKEN
   APP_UPDATE_WORKER_TOKEN
-  APP_UPDATE_WORKER_URL    Optional override for the built-in Worker URL.
+  OMNIBOT_BACKEND_URL      Optional override for the website backend URL.
+  APP_UPDATE_WORKER_URL    Legacy override; --worker-url is also supported.
 EOF
 }
 
