@@ -26,6 +26,7 @@ import cn.com.omnimind.nativeui.workspace.WorkspaceFileKind
 import cn.com.omnimind.nativeui.workspace.WorkspaceFileScreen
 import cn.com.omnimind.nativeui.workspace.WorkspaceFileState
 import cn.com.omnimind.nativeui.workspace.editable
+import cn.com.omnimind.nativeui.workspace.previewLines
 import cn.com.omnimind.nativeui.workspace.workspaceEntryName
 import cn.com.omnimind.nativeui.workspace.workspaceFileKind
 import cn.com.omnimind.nativeui.workspace.workspaceMimeType
@@ -94,12 +95,18 @@ internal class NativeWorkspaceFileViewModel(
                         val content = withContext(Dispatchers.IO) {
                             repository.readText(state.value.path, WORKSPACE_TEXT_PREVIEW_LIMIT)
                         }
-                        val restoredDraft = savedState.get<String>(KEY_DRAFT)
-                        val editing = !content.truncated && (restoredDraft != null || startInEdit && savedState.get<Boolean>(KEY_EDIT_STARTED) != true)
+                        // Off the main thread: cutting long lines walks the whole text.
+                        val (shown, longLines) = withContext(Dispatchers.Default) { previewLines(content.text) }
+                        val readOnly = content.truncated || longLines
+                        val restoredDraft = savedState.get<String>(KEY_DRAFT).takeUnless { readOnly }
+                        val editing = !readOnly && (restoredDraft != null || startInEdit && savedState.get<Boolean>(KEY_EDIT_STARTED) != true)
                         savedState[KEY_EDIT_STARTED] = true
                         mutableState.update {
                             it.copy(
-                                loading = false, text = content.text, truncated = content.truncated,
+                                loading = false,
+                                // A read-only file only ever shows the cut text; an editable one has no long lines.
+                                text = if (readOnly) shown else content.text,
+                                truncated = content.truncated, longLines = longLines,
                                 editing = editing, draft = restoredDraft ?: content.text,
                             )
                         }

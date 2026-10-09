@@ -120,7 +120,9 @@ internal fun BoxWithConstraintsScope.TabletShell(
                 }
             },
         )
-        Box(Modifier.weight(1f).fillMaxHeight()) { center() }
+        // Clipped: the page stack keeps the previous page composed and offset during and after a
+        // transition, which otherwise drew over the drawer pane (found on the emulator, 5e-9).
+        Box(Modifier.weight(1f).fillMaxHeight().then(if (enabled) Modifier.clipToBounds() else Modifier)) { center() }
         if (enabled && showRight) {
             PaneDivider(
                 collapsed = controls.rightCollapsed,

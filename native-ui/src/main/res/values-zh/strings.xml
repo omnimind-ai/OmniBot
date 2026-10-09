@@ -1151,4 +1151,5 @@
     <string name="omni_tablet_pane_expanded">已展开，可拖动调整宽度</string>
     <string name="omni_tablet_pane_expand">展开侧栏</string>
     <string name="omni_tablet_pane_collapse">收起侧栏</string>
+    <string name="omni_ws_long_lines">部分行过长，此处已截断显示，且不能在此编辑。</string>
 </resources>

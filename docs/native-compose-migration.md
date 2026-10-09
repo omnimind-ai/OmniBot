@@ -793,6 +793,54 @@ The variants carry an edition dimension, so the install task is
 (`installDevelopDebug` is ambiguous). Earlier hand-offs named the wrong
 task.
 
+### First emulator pass (2026-10-10)
+
+The first run of native Home on a device: Pixel 10 Pro emulator, API 37.1,
+`-Pomnibot.nativeHome=true`; tablet checks with `wm size 1600x2560`,
+`wm density 320` in landscape. No crash on launch.
+
+Verified working: cold launch into native Home; workspace browser
+(listing, two-level expansion, descend at depth 2, breadcrumbs, back climbs
+a folder); Markdown preview; edit, rotate with an unsaved draft (kept),
+save (written atomically, no temp file left); a 1.1 MB multi-line log
+(truncated, read-only); tablet panes (drawer pane, workspace pane on chat,
+drag resize clamped to 360 dp and saved in the Flutter double encoding,
+drag past the threshold collapses, the rail and the menu button reopen);
+a chat draft survives landscape → portrait → landscape; phones stay
+portrait.
+
+Defects found and fixed (each now named here):
+
+1. **Overlays outside the page Scaffold never showed** (5e-8a). The file
+   preview's leave/discard confirmations and every browser sheet and dialog
+   (actions, rename, delete, move) were declared after `OmniPage`; Miuix
+   overlays render in a Scaffold's popup host, so they composed but never
+   appeared and back went straight to the previous page. Moved inside the
+   page content, like every other native screen.
+2. **Back on the leave confirmation also left the page.** With the dialog
+   open, a back press closed the dialog and fell through to the page stack,
+   losing the draft. The page's back handler now stays enabled while its
+   dialogs are open and only closes them.
+3. **The drawer raised the keyboard on every open** (native Home since
+   batch 1). `ModalNavigationDrawer` requests focus on its content when it
+   opens; with no focusable container the focus reached the search field,
+   and the keyboard stayed up on the page the drawer opened next. The
+   drawer column is now focusable, so it takes that focus; tapping search
+   still opens the keyboard.
+4. **A 1 MB single-line file exhausted memory** (5e-8a). Laying out one
+   very long line grew native heap past 1.2 GB within seconds and took
+   down the app and system processes across the emulator. The read-only
+   preview cuts lines over 4,000 characters and marks the file read-only
+   (`previewCutsOnlyOverlongLines`); the 1 MB read limit alone was not
+   enough. Re-measured: native heap stays at 18 MB.
+5. **Tablet: the page stack drew over the drawer pane** (5e-7d). The
+   outgoing page of a transition stayed composed and offset outside the
+   center slot. The center slot is now clipped when the panes show.
+
+Not covered yet on the emulator: notifications, voice, share-in,
+TalkBack, predictive back gestures (only key presses were sent), process
+death.
+
 ### 5e-7f checkpoint: notifications open native chats (source complete; device acceptance pending)
 
 - Task-completion and scheduled Sub Agent notifications build

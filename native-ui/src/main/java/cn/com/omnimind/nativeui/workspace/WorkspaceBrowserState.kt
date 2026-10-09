@@ -116,13 +116,15 @@ data class WorkspaceFileState(
     val text: String? = null,
     /** The file is larger than [WORKSPACE_TEXT_PREVIEW_LIMIT]; only its head is shown and it cannot be edited. */
     val truncated: Boolean = false,
+    /** A line was longer than [WORKSPACE_PREVIEW_LINE_LIMIT]; the preview shows it cut and the file is read-only. */
+    val longLines: Boolean = false,
     val image: ImageBitmap? = null,
     val editing: Boolean = false,
     val draft: String = "",
     val saving: Boolean = false,
     val notice: String? = null,
 ) {
-    val canEdit: Boolean get() = exists && kind.editable && !truncated && text != null
+    val canEdit: Boolean get() = exists && kind.editable && !truncated && !longLines && text != null
     val dirty: Boolean get() = editing && draft != text.orEmpty()
     val markdown: Boolean get() = mimeType == "text/markdown"
 }

@@ -125,4 +125,17 @@ class WorkspaceBrowserModelsTest {
         assertFalse(LegacyDestination.Page.Account.opensNativePage)
         assertFalse(LegacyDestination.Conversation(1, "agent").opensNativePage)
     }
+
+    /** Fix (5e-9): a 1 MB single-line file exhausted native memory in text layout. */
+    @Test fun previewCutsOnlyOverlongLines() {
+        val (short, shortCut) = previewLines("a\nbb\nccc", limit = 3)
+        assertEquals("a\nbb\nccc", short)
+        assertFalse(shortCut)
+        val (cut, didCut) = previewLines("abcdef\nxy\n", limit = 3)
+        assertEquals("abc\u2026\nxy\n", cut)
+        assertTrue(didCut)
+        val (shown, hugeCut) = previewLines("a".repeat(1_000_000))
+        assertTrue(hugeCut)
+        assertEquals(WORKSPACE_PREVIEW_LINE_LIMIT + 1, shown.length)
+    }
 }

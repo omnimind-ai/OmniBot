@@ -63,7 +63,15 @@ fun WorkspaceFileScreen(
     var confirmLeave by rememberSaveable { mutableStateOf(false) }
     var confirmCancel by rememberSaveable { mutableStateOf(false) }
     val leave = { if (state.dirty) confirmLeave = true else onBack() }
-    BackHandler(enabled = state.dirty) { confirmLeave = true }
+    // Also owns back while its dialogs are open: a back press there closes the dialog and
+    // must not fall through to the page stack (found on the emulator, 5e-9).
+    BackHandler(enabled = state.dirty || confirmLeave || confirmCancel) {
+        when {
+            confirmLeave -> confirmLeave = false
+            confirmCancel -> confirmCancel = false
+            else -> confirmLeave = true
+        }
+    }
 
     OmniPage(
         title = state.name,
@@ -113,9 +121,10 @@ fun WorkspaceFileScreen(
                     Spacer(Modifier.height(8.dp))
                 }
                 state.text != null -> Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-                    if (state.truncated) Text(stringResource(R.string.omni_ws_truncated), fontSize = 12.sp,
-                        color = palette.secondaryText, modifier = Modifier.padding(bottom = 12.dp))
-                    if (state.markdown) {
+                    if (state.truncated || state.longLines) Text(
+                        stringResource(if (state.truncated) R.string.omni_ws_truncated else R.string.omni_ws_long_lines),
+                        fontSize = 12.sp, color = palette.secondaryText, modifier = Modifier.padding(bottom = 12.dp))
+                    if (state.markdown && !state.truncated && !state.longLines) {
                         ChatMarkdownText(state.text, palette.text, palette.accent, palette.secondarySurface, onOpenLink = onLink)
                     } else SelectionContainer {
                         Text(state.text, fontSize = 14.sp, lineHeight = 21.sp, color = palette.text,
@@ -127,24 +136,25 @@ fun WorkspaceFileScreen(
                 else -> HandOff(state, actions)
             }
         }
+        // Inside the page Scaffold: Miuix overlays render in a Scaffold's popup host.
+        OmniConfirmDialog(
+            show = confirmLeave,
+            title = stringResource(R.string.omni_ws_leave_title),
+            summary = stringResource(R.string.omni_ws_unsaved_summary),
+            confirmText = stringResource(R.string.omni_ws_discard),
+            onConfirm = { confirmLeave = false; actions.cancelEdit(); onBack() },
+            onDismiss = { confirmLeave = false },
+        )
+        OmniConfirmDialog(
+            show = confirmCancel,
+            title = stringResource(R.string.omni_ws_discard_title),
+            summary = stringResource(R.string.omni_ws_unsaved_summary),
+            confirmText = stringResource(R.string.omni_ws_discard),
+            onConfirm = { confirmCancel = false; actions.cancelEdit() },
+            onDismiss = { confirmCancel = false },
+        )
     }
 
-    OmniConfirmDialog(
-        show = confirmLeave,
-        title = stringResource(R.string.omni_ws_leave_title),
-        summary = stringResource(R.string.omni_ws_unsaved_summary),
-        confirmText = stringResource(R.string.omni_ws_discard),
-        onConfirm = { confirmLeave = false; actions.cancelEdit(); onBack() },
-        onDismiss = { confirmLeave = false },
-    )
-    OmniConfirmDialog(
-        show = confirmCancel,
-        title = stringResource(R.string.omni_ws_discard_title),
-        summary = stringResource(R.string.omni_ws_unsaved_summary),
-        confirmText = stringResource(R.string.omni_ws_discard),
-        onConfirm = { confirmCancel = false; actions.cancelEdit() },
-        onDismiss = { confirmCancel = false },
-    )
 }
 
 @Composable

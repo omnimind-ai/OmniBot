@@ -1,6 +1,7 @@
 package cn.com.omnimind.nativeui.home
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.BasicTextField
@@ -40,7 +41,11 @@ internal fun HomeDrawer(
 ) {
     val palette = LocalOmniPalette.current
     var query by rememberSaveable { mutableStateOf("") }
-    Column(Modifier.fillMaxSize().background(palette.drawer).safeDrawingPadding().imePadding().padding(top = 16.dp)) {
+    // ModalNavigationDrawer requests focus on its content when it opens. Without a
+    // focusable container that focus reached the search field and raised the soft
+    // keyboard on every open, and the keyboard stayed up on the page the drawer
+    // opened next (found on the emulator, 5e-9).
+    Column(Modifier.fillMaxSize().background(palette.drawer).focusable().safeDrawingPadding().imePadding().padding(top = 16.dp)) {
         Row(Modifier.padding(horizontal = 16.dp), verticalAlignment = Alignment.CenterVertically) {
             val searchLabel = stringResource(R.string.omni_home_drawer_search_hint)
             BasicTextField(

@@ -240,3 +240,32 @@ val WorkspaceFileKind.editable: Boolean get() = this == WorkspaceFileKind.Text |
 /** Dart `_preferMonospace`. */
 fun workspacePrefersMonospace(path: String): Boolean =
     workspaceFileKind(path) == WorkspaceFileKind.Code
+
+/** Longest line the read-only preview lays out; longer lines are cut with an ellipsis. */
+const val WORKSPACE_PREVIEW_LINE_LIMIT = 4_000
+
+/**
+ * Cuts each line of a read-only preview to [limit] characters. Text layout of
+ * one very long line (a minified bundle, a log without newlines) grew native
+ * memory without bound and got processes across the device killed (found on
+ * the emulator with a 1 MB single-line file, 5e-9).
+ */
+fun previewLines(text: String, limit: Int = WORKSPACE_PREVIEW_LINE_LIMIT): Pair<String, Boolean> {
+    if (text.length <= limit) return text to false
+    var cut = false
+    val out = StringBuilder(minOf(text.length, 1_100_000))
+    var start = 0
+    while (true) {
+        val end = text.indexOf('\n', start).let { if (it < 0) text.length else it }
+        if (end - start > limit) {
+            out.append(text, start, start + limit).append('\u2026')
+            cut = true
+        } else {
+            out.append(text, start, end)
+        }
+        if (end == text.length) break
+        out.append('\n')
+        start = end + 1
+    }
+    return out.toString() to cut
+}

@@ -1151,4 +1151,5 @@
     <string name="omni_tablet_pane_expanded">Expanded, drag to resize</string>
     <string name="omni_tablet_pane_expand">Expand pane</string>
     <string name="omni_tablet_pane_collapse">Collapse pane</string>
+    <string name="omni_ws_long_lines">Some lines are very long, so they are cut here and the file can\'t be edited here.</string>
 </resources>

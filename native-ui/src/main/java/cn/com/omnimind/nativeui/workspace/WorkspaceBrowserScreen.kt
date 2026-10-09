@@ -138,81 +138,81 @@ fun WorkspaceBrowserScreen(
                 }
             }
         }
-    }
-
-    val sheetEntry = sheetPath?.let(entries::get)?.entry
-    OverlayBottomSheet(
-        show = sheetEntry != null,
-        title = sheetEntry?.name,
-        backgroundColor = palette.page,
-        onDismissRequest = { sheetPath = null },
-    ) {
-        if (sheetEntry != null) EntryActions(
-            entry = sheetEntry,
-            onEdit = { sheetPath = null; onOpenFile(sheetEntry.path, true) },
-            onRename = { sheetPath = null; renamePath = sheetEntry.path },
-            onMove = { sheetPath = null; actions.startMove(sheetEntry.path) },
-            onDelete = { sheetPath = null; deletePath = sheetEntry.path },
-        )
-    }
-
-    val renaming = renamePath?.let(entries::get)?.entry
-    if (renaming != null) RenameDialog(renaming, onDismiss = { renamePath = null }) { name ->
-        renamePath = null
-        actions.rename(renaming.path, name)
-    }
-
-    val deleting = deletePath?.let(entries::get)?.entry
-    OmniConfirmDialog(
-        show = deleting != null,
-        title = stringResource(when {
-            deleting?.mount == true -> R.string.omni_ws_unmount
-            deleting?.directory == true -> R.string.omni_ws_delete_folder
-            else -> R.string.omni_ws_delete_file
-        }),
-        summary = deleting?.let {
-            if (it.mount) stringResource(R.string.omni_ws_unmount_confirm, "/workspace/${it.name}")
-            else stringResource(R.string.omni_ws_delete_confirm, it.name)
-        },
-        confirmText = stringResource(if (deleting?.mount == true) R.string.omni_ws_unmount_action else R.string.omni_ws_delete),
-        onConfirm = {
-            deleting?.let { if (it.mount) actions.unmount(it.path) else actions.delete(it.path) }
-            deletePath = null
-        },
-        onDismiss = { deletePath = null },
-    )
-
-    val topLevel = state.selection.topLevelSelected()
-    OmniConfirmDialog(
-        show = confirmBulkDelete && topLevel.isNotEmpty(),
-        title = stringResource(R.string.omni_ws_delete_selected_title),
-        summary = if (topLevel.size == 1) stringResource(R.string.omni_ws_delete_confirm, workspaceEntryName(topLevel.first()))
-            else stringResource(R.string.omni_ws_delete_selected_confirm, topLevel.size),
-        confirmText = stringResource(R.string.omni_ws_delete),
-        onConfirm = { confirmBulkDelete = false; actions.deleteSelected() },
-        onDismiss = { confirmBulkDelete = false },
-    )
-
-    OverlayBottomSheet(
-        show = state.moveTargets != null,
-        title = stringResource(R.string.omni_ws_move_to),
-        backgroundColor = palette.page,
-        onDismissRequest = actions.cancelMove,
-    ) {
-        val targets = state.moveTargets.orEmpty()
-        if (targets.isEmpty()) {
-            Text(stringResource(R.string.omni_ws_move_no_targets), color = palette.secondaryText,
-                modifier = Modifier.padding(vertical = 24.dp))
-        } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-            items(targets, key = { it.path }) { target ->
-                BasicComponent(
-                    title = target.label,
-                    startAction = { OmniIcon(R.drawable.omni_folder, null, Modifier.padding(end = 12.dp), size = 20.dp) },
-                    onClick = { actions.moveTo(target.path) },
-                )
-            }
+        // Inside the page Scaffold: Miuix overlays render in a Scaffold's popup host.
+        val sheetEntry = sheetPath?.let(entries::get)?.entry
+        OverlayBottomSheet(
+            show = sheetEntry != null,
+            title = sheetEntry?.name,
+            backgroundColor = palette.page,
+            onDismissRequest = { sheetPath = null },
+        ) {
+            if (sheetEntry != null) EntryActions(
+                entry = sheetEntry,
+                onEdit = { sheetPath = null; onOpenFile(sheetEntry.path, true) },
+                onRename = { sheetPath = null; renamePath = sheetEntry.path },
+                onMove = { sheetPath = null; actions.startMove(sheetEntry.path) },
+                onDelete = { sheetPath = null; deletePath = sheetEntry.path },
+            )
         }
-        Spacer(Modifier.height(12.dp))
+
+        val renaming = renamePath?.let(entries::get)?.entry
+        if (renaming != null) RenameDialog(renaming, onDismiss = { renamePath = null }) { name ->
+            renamePath = null
+            actions.rename(renaming.path, name)
+        }
+
+        val deleting = deletePath?.let(entries::get)?.entry
+        OmniConfirmDialog(
+            show = deleting != null,
+            title = stringResource(when {
+                deleting?.mount == true -> R.string.omni_ws_unmount
+                deleting?.directory == true -> R.string.omni_ws_delete_folder
+                else -> R.string.omni_ws_delete_file
+            }),
+            summary = deleting?.let {
+                if (it.mount) stringResource(R.string.omni_ws_unmount_confirm, "/workspace/${it.name}")
+                else stringResource(R.string.omni_ws_delete_confirm, it.name)
+            },
+            confirmText = stringResource(if (deleting?.mount == true) R.string.omni_ws_unmount_action else R.string.omni_ws_delete),
+            onConfirm = {
+                deleting?.let { if (it.mount) actions.unmount(it.path) else actions.delete(it.path) }
+                deletePath = null
+            },
+            onDismiss = { deletePath = null },
+        )
+
+        val topLevel = state.selection.topLevelSelected()
+        OmniConfirmDialog(
+            show = confirmBulkDelete && topLevel.isNotEmpty(),
+            title = stringResource(R.string.omni_ws_delete_selected_title),
+            summary = if (topLevel.size == 1) stringResource(R.string.omni_ws_delete_confirm, workspaceEntryName(topLevel.first()))
+                else stringResource(R.string.omni_ws_delete_selected_confirm, topLevel.size),
+            confirmText = stringResource(R.string.omni_ws_delete),
+            onConfirm = { confirmBulkDelete = false; actions.deleteSelected() },
+            onDismiss = { confirmBulkDelete = false },
+        )
+
+        OverlayBottomSheet(
+            show = state.moveTargets != null,
+            title = stringResource(R.string.omni_ws_move_to),
+            backgroundColor = palette.page,
+            onDismissRequest = actions.cancelMove,
+        ) {
+            val targets = state.moveTargets.orEmpty()
+            if (targets.isEmpty()) {
+                Text(stringResource(R.string.omni_ws_move_no_targets), color = palette.secondaryText,
+                    modifier = Modifier.padding(vertical = 24.dp))
+            } else LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
+                items(targets, key = { it.path }) { target ->
+                    BasicComponent(
+                        title = target.label,
+                        startAction = { OmniIcon(R.drawable.omni_folder, null, Modifier.padding(end = 12.dp), size = 20.dp) },
+                        onClick = { actions.moveTo(target.path) },
+                    )
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
     }
 }
 
