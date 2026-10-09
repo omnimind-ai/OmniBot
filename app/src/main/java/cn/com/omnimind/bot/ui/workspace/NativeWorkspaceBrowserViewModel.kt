@@ -354,7 +354,8 @@ internal fun NativeWorkspaceBrowserRoute(
     viewModel: NativeWorkspaceBrowserViewModel,
     onOpenFile: (path: String, edit: Boolean) -> Unit,
     onBack: () -> Unit,
+    embedded: Boolean = false,
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
-    WorkspaceBrowserScreen(state, viewModel.actions, onOpenFile, onBack)
+    WorkspaceBrowserScreen(state, viewModel.actions, onOpenFile, onBack, embedded)
 }

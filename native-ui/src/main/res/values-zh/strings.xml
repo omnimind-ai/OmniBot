@@ -1145,4 +1145,10 @@
     <string name="omni_ws_discard_title">放弃修改</string>
     <string name="omni_ws_unsaved_summary">当前有未保存修改，确认放弃吗？</string>
     <string name="omni_ws_discard">放弃</string>
+    <string name="omni_tablet_drawer_pane">会话列表栏</string>
+    <string name="omni_tablet_workspace_pane">工作区栏</string>
+    <string name="omni_tablet_pane_collapsed">已收起</string>
+    <string name="omni_tablet_pane_expanded">已展开，可拖动调整宽度</string>
+    <string name="omni_tablet_pane_expand">展开侧栏</string>
+    <string name="omni_tablet_pane_collapse">收起侧栏</string>
 </resources>

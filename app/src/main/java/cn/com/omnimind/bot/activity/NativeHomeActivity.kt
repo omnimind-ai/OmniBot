@@ -32,6 +32,9 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
+import cn.com.omnimind.bot.ui.nativehome.TabletPanePreferences
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceBrowserRoute
 import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceBrowserViewModel
 import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceFileRoute
@@ -188,8 +191,10 @@ class NativeHomeActivity : ComponentActivity() {
             invokeWebAction = viewModel::invokeWebAction,
             refresh = viewModel::refresh,
         )
+        val tabletPanePreferences = TabletPanePreferences(getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE))
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
+            var tabletWidths by remember { mutableStateOf(tabletPanePreferences.read()) }
             val savedPreferences by preferences.state.collectAsStateWithLifecycle()
             val backgroundState by backgroundViewModel.state.collectAsStateWithLifecycle()
             val imagePicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
@@ -303,6 +308,19 @@ class NativeHomeActivity : ComponentActivity() {
                                 key, NativeWorkspaceBrowserViewModel::class.java]
                     }
                     NativeWorkspaceBrowserRoute(workspaceViewModel, onOpenFile, onBack)
+                },
+                workspacePane = { onOpenFile, onClose ->
+                    val paneViewModel = remember {
+                        ViewModelProvider(this@NativeHomeActivity,
+                            NativeWorkspaceBrowserViewModel.Factory(this@NativeHomeActivity, null))[
+                                "workspace-pane", NativeWorkspaceBrowserViewModel::class.java]
+                    }
+                    NativeWorkspaceBrowserRoute(paneViewModel, onOpenFile, onClose, embedded = true)
+                },
+                tabletWidths = tabletWidths,
+                onTabletWidthsChange = { widths ->
+                    tabletWidths = widths
+                    tabletPanePreferences.write(widths)
                 },
                 workspaceFile = { path, edit, key, onBack ->
                     val fileViewModel = remember(key) {

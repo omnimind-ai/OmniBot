@@ -68,9 +68,11 @@ fun WorkspaceBrowserScreen(
     actions: WorkspaceBrowserActions,
     onOpenFile: (path: String, edit: Boolean) -> Unit,
     onBack: () -> Unit,
+    /** The tablet workspace pane (5e-7d): system back belongs to the chat page beside it. */
+    embedded: Boolean = false,
 ) {
     val palette = LocalOmniPalette.current
-    BackHandler(enabled = state.canGoUp, onBack = actions.goUp)
+    BackHandler(enabled = state.canGoUp && !embedded, onBack = actions.goUp)
     var sheetPath by rememberSaveable { mutableStateOf<String?>(null) }
     var renamePath by rememberSaveable { mutableStateOf<String?>(null) }
     var deletePath by rememberSaveable { mutableStateOf<String?>(null) }

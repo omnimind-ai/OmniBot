@@ -1145,4 +1145,10 @@
     <string name="omni_ws_discard_title">Discard changes</string>
     <string name="omni_ws_unsaved_summary">You have unsaved changes. Discard them?</string>
     <string name="omni_ws_discard">Discard</string>
+    <string name="omni_tablet_drawer_pane">Conversation list pane</string>
+    <string name="omni_tablet_workspace_pane">Workspace pane</string>
+    <string name="omni_tablet_pane_collapsed">Collapsed</string>
+    <string name="omni_tablet_pane_expanded">Expanded, drag to resize</string>
+    <string name="omni_tablet_pane_expand">Expand pane</string>
+    <string name="omni_tablet_pane_collapse">Collapse pane</string>
 </resources>

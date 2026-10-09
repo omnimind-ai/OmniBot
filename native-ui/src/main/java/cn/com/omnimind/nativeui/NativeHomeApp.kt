@@ -12,6 +12,14 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import cn.com.omnimind.nativeui.home.TabletPaneControls
+import cn.com.omnimind.nativeui.home.TabletPaneWidths
+import cn.com.omnimind.nativeui.home.TabletShell
+import cn.com.omnimind.nativeui.home.isTabletLandscape
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.unit.dp
@@ -124,6 +132,10 @@ fun NativeHomeApp(
         { _, _, _, _ -> },
     workspaceFile: @Composable (path: String, edit: Boolean, instanceKey: String, onBack: () -> Unit) -> Unit =
         { _, _, _, _ -> },
+    /** The tablet workspace pane (5e-7d); [onClose] collapses it. */
+    workspacePane: @Composable (onOpenFile: (String, Boolean) -> Unit, onClose: () -> Unit) -> Unit = { _, _ -> },
+    tabletWidths: TabletPaneWidths = TabletPaneWidths(),
+    onTabletWidthsChange: (TabletPaneWidths) -> Unit = {},
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -162,6 +174,52 @@ fun NativeHomeApp(
                 else -> Unit
             }
         }
+        var leftCollapsed by rememberSaveable { mutableStateOf(false) }
+        var rightCollapsed by rememberSaveable { mutableStateOf(false) }
+        val top = backStack.lastOrNull()
+        val chatOnTop = top is HomeRoute.ChatTranscriptPreview || top is HomeRoute.NativeNewChat
+        // A conversation picked in the drawer pane replaces the chat beside it (Flutter switched the
+        // embedded thread); from Home it opens on top.
+        val openFromPane: (HomeRoute) -> Unit = { route ->
+            if (chatOnTop) backStack.removeLastOrNull()
+            backStack.add(route)
+        }
+        val paneTranscript: (ConversationSummary) -> Unit = { conversation ->
+            openFromPane(HomeRoute.ChatTranscriptPreview(conversation.id, conversation.mode, conversation.title))
+        }
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+        val tablet = isTabletLandscape(maxWidth.value, maxHeight.value) && (top == HomeRoute.Home || chatOnTop)
+        val controls = TabletPaneControls(
+            leftCollapsed, rightCollapsed,
+            toggleLeft = { leftCollapsed = !leftCollapsed },
+            toggleRight = { rightCollapsed = !rightCollapsed },
+        )
+        TabletShell(
+            enabled = tablet,
+            widths = tabletWidths,
+            onWidthsChange = onTabletWidthsChange,
+            controls = controls,
+            showRight = chatOnTop,
+            left = {
+                HomeDrawerContent(
+                    state = state,
+                    actions = actions,
+                    navigate = { it() },
+                    onSettings = { backStack.add(HomeRoute.Settings) },
+                    onArchive = { backStack.add(HomeRoute.Archive) },
+                    onNewConversation = { openFromPane(HomeRoute.NativeNewChat(System.currentTimeMillis())) },
+                    onScheduledTasks = { backStack.add(HomeRoute.ScheduledTasks) },
+                    onExecutionHistory = { backStack.add(HomeRoute.ExecutionHistory) },
+                    onSkills = { backStack.add(HomeRoute.Skills) },
+                    onPlugins = { backStack.add(HomeRoute.Plugins) },
+                    onMemory = { backStack.add(HomeRoute.Memory) },
+                    onTranscript = paneTranscript,
+                )
+            },
+            right = {
+                workspacePane({ path, edit -> backStack.add(HomeRoute.WorkspaceFile(path, edit)) }) { rightCollapsed = true }
+            },
+        ) {
         NavDisplay(
             backStack = backStack,
             modifier = Modifier.fillMaxSize().background(palette.page),
@@ -189,6 +247,7 @@ fun NativeHomeApp(
                     onNativeChatWithDraft = openNativeChatWithDraft,
                     actions = actions,
                     onWorkspace = { backStack.add(HomeRoute.Workspace()) },
+                    drawerPane = if (tablet) controls.toggleLeft else null,
                 )
             }
             entry<HomeRoute.Archive> {
@@ -309,6 +368,8 @@ fun NativeHomeApp(
                 }
             }
         }
+        }
+        }
     }
 }
 
@@ -331,9 +392,12 @@ private fun HomeWithDrawer(
     onNativeChatWithDraft: (String) -> Unit,
     actions: NativeHomeActions,
     onWorkspace: () -> Unit = {},
+    /** Non-null on a tablet: the drawer is the permanent pane and the menu button toggles it (5e-7d). */
+    drawerPane: (() -> Unit)? = null,
 ) {
     val palette = LocalOmniPalette.current
     val drawer = rememberDrawerState(DrawerValue.Closed)
+    LaunchedEffect(drawerPane != null) { if (drawerPane != null) drawer.snapTo(DrawerValue.Closed) }
     val scope = rememberCoroutineScope()
     val navigate: (() -> Unit) -> Unit = { action ->
         scope.launch {
@@ -346,6 +410,7 @@ private fun HomeWithDrawer(
             val drawerWidth = maxWidth * .8f
             ModalNavigationDrawer(
                 drawerState = drawer,
+                gesturesEnabled = drawerPane == null,
                 scrimColor = palette.scrim,
                 drawerContent = {
                     ModalDrawerSheet(
@@ -355,31 +420,19 @@ private fun HomeWithDrawer(
                         drawerContainerColor = palette.drawer, drawerTonalElevation = 0.dp,
                         windowInsets = WindowInsets(0, 0, 0, 0),
                     ) {
-                        HomeDrawer(
+                        HomeDrawerContent(
                             state = state,
-                            onSettings = { navigate(onSettings) },
-                            onArchive = { navigate(onArchive) },
-                            // The native chat page (5e-1); the composer entry on Home keeps the Flutter chat.
-                            onNewConversation = { navigate(onNativeNewChat) },
-                            onScheduledTasks = { navigate(onScheduledTasks) },
-                            onExecutionHistory = { navigate(onExecutionHistory) },
-                            onSkills = { navigate(onSkills) },
-                            onPlugins = { navigate(onPlugins) },
-                            onMemory = { navigate(onMemory) },
-                            actions = actions.copy(
-                                open = { destination ->
-                                    navigate {
-                                        // The native page has the composer, message actions and the
-                                        // Harness switcher (5e-5), so the drawer opens it for every
-                                        // conversation it can send to; the rest keep their Flutter flows.
-                                        val native = (destination as? LegacyDestination.Conversation)
-                                            ?.let { target -> state.conversations.firstOrNull { it.id == target.id && it.mode == target.mode } }
-                                            ?.takeIf(::opensNatively)
-                                        if (native != null) onTranscript(native) else actions.open(destination)
-                                    }
-                                },
-                                previewTranscript = { conversation -> navigate { onTranscript(conversation) } },
-                            ),
+                            actions = actions,
+                            navigate = navigate,
+                            onSettings = onSettings,
+                            onArchive = onArchive,
+                            onNewConversation = onNativeNewChat,
+                            onScheduledTasks = onScheduledTasks,
+                            onExecutionHistory = onExecutionHistory,
+                            onSkills = onSkills,
+                            onPlugins = onPlugins,
+                            onMemory = onMemory,
+                            onTranscript = onTranscript,
                         )
                     }
                 },
@@ -397,11 +450,57 @@ private fun HomeWithDrawer(
                         else -> actions.open(destination)
                     }
                 }
-                HomeScreen(state, backgroundState, { actions.refresh(); scope.launch { drawer.open() } },
+                HomeScreen(state, backgroundState, {
+                    actions.refresh()
+                    if (drawerPane != null) drawerPane() else scope.launch { drawer.open() }
+                },
                     onPet, onAgents, onTerminal, openHome)
             }
         }
     }
+}
+
+/** The drawer as a modal sheet (phones) or the permanent tablet pane; [navigate] closes the sheet first. */
+@Composable
+private fun HomeDrawerContent(
+    state: NativeHomeState,
+    actions: NativeHomeActions,
+    navigate: (() -> Unit) -> Unit,
+    onSettings: () -> Unit,
+    onArchive: () -> Unit,
+    onNewConversation: () -> Unit,
+    onScheduledTasks: () -> Unit,
+    onExecutionHistory: () -> Unit,
+    onSkills: () -> Unit,
+    onPlugins: () -> Unit,
+    onMemory: () -> Unit,
+    onTranscript: (ConversationSummary) -> Unit,
+) {
+    HomeDrawer(
+        state = state,
+        onSettings = { navigate(onSettings) },
+        onArchive = { navigate(onArchive) },
+        onNewConversation = { navigate(onNewConversation) },
+        onScheduledTasks = { navigate(onScheduledTasks) },
+        onExecutionHistory = { navigate(onExecutionHistory) },
+        onSkills = { navigate(onSkills) },
+        onPlugins = { navigate(onPlugins) },
+        onMemory = { navigate(onMemory) },
+        actions = actions.copy(
+            open = { destination ->
+                navigate {
+                    // The native page has the composer, message actions and the
+                    // Harness switcher (5e-5), so the drawer opens it for every
+                    // conversation it can send to; the rest keep their Flutter flows.
+                    val native = (destination as? LegacyDestination.Conversation)
+                        ?.let { target -> state.conversations.firstOrNull { it.id == target.id && it.mode == target.mode } }
+                        ?.takeIf(::opensNatively)
+                    if (native != null) onTranscript(native) else actions.open(destination)
+                }
+            },
+            previewTranscript = { conversation -> navigate { onTranscript(conversation) } },
+        ),
+    )
 }
 
 /**

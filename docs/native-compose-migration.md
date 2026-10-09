@@ -712,6 +712,44 @@ Manual acceptance (5e-7c): send from the native page and keep it open
 until the reply ends: no completion notification; leave the page before it
 ends: the notification appears.
 
+### 5e-7d checkpoint: tablet landscape layout (source complete; device acceptance pending)
+
+- In a landscape window at least 960 x 600 dp (Dart
+  `isHdPadLandscapeViewport`), Home and the native chat pages show the
+  drawer as a permanent left pane; chat pages add the workspace browser
+  (5e-8a) as a right pane. Other pages (settings, workspace, file preview)
+  take the full width. `TabletShell` keeps the page stack in the same slot
+  whatever panes show, so resizing a multi-window split or rotating keeps
+  the page state.
+- Widths follow `HdPadPaneLayoutResolver` (`TabletPanes.resolve`: left
+  220–360, right 240–420, center at least 320). Dragging a divider resizes;
+  dragging past the Dart collapse threshold collapses the pane. Widths are
+  saved under the Flutter keys (`chat_hd_pad_left_pane_width` /
+  `..._right_...`, in the `shared_preferences` double encoding), so both
+  chats open at the same widths. Collapse state is per session, as in
+  Flutter.
+- Changes from Flutter: a collapsed pane keeps its divider as a rail that
+  reopens it on tap (Flutter needed the menu button and its own workspace
+  chip). Dividers are TalkBack buttons with a state description and a
+  collapse/expand action. Home's menu button toggles the left pane instead of opening the
+  modal drawer, whose swipe gesture is off on tablets.
+- A conversation picked in the left pane replaces the chat beside it
+  instead of stacking another page (Flutter switched the embedded thread).
+- The embedded workspace pane leaves system back to the chat page beside it.
+- Verification: `TabletPaneLayoutTest` (6, the Dart
+  `chat_hd_pad_layout_test.dart` cases plus the collapse threshold) and
+  `TabletPanePreferencesTest` (2). `:app` 1556, native-ui 96, 0 failures.
+  No device run; layout, drag feel and the 280 ms pane animation are
+  device-only.
+
+Manual acceptance (5e-7d): on a tablet or a resizable emulator in
+landscape, Home and a chat show the left pane; a chat shows the workspace
+pane. Drag each divider to resize and past the threshold to collapse; tap a
+rail to reopen; reopen the Flutter chat and confirm it uses the same widths.
+Pick conversations in the left pane (no page stacking). Rotate to portrait
+and resize a split window across 960 dp: the chat keeps its draft and
+scroll position. With TalkBack, focus a divider and use its action.
+
 ### 5e-8a checkpoint: workspace browser and file preview (source complete; device acceptance pending)
 
 The tablet layout (5e-7d) needs a workspace pane, so the workspace browser
