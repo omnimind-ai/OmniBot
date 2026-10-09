@@ -109,9 +109,26 @@ sealed interface LegacyDestination {
     /** Plugin-declared in-app route; validated to stay an app-internal path. */
     data class PluginRoute(val route: String) : LegacyDestination
 
+    /** The native workspace browser (5e-8a); null opens the workspace root. */
+    data class Workspace(val path: String? = null) : LegacyDestination
+
+    /** The native file preview (5e-8a); [edit] starts in the editor. */
+    data class WorkspaceFile(val path: String, val edit: Boolean = false) : LegacyDestination
+
     enum class Page : LegacyDestination {
         Account, ModelProviders, SceneModels, RemoteBridge,
         Chat, QuickStart, UserGuide,
-        Workspace,
     }
 }
+
+/**
+ * Destinations [NativeHomeApp] pushes as native pages. The host hands only the
+ * others to Flutter; before 5e-8a it handed everything but ModelProviders, so
+ * a terminal focus or a shared draft opened both pages.
+ */
+val LegacyDestination.opensNativePage: Boolean
+    get() = this == LegacyDestination.Page.ModelProviders ||
+        this is LegacyDestination.TerminalPackage ||
+        this is LegacyDestination.SharedDraft ||
+        this is LegacyDestination.Workspace ||
+        this is LegacyDestination.WorkspaceFile

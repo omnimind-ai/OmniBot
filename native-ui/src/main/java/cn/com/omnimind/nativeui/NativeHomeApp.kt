@@ -69,6 +69,9 @@ internal sealed interface HomeRoute : NavKey {
     ) : HomeRoute
     /** A new conversation on the native chat page; created by its first send (5e-1). */
     /** [sharedDraftKey] names a pending shared draft the page adopts once (5e-7). */
+    /** The workspace browser (5e-8a); [path] null opens the root. */
+    @Serializable data class Workspace(val path: String? = null) : HomeRoute
+    @Serializable data class WorkspaceFile(val path: String, val edit: Boolean = false) : HomeRoute
     @Serializable data class NativeNewChat(
         val requestKey: Long,
         val draft: String = "",
@@ -116,6 +119,11 @@ fun NativeHomeApp(
         conversationId: Long?, mode: String, title: String, instanceKey: String, draft: String,
         sharedDraftKey: String, onNewConversation: () -> Unit, onBack: () -> Unit,
     ) -> Unit = { _, _, _, _, _, _, _, _ -> },
+    /** [instanceKey] scopes the page's ViewModel to this back-stack entry (5e-8a). */
+    workspace: @Composable (path: String?, instanceKey: String, onOpenFile: (String, Boolean) -> Unit, onBack: () -> Unit) -> Unit =
+        { _, _, _, _ -> },
+    workspaceFile: @Composable (path: String, edit: Boolean, instanceKey: String, onBack: () -> Unit) -> Unit =
+        { _, _, _, _ -> },
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -142,6 +150,14 @@ fun NativeHomeApp(
                 is LegacyDestination.SharedDraft -> {
                     actions.consumeDestination()
                     backStack.add(HomeRoute.NativeNewChat(System.currentTimeMillis(), sharedDraftKey = destination.requestKey))
+                }
+                is LegacyDestination.Workspace -> {
+                    actions.consumeDestination()
+                    backStack.add(HomeRoute.Workspace(destination.path))
+                }
+                is LegacyDestination.WorkspaceFile -> {
+                    actions.consumeDestination()
+                    backStack.add(HomeRoute.WorkspaceFile(destination.path, destination.edit))
                 }
                 else -> Unit
             }
@@ -172,6 +188,7 @@ fun NativeHomeApp(
                     onNativeNewChat = openNativeNewChat,
                     onNativeChatWithDraft = openNativeChatWithDraft,
                     actions = actions,
+                    onWorkspace = { backStack.add(HomeRoute.Workspace()) },
                 )
             }
             entry<HomeRoute.Archive> {
@@ -276,6 +293,16 @@ fun NativeHomeApp(
                     replaceWithNewChat,
                 ) { backStack.removeLastOrNull() }
             }
+            entry<HomeRoute.Workspace> { key ->
+                workspace(key.path, "workspace:${key.path.orEmpty()}:${backStack.indexOf(key)}",
+                    { path, edit -> backStack.add(HomeRoute.WorkspaceFile(path, edit)) },
+                ) { backStack.removeLastOrNull() }
+            }
+            entry<HomeRoute.WorkspaceFile> { key ->
+                workspaceFile(key.path, key.edit, "workspace-file:${key.path}:${key.edit}:${backStack.indexOf(key)}") {
+                    backStack.removeLastOrNull()
+                }
+            }
             entry<HomeRoute.NativeNewChat> { key ->
                 chatTranscript(null, "agent", "", "new-chat:${key.requestKey}", key.draft, key.sharedDraftKey, replaceWithNewChat) {
                     backStack.removeLastOrNull()
@@ -303,6 +330,7 @@ private fun HomeWithDrawer(
     onNativeNewChat: () -> Unit,
     onNativeChatWithDraft: (String) -> Unit,
     actions: NativeHomeActions,
+    onWorkspace: () -> Unit = {},
 ) {
     val palette = LocalOmniPalette.current
     val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -365,6 +393,7 @@ private fun HomeWithDrawer(
                             actions.resolveStartupChat()?.let(onTranscript) ?: onNativeNewChat()
                         }
                         is LegacyDestination.NewConversation -> onNativeChatWithDraft(destination.draft)
+                        is LegacyDestination.Workspace -> onWorkspace()
                         else -> actions.open(destination)
                     }
                 }

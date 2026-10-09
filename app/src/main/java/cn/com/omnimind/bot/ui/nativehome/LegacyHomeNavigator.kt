@@ -41,8 +41,9 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 Page.Chat -> "/home/chat"
                 Page.QuickStart -> "/home/first_use_tutorial/setup"
                 Page.UserGuide -> "/my/about/user-guide"
-                Page.Workspace -> "/home/chat"
             }
+            // Native pages since 5e-8a; NativeHomeApp opens them and never hands them over.
+            is LegacyDestination.Workspace, is LegacyDestination.WorkspaceFile -> return
         }
         activity.startActivity(Intent(activity, MainActivity::class.java)
             .putExtra(EXTRA_NATIVE_DESTINATION, route))

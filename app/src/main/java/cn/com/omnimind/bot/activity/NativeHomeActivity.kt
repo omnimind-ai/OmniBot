@@ -32,6 +32,11 @@ import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
+import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceBrowserRoute
+import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceBrowserViewModel
+import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceFileRoute
+import cn.com.omnimind.bot.ui.workspace.NativeWorkspaceFileViewModel
+import cn.com.omnimind.bot.ui.workspace.WorkspaceResourcePaths
 import cn.com.omnimind.bot.ui.nativehome.NativeHomeViewModel
 import cn.com.omnimind.bot.ui.nativehome.resolveNativeHomeLocale
 import cn.com.omnimind.bot.manager.AppPermissionAccess
@@ -42,6 +47,7 @@ import cn.com.omnimind.bot.ui.settings.NativePreferencesViewModel
 import cn.com.omnimind.nativeui.settings.AppearanceScreen
 import cn.com.omnimind.nativeui.settings.HomePreferencesScreen
 import cn.com.omnimind.nativeui.LegacyDestination
+import cn.com.omnimind.nativeui.opensNativePage
 import cn.com.omnimind.bot.ui.settings.NativeAboutRoute
 import cn.com.omnimind.bot.ui.settings.NativeAboutViewModel
 import cn.com.omnimind.bot.ui.settings.NativePermissionsRoute
@@ -215,7 +221,8 @@ class NativeHomeActivity : ComponentActivity() {
             }
             LaunchedEffect(state.pendingDestination) {
                 state.pendingDestination?.let {
-                    if (it != LegacyDestination.Page.ModelProviders) {
+                    // NativeHomeApp consumes the destinations it opens natively.
+                    if (!it.opensNativePage) {
                         viewModel.consumeDestination()
                         navigator.open(it)
                     }
@@ -288,6 +295,22 @@ class NativeHomeActivity : ComponentActivity() {
                         },
                         onBack = onBack,
                     )
+                },
+                workspace = { path, key, onOpenFile, onBack ->
+                    val workspaceViewModel = remember(key) {
+                        ViewModelProvider(this@NativeHomeActivity,
+                            NativeWorkspaceBrowserViewModel.Factory(this@NativeHomeActivity, path))[
+                                key, NativeWorkspaceBrowserViewModel::class.java]
+                    }
+                    NativeWorkspaceBrowserRoute(workspaceViewModel, onOpenFile, onBack)
+                },
+                workspaceFile = { path, edit, key, onBack ->
+                    val fileViewModel = remember(key) {
+                        ViewModelProvider(this@NativeHomeActivity,
+                            NativeWorkspaceFileViewModel.Factory(this@NativeHomeActivity, path, edit))[
+                                key, NativeWorkspaceFileViewModel::class.java]
+                    }
+                    NativeWorkspaceFileRoute(fileViewModel, this@NativeHomeActivity, ::openTranscriptLink, onBack)
                 },
                 terminal = { focusPackageId, onBack ->
                     val terminalViewModel = remember(focusPackageId) {
@@ -366,20 +389,55 @@ class NativeHomeActivity : ComponentActivity() {
     }
 
     /**
-     * Tool-card follow-ups from the read-only preview. App routes hand off to
-     * Flutter like plugin routes; workspace/file actions need the Flutter
-     * resource service (route extras), so they stay in the Flutter chat until 5e.
+     * Tool-card follow-ups (Dart `_runAgentToolAction`). App routes hand off to
+     * Flutter like plugin routes; workspace, preview and open actions open the
+     * native workspace pages (5e-8a); save opens the preview, whose toolbar
+     * saves to the device.
      */
     private fun runTranscriptToolAction(action: AgentToolActionUi) {
         val type = action.type.trim().lowercase()
         val target = action.target.trim()
+        val path = (action.payload["path"] ?: action.payload["workspacePath"])?.toString()?.trim().orEmpty()
+        val shellPath = (action.payload["shellPath"] ?: action.payload["workspaceShellPath"])?.toString()?.trim().orEmpty()
         when {
             type == "route" && target.startsWith("/") -> LegacyHomeNavigator(this).open(LegacyDestination.PluginRoute(target))
-            type in setOf("workspace", "save", "preview", "open") -> Toast.makeText(
-                this, cn.com.omnimind.nativeui.R.string.omni_tool_action_flutter_only, Toast.LENGTH_SHORT,
-            ).show()
+            type == "workspace" -> openWorkspaceResource(path.ifEmpty { null }, shellPath.ifEmpty { null }, target, directory = true)
+            type in setOf("save", "preview", "open") && path.isNotEmpty() ->
+                viewModel.requestDestination(LegacyDestination.WorkspaceFile(path))
             target.isNotEmpty() -> openTranscriptLink(target)
         }
+    }
+
+    /**
+     * Opens a workspace path or `omnibot://` resource natively (Dart
+     * `OmnibotResourceService.openUri`/`openWorkspace`): folders in the
+     * browser, files in the preview. Public storage still needs the
+     * all-files permission, so those paths keep the Flutter flow that asks.
+     */
+    private fun openWorkspaceResource(path: String?, shellPath: String?, uri: String, directory: Boolean = false) {
+        val paths = WorkspaceResourcePaths.from(this)
+        val resolved = path ?: shellPath?.let(paths::androidPathForShellPath) ?: paths.resolveUriToPath(uri)
+            ?: if (directory) paths.rootPath else return
+        if (paths.isPublicPath(resolved) && !cn.com.omnimind.bot.workspace.PublicStorageAccess.isGranted()) {
+            Toast.makeText(this, cn.com.omnimind.nativeui.R.string.omni_tool_action_flutter_only, Toast.LENGTH_SHORT).show()
+            return
+        }
+        val file = java.io.File(resolved)
+        val insideWorkspace = cn.com.omnimind.nativeui.workspace.isSelfOrDescendant(resolved, paths.rootPath)
+        val destination = when {
+            // The native browser is rooted at the workspace; public folders keep the Flutter page.
+            (file.isDirectory || directory) && !insideWorkspace -> {
+                Toast.makeText(this, cn.com.omnimind.nativeui.R.string.omni_tool_action_flutter_only, Toast.LENGTH_SHORT).show()
+                return
+            }
+            file.isDirectory -> LegacyDestination.Workspace(resolved)
+            // A workspace action on a file shows its folder (Dart opened the browser on the file and found nothing).
+            directory && file.isFile -> LegacyDestination.Workspace(file.parent)
+            // Dart: a missing workspace target opens the workspace instead of a dead preview.
+            !file.exists() && (directory || uri.startsWith("omnibot://workspace/")) -> LegacyDestination.Workspace(resolved)
+            else -> LegacyDestination.WorkspaceFile(resolved)
+        }
+        viewModel.requestDestination(destination)
     }
 
     /** Home's untargeted chat entry, resolved like the Flutter chat page's bootstrap (5e-4). */
@@ -398,6 +456,10 @@ class NativeHomeActivity : ComponentActivity() {
     }
 
     private fun openTranscriptLink(link: String) {
+        if (link.startsWith("omnibot://")) {
+            openWorkspaceResource(null, null, link)
+            return
+        }
         val uri = runCatching { android.net.Uri.parse(link) }.getOrNull() ?: return
         if (uri.scheme !in setOf("http", "https")) return
         runCatching { startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, uri)) }

@@ -124,7 +124,7 @@ private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit, onAgents
                 .background(Brush.horizontalGradient(gradient)), contentAlignment = Alignment.Center) {
                 OmniIcon(R.drawable.omni_bot, stringResource(R.string.omni_chat), tint = Color.White, size = 19.dp)
             }
-            Box(Modifier.weight(1f).fillMaxHeight().clickable(role = Role.Button) { onOpen(LegacyDestination.Page.Workspace) },
+            Box(Modifier.weight(1f).fillMaxHeight().clickable(role = Role.Button) { onOpen(LegacyDestination.Workspace()) },
                 contentAlignment = Alignment.Center) {
                 OmniIcon(R.drawable.omni_folders, stringResource(R.string.omni_workspace), tint = palette.tertiaryText, size = 19.dp)
             }

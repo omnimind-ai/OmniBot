@@ -712,6 +712,95 @@ Manual acceptance (5e-7c): send from the native page and keep it open
 until the reply ends: no completion notification; leave the page before it
 ends: the notification appears.
 
+### 5e-8a checkpoint: workspace browser and file preview (source complete; device acceptance pending)
+
+The tablet layout (5e-7d) needs a workspace pane, so the workspace browser
+moves first. Native Home's Workspace button now opens a native page instead
+of the Flutter chat.
+
+- **Browser** (`WorkspaceBrowserScreen`, `NativeWorkspaceBrowserViewModel`,
+  `WorkspaceFileRepository`): breadcrumbs from `/workspace`, folders first,
+  inline expansion two levels deep and then descend, mounts marked and
+  unmount-only, long-press sheet (edit, rename, move, delete), multi-select
+  with folder include/child exclude and bulk delete. Back leaves selection
+  mode, then climbs a folder, and only leaves the page at the root. A
+  refresh is fenced by a generation so a slow listing of a folder the user
+  left never replaces the current one. Pure rules
+  (`WorkspaceBrowserModels.kt`) are ported from
+  `omnibot_workspace_browser.dart`.
+- **Move** uses a folder picker instead of drag-and-drop (the Dart drag only
+  reached folders on screen and was not reachable with TalkBack). The same
+  checks refuse a move into itself or a descendant, into the current parent,
+  of a mount, or onto a taken name.
+- **File preview** (`WorkspaceFileScreen`, `NativeWorkspaceFileViewModel`):
+  text, Markdown (`ChatMarkdownText`) and code with an editor; images
+  decoded with sampling; a draft survives rotation and process death
+  (`SavedStateHandle`), and leaving with unsaved edits asks first.
+  Open-with, open-in-browser (HTML), share and save-to-device (system
+  "create document" picker) are in the toolbar. PDF, HTML, Office and media
+  files show their details and hand off to the system: the Flutter page's
+  embedded WebView/PDF/media players are not ported yet.
+- **File hand-offs** (`SharedFileIntents`): the FileProvider staging, mime
+  fallback and per-resolver grants moved out of `FileSaveChannel`, which now
+  calls the same code, so Flutter and native stage files identically.
+- **Links and tool cards**: on the native chat page, `omnibot://` links and
+  the workspace/preview/open/save tool actions open these pages
+  (`WorkspaceResourcePaths`, a port of the resource service's uri and shell
+  path mapping) instead of the "open from the chat page" toast. Public
+  storage still goes through the Flutter flow that requests the all-files
+  permission.
+
+- **Links are never followed when deleting**: a mount is unmounted by
+  removing the link, and a symlink nested in a deleted folder is removed as a
+  link, so host files are never touched
+  (`aNestedLinkIsDeletedAsALink`,
+  `deletingAMountUnmountsWithoutTouchingTheHostFiles`). This is a
+  safeguard, not a reproduced Flutter bug.
+
+Legacy bugs fixed (each covered by a Kotlin test):
+
+1. **Saving wrote in place.** An interrupted save left a truncated file.
+   Saves now write a sibling temp file and rename it atomically, writing
+   through a symlinked file to its target (`writeReplacesContentAndLeavesNoTempFile`,
+   `writingThroughALinkKeepsTheLink`).
+2. **Large or non-UTF-8 files broke the preview.** Dart read the whole file
+   with a strict decoder, so a binary-ish log failed to open and a huge one
+   could exhaust memory. The preview reads at most 1 MB, replaces malformed
+   bytes and opens a truncated file read-only
+   (`readTextTruncatesLargeFilesAndReplacesMalformedBytes`).
+3. **Native Home sent some native destinations to Flutter.** The host handed
+   every pending destination except ModelProviders to Flutter while
+   `NativeHomeApp` also pushed native pages for terminal focus and shared
+   drafts. Both effects read the same composition's value, so both ran: the
+   Flutter page opened over the native one. For shared drafts this was a
+   5e-7a regression (the Flutter chat also adopted the draft). `LegacyDestination.opensNativePage` now names
+   every destination the native app owns
+   (`destinationsNativeHomeOpensAreNotHandedToFlutter`).
+
+- Still Flutter: the in-chat workspace panel and the Flutter `/home/omnibot_workspace`
+  and `/home/omnibot_artifact_preview` routes (used by the Flutter chat and
+  ChatBotSheet), the remote Codex workspace browser, and embedded
+  PDF/HTML/Office/media preview.
+- Verification: new `WorkspaceBrowserModelsTest` (12),
+  `WorkspaceFileRepositoryTest` (12, real temp directories and symlinks) and
+  `WorkspaceResourcePathsTest` (3). No device run.
+
+Manual acceptance (5e-8a):
+1. Home → Workspace: the root lists folders first, mounts are marked;
+   expand two levels, the third opens as the current folder; breadcrumbs
+   and back climb up.
+2. Rename, move (picker) and delete a file and a folder; try the refused
+   moves (into itself, onto a taken name, a mount); unmount a mount and
+   confirm the host folder is untouched.
+3. Multi-select a folder, exclude one child, delete: only the child stays.
+4. Open a `.md`, edit, rotate, then back: the draft survives and leaving
+   asks first; save and reopen. Open a large log: truncated, read-only.
+5. Open an image, a PDF and an HTML file: image renders; PDF/HTML offer
+   open-with/browser/share; save to device writes a copy.
+6. In the native chat, tap an `omnibot://workspace/...` link and a tool
+   card's preview action: the native pages open. Settings → Terminal from a
+   focus link opens only the native page (no Flutter page behind it).
+
 ## Batch 5d-1 plan: Compose composer (2026-10-07; 5d-1a, 5d-1b and 5d-1c source complete)
 
 | Slice | Scope |
