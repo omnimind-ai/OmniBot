@@ -44,23 +44,33 @@ It requires the previous R2 credentials and is not used by CI.
 
 ## Catalog scheduler cutover
 
-The website repository owns the only hourly catalog workflow after migration.
-This Android workflow has `workflow_dispatch` only, so merging this branch cannot
-start a second hourly publisher.
+The production server `4090` owns the only hourly catalog publisher after
+migration: `omnibot-catalog-sync.timer` runs at minute 37 of every hour, catches
+up after downtime with `Persistent=true`, and checks again five minutes after
+boot. Its oneshot service runs as `sy` from the current website backend release
+and maps the existing private environment's `ADMIN_TOKEN` into the shared CLI;
+no token is duplicated in the repository or in a second secret file.
 
-Deploy and validate the website backend first, configure the website repository's
-`APP_UPDATE_WORKER_TOKEN` to match its `ADMIN_TOKEN`, then set website repository
-variable `OMNIBOT_BACKEND_READY=true`. Both website scheduled and manual runs
-require that readiness switch. Manually dispatch the website workflow and verify
-publishing plus its public mirror check before disabling the old Android hourly
-workflow. The Android default branch still writes directly to R2 until that old
-workflow is disabled or this manual-only change reaches the default branch;
-changing the Worker to a compatibility proxy does not stop direct R2 writes.
+Deploy and validate the website backend first, then run the website repository's
+`deploy/pa2/install-catalog-sync.sh`. The installer backs up existing units and
+timer enable/active state, runs a real sync before enabling the timer, and restores
+the previous configuration if installation or synchronization fails. It never
+stops the website backend. Verify service logs, published SHA-256, public catalog,
+and the timer's next activation before disabling the old Android R2 hourly
+workflow. Changing the Worker to a compatibility proxy does not stop direct R2
+writes from the old Android default-branch workflow.
+
+Both website and Android GitHub catalog workflows are manual-only recovery
+options. This Android workflow has `workflow_dispatch` only, so merging this
+branch cannot start a second hourly publisher. The website manual workflow also
+requires `OMNIBOT_BACKEND_READY=true` and `APP_UPDATE_WORKER_TOKEN` matching the
+backend's `ADMIN_TOKEN`. GitHub Actions organization billing currently prevents
+its jobs from starting; the production timer does not depend on Actions billing.
 
 The website URL defaults to `https://omnibot.omnimind.com.cn`; an optional
-`OMNIBOT_BACKEND_URL` repository variable overrides it. No R2/AWS secrets are
-needed by the website scheduler. Keep this Android catalog workflow manual-only
-when this feature branch is merged.
+`OMNIBOT_BACKEND_URL` configuration overrides it. No R2/AWS secrets are needed by
+the production scheduler. Keep both repository workflows manual-only when this
+feature branch is merged.
 
 ## Scope
 
