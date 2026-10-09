@@ -383,14 +383,17 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
         final text = item['content'] as String? ?? '';
         final attachments = item['attachments'] as List? ?? const [];
         if (text.trim().isEmpty && attachments.isEmpty) continue;
+        // Adapters can retain the host's submitted message identity. This
+        // also covers retries where user and prompt ids are unrelated.
+        final messageId = _asAgentString(item['hostMessageId']) ?? '$itemId-agent-user';
         final content = <String, dynamic>{
           'text': text,
-          'id': '$itemId-agent-user',
+          'id': messageId,
           if (attachments.isNotEmpty) 'attachments': attachments,
         };
         chronological.add(
           ChatMessageModel(
-            id: '$itemId-agent-user',
+            id: messageId,
             type: 1,
             user: 1,
             content: content,

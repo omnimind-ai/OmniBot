@@ -324,11 +324,13 @@ void main() {
     await AgentRuntimeService.promptSession(
       conversationId: 42,
       requestId: 'prompt-1',
+      userMessageId: 'original-user',
       text: 'hello',
     );
 
     expect(capturedCall?.method, 'session/prompt');
     expect((capturedCall?.arguments as Map)['requestId'], 'prompt-1');
+    expect((capturedCall?.arguments as Map)['userMessageId'], 'original-user');
   });
 
   test(

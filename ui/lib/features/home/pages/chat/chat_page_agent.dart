@@ -48,7 +48,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   bool _usesSharedProviderModel(String? agentId) {
     final normalizedAgentId = agentId?.trim() ?? '';
     if (normalizedAgentId.isEmpty ||
-        normalizedAgentId == _kRemoteCodexModeAgentId) {
+        normalizedAgentId == _kRemoteCodexModeAgentId ||
+        normalizedAgentId == 'na-cloud') {
       return false;
     }
     // Every local ACP Agent consumes the app's configured Provider catalog.
@@ -290,7 +291,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         final previousTarget = _threadTargetForMode;
         final target = buildHarnessSwitchTarget(
           agentId: normalized,
-          agentRuntime: selectsRemote ? 'remote' : 'local',
+          agentRuntime: selectsRemote
+              ? 'remote'
+              : normalized == 'na-cloud'
+              ? 'na'
+              : 'local',
           requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
         );
         // Only a real switch invalidates bootstrap/navigation work. A no-op
@@ -616,6 +621,20 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   @override
   Future<void> _loadAgentModelOptions({bool force = false}) async {
     final statusForRequest = _agentRuntimeStatus;
+    if (_activeAcpAgentId == 'na-cloud') {
+      if (!mounted) return;
+      setState(() {
+        _agentModelOptions = const <String>[];
+        _agentReasoningEffortOptions = const <String>[];
+        _agentCollaborationModes = const <String>[];
+        _agentModelConfigSupported = false;
+        _activeAgentModelId = null;
+        _activeAgentReasoningEffort = null;
+        _activeAgentCollaborationMode = null;
+        _loadedAgentModelSourceKey = agentModelSourceKey(statusForRequest);
+      });
+      return;
+    }
     final sourceKey = agentModelSourceKey(statusForRequest);
     if (_isAgentModelListLoading && _loadingAgentModelSourceKey == sourceKey) {
       return;
@@ -823,9 +842,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         includeHistory: false,
       );
       if (!mounted || generation != _conversationTargetRequestId) return;
-      final option = acpConfigOptions(
-        response,
-      ).where((option) => option['id'] == 'collaboration_mode').firstOrNull;
+      final option = acpConfigOptions(response)
+          .where((option) => option['id'] == 'collaboration_mode')
+          .firstOrNull;
       final choices = <Map>[];
       for (final entry
           in (option?['options'] as List? ?? const []).whereType<Map>()) {
@@ -1378,9 +1397,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
   @override
   Future<void> _startAgentReviewCommand() async {
     if (_availableAcpCommandForText('/review') == null) {
-      _showSnackBar(LegacyTextLocalizer.isEnglish
-          ? 'This Agent does not advertise /review'
-          : '当前 Agent 未提供 /review 命令');
+      _showSnackBar(
+        LegacyTextLocalizer.isEnglish
+            ? 'This Agent does not advertise /review'
+            : '当前 Agent 未提供 /review 命令',
+      );
       return;
     }
     if (_isAiResponding) {
@@ -1766,12 +1787,10 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (remoteCodex && eventThreadId != null && !shouldPromoteRemoteEvent) {
       this._ensureRemoteCodexRuntimeForThread(eventThreadId);
     }
-    final normalConversationId = _modeState(
-      ChatPageMode.normal,
-    ).currentConversationId;
-    final agentConversationId = _modeState(
-      ChatPageMode.agent,
-    ).currentConversationId;
+    final normalConversationId = _modeState(ChatPageMode.normal)
+        .currentConversationId;
+    final agentConversationId = _modeState(ChatPageMode.agent)
+        .currentConversationId;
     final ownerMode = _runtimeCoordinator.modeForAcpEvent(
       conversationId: conversationId,
       sessionId: eventSessionId,
@@ -2084,6 +2103,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         // runtime uses it to return the original turn instead of replaying
         // tool calls.
         requestId: aiMessageId,
+        // The cloud adapter preserves the host's actual user item on reload.
+        // Retries may retain a user item while reserving a new prompt id.
+        userMessageId: dispatchAgentId == 'na-cloud' ? userMessageId : null,
         agentId: remoteCodex ? null : dispatchAgentId,
         text: messageText,
         attachments: attachments,

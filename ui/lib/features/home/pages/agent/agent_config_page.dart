@@ -106,7 +106,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         _loading = false;
         _error = null;
       });
-      if (agent.builtIn) {
+      if (agent.builtIn && _kind != 'na-cloud') {
         unawaited(_loadSharedModelSelection());
       }
     } catch (error) {
@@ -268,6 +268,15 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     });
     try {
       switch (_kind) {
+        case 'na-cloud':
+          final payload = await AgentRuntimeService.writeAgentConfig(
+            _agent!.id,
+            baseUrl: _baseUrlController.text.trim(),
+            apiKey: _apiKeyController.text.trim(),
+          );
+          if (!mounted) return;
+          _syncPayload(payload);
+          break;
         case 'codex':
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
@@ -501,6 +510,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
 
   String get _pageTitle {
     return switch (_kind) {
+      'na-cloud' => _text('Na 云端连接', 'Na cloud connection'),
       'codex' => _text('Codex API 配置', 'Codex API configuration'),
       'json' => _text('Claude Code 配置', 'Claude Code configuration'),
       'jsonc' => _text('OpenCode 配置', 'OpenCode configuration'),
@@ -515,6 +525,10 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
 
   String get _pageSubtitle {
     return switch (_kind) {
+      'na-cloud' => _text(
+        'Na 的模型、密钥和执行权限由云端管理。这里只配置服务地址与账户访问令牌；令牌仅保留在本次 App 进程中。',
+        'Na manages its model, API key and permissions in the cloud. Configure the address and account access token here; the token stays in this App process.',
+      ),
       'codex' => _text(
         '默认直接复用统一 Provider；这里仅查看或覆盖官方 Codex 文件，保存后下一次启动 ACP 时生效。',
         'The shared Provider is used by default. This page only views or overrides the official Codex files; changes apply on the next ACP start.',
@@ -541,12 +555,52 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
 
   Widget _buildEditor() {
     return switch (_kind) {
+      'na-cloud' => _buildNaConnectionEditor(),
       'codex' => _buildCodexEditor(),
       'json' || 'jsonc' => _buildRawFileEditor(),
       'deepseek-harness' => _buildDeepSeekHarnessEditor(),
       'profile' => _buildProfileEditor(),
       _ => Text(_text('没有可编辑的配置。', 'No editable configuration.')),
     };
+  }
+
+  Widget _buildNaConnectionEditor() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextField(
+          key: const Key('na-service-address'),
+          controller: _baseUrlController,
+          keyboardType: TextInputType.url,
+          autocorrect: false,
+          decoration: InputDecoration(
+            labelText: _text('服务地址', 'Service address'),
+          ),
+        ),
+        const SizedBox(height: 14),
+        TextField(
+          key: const Key('na-access-token'),
+          controller: _apiKeyController,
+          obscureText: _obscureApiKey,
+          autocorrect: false,
+          enableSuggestions: false,
+          decoration: InputDecoration(
+            labelText: _text('账户访问令牌', 'Account access token'),
+            suffixIcon: IconButton(
+              onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
+              icon: Icon(_obscureApiKey ? LucideIcons.eye : LucideIcons.eyeOff),
+            ),
+          ),
+        ),
+        const SizedBox(height: 14),
+        Text(
+          _text(
+            '保存后，在聊天页的 Agent 列表选择 Na。',
+            'After saving, choose Na from the Agent list in chat.',
+          ),
+        ),
+      ],
+    );
   }
 
   Widget _buildCodexEditor() {

@@ -26,6 +26,8 @@ class CodexRemoteWorkspaceBrowser extends StatefulWidget {
   const CodexRemoteWorkspaceBrowser({
     super.key,
     required this.workspacePath,
+    this.agentId,
+    this.allowFileMutations = true,
     this.remoteBridgeUrl = '',
     this.remoteBridgeToken = '',
     this.enableSystemBackHandler = true,
@@ -36,6 +38,8 @@ class CodexRemoteWorkspaceBrowser extends StatefulWidget {
   });
 
   final String workspacePath;
+  final String? agentId;
+  final bool allowFileMutations;
   final String remoteBridgeUrl;
   final String remoteBridgeToken;
   final bool enableSystemBackHandler;
@@ -92,6 +96,7 @@ class CodexRemoteWorkspaceBrowserState
   void didUpdateWidget(covariant CodexRemoteWorkspaceBrowser oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.workspacePath == widget.workspacePath &&
+        oldWidget.agentId == widget.agentId &&
         oldWidget.remoteBridgeUrl == widget.remoteBridgeUrl &&
         oldWidget.remoteBridgeToken == widget.remoteBridgeToken) {
       return;
@@ -128,6 +133,7 @@ class CodexRemoteWorkspaceBrowserState
     });
     try {
       final listing = await AgentRuntimeService.listRemoteDirectories(
+        agentId: widget.agentId,
         remoteBridgeUrl: widget.remoteBridgeUrl,
         remoteBridgeToken: widget.remoteBridgeToken,
         remoteCwd: _rootPath,
@@ -208,6 +214,7 @@ class CodexRemoteWorkspaceBrowserState
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => CodexRemoteFilePreviewPage(
+          agentId: widget.agentId,
           path: entry.path,
           title: entry.name,
           remoteBridgeUrl: widget.remoteBridgeUrl,
@@ -233,90 +240,94 @@ class CodexRemoteWorkspaceBrowserState
       ),
       builder: (sheetContext) {
         return SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 36,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: palette.borderStrong,
-                    borderRadius: BorderRadius.circular(999),
+          child: SingleChildScrollView(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: palette.borderStrong,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  entry.name,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w600,
-                    color: palette.textPrimary,
-                    fontFamily: 'PingFang SC',
-                  ),
-                ),
-                const SizedBox(height: 12),
-                if (!isDirectory) ...[
-                  _buildActionTile(
-                    context: sheetContext,
-                    icon: Icons.visibility_outlined,
-                    label: _isEnglish ? 'Open' : '打开',
-                    action: _RemoteWorkspaceEntryAction.open,
-                  ),
-                  const SizedBox(height: 8),
-                  _buildActionTile(
-                    context: sheetContext,
-                    icon: Icons.edit_outlined,
-                    label: _isEnglish ? 'Edit' : '编辑',
-                    action: _RemoteWorkspaceEntryAction.edit,
-                  ),
-                  const SizedBox(height: 8),
-                ],
-                _buildActionTile(
-                  context: sheetContext,
-                  icon: Icons.drive_file_rename_outline_rounded,
-                  label: _isEnglish ? 'Rename' : '重命名',
-                  action: _RemoteWorkspaceEntryAction.rename,
-                ),
-                const SizedBox(height: 8),
-                _buildActionTile(
-                  context: sheetContext,
-                  icon: Icons.copy_rounded,
-                  label: _isEnglish ? 'Copy path' : '复制路径',
-                  action: _RemoteWorkspaceEntryAction.copyPath,
-                ),
-                const SizedBox(height: 8),
-                _buildActionTile(
-                  context: sheetContext,
-                  icon: Icons.delete_outline_rounded,
-                  label: _isEnglish ? 'Delete' : '删除',
-                  action: _RemoteWorkspaceEntryAction.delete,
-                  destructive: true,
-                ),
-                const SizedBox(height: 8),
-                ListTile(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  tileColor: _secondarySurfaceColor(),
-                  leading: Icon(
-                    Icons.close_rounded,
-                    color: palette.textPrimary,
-                  ),
-                  title: Text(
-                    _isEnglish ? 'Cancel' : '取消',
+                  const SizedBox(height: 12),
+                  Text(
+                    entry.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                     style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
                       color: palette.textPrimary,
-                      fontWeight: FontWeight.w500,
                       fontFamily: 'PingFang SC',
                     ),
                   ),
-                  onTap: () => Navigator.of(sheetContext).pop(),
-                ),
-              ],
+                  const SizedBox(height: 12),
+                  if (!isDirectory) ...[
+                    _buildActionTile(
+                      context: sheetContext,
+                      icon: Icons.visibility_outlined,
+                      label: _isEnglish ? 'Open' : '打开',
+                      action: _RemoteWorkspaceEntryAction.open,
+                    ),
+                    const SizedBox(height: 8),
+                    _buildActionTile(
+                      context: sheetContext,
+                      icon: Icons.edit_outlined,
+                      label: _isEnglish ? 'Edit' : '编辑',
+                      action: _RemoteWorkspaceEntryAction.edit,
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  if (widget.allowFileMutations)
+                    _buildActionTile(
+                      context: sheetContext,
+                      icon: Icons.drive_file_rename_outline_rounded,
+                      label: _isEnglish ? 'Rename' : '重命名',
+                      action: _RemoteWorkspaceEntryAction.rename,
+                    ),
+                  const SizedBox(height: 8),
+                  _buildActionTile(
+                    context: sheetContext,
+                    icon: Icons.copy_rounded,
+                    label: _isEnglish ? 'Copy path' : '复制路径',
+                    action: _RemoteWorkspaceEntryAction.copyPath,
+                  ),
+                  const SizedBox(height: 8),
+                  if (widget.allowFileMutations)
+                    _buildActionTile(
+                      context: sheetContext,
+                      icon: Icons.delete_outline_rounded,
+                      label: _isEnglish ? 'Delete' : '删除',
+                      action: _RemoteWorkspaceEntryAction.delete,
+                      destructive: true,
+                    ),
+                  const SizedBox(height: 8),
+                  ListTile(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    tileColor: _secondarySurfaceColor(),
+                    leading: Icon(
+                      Icons.close_rounded,
+                      color: palette.textPrimary,
+                    ),
+                    title: Text(
+                      _isEnglish ? 'Cancel' : '取消',
+                      style: TextStyle(
+                        color: palette.textPrimary,
+                        fontWeight: FontWeight.w500,
+                        fontFamily: 'PingFang SC',
+                      ),
+                    ),
+                    onTap: () => Navigator.of(sheetContext).pop(),
+                  ),
+                ],
+              ),
             ),
           ),
         );

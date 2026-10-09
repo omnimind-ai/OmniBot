@@ -222,6 +222,7 @@ class AgentRuntimeManager private constructor(
     private val historyRepository = AgentConversationHistoryRepository(appContext)
     private val remoteConfigStore = CodexRemoteBridgeConfigStore(appContext)
     private val acpAgentProfileStore = AcpAgentProfileStore(appContext)
+    private val naRuntime by lazy { NaCloudRuntime(appContext, scope, bindingRepository, acpAgentProfileStore, ::emitEvent) }
     private val scheduledTaskScheduler by lazy {
         WorkspaceScheduledTaskScheduler(appContext)
     }
@@ -454,6 +455,7 @@ class AgentRuntimeManager private constructor(
     }
 
     suspend fun status(): Map<String, Any?> {
+        if (acpAgentProfileStore.selected().id == NA_AGENT_ID && !remoteConfigStore.read().enabled) return naRuntime.status()
         val statusStartedAt = System.nanoTime()
         val runtime = resolveRuntime()
         val selectedLocalRuntime = if (runtime.kind == AgentRuntimeKind.LOCAL) {
@@ -528,6 +530,7 @@ class AgentRuntimeManager private constructor(
     }
 
     suspend fun connect(): Map<String, Any?> {
+        if (acpAgentProfileStore.selected().id == NA_AGENT_ID && !remoteConfigStore.read().enabled) return naRuntime.status()
         sessionMutex.withLock {
             invalidateLocalProbeCache()
             val runtime = resolveRuntime()
@@ -728,6 +731,7 @@ class AgentRuntimeManager private constructor(
         args: Map<String, Any?>,
     ): Any? {
         val canonicalArgs = AcpSessionCompatibility.canonicalize(method, args)
+        if (naRuntime.owns(method, canonicalArgs, remoteConfigStore.read().enabled)) return naRuntime.handle(method, canonicalArgs)
         if (method == "initialize") {
             return initializeAcp(canonicalArgs)
         }
@@ -751,6 +755,11 @@ class AgentRuntimeManager private constructor(
         }
         if (method == "agent/config/rollback") {
             return rollbackAgentConfig(canonicalArgs)
+        }
+        if (method == "agent/select" && canonicalArgs["agentId"] == NA_AGENT_ID) {
+            acpAgentProfileStore.select(NA_AGENT_ID)
+            return naRuntime.status() + mapOf("selectedAgentId" to NA_AGENT_ID,
+                "agents" to acpAgentProfileStore.list().map { it.toPayload(selected = it.id == NA_AGENT_ID, health = acpAgentProfileStore.health(it.id)) })
         }
         if (method.startsWith("agent/")) {
             val requestedAgentId = canonicalArgs.stringValue("agentId")

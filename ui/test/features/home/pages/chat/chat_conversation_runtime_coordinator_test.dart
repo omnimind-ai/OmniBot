@@ -602,6 +602,35 @@ void main() {
     expect(runtime.activeAcpSessionId, isNull);
   });
 
+  test('cancelled cloud history keeps submitted user identities and repeated text', () {
+    const conversationId = 99209;
+    final runtime = coordinator.ensureRuntime(
+      conversationId: conversationId, mode: kChatRuntimeModeAgent,
+    );
+    runtime.messages.addAll([
+      ChatMessageModel.userMessage('same query', id: 'cloud-user-first'),
+      ChatMessageModel.userMessage('same query', id: 'cloud-user-second'),
+    ]);
+    coordinator.registerTask(taskId: 'cloud-cancel-turn', conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    coordinator.beginAcpTurn(taskId: 'cloud-cancel-turn', conversationId: conversationId, mode: kChatRuntimeModeAgent);
+    coordinator.applyAcpPromptResponse(taskId: 'cloud-cancel-turn', conversationId: conversationId,
+      mode: kChatRuntimeModeAgent, sessionId: 'na:instance:session', turnId: 'cloud-cancel-turn', stopReason: 'cancelled');
+    // Durable adapter snapshots retain actual host user ids, including retries
+    // whose retained user id differs from the new prompt reservation.
+    final history = [
+      ChatMessageModel.userMessage('same query', id: 'cloud-user-first'),
+      ChatMessageModel.userMessage('same query', id: 'cloud-user-second'),
+    ];
+    for (var read = 0; read < 3; read++) {
+      coordinator.replaceConversationSnapshot(conversationId: conversationId, mode: kChatRuntimeModeAgent,
+        messages: history, preserveLiveStreamingState: runtime.isAiResponding);
+      expect(runtime.messages.where((message) => message.user == 1).map((message) => message.id).toSet(),
+        {'cloud-user-first', 'cloud-user-second'});
+      expect(runtime.messages.where((message) => message.user == 1), hasLength(2));
+      expect(runtime.hasInFlightTask, isFalse);
+    }
+  });
+
   test('an idle snapshot cannot demote an admitted ACP turn', () {
     const conversationId = 2005;
     final runtime = coordinator.ensureRuntime(

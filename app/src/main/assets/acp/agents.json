@@ -130,6 +130,24 @@
           }
         }
       }
+    },
+    {
+      "id": "na-cloud",
+      "name": "Na",
+      "description": "云端个人助手 · 独立模型、长期记忆与任务",
+      "command": "na-cloud",
+      "arguments": [],
+      "enabled": true,
+      "builtIn": true,
+      "runtime": {
+        "discoveryCommand": "na-cloud",
+        "embedded": true,
+        "usesSharedProvider": false,
+        "declaredCapabilities": {
+          "cloudModelManaged": true,
+          "transport": "http"
+        }
+      }
     }
   ]
 }

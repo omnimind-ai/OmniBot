@@ -41,7 +41,7 @@ internal data class AcpAgentProfile(
             "builtIn" to builtIn,
             "source" to if (builtIn) "official" else "custom",
             "selected" to selected,
-            "installed" to health.installed,
+            "installed" to if (id == NA_AGENT_ID) true else health.installed,
             "status" to health.status,
             "lastCheckError" to health.error,
             "lastCheckLatencyMs" to health.latencyMs,

@@ -398,11 +398,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
           _resolvedThreadTarget = currentTarget?.copyWith(
             agentId: resolvedAgentId,
             agentSessionId: threadId.isEmpty ? null : threadId,
-            agentRuntime: 'local',
+            agentRuntime: resolvedAgentId == 'na-cloud' ? 'na' : 'local',
           );
-          final conversation = _modeState(
-            ChatPageMode.agent,
-          ).currentConversation;
+          final conversation = _modeState(ChatPageMode.agent)
+              .currentConversation;
           if (conversation?.id == conversationId) {
             final updatedConversation = conversation!.copyWith(
               agentId: resolvedAgentId,
@@ -419,6 +418,31 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
           _agentRuntimeStatus = status;
         }
       });
+      if (resolvedAgentId == 'na-cloud' &&
+          _remoteCodexThreadResponseHasTurns(response)) {
+        final runtime = _runtimeForMode(ChatPageMode.agent);
+        final responding = runtime?.isAiResponding ?? false;
+        final merged = _mergeRemoteCodexSnapshotMessages(
+          snapshotMessages: _remoteCodexMessagesFromThreadResponse(response),
+          existingMessages: List<ChatMessageModel>.from(
+            runtime?.messages ?? _modeState(ChatPageMode.agent).messages,
+          ),
+          activeTaskId: runtime?.activeRunId,
+          isAiResponding: responding,
+        );
+        _syncRuntimeSnapshotForMode(
+          ChatPageMode.agent,
+          messages: merged,
+          preserveLiveStreamingState: responding,
+        );
+        if (!responding) {
+          await _runtimeCoordinator.persistRuntimeConversation(
+            conversationId: conversationId,
+            mode: kChatRuntimeModeAgent,
+            persistMessages: true,
+          );
+        }
+      }
       unawaited(_loadAgentCatalog());
       unawaited(_loadAgentModelOptionsWhenReady(force: true));
       unawaited(_persistVisibleThreadTargetIfNeeded());

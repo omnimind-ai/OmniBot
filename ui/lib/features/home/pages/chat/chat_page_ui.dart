@@ -17,6 +17,16 @@ enum _UserMessageQuickAction { copy, edit, retry }
 
 mixin _ChatPageUiMixin on _ChatPageStateBase {
   Widget _buildAcpConfigButton() {
+    if (_activeMode == ChatPageMode.agent && _activeAcpAgentId == 'na-cloud') {
+      return TextButton.icon(
+        key: const Key('na-cloud-settings'),
+        onPressed: () => GoRouterManager.push('/home/agent_config/na-cloud'),
+        icon: const Icon(Icons.cloud_outlined, size: 16),
+        label: Text(
+          LegacyTextLocalizer.isEnglish ? 'Cloud connection' : '云端连接',
+        ),
+      );
+    }
     final generation = _conversationTargetRequestId;
     final mode = _activeMode;
     final agentId = _activeAcpAgentId;
@@ -340,34 +350,35 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     final query = _messageController.text.trimLeft().toLowerCase();
     final planModeEnabled = _isAgentPlanMode(_activeAgentCollaborationMode);
     final commands = <Map<String, dynamic>>[
-      _buildAgentCommandCard(
-        cardId: 'slash-command-agent-model',
-        toolTitle: '/model',
-        displayName: '/model',
-        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Model' : '模型',
-        status: _activeAgentModelId == null ? 'running' : 'success',
-        statusLabel: _activeAgentModelId == null
-            ? (LegacyTextLocalizer.isEnglish ? 'Select' : '选择')
-            : (_activeAgentModelId!),
-        summary: _activeAgentModelId == null
-            ? (LegacyTextLocalizer.isEnglish
-                  ? 'Choose a model for $_activeAcpAgentDisplayName'
-                  : '选择 $_activeAcpAgentDisplayName 的模型')
-            : (LegacyTextLocalizer.isEnglish
-                  ? 'Current model: $_activeAgentModelId'
-                  : '当前模型：$_activeAgentModelId'),
-        progress: _agentModelListError != null
-            ? _agentModelListError!
-            : _isAgentModelListLoading
-            ? (LegacyTextLocalizer.isEnglish ? 'Loading models' : '加载模型中')
-            : (_agentModelOptions.isEmpty
-                  ? (LegacyTextLocalizer.isEnglish
-                        ? 'Tap to load models'
-                        : '点击加载模型')
-                  : (_agentModelOptions.length == 1
-                        ? '1 model'
-                        : '${_agentModelOptions.length} models')),
-      ),
+      if (_activeAcpAgentId != 'na-cloud')
+        _buildAgentCommandCard(
+          cardId: 'slash-command-agent-model',
+          toolTitle: '/model',
+          displayName: '/model',
+          toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Model' : '模型',
+          status: _activeAgentModelId == null ? 'running' : 'success',
+          statusLabel: _activeAgentModelId == null
+              ? (LegacyTextLocalizer.isEnglish ? 'Select' : '选择')
+              : (_activeAgentModelId!),
+          summary: _activeAgentModelId == null
+              ? (LegacyTextLocalizer.isEnglish
+                    ? 'Choose a model for $_activeAcpAgentDisplayName'
+                    : '选择 $_activeAcpAgentDisplayName 的模型')
+              : (LegacyTextLocalizer.isEnglish
+                    ? 'Current model: $_activeAgentModelId'
+                    : '当前模型：$_activeAgentModelId'),
+          progress: _agentModelListError != null
+              ? _agentModelListError!
+              : _isAgentModelListLoading
+              ? (LegacyTextLocalizer.isEnglish ? 'Loading models' : '加载模型中')
+              : (_agentModelOptions.isEmpty
+                    ? (LegacyTextLocalizer.isEnglish
+                          ? 'Tap to load models'
+                          : '点击加载模型')
+                    : (_agentModelOptions.length == 1
+                          ? '1 model'
+                          : '${_agentModelOptions.length} models')),
+        ),
       if (_availableAcpCommandForText('/review') != null)
         _buildAgentCommandCard(
           cardId: 'slash-command-agent-review',
@@ -383,20 +394,21 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               ? 'Runs an Agent review on the active thread'
               : '在当前线程中启动 Agent review',
         ),
-      _buildAgentCommandCard(
-        cardId: 'slash-command-agent-init',
-        toolTitle: '/init',
-        displayName: '/init',
-        toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Init' : '初始化',
-        status: 'running',
-        statusLabel: LegacyTextLocalizer.isEnglish ? 'Command' : '命令',
-        summary: LegacyTextLocalizer.isEnglish
-            ? 'Generate or update AGENTS.md'
-            : '生成或更新 AGENTS.md',
-        progress: LegacyTextLocalizer.isEnglish
-            ? 'Prompt shortcut: asks the Agent to write workspace guidance'
-            : '提示词快捷操作：请求 Agent 编写工作区指引',
-      ),
+      if (_activeAcpAgentId != 'na-cloud')
+        _buildAgentCommandCard(
+          cardId: 'slash-command-agent-init',
+          toolTitle: '/init',
+          displayName: '/init',
+          toolTypeLabel: LegacyTextLocalizer.isEnglish ? 'Init' : '初始化',
+          status: 'running',
+          statusLabel: LegacyTextLocalizer.isEnglish ? 'Command' : '命令',
+          summary: LegacyTextLocalizer.isEnglish
+              ? 'Generate or update AGENTS.md'
+              : '生成或更新 AGENTS.md',
+          progress: LegacyTextLocalizer.isEnglish
+              ? 'Prompt shortcut: asks the Agent to write workspace guidance'
+              : '提示词快捷操作：请求 Agent 编写工作区指引',
+        ),
       if (_resolveAgentPlanMode(_agentCollaborationModes) != null)
         _buildAgentCommandCard(
           cardId: 'slash-command-agent-plan',
@@ -485,9 +497,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         _agentModelListError == null) {
       unawaited(_loadAgentModelOptionsWhenReady());
     }
-    final query = _slashCommandRouteQuery(
-      _SlashCommandPanelRoute.agentModel,
-    ).toLowerCase();
+    final query = _slashCommandRouteQuery(_SlashCommandPanelRoute.agentModel)
+        .toLowerCase();
     final availableModels = _agentModelOptions.isEmpty
         ? <String>[]
         : _agentModelOptions;
@@ -1141,7 +1152,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return false;
     }
     final runtime = _agentRuntimeStatus.runtime?.trim();
-    return runtime == 'remote' || _agentRuntimeStatus.remoteEnabled;
+    return _activeAcpAgentId == 'na-cloud' ||
+        runtime == 'remote' ||
+        _agentRuntimeStatus.remoteEnabled;
   }
 
   Widget _buildRemoteCodexWorkspaceBrowser({
@@ -1149,13 +1162,17 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     required bool translucentSurfaces,
     required bool enableSystemBackHandler,
   }) {
-    final workspacePath =
-        (_agentRuntimeStatus.remoteCwd ?? _agentRuntimeStatus.cwd ?? '').trim();
+    final workspacePath = _activeAcpAgentId == 'na-cloud'
+        ? '/workspace'
+        : (_agentRuntimeStatus.remoteCwd ?? _agentRuntimeStatus.cwd ?? '')
+              .trim();
     final bridgeUrl = (_agentRuntimeStatus.remoteBridgeUrl ?? '').trim();
     if (workspacePath.isEmpty) {
       return _buildRemoteCodexWorkspaceUnavailable();
     }
     return CodexRemoteWorkspaceBrowser(
+      agentId: _activeAcpAgentId == 'na-cloud' ? 'na-cloud' : null,
+      allowFileMutations: _activeAcpAgentId != 'na-cloud',
       key: key,
       workspacePath: workspacePath,
       remoteBridgeUrl: bridgeUrl,
@@ -1503,7 +1520,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                       agentRunSettings: null,
                       onAgentRunSettingsOpened: null,
                       onAgentRunSettingsChanged: null,
-                      agentPermissionMode: _activeMode == ChatPageMode.agent
+                      agentPermissionMode:
+                          _activeMode == ChatPageMode.agent &&
+                              _activeAcpAgentId != 'na-cloud'
                           ? _agentPermissionMode
                           : null,
                       agentPermissionModes:
@@ -1517,7 +1536,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                             ]
                           : AgentPermissionMode.values,
                       onAgentPermissionModeChanged:
-                          _activeMode == ChatPageMode.agent
+                          _activeMode == ChatPageMode.agent &&
+                              _activeAcpAgentId != 'na-cloud'
                           ? _selectAgentPermissionMode
                           : null,
                       onInputHeightChanged: _handleInputAreaHeightChanged,

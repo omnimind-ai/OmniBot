@@ -18,6 +18,7 @@ class CodexRemoteFilePreviewPage extends StatefulWidget {
     super.key,
     required this.path,
     this.title,
+    this.agentId,
     this.remoteBridgeUrl = '',
     this.remoteBridgeToken = '',
     this.remoteCwd = '',
@@ -25,6 +26,7 @@ class CodexRemoteFilePreviewPage extends StatefulWidget {
   });
 
   final String path;
+  final String? agentId;
   final String? title;
   final String remoteBridgeUrl;
   final String remoteBridgeToken;
@@ -95,6 +97,7 @@ class _CodexRemoteFilePreviewPageState
     }
     try {
       final payload = await AgentRuntimeService.readRemoteFile(
+        agentId: widget.agentId,
         remoteBridgeUrl: widget.remoteBridgeUrl,
         remoteBridgeToken: widget.remoteBridgeToken,
         remoteCwd: widget.remoteCwd,
@@ -206,6 +209,7 @@ class _CodexRemoteFilePreviewPageState
     try {
       final savedText = _editorController.text;
       final response = await AgentRuntimeService.writeRemoteFile(
+        agentId: widget.agentId,
         remoteBridgeUrl: widget.remoteBridgeUrl,
         remoteBridgeToken: widget.remoteBridgeToken,
         remoteCwd: widget.remoteCwd,
@@ -252,8 +256,8 @@ class _CodexRemoteFilePreviewPageState
             _isDirty
                 ? (_isEnglish ? 'Editing with unsaved changes' : '编辑中，存在未保存修改')
                 : (_isEnglish
-                      ? 'Editing remote file. Save writes back to the PC Bridge.'
-                      : '正在编辑远程文件，保存后会写回 PC Bridge。'),
+                      ? 'Editing remote file. Save writes back to the remote workspace.'
+                      : '正在编辑远程文件，保存后会写回远程工作区。'),
             style: TextStyle(fontSize: 12, color: palette.textSecondary),
           ),
         ),

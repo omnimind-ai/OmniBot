@@ -45,6 +45,60 @@ void main() {
         .setMockMethodCallHandler(assistCoreChannel, null);
   });
 
+  testWidgets(
+    'Na uses the existing Agent config without device model settings',
+    (tester) async {
+      final providerCalls = <String>[];
+      Map<String, dynamic>? saved;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method == 'agent/list')
+              return _catalog(_agent('na-cloud', 'Na'));
+            if (call.method == 'agent/config/read')
+              return {'kind': 'na-cloud', 'baseUrl': 'http://127.0.0.1:8787'};
+            if (call.method == 'agent/config/write') {
+              saved = Map<String, dynamic>.from(call.arguments as Map);
+              return {
+                'kind': 'na-cloud',
+                'baseUrl': saved!['baseUrl'],
+                'apiKey': saved!['apiKey'],
+              };
+            }
+            return null;
+          });
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(assistCoreChannel, (call) async {
+            providerCalls.add(call.method);
+            return null;
+          });
+      await _pumpPage(tester, 'na-cloud');
+      expect(find.byKey(const Key('na-service-address')), findsOneWidget);
+      expect(find.byKey(const Key('na-access-token')), findsOneWidget);
+      expect(
+        find.byKey(const Key('agent-shared-provider-model-selector')),
+        findsNothing,
+      );
+      expect(find.byType(DropdownButtonFormField<String>), findsNothing);
+      await tester.enterText(
+        find.byKey(const Key('na-service-address')),
+        'https://na.example.test',
+      );
+      await tester.enterText(
+        find.byKey(const Key('na-access-token')),
+        'fixture-account-token',
+      );
+      await tester.ensureVisible(find.byKey(const Key('agent-config-save')));
+      await tester.tap(find.byKey(const Key('agent-config-save')));
+      await tester.pumpAndSettle();
+      expect(saved, {
+        'agentId': 'na-cloud',
+        'baseUrl': 'https://na.example.test',
+        'apiKey': 'fixture-account-token',
+      });
+      expect(providerCalls, isEmpty);
+    },
+  );
+
   testWidgets('custom Agent launch edits survive saving and reopening', (
     tester,
   ) async {

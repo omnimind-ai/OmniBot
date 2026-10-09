@@ -1416,6 +1416,7 @@ class AgentRuntimeService {
     String? sessionId,
     int? conversationId,
     String? requestId,
+    String? userMessageId,
     String? agentId,
     required String text,
     List<Map<String, dynamic>> attachments = const [],
@@ -1434,6 +1435,8 @@ class AgentRuntimeService {
       if (conversationId != null) 'conversationId': conversationId,
       if (requestId != null && requestId.trim().isNotEmpty)
         'requestId': requestId.trim(),
+      if (userMessageId != null && userMessageId.trim().isNotEmpty)
+        'userMessageId': userMessageId.trim(),
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       if (cwd != null && cwd.trim().isNotEmpty) 'cwd': cwd.trim(),
@@ -1457,11 +1460,13 @@ class AgentRuntimeService {
       if (failureKind is String && response['error'] is String) {
         return <String, dynamic>{
           ...response,
-          'error': formatAgentRuntimeErrorForUser(PlatformException(
-            code: 'AGENT_RUNTIME_CALL_FAILED',
-            message: response['error'] as String,
-            details: <String, dynamic>{'failureKind': failureKind},
-          )),
+          'error': formatAgentRuntimeErrorForUser(
+            PlatformException(
+              code: 'AGENT_RUNTIME_CALL_FAILED',
+              message: response['error'] as String,
+              details: <String, dynamic>{'failureKind': failureKind},
+            ),
+          ),
         };
       }
       return response;
@@ -1640,12 +1645,14 @@ class AgentRuntimeService {
   }
 
   static Future<CodexRemoteDirectoryList> listRemoteDirectories({
+    String? agentId,
     String remoteBridgeUrl = '',
     String remoteBridgeToken = '',
     String remoteCwd = '',
     String? path,
   }) async {
     final result = await _invokeMap('config/remote/fs/list', {
+      if (agentId != null) 'agentId': agentId,
       if (remoteBridgeUrl.trim().isNotEmpty)
         'remoteBridgeUrl': remoteBridgeUrl.trim(),
       if (remoteBridgeToken.trim().isNotEmpty)
@@ -1657,12 +1664,14 @@ class AgentRuntimeService {
   }
 
   static Future<CodexRemoteFilePayload> readRemoteFile({
+    String? agentId,
     String remoteBridgeUrl = '',
     String remoteBridgeToken = '',
     String remoteCwd = '',
     required String path,
   }) async {
     final result = await _invokeMap('config/remote/fs/read', {
+      if (agentId != null) 'agentId': agentId,
       if (remoteBridgeUrl.trim().isNotEmpty)
         'remoteBridgeUrl': remoteBridgeUrl.trim(),
       if (remoteBridgeToken.trim().isNotEmpty)
@@ -1674,6 +1683,7 @@ class AgentRuntimeService {
   }
 
   static Future<Map<String, dynamic>> writeRemoteFile({
+    String? agentId,
     String remoteBridgeUrl = '',
     String remoteBridgeToken = '',
     String remoteCwd = '',
@@ -1681,6 +1691,7 @@ class AgentRuntimeService {
     required String content,
   }) {
     return _invokeMap('config/remote/fs/write', {
+      if (agentId != null) 'agentId': agentId,
       if (remoteBridgeUrl.trim().isNotEmpty)
         'remoteBridgeUrl': remoteBridgeUrl.trim(),
       if (remoteBridgeToken.trim().isNotEmpty)

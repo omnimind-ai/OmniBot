@@ -260,6 +260,10 @@ void main() {
     // Installation stays on the separate action button.
     expect(find.byIcon(LucideIcons.chevronRight), findsNWidgets(5));
     expect(
+      find.text('Na · 云端个人助手'),
+      findsNothing,
+    ); // No separate Na route tile.
+    expect(
       tester
           .getTopLeft(find.byKey(const Key('agent-check-deepseek-harness-acp')))
           .dy,
@@ -653,9 +657,7 @@ void main() {
     expect(find.text('运行中'), findsNothing);
     expect(
       find.byKey(
-        const Key(
-          'plugin-action-button-com.omnimind.agent-web/open_kimi_web',
-        ),
+        const Key('plugin-action-button-com.omnimind.agent-web/open_kimi_web'),
       ),
       findsOneWidget,
     );

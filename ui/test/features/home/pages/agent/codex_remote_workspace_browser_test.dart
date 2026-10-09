@@ -14,6 +14,79 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  testWidgets('Na reuses workspace browsing with an explicit cloud owner', (
+    tester,
+  ) async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      if (call.method == 'config/remote/fs/read')
+        return {
+          'ok': true,
+          'path': '/workspace/result.md',
+          'name': 'result.md',
+          'previewKind': 'text',
+          'content': 'Na cloud result',
+        };
+      return {
+        'ok': true,
+        'path': '/workspace',
+        'cwd': '/workspace',
+        'entries': [
+          {'name': 'result.md', 'path': '/workspace/result.md', 'type': 'file'},
+        ],
+      };
+    });
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Scaffold(
+          body: CodexRemoteWorkspaceBrowser(
+            workspacePath: '/workspace',
+            agentId: 'na-cloud',
+            allowFileMutations: false,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(calls.single.arguments, {
+      'agentId': 'na-cloud',
+      'remoteCwd': '/workspace',
+      'path': '/workspace',
+    });
+    await tester.longPress(find.text('result.md'));
+    await tester.pumpAndSettle();
+    expect(find.text('Rename'), findsNothing);
+    expect(find.text('Delete'), findsNothing);
+    expect(find.text('Edit'), findsOneWidget);
+    await tester.tap(find.text('Open'));
+    await tester.pumpAndSettle();
+    expect(calls.last.method, 'config/remote/fs/read');
+    expect((calls.last.arguments as Map)['agentId'], 'na-cloud');
+    expect(find.textContaining('Na cloud result'), findsWidgets);
+  });
+
+  testWidgets('same workspace path reloads when its Agent owner changes', (tester) async {
+    final owners = <String?>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      final owner = (call.arguments as Map)['agentId'] as String?;
+      owners.add(owner);
+      final name = owner == 'na-cloud' ? 'cloud.md' : 'bridge.md';
+      return {'ok': true, 'path': '/workspace', 'cwd': '/workspace',
+        'entries': [{'name': name, 'path': '/workspace/$name', 'type': 'file'}]};
+    });
+    Widget browser(String? owner) => MaterialApp(home: Scaffold(body:
+      CodexRemoteWorkspaceBrowser(workspacePath: '/workspace', agentId: owner)));
+    await tester.pumpWidget(browser(null));
+    await tester.pumpAndSettle();
+    expect(find.text('bridge.md'), findsOneWidget);
+    await tester.pumpWidget(browser('na-cloud'));
+    await tester.pumpAndSettle();
+    expect(owners, [null, 'na-cloud']);
+    expect(find.text('bridge.md'), findsNothing);
+    expect(find.text('cloud.md'), findsOneWidget);
+  });
+
   testWidgets('loads remote Codex workspace entries from bridge list API', (
     tester,
   ) async {

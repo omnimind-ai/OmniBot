@@ -81,7 +81,8 @@ class AgentBrandIcon extends StatelessWidget {
   /// badge, which produces the visible "circle inside a circle" for marks
   /// such as Codex. Unknown custom Harnesses still use the generic host badge.
   static bool hasKnownBrand(String agentId) {
-    return _brands.containsKey(normalizeAgentId(agentId));
+    return normalizeAgentId(agentId) == 'na-cloud' ||
+        _brands.containsKey(normalizeAgentId(agentId));
   }
 
   @override
@@ -89,6 +90,21 @@ class AgentBrandIcon extends StatelessWidget {
     final palette = context.omniPalette;
     final normalizedAgentId = normalizeAgentId(agentId);
     final brand = _brands[normalizedAgentId];
+    if (normalizedAgentId == 'na-cloud') {
+      return Semantics(
+        label: 'Na',
+        excludeSemantics: true,
+        child: Text(
+          'N',
+          style: TextStyle(
+            fontSize: size,
+            height: 1,
+            fontWeight: FontWeight.w600,
+            color: tint ?? fallbackColor ?? palette.accentPrimary,
+          ),
+        ),
+      );
+    }
     if (brand?.presentation == _AgentBrandPresentation.avatar) {
       return _XiaowanAgentAvatar(size: size);
     }
