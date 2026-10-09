@@ -1,17 +1,14 @@
 package cn.com.omnimind.bot.activity
 
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
-import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
-import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
 import cn.com.omnimind.bot.preferences.RecentTasksVisibility
 import cn.com.omnimind.bot.ui.channel.ChannelManager
@@ -19,7 +16,6 @@ import cn.com.omnimind.bot.ui.channel.FileSaveChannel
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
 import cn.com.omnimind.bot.ui.platformview.AgentBrowserPlatformViewFactory
 import cn.com.omnimind.bot.ui.platformview.EmbeddedTerminalPlatformViewFactory
-import cn.com.omnimind.bot.update.AppUpdateManager
 import cn.com.omnimind.bot.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import io.flutter.embedding.android.FlutterActivity
@@ -33,9 +29,6 @@ class MainActivity : FlutterActivity() {
 
     private var channelManager: ChannelManager = ChannelManager()
     private var navigationRequestGeneration = 0
-    private val embeddedTerminalAutoStartManager by lazy {
-        EmbeddedTerminalAutoStartManager(this)
-    }
 
     override fun provideFlutterEngine(context: android.content.Context): FlutterEngine {
         val provideStart = System.currentTimeMillis()
@@ -55,7 +48,7 @@ class MainActivity : FlutterActivity() {
         val mainActivityStart = System.currentTimeMillis()
         OmniLog.d(TAG, "MainActivity onCreate start")
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
-        applyResponsiveOrientation()
+        AppEntryBehaviors.applyResponsiveOrientation(this)
         applySoftInputResizeMode()
         super.onCreate(savedInstanceState)
         applyEdgeToEdgeWindow()
@@ -74,12 +67,9 @@ class MainActivity : FlutterActivity() {
         navigateFromIntent()
 
         applyHideFromRecentsSetting()
-        lifecycleScope.launch {
-            runCatching {
-                embeddedTerminalAutoStartManager.runEnabledTasksOnAppOpen()
-            }.onFailure { error ->
-                OmniLog.e(TAG, "MainActivity auto-start Alpine tasks failed", error)
-            }
+        // Compatibility pages opened from native Home are not an app launch.
+        if (savedInstanceState == null && !intent.hasExtra(LegacyHomeNavigator.EXTRA_NATIVE_DESTINATION)) {
+            AppEntryBehaviors.onAppOpen(this, lifecycleScope)
         }
         OmniLog.d(TAG, "MainActivity onCreate total cost: ${System.currentTimeMillis() - mainActivityStart}ms")
     }
@@ -98,15 +88,6 @@ class MainActivity : FlutterActivity() {
 
     override fun shouldHandleDeeplinking(): Boolean {
         return false
-    }
-
-    private fun applyResponsiveOrientation() {
-        val isTablet = resources.configuration.smallestScreenWidthDp >= 600
-        requestedOrientation = if (isTablet) {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
     }
 
     private fun applySoftInputResizeMode() {
@@ -160,21 +141,7 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.onActivityResumed(this)
-        AppUpdateManager.requestSilentCheckIfDue(this)
-        lifecycleScope.launch {
-            runCatching {
-                if (OmniAccount.isConfigured()) {
-                    OmniAccount.repository().refreshSessionIfNeeded()
-                }
-            }.onFailure { error ->
-                // A foreground refresh is best effort.  The request owner
-                // still handles a real 401, while this path prevents a
-                // normally expired access token from being presented as an
-                // unexpected logout after app switching.
-                OmniLog.w(TAG, "Foreground account session refresh skipped", error)
-            }
-        }
-
+        AppEntryBehaviors.onForeground(this, lifecycleScope)
     }
 
     override fun onDestroy() {

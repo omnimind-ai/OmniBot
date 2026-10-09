@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.activity
 
 import android.content.Intent
-import android.content.pm.ActivityInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import cn.com.omnimind.baselib.util.OmniLog
@@ -23,7 +22,7 @@ class LauncherActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
-        applyResponsiveOrientation()
+        AppEntryBehaviors.applyResponsiveOrientation(this)
         super.onCreate(savedInstanceState)
         PredictiveBackGate.install(this)
         OmniLog.d(TAG, "LauncherActivity onCreate")
@@ -32,15 +31,6 @@ class LauncherActivity : ComponentActivity() {
             return
         }
         showLoadingAndStartMain()
-    }
-
-    private fun applyResponsiveOrientation() {
-        val isTablet = resources.configuration.smallestScreenWidthDp >= 600
-        requestedOrientation = if (isTablet) {
-            ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        } else {
-            ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
-        }
     }
 
     /**

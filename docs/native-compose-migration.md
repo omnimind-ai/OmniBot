@@ -175,9 +175,9 @@ random greeting selection out of pixel comparisons.
   boot tasks and workspace mounts. The OmniFlow execution center
   (`/task/omniflow`, entered from tool-summary cards and manual recording) and
   the remote workspace browser remain Flutter compatibility destinations.
-- Native home must gain the launch/foreground behaviors currently owned by
-  MainActivity (terminal auto-start, account refresh and app update checks)
-  before becoming the default. The generic native chat entry now delegates
+- Native home gained MainActivity's launch/foreground behaviors in 5e-7e
+  (terminal auto-start, account refresh, app update checks, orientation);
+  deep-link routing still goes through MainActivity. The generic native chat entry now delegates
   startup conversation selection to the existing Flutter chat owner; the
   launcher itself still presents native Home first. NativeHomeActivity
   now attaches to the existing task wake-lock/notification foreground owner.
@@ -749,6 +749,42 @@ rail to reopen; reopen the Flutter chat and confirm it uses the same widths.
 Pick conversations in the left pane (no page stacking). Rotate to portrait
 and resize a split window across 960 dp: the chat keeps its draft and
 scroll position. With TalkBack, focus a divider and use its action.
+
+### 5e-7e checkpoint: launch behaviors in native Home (source complete; device acceptance pending)
+
+- `AppEntryBehaviors` now owns what only `MainActivity` did on launch and
+  resume, and both entry activities call it:
+  - responsive orientation (phones portrait, tablets free);
+  - terminal auto-start tasks on a fresh launch;
+  - the silent update check and the best-effort account session refresh on
+    every resume.
+- Legacy bugs fixed:
+  1. **Native Home skipped all of them.** With `omnibot.nativeHome=true`,
+     enabled terminal auto-start tasks never ran, the account session was
+     not refreshed after app switching, no update check ran, and phones
+     rotated Home to landscape. Covered by `AppEntryBehaviorsTest` (the
+     orientation rule); the other three are launch/IO behaviors and
+     device-only.
+  2. **Every compatibility page re-ran terminal auto-start.** Each page
+     native Home hands to Flutter starts `MainActivity`, which ran the
+     auto-start tasks again. Sessions that were running reported
+     `alreadyRunning`, but a task that had exited was restarted just by
+     opening a Flutter page. `MainActivity` now skips auto-start for
+     native-destination intents and on recreation.
+- Unchanged on purpose: `AppUpdateManager.requestSilentCheckIfDue` passes
+  `force = true` (since `9372e0b64`), so each resume fetches the release
+  feed despite the 6-hour interval. That predates the migration and may be
+  intended for the cloud-service policy, so it is noted rather than changed.
+- Still `MainActivity`-only: deep-link routing (`SchemeUtil.pushRoute`) and
+  the quick-log widget router; `LauncherActivity` sends any intent with data
+  or extras to `MainActivity`.
+- Verification: `:app` 1557, native-ui 96, 0 failures. No device run.
+
+Manual acceptance (5e-7e), with `-Pomnibot.nativeHome=true`: enable a
+terminal auto-start task, kill the app and launch: the task starts once; open
+a Flutter compatibility page (e.g. Account) after stopping the task: it does
+not restart. Rotate a phone on Home: stays portrait. Background the app past
+the token lifetime and return: still signed in.
 
 ### 5e-8a checkpoint: workspace browser and file preview (source complete; device acceptance pending)
 

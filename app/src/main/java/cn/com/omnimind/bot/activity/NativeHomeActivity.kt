@@ -30,6 +30,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import cn.com.omnimind.bot.ui.nativehome.LegacyHomeNavigator
 import cn.com.omnimind.bot.ui.nativehome.TabletPanePreferences
@@ -163,8 +164,11 @@ class NativeHomeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
+        // MainActivity's launch behaviors, which native Home lacked (5e-7e).
+        AppEntryBehaviors.applyResponsiveOrientation(this)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        if (savedInstanceState == null) AppEntryBehaviors.onAppOpen(this, lifecycleScope)
         TaskRuntimeSettings.attachActivity(this)
         runCatching { RecentTasksVisibility.applySaved(this) }
             .onFailure { OmniLog.w("NativeHomeActivity", "Unable to apply recent-task visibility") }
@@ -375,6 +379,7 @@ class NativeHomeActivity : ComponentActivity() {
         }
         viewModel.refresh()
         backgroundViewModel.refresh()
+        AppEntryBehaviors.onForeground(this, lifecycleScope)
     }
 
     override fun onPause() {
