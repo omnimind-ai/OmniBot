@@ -786,6 +786,35 @@ a Flutter compatibility page (e.g. Account) after stopping the task: it does
 not restart. Rotate a phone on Home: stays portrait. Background the app past
 the token lifetime and return: still signed in.
 
+### 5e-7f checkpoint: notifications open native chats (source complete; device acceptance pending)
+
+- Task-completion and scheduled Sub Agent notifications build
+  `/home/chat?conversationId=…&mode=…` and start `MainActivity`. With native
+  Home on, `MainActivity` now clears the notification as before, then
+  forwards those routes to native Home (`NativeEntryRoutes`) and finishes
+  without starting the Flutter engine's page. Producers are unchanged.
+- Native Home waits for its conversation list, then opens the conversation
+  on the native page when `opensNatively` allows (not if the same chat is
+  already on top) and otherwise hands it to the Flutter chat. Notification
+  modes (`normal`) and stored modes (`agent`) are compared through
+  `conversationModeKey`.
+- Unchanged: other routes (memory center from the quick-log widget, an
+  untargeted `/home/chat`) still open Flutter pages, and with native Home
+  off nothing changes.
+- The first-use spotlight tour stays in Flutter: it is only reached from
+  the Flutter onboarding (`ChatPage(showFirstUseTour: true)`), which is not
+  migrated yet; it moves with onboarding.
+- Verification: `NativeEntryRoutesTest` (3, using the producers'
+  `TaskCompletionNavigator.buildChatRoute`); `:app` 1560, native-ui 96,
+  0 failures. No device run.
+
+Manual acceptance (5e-7f), with `-Pomnibot.nativeHome=true`: leave a native
+chat before its reply ends, tap the completion notification: the native
+page opens on that conversation and the notification is gone; tap it again
+while that chat is open: no second page. A scheduled Sub Agent notification
+opens the Flutter chat (Sub Agent runs are Flutter-only). Kill the app and
+tap a notification: native Home starts and opens the conversation.
+
 ### 5e-8a checkpoint: workspace browser and file preview (source complete; device acceptance pending)
 
 The tablet layout (5e-7d) needs a workspace pane, so the workspace browser

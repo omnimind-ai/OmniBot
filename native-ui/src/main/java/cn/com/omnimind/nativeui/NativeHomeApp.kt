@@ -148,8 +148,22 @@ fun NativeHomeApp(
         val openNativeChatWithDraft: (String) -> Unit = { draft ->
             backStack.add(HomeRoute.NativeNewChat(System.currentTimeMillis(), draft))
         }
-        LaunchedEffect(state.pendingDestination) {
+        LaunchedEffect(state.pendingDestination, state.loading) {
             when (val destination = state.pendingDestination) {
+                is LegacyDestination.OpenConversation -> if (!state.loading) {
+                    actions.consumeDestination()
+                    val summary = state.conversations.firstOrNull {
+                        it.id == destination.id && conversationModeKey(it.mode) == conversationModeKey(destination.mode)
+                    }
+                    if (summary != null && opensNatively(summary)) {
+                        // Replaces a chat already on top instead of stacking a second page for it.
+                        val top = backStack.lastOrNull()
+                        val sameOnTop = top is HomeRoute.ChatTranscriptPreview && top.conversationId == summary.id
+                        if (!sameOnTop) backStack.add(HomeRoute.ChatTranscriptPreview(summary.id, summary.mode, summary.title))
+                    } else {
+                        actions.open(LegacyDestination.Conversation(destination.id, destination.mode, summary?.agentId))
+                    }
+                }
                 LegacyDestination.Page.ModelProviders -> {
                     actions.consumeDestination()
                     if (HomeRoute.ModelProviders !in backStack) backStack.add(HomeRoute.ModelProviders)

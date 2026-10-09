@@ -59,6 +59,7 @@ class MainActivity : FlutterActivity() {
             finish()
             return
         }
+        if (forwardToNativeHome(intent)) return
 
         val channelStart = System.currentTimeMillis()
         channelManager.onCreate(this)
@@ -112,9 +113,23 @@ class MainActivity : FlutterActivity() {
             finish()
             return
         }
+        if (forwardToNativeHome(intent)) return
 
         navigateFromIntent()
 
+    }
+
+    /**
+     * With native Home on, a notification for a conversation opens it there
+     * instead of the Flutter chat (5e-7f). The notification was already
+     * cleared above; native Home decides between its own page and a hand-off.
+     */
+    private fun forwardToNativeHome(intent: Intent): Boolean {
+        val destination = NativeEntryRoutes.destinationFor(intent.getStringExtra("route")) ?: return false
+        val nativeIntent = NativeEntryRoutes.nativeHomeIntent(this, destination) ?: return false
+        startActivity(nativeIntent)
+        finish()
+        return true
     }
 
     private fun navigateFromIntent() {

@@ -174,7 +174,10 @@ class NativeHomeActivity : ComponentActivity() {
             .onFailure { OmniLog.w("NativeHomeActivity", "Unable to apply recent-task visibility") }
         viewModel = ViewModelProvider(this, NativeHomeViewModel.Factory(this))[NativeHomeViewModel::class.java]
         // A recreated activity already handled its launch intent.
-        if (savedInstanceState == null) consumeSharedDraftIntent(intent)
+        if (savedInstanceState == null) {
+            consumeSharedDraftIntent(intent)
+            consumeConversationIntent(intent)
+        }
         val about = ViewModelProvider(this, NativeAboutViewModel.Factory(this))[NativeAboutViewModel::class.java]
         val permissions = ViewModelProvider(this, NativePermissionsViewModel.Factory(this))[NativePermissionsViewModel::class.java]
         val preferences = ViewModelProvider(this, NativePreferencesViewModel.Factory(this))[NativePreferencesViewModel::class.java]
@@ -361,6 +364,14 @@ class NativeHomeActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         consumeSharedDraftIntent(intent)
+        consumeConversationIntent(intent)
+    }
+
+    /** A notification for a conversation, forwarded by MainActivity (5e-7f). */
+    private fun consumeConversationIntent(intent: Intent?) {
+        val destination = intent?.let(NativeEntryRoutes::destinationFrom) ?: return
+        intent.removeExtra(NativeEntryRoutes.EXTRA_DESTINATION_CONVERSATION_ID)
+        viewModel.requestDestination(destination)
     }
 
     /** A share from another app opens a native page with the pending draft (5e-7). */

@@ -109,6 +109,13 @@ sealed interface LegacyDestination {
     /** Plugin-declared in-app route; validated to stay an app-internal path. */
     data class PluginRoute(val route: String) : LegacyDestination
 
+    /**
+     * A conversation named from outside Home (a task-completion notification,
+     * 5e-7f). Native Home opens it on the native page when it can, else hands
+     * it to Flutter; it waits for the conversation list to load to decide.
+     */
+    data class OpenConversation(val id: Long, val mode: String) : LegacyDestination
+
     /** The native workspace browser (5e-8a); null opens the workspace root. */
     data class Workspace(val path: String? = null) : LegacyDestination
 
@@ -130,5 +137,13 @@ val LegacyDestination.opensNativePage: Boolean
     get() = this == LegacyDestination.Page.ModelProviders ||
         this is LegacyDestination.TerminalPackage ||
         this is LegacyDestination.SharedDraft ||
+        this is LegacyDestination.OpenConversation ||
         this is LegacyDestination.Workspace ||
         this is LegacyDestination.WorkspaceFile
+
+/** Notification and stored modes spell the same mode differently (`normal` vs `agent`). */
+fun conversationModeKey(mode: String?): String = when (mode?.trim()?.lowercase()) {
+    null, "", "normal", "codex", "acp", "coding", "agent" -> "agent"
+    "chat", "chatonly", "chat-only", "chat_only" -> "chat_only"
+    else -> mode.trim().lowercase()
+}
