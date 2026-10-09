@@ -1,9 +1,8 @@
 name: Sync models.dev catalog
 
 on:
-  schedule:
-    # Avoid the start-of-hour GitHub Actions scheduling peak.
-    - cron: '37 * * * *'
+  # Website repository owns hourly synchronization after backend cutover.
+  # Keep this Android workflow available for manual recovery only.
   workflow_dispatch:
     inputs:
       force:

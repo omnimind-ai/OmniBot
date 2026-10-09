@@ -20,7 +20,7 @@ is labelled “小万官网” / “Omnibot website”.
 
 ## Publishing
 
-GitHub release and hourly catalog workflows use `vars.OMNIBOT_BACKEND_URL`,
+GitHub release and manual catalog workflows use `vars.OMNIBOT_BACKEND_URL`,
 falling back to the website. They intentionally do not use the old
 `secrets.APP_UPDATE_WORKER_URL`; update its replacement variable for a custom
 backend. `secrets.APP_UPDATE_WORKER_TOKEN` remains the admin API bearer token;
@@ -40,7 +40,27 @@ catalog data. The CLI defaults to this mode and requires
 
 The old R2 command is retained only as an explicit recovery path:
 `MODELS_DEV_STORAGE=r2 node scripts/sync_models_dev_catalog.mjs`.
-It requires the previous R2 credentials and is not used by scheduled CI.
+It requires the previous R2 credentials and is not used by CI.
+
+## Catalog scheduler cutover
+
+The website repository owns the only hourly catalog workflow after migration.
+This Android workflow has `workflow_dispatch` only, so merging this branch cannot
+start a second hourly publisher.
+
+Deploy and validate the website backend first, configure the website repository's
+`APP_UPDATE_WORKER_TOKEN` to match its `ADMIN_TOKEN`, then set website repository
+variable `OMNIBOT_BACKEND_READY=true`. Both website scheduled and manual runs
+require that readiness switch. Manually dispatch the website workflow and verify
+publishing plus its public mirror check before disabling the old Android hourly
+workflow. The Android default branch still writes directly to R2 until that old
+workflow is disabled or this manual-only change reaches the default branch;
+changing the Worker to a compatibility proxy does not stop direct R2 writes.
+
+The website URL defaults to `https://omnibot.omnimind.com.cn`; an optional
+`OMNIBOT_BACKEND_URL` repository variable overrides it. No R2/AWS secrets are
+needed by the website scheduler. Keep this Android catalog workflow manual-only
+when this feature branch is merged.
 
 ## Scope
 
