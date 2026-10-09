@@ -3,6 +3,7 @@ package cn.com.omnimind.baselib.llm
 import cn.com.omnimind.baselib.util.OmniLog
 import com.google.gson.Gson
 import com.tencent.mmkv.MMKV
+import java.net.URI
 
 object OfficialVlmOperationConfigStore {
     private const val TAG = "OfficialVlmOperationConfigStore"
@@ -22,7 +23,7 @@ object OfficialVlmOperationConfigStore {
             ?.trim()
             ?.takeIf(String::isNotEmpty)
         val saved = raw?.let(::parse)
-        if (saved != null && containsLegacySecretField(raw)) {
+        if (saved != null && (containsLegacySecretField(raw) || raw.contains("https://omni.1775885.xyz"))) {
             saveConfig(saved)
         }
         return saved ?: bundledDefault ?: defaultConfig
@@ -46,10 +47,22 @@ object OfficialVlmOperationConfigStore {
     fun normalize(config: OfficialVlmOperationConfig): OfficialVlmOperationConfig {
         return OfficialVlmOperationConfig(
             enabled = config.enabled,
-            apiBase = config.apiBase.trim().trimEnd('/'),
+            apiBase = migrateFirstPartyServiceUrl(config.apiBase.trim().trimEnd('/')),
             model = config.model.trim(),
             wireApi = OpenAiWireApi.normalize(config.wireApi)
         )
+    }
+
+    // Only the official operation cache is migrated. User Provider profiles
+    // are stored separately and keep their chosen endpoints.
+    internal fun migrateFirstPartyServiceUrl(value: String): String {
+        val uri = runCatching { URI(value) }.getOrNull() ?: return value
+        if (uri.scheme != "https" || uri.host != "omni.1775885.xyz" ||
+            uri.port != -1 || uri.userInfo != null) return value
+        return "https://omnibot.omnimind.com.cn" +
+            uri.rawPath.orEmpty() +
+            (uri.rawQuery?.let { "?$it" } ?: "") +
+            (uri.rawFragment?.let { "#$it" } ?: "")
     }
 
     internal fun parse(raw: String): OfficialVlmOperationConfig? {

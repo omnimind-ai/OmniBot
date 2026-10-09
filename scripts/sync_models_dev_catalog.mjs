@@ -522,20 +522,135 @@ function modelsDevKeys(prefix) {
   };
 }
 
+async function syncModelsDevCatalogToBackend({
+  config,
+  fetchImpl = fetch,
+  now = () => Date.now(),
+  logger = console,
+}) {
+  const base = config.backendUrl.replace(/\/+$/g, "");
+  const endpoint = `${base}/api/admin/models-dev`;
+  const authorization = { authorization: `Bearer ${config.backendToken}` };
+  const adminRequest = async (url, init = {}) => {
+    const response = await fetchImpl(url, {
+      ...init,
+      headers: { ...authorization, ...init.headers },
+      signal: AbortSignal.timeout(config.timeoutMs),
+    });
+    if (!response.ok) {
+      throw new Error(`Website catalog API returned HTTP ${response.status}`);
+    }
+    return response;
+  };
+  const catalog = await (await adminRequest(endpoint)).json();
+  const currentExists = Boolean(catalog.current);
+  const previousStatus = currentExists || catalog.refresh
+    ? { ...(catalog.refresh || {}), ...(catalog.current || {}) }
+    : null;
+  const checkedAt = now();
+  const writeRefreshStatus = async (status) => {
+    await adminRequest(`${endpoint}/status`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(status),
+    });
+  };
+  try {
+    const upstream = await fetchModelsDevCatalog({
+      config, currentExists, previousStatus, fetchImpl,
+    });
+    if (upstream.notModified) {
+      if (!currentExists || !previousStatus) {
+        throw new Error("models.dev returned 304 before the website mirror was initialized");
+      }
+      const status = {
+        ...previousStatus,
+        lastCheckedAt: checkedAt,
+        lastSuccessfulAt: checkedAt,
+        changed: false,
+        consecutiveFailures: 0,
+        lastError: "",
+        upstreamUrl: config.upstreamUrl,
+        upstreamEtag: upstream.etag || previousStatus.upstreamEtag || "",
+      };
+      await writeRefreshStatus(status);
+      return syncResult(status, { notModified: true });
+    }
+    const validation = validateModelsDevCatalog(upstream.payload, {
+      config, previousStatus, force: config.force,
+    });
+    const sha256 = createHash("sha256").update(upstream.payload, "utf8").digest("hex");
+    const changed = !currentExists || sha256 !== String(previousStatus?.sha256 || "");
+    const publishedAt = now();
+    await adminRequest(endpoint, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-models-dev-sha256": sha256,
+        "x-models-dev-provider-count": String(validation.providerCount),
+        "x-models-dev-model-count": String(validation.modelCount),
+        "x-models-dev-fetched-at": String(publishedAt),
+        "x-models-dev-upstream-etag": upstream.etag || "",
+        "x-models-dev-upstream-url": config.upstreamUrl,
+        "x-models-dev-force": String(config.force),
+      },
+      body: upstream.payload,
+    });
+    return syncResult({
+      ...validation,
+      lastCheckedAt: checkedAt,
+      lastSuccessfulAt: publishedAt,
+      sha256,
+      upstreamEtag: upstream.etag,
+      changed,
+    }, { notModified: false });
+  } catch (error) {
+    try {
+      await writeRefreshStatus({
+        ...(previousStatus || {}),
+        lastCheckedAt: checkedAt,
+        changed: false,
+        consecutiveFailures: positiveInteger(previousStatus?.consecutiveFailures) + 1,
+        lastError: error.message || String(error),
+        upstreamUrl: config.upstreamUrl,
+      });
+    } catch (statusError) {
+      logger.error(`Could not record sync failure on website: ${statusError.message || statusError}`);
+    }
+    throw error;
+  }
+}
+
 function loadConfig(env = process.env) {
-  const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || "").trim();
-  const bucket = requiredValue(env.CLOUDFLARE_R2_BUCKET_NAME, "CLOUDFLARE_R2_BUCKET_NAME");
-  const endpoint = String(env.CLOUDFLARE_R2_ENDPOINT || "").trim() ||
-    `https://${requiredValue(accountId, "CLOUDFLARE_ACCOUNT_ID")}.r2.cloudflarestorage.com`;
+  const storage = String(env.MODELS_DEV_STORAGE || "backend").trim();
+  if (!["backend", "r2"].includes(storage)) throw new Error("MODELS_DEV_STORAGE must be backend or r2");
+  let bucket = "", endpoint = "", backendUrl = "", backendToken = "";
+  if (storage === "r2") {
+    const accountId = String(env.CLOUDFLARE_ACCOUNT_ID || "").trim();
+    bucket = requiredValue(env.CLOUDFLARE_R2_BUCKET_NAME, "CLOUDFLARE_R2_BUCKET_NAME");
+    endpoint = String(env.CLOUDFLARE_R2_ENDPOINT || "").trim() ||
+      `https://${requiredValue(accountId, "CLOUDFLARE_ACCOUNT_ID")}.r2.cloudflarestorage.com`;
+    httpsUrl(endpoint, "CLOUDFLARE_R2_ENDPOINT");
+    requiredValue(env.AWS_ACCESS_KEY_ID, "AWS_ACCESS_KEY_ID");
+    requiredValue(env.AWS_SECRET_ACCESS_KEY, "AWS_SECRET_ACCESS_KEY");
+  } else {
+    backendUrl = httpsUrl(
+      String(env.OMNIBOT_BACKEND_URL || "https://omnibot.omnimind.com.cn"),
+      "OMNIBOT_BACKEND_URL",
+    ).replace(/\/+$/g, "");
+    backendToken = requiredValue(
+      env.OMNIBOT_BACKEND_TOKEN || env.APP_UPDATE_WORKER_TOKEN,
+      "OMNIBOT_BACKEND_TOKEN or APP_UPDATE_WORKER_TOKEN",
+    );
+  }
   const upstreamUrl = httpsUrl(
     String(env.MODELS_DEV_UPSTREAM_URL || DEFAULT_UPSTREAM_URL),
     "MODELS_DEV_UPSTREAM_URL",
   );
-  httpsUrl(endpoint, "CLOUDFLARE_R2_ENDPOINT");
-  requiredValue(env.AWS_ACCESS_KEY_ID, "AWS_ACCESS_KEY_ID");
-  requiredValue(env.AWS_SECRET_ACCESS_KEY, "AWS_SECRET_ACCESS_KEY");
-
   return {
+    storage,
+    backendUrl,
+    backendToken,
     bucket,
     endpoint,
     upstreamUrl,
@@ -643,11 +758,12 @@ function httpsUrl(value, name) {
 
 async function main() {
   const config = loadConfig();
-  const r2 = new AwsCliR2Client({
-    bucket: config.bucket,
-    endpoint: config.endpoint,
-  });
-  const result = await syncModelsDevCatalog({ config, r2 });
+  const result = config.storage === "r2"
+    ? await syncModelsDevCatalog({
+      config,
+      r2: new AwsCliR2Client({ bucket: config.bucket, endpoint: config.endpoint }),
+    })
+    : await syncModelsDevCatalogToBackend({ config });
   console.log(JSON.stringify(result, null, 2));
 }
 
@@ -667,5 +783,6 @@ export {
   loadConfig,
   modelsDevKeys,
   syncModelsDevCatalog,
+  syncModelsDevCatalogToBackend,
   validateModelsDevCatalog,
 };

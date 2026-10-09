@@ -109,7 +109,7 @@ class _ModelsDevCatalogCache {
 class ModelsDevCatalogService {
   static const String catalogUrl = String.fromEnvironment(
     'OMNIBOT_MODELS_CATALOG_URL',
-    defaultValue: 'https://omni.1775885.xyz/catalog/models-dev/api.json',
+    defaultValue: 'https://omnibot.omnimind.com.cn/catalog/models-dev/api.json',
   );
   static const String _kCacheKey = 'models_dev_catalog_cache_v1';
   static const Duration _kCacheTtl = Duration(hours: 24);

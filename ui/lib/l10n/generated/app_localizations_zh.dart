@@ -1333,13 +1333,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get aboutApkSourceDisclaimer =>
-      '使用本软件即表示您同意我们的隐私政策，并同意我们通过开源的更新 Worker 收集匿名使用信息，以持续改进软件。因使用本软件产生的任何损失或后果由您自行承担。';
+      '使用本软件即表示您同意我们的隐私政策，并同意我们通过开源的网站后端收集匿名使用信息，以持续改进软件。因使用本软件产生的任何损失或后果由您自行承担。';
 
   @override
-  String get aboutApkSourceOptionCnb => 'Cloudflare R2';
+  String get aboutApkSourceOptionCnb => '小万官网';
 
   @override
-  String get aboutApkSourceOptionCnbDescription => '通过更新 Worker 分发';
+  String get aboutApkSourceOptionCnbDescription => '通过小万官网分发';
 
   @override
   String get aboutApkSourceOptionGithub => 'GitHub';

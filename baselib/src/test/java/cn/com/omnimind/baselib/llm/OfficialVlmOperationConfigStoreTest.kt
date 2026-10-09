@@ -33,6 +33,27 @@ class OfficialVlmOperationConfigStoreTest {
     }
 
     @Test
+    fun `official legacy endpoint preserves path and moves to website`() {
+        assertEquals(
+            "https://omnibot.omnimind.com.cn/v1?source=app",
+            OfficialVlmOperationConfigStore.migrateFirstPartyServiceUrl(
+                "https://omni.1775885.xyz/v1?source=app"
+            ),
+        )
+    }
+
+    @Test
+    fun `custom and lookalike endpoints remain unchanged`() {
+        listOf(
+            "https://custom.example/v1",
+            "https://omni.1775885.xyz.example/v1",
+            "https://omni.1775885.xyz:8443/v1",
+        ).forEach { value ->
+            assertEquals(value, OfficialVlmOperationConfigStore.migrateFirstPartyServiceUrl(value))
+        }
+    }
+
+    @Test
     fun `legacy persisted upstream keys are detected for removal`() {
         assertEquals(
             true,

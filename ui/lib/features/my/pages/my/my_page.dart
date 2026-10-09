@@ -10,6 +10,8 @@ import 'package:ui/theme/app_colors.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/utils/cache_util.dart';
 import 'package:ui/utils/ui.dart';
+import 'package:ui/l10n/l10n.dart';
+import 'package:ui/services/feedback_service.dart';
 
 class MyPage extends StatefulWidget {
   const MyPage({super.key});
@@ -163,8 +165,17 @@ class MyPageState extends State<MyPage> {
                           children: [
                             SettingTile(
                               title: '意见反馈',
-                              onTap: () {
-                                GoRouterManager.push('/my/feedback');
+                              onTap: () async {
+                                final opened = await FeedbackService.open(
+                                  languageCode: Localizations.localeOf(context)
+                                      .languageCode,
+                                );
+                                if (!opened && context.mounted) {
+                                  showToast(
+                                    context.trLegacy('无法打开反馈页面'),
+                                    type: ToastType.error,
+                                  );
+                                }
                               },
                             ),
                             SettingTile(

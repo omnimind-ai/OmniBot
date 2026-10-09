@@ -133,7 +133,7 @@ class AppUpdateManagerTest {
         )
 
         assertEquals(
-            "https://omni.1775885.xyz/downloads/v0.3.7.5/OpenOmniBot-v0.3.7.5.apk",
+            "https://omnibot.omnimind.com.cn/downloads/v0.3.7.5/OpenOmniBot-v0.3.7.5.apk",
             AppUpdateManager.resolveApkDownloadUrl(ApkDownloadSource.WORKER, "0.3.7.5", asset)
         )
         assertEquals(

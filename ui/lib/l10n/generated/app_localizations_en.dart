@@ -1425,13 +1425,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get aboutApkSourceDisclaimer =>
-      'By using this app, you agree to our Privacy Policy and consent to the collection of anonymous usage information through the open-source update Worker to help improve the software. You are solely responsible for any loss or consequence arising from your use of the app.';
+      'By using this app, you agree to our Privacy Policy and consent to the collection of anonymous usage information through the open-source website backend to help improve the software. You are solely responsible for any loss or consequence arising from your use of the app.';
 
   @override
-  String get aboutApkSourceOptionCnb => 'Cloudflare R2';
+  String get aboutApkSourceOptionCnb => 'Omnibot website';
 
   @override
-  String get aboutApkSourceOptionCnbDescription => 'Served by update worker';
+  String get aboutApkSourceOptionCnbDescription =>
+      'Served by the Omnibot website';
 
   @override
   String get aboutApkSourceOptionGithub => 'GitHub';

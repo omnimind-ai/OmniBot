@@ -309,11 +309,11 @@ jobs:
             ${{ steps.artifacts.outputs.dir }}/OpenOmniBot-${{ steps.release_ref.outputs.safe_ref_name }}-standard.apk.sha256
             ${{ steps.artifacts.outputs.dir }}/manifest.txt
 
-      - name: Upload APKs to Cloudflare R2 via Worker
+      - name: Upload APKs to OmniBot website backend
         if: steps.release_ref.outputs.publish_release == 'true'
         shell: bash
         env:
-          APP_UPDATE_WORKER_URL: ${{ secrets.APP_UPDATE_WORKER_URL }}
+          APP_UPDATE_WORKER_URL: ${{ vars.OMNIBOT_BACKEND_URL || 'https://omnibot.omnimind.com.cn' }}
           APP_UPDATE_WORKER_TOKEN: ${{ secrets.APP_UPDATE_WORKER_TOKEN }}
           RELEASE_TAG_NAME: ${{ steps.release_ref.outputs.release_tag_name }}
           RELEASE_ASSET_DIR: ${{ steps.artifacts.outputs.dir }}
@@ -354,11 +354,11 @@ jobs:
               --sha256 "${sha_file_sha256}"
           done
 
-      - name: Publish release tag to Cloudflare Worker
+      - name: Publish release tag to OmniBot website backend
         if: steps.release_ref.outputs.publish_release == 'true'
         shell: bash
         env:
-          APP_UPDATE_WORKER_URL: ${{ secrets.APP_UPDATE_WORKER_URL }}
+          APP_UPDATE_WORKER_URL: ${{ vars.OMNIBOT_BACKEND_URL || 'https://omnibot.omnimind.com.cn' }}
           APP_UPDATE_WORKER_TOKEN: ${{ secrets.APP_UPDATE_WORKER_TOKEN }}
           RELEASE_TAG_NAME: ${{ steps.release_ref.outputs.release_tag_name }}
           RELEASE_TRACK: ${{ steps.release_mode.outputs.track }}

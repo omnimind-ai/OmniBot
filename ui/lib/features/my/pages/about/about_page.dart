@@ -5,6 +5,7 @@ import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/device_service.dart';
+import 'package:ui/services/feedback_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/app_text_styles.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -237,6 +238,15 @@ class _AboutPageState extends State<AboutPage> {
     );
   }
 
+  Future<void> _openFeedback() async {
+    final opened = await FeedbackService.open(
+      languageCode: Localizations.localeOf(context).languageCode,
+    );
+    if (!opened && mounted) {
+      showToast(context.trLegacy('无法打开反馈页面'), type: ToastType.error);
+    }
+  }
+
   String _downloadSourceLabel(AppUpdateDownloadSource source) {
     switch (source) {
       case AppUpdateDownloadSource.worker:
@@ -394,6 +404,13 @@ class _AboutPageState extends State<AboutPage> {
           label: context.trLegacy('使用手册'),
           compact: compact,
           onPressed: _openUserGuide,
+        ),
+        SizedBox(height: compact ? 6 : 8),
+        _buildAboutActionButton(
+          icon: LucideIcons.messageSquare,
+          label: context.trLegacy('我要反馈'),
+          compact: compact,
+          onPressed: _openFeedback,
         ),
       ],
     );
