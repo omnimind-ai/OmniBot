@@ -11,12 +11,13 @@ is labelled “小万官网” / “Omnibot website”.
   with the current backend URL when reading update state.
 - `/catalog/models-dev/api.json`: model catalog mirror. Existing device catalog
   caches and their stale-cache fallback are retained.
-- `/feedback/?source=android&lang=zh|en`: shared feedback form. Both Settings
-  feedback and About → Send feedback open the browser to support the Android
-  file picker. App version metadata and the signed-in account email are attached
-  automatically. Email is carried in the URL fragment (outside HTTP access logs),
-  removed by the page after load, and stored separately from editable contact
-  details. Signed-out/offline users can fill contact details manually.
+- `/my/feedback`: an app-owned Flutter page opened by both Settings feedback
+  and About → Send feedback. It posts the title, description, selected native
+  file-picker attachments, optional contact and signed-in account email directly
+  to `/api/feedback`. Contact is prefilled but editable; the account email is
+  stored separately. No browser or WebView is opened. Signed-out users can
+  supply contact details manually. `OMNIBOT_FEEDBACK_API_URL` optionally overrides
+  the first-party endpoint at build time.
 - The official VLM operation cache migrates the old product Worker origin to
   the website origin and preserves the URL path. Custom model Provider profiles
   are separate and are not rewritten.

@@ -6,6 +6,7 @@ import 'package:ui/features/my/pages/about/about_page.dart';
 import 'package:ui/features/my/pages/about/ai_request_logs_page.dart';
 import 'package:ui/features/my/pages/about/runtime_logs_page.dart';
 import 'package:ui/features/my/pages/account/account_page.dart';
+import 'package:ui/features/my/pages/feedback/feedback_page.dart';
 
 /// My模块路由配置
 List<GoRoute> myRoutes = [
@@ -30,6 +31,16 @@ List<GoRoute> myRoutes = [
       key: state.pageKey,
       name: 'my/account',
       child: const AccountPage(),
+    ),
+  ),
+
+  GoRoute(
+    path: '/my/feedback',
+    name: 'my/feedback',
+    pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
+      key: state.pageKey,
+      name: 'my/feedback',
+      child: const FeedbackPage(),
     ),
   ),
 
