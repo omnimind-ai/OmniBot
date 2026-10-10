@@ -1275,4 +1275,8 @@
     <string name="omni_tour_skip">Skip</string>
     <string name="omni_tour_next">Next</string>
     <string name="omni_tour_done">Got it</string>
+    <string name="omni_onb_env_cancelled_title">Setup paused</string>
+    <string name="omni_onb_env_cancelled">Downloads so far are kept.</string>
+    <string name="omni_onb_env_hint_cancelled">Pick up where you left off, or continue and set it up later in settings.</string>
+    <string name="omni_onb_env_resume">Resume setup</string>
 </resources>

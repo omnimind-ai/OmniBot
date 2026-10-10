@@ -814,6 +814,36 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
   and progress easing, and the connection form checks.
 - Verification: `OnboardingModelsTest` (8). Nothing uses it yet.
 
+### 5f-1 cleanup: onboarding structure and a paused install (2026-10-10)
+
+- `OnboardingRepository` now owns every platform call onboarding makes:
+  - the terminal system choice, the install, its snapshot and cancel;
+  - Provider profiles, model discovery and manual IDs;
+  - scene bindings;
+  - the completion flag.
+
+  `NativeOnboardingViewModel` only holds state and saved state. The
+  `EnvironmentSetup` and `ProviderSetup` transitions (`choiceChanged`,
+  `startedOver`, `connected`) live with the state they change.
+- The 940-line screen is split by purpose:
+  - `OnboardingScreen` (the shell: rail, page transition, footer);
+  - `OnboardingComponents` (shared parts);
+  - `OnboardingEnvironmentPages`;
+  - `OnboardingSetupPages`.
+
+  The ViewModel no longer reads Android string resources. Onboarding's own
+  install lines are an `EnvironmentStep` that the page renders.
+- Fix: cancelling the install showed the red "did not finish" error, with
+  the installer's Chinese message even in English. A cancel the user asked
+  for now reads as paused: a neutral ring, "Setup paused", "Resume setup",
+  and the option to continue without it.
+- Fix: the tour's spotlight hole animated in from the top-left corner on its
+  first step. It now snaps to the first control and glides only between
+  controls.
+- Verification:
+  - Tests: `OnboardingModelsTest` (17).
+  - Emulator: cancel mid-install shows the paused state.
+
 ### 5f-1c checkpoint: first-use tour on native Home (device-verified on the emulator)
 
 - After onboarding, native Home opens with a five-step spotlight tour

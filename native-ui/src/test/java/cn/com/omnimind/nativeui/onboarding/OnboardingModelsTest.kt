@@ -147,6 +147,8 @@ class OnboardingModelsTest {
         assertEquals("正在校验终端环境运行资源", localizedEnvironmentStage("正在校验终端环境运行资源", english = false))
         assertEquals("custom error", localizedEnvironmentStage("custom error", english = true))
         assertNull(localizedEnvironmentStage("基础 Agent CLI 包尚未完成预装", english = false))
+        assertEquals("Setup was cancelled; downloads so far are kept",
+            localizedEnvironmentStage("终端环境准备已取消，已保留下载进度。", english = true))
     }
 
     /** Fix (5f-1b): adding a model reset hand-made picks in Dart, or would have left a new embedding model unused. */
@@ -157,5 +159,13 @@ class OnboardingModelsTest {
         assertEquals("glm-4", after["scene.compactor.context.chat"])
         assertEquals("bge-m3", after["scene.memory.embedding"])
         assertEquals("qwen3-32b", after["scene.dispatch.model"])
+    }
+
+    @Test fun aCancelReadsAsPausedNotFailed() {
+        val cancelled = EnvironmentSetup(failed = true, step = EnvironmentStep.Cancelled)
+        assertTrue(cancelled.cancelled)
+        assertFalse(EnvironmentSetup(failed = true, step = EnvironmentStep.Failed).cancelled)
+        // A new choice clears the outcome.
+        assertFalse(cancelled.choiceChanged().failed)
     }
 }

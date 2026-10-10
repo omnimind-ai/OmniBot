@@ -1275,4 +1275,8 @@
     <string name="omni_tour_skip">跳过</string>
     <string name="omni_tour_next">下一步</string>
     <string name="omni_tour_done">知道了</string>
+    <string name="omni_onb_env_cancelled_title">已暂停配置</string>
+    <string name="omni_onb_env_cancelled">已下载的内容会保留。</string>
+    <string name="omni_onb_env_hint_cancelled">可以从中断处继续，也可以先往下走，之后在设置中配置。</string>
+    <string name="omni_onb_env_resume">继续配置</string>
 </resources>

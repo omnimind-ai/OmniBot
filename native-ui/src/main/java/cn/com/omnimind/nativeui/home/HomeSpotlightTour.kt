@@ -8,7 +8,8 @@ import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateRectAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.spring
@@ -135,8 +136,13 @@ internal fun HomeSpotlightTour(anchors: HomeTourAnchors, onFinish: () -> Unit) {
     var origin by remember { mutableStateOf(Offset.Zero) }
     val padding = with(density) { 6.dp.toPx() }
     val target = anchors.bounds[step.anchor]?.translate(-origin)?.inflate(padding)
-    val hole by animateRectAsState(target ?: Rect.Zero, spring(dampingRatio = .82f, stiffness = Spring.StiffnessMediumLow),
-        label = "tour-hole")
+    // Snaps to the first measured control, then glides between controls.
+    val hole = remember { Animatable(Rect.Zero, Rect.VectorConverter) }
+    LaunchedEffect(target) {
+        val next = target ?: return@LaunchedEffect
+        if (hole.value == Rect.Zero) hole.snapTo(next)
+        else hole.animateTo(next, spring(dampingRatio = .82f, stiffness = Spring.StiffnessMediumLow))
+    }
     val pulse by rememberInfiniteTransition(label = "tour-ring")
         .animateFloat(0f, 1f, infiniteRepeatable(tween(1400), RepeatMode.Reverse), label = "tour-pulse")
     val title = stringResource(step.title)
@@ -151,6 +157,7 @@ internal fun HomeSpotlightTour(anchors: HomeTourAnchors, onFinish: () -> Unit) {
             Canvas(Modifier.fillMaxSize().graphicsLayer { compositingStrategy = CompositingStrategy.Offscreen }) {
                 drawRect(Color.Black.copy(alpha = .62f))
                 if (target != null) {
+                    val hole = hole.value
                     val radius = CornerRadius(minOf(hole.height, hole.width) / 2f)
                     drawRoundRect(Color.Transparent, hole.topLeft, hole.size, radius, blendMode = BlendMode.Clear)
                     val spread = 2.dp.toPx() + pulse * 4.dp.toPx()
@@ -172,7 +179,7 @@ internal fun HomeSpotlightTour(anchors: HomeTourAnchors, onFinish: () -> Unit) {
         val card = measurables[1].measure(constraints.copy(minWidth = cardWidth, maxWidth = cardWidth, minHeight = 0))
         layout(constraints.maxWidth, constraints.maxHeight) {
             scrim.place(0, 0)
-            val top = spotlightCardTop(hole, card.height.toFloat(), constraints.maxHeight.toFloat(),
+            val top = spotlightCardTop(hole.value, card.height.toFloat(), constraints.maxHeight.toFloat(),
                 safeTop.toFloat(), safeBottom.toFloat(), 16.dp.toPx())
             card.place((constraints.maxWidth - cardWidth) / 2, top.toInt())
         }

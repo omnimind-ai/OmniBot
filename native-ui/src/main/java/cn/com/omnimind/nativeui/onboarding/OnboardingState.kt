@@ -12,6 +12,9 @@ data class OnboardingNotice(val kind: Kind, val detail: String = "") {
     }
 }
 
+/** Install steps onboarding itself reports, before or instead of the installer's own text. */
+enum class EnvironmentStep { SavingChoices, PreparingSystem, Failed, Cancelled }
+
 @Immutable
 data class EnvironmentSetup(
     val distributionLoading: Boolean = true,
@@ -23,11 +26,19 @@ data class EnvironmentSetup(
     val ready: Boolean = false,
     val failed: Boolean = false,
     val progress: Float = 0f,
+    /** The installer's latest stage text (Chinese; see [localizedEnvironmentStage]). */
     val stage: String = "",
+    /** Shown while [stage] is empty: onboarding's own step. */
+    val step: EnvironmentStep? = null,
 ) {
+    /** The user stopped the install; it reads as paused, not as an error. */
+    val cancelled: Boolean get() = failed && step == EnvironmentStep.Cancelled
     val preset: EnvironmentPreset get() = ENVIRONMENT_PRESETS.firstOrNull { it.id == presetId } ?: ENVIRONMENT_PRESETS.first()
     val distributionName: String get() = if (distribution == "ubuntu") "Ubuntu" else "Alpine"
     val phase: Int get() = environmentPhase(stage, progress, ready)
+
+    /** A new choice invalidates the last install outcome. */
+    fun choiceChanged(): EnvironmentSetup = copy(ready = false, failed = false, progress = 0f, stage = "", step = null)
 }
 
 @Immutable
@@ -50,6 +61,17 @@ data class ProviderSetup(
 ) {
     val option: ProviderOption get() = PROVIDER_OPTIONS.firstOrNull { it.id == optionId } ?: PROVIDER_OPTIONS.first()
     val connected: Boolean get() = profileId != null
+
+    /** An empty form for [option], prefilled with its name and endpoint. */
+    fun startedOver(option: ProviderOption): ProviderSetup = ProviderSetup(
+        loading = loading, optionId = option.id, name = if (option.id == "custom") "" else option.label, baseUrl = option.baseUrl,
+    )
+
+    /** Connected to a saved profile with [models]; scene picks start from the defaults or [bindings]. */
+    fun connected(profileId: String, profileName: String, models: List<String>, bindings: Map<String, String> = emptyMap()) = copy(
+        profileId = profileId, profileName = profileName, models = models,
+        sceneSelections = defaultSceneSelections(models, bindings), pickedScenes = emptySet(),
+    )
 }
 
 @Immutable

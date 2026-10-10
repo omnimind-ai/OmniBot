@@ -320,6 +320,7 @@ private val ENVIRONMENT_STAGE_EN = linkedMapOf(
     "正在验证所选开发工具" to "Verifying selected development tools",
     "开发环境配置完成" to "Development environment ready",
     "所选开发工具已就绪" to "Selected development tools are ready",
+    "终端环境准备已取消" to "Setup was cancelled; downloads so far are kept",
 )
 
 /**
