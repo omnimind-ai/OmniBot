@@ -54,7 +54,7 @@ internal fun HomeScreen(
             bottomBar = {
                 Column(Modifier.navigationBarsPadding().imePadding().padding(horizontal = 12.dp, vertical = 8.dp)) {
                     // This is an entry point, not a second composer or send pipeline.
-                    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(28.dp))
+                    Column(Modifier.fillMaxWidth().homeTourAnchor(HomeTourAnchor.Composer).clip(RoundedCornerShape(28.dp))
                         .background(palette.surface.copy(alpha = if (backgroundActive) .76f else 1f))
                         .clickable(role = Role.Button, onClick = openChat).padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Text(stringResource(R.string.omni_composer_hint), fontSize = 15.sp, color = palette.tertiaryText,
@@ -113,11 +113,12 @@ private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit, onAgents
         val islandLeft = (maxWidth - islandWidth) / 2
         val accessoryLeft = 62.dp + ((islandLeft - 114.dp) / 2).coerceAtLeast(0.dp)
         OmniIconButton(R.drawable.omni_menu, stringResource(R.string.omni_open_drawer), onDrawer,
-            Modifier.align(Alignment.CenterStart).width(50.dp))
+            Modifier.align(Alignment.CenterStart).width(50.dp).homeTourAnchor(HomeTourAnchor.Menu))
         // The pet and agent controls still belong to the chat feature during this slice.
         OmniIconButton(R.drawable.omni_paw_print, stringResource(R.string.omni_pet),
-            onPetSettings, Modifier.offset(x = accessoryLeft).align(Alignment.CenterStart).width(40.dp))
-        Row(Modifier.align(Alignment.Center).width(islandWidth).height(34.dp).clip(CircleShape).background(palette.surface)) {
+            onPetSettings, Modifier.offset(x = accessoryLeft).align(Alignment.CenterStart).width(40.dp)
+                .homeTourAnchor(HomeTourAnchor.Pet))
+        Row(Modifier.align(Alignment.Center).width(islandWidth).height(34.dp).homeTourAnchor(HomeTourAnchor.Island).clip(CircleShape).background(palette.surface)) {
             val gradient = if (palette.dark) listOf(Color(0xFFAA9774), Color(0xFF8FA38A))
                 else listOf(Color(0xFF00AEFF), Color(0xFF4658FF))
             Box(Modifier.weight(1f).fillMaxHeight().padding(2.dp).clip(CircleShape)
@@ -131,6 +132,6 @@ private fun HomeTopBar(onDrawer: () -> Unit, onPetSettings: () -> Unit, onAgents
         }
         // The chat-owned quick switcher is a later slice; this opens the native Agents page.
         OmniIconButton(R.drawable.omni_circle_chevron_down, stringResource(R.string.omni_agent_select),
-            onAgents, Modifier.align(Alignment.CenterEnd).width(50.dp))
+            onAgents, Modifier.align(Alignment.CenterEnd).width(50.dp).homeTourAnchor(HomeTourAnchor.Agents))
     }
 }

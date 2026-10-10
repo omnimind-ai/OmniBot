@@ -1261,4 +1261,18 @@
     <string name="omni_onb_choose_model">Choose a model</string>
     <string name="omni_onb_key_show">Show key</string>
     <string name="omni_onb_key_hide">Hide key</string>
+    <!-- Home first-use tour (5f-1c) -->
+    <string name="omni_tour_menu_title">Menu and conversations</string>
+    <string name="omni_tour_menu_body">Open the sidebar to start a chat, switch to an earlier conversation, or reach settings.</string>
+    <string name="omni_tour_island_title">Chat and workspace</string>
+    <string name="omni_tour_island_body">The island switches between chat and the workspace, where agent files live on this device.</string>
+    <string name="omni_tour_pet_title">Desktop pet</string>
+    <string name="omni_tour_pet_body">Show a pet that floats above other apps and opens a half-screen chat.</string>
+    <string name="omni_tour_agents_title">Agents</string>
+    <string name="omni_tour_agents_body">Pick and configure agents: Omnibot, Codex, Claude Code and more, each with its own model.</string>
+    <string name="omni_tour_composer_title">Start a conversation</string>
+    <string name="omni_tour_composer_body">Type here to begin. In a chat, plus adds files, slash opens commands, and the ring shows context use.</string>
+    <string name="omni_tour_skip">Skip</string>
+    <string name="omni_tour_next">Next</string>
+    <string name="omni_tour_done">Got it</string>
 </resources>

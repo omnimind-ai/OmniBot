@@ -1,5 +1,12 @@
 package cn.com.omnimind.nativeui
 
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.layout.Box
+
+import androidx.compose.runtime.CompositionLocalProvider
+import cn.com.omnimind.nativeui.home.HomeSpotlightTour
+import cn.com.omnimind.nativeui.home.LocalHomeTourAnchors
+import cn.com.omnimind.nativeui.home.HomeTourAnchors
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.WindowInsets
@@ -136,6 +143,9 @@ fun NativeHomeApp(
     workspacePane: @Composable (onOpenFile: (String, Boolean) -> Unit, onClose: () -> Unit) -> Unit = { _, _ -> },
     tabletWidths: TabletPaneWidths = TabletPaneWidths(),
     onTabletWidthsChange: (TabletPaneWidths) -> Unit = {},
+    /** The first-use tour over Home, right after onboarding (5f-1c). */
+    showFirstUseTour: Boolean = false,
+    onFirstUseTourFinished: () -> Unit = {},
 ) {
     OmniTheme(state.theme) {
         val palette = LocalOmniPalette.current
@@ -243,6 +253,9 @@ fun NativeHomeApp(
             ),
         ) {
             entry<HomeRoute.Home> {
+                val tourAnchors = remember { HomeTourAnchors() }
+                CompositionLocalProvider(LocalHomeTourAnchors provides tourAnchors.takeIf { showFirstUseTour }) {
+                Box(Modifier.fillMaxSize()) {
                 HomeWithDrawer(
                     state = state,
                     backgroundState = backgroundState,
@@ -263,6 +276,9 @@ fun NativeHomeApp(
                     onWorkspace = { backStack.add(HomeRoute.Workspace()) },
                     drawerPane = if (tablet) controls.toggleLeft else null,
                 )
+                if (showFirstUseTour) HomeSpotlightTour(tourAnchors, onFirstUseTourFinished)
+                }
+                }
             }
             entry<HomeRoute.Archive> {
                 ConversationArchiveScreen(state, actions.copy(

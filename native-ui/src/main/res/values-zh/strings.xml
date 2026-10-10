@@ -1261,4 +1261,18 @@
     <string name="omni_onb_choose_model">选择模型</string>
     <string name="omni_onb_key_show">显示密钥</string>
     <string name="omni_onb_key_hide">隐藏密钥</string>
+    <!-- Home first-use tour (5f-1c) -->
+    <string name="omni_tour_menu_title">菜单与会话</string>
+    <string name="omni_tour_menu_body">从左上角打开侧栏，可新建对话、切换历史会话，并进入各项设置。</string>
+    <string name="omni_tour_island_title">对话与工作区</string>
+    <string name="omni_tour_island_body">顶部岛在对话与工作区之间切换；工作区是 Agent 在本机读写文件的地方。</string>
+    <string name="omni_tour_pet_title">桌面宠物</string>
+    <string name="omni_tour_pet_body">可以显示悬浮在其他应用上方的宠物，点它就能打开半屏聊天。</string>
+    <string name="omni_tour_agents_title">Agent</string>
+    <string name="omni_tour_agents_body">选择与配置 Agent：小万、Codex、Claude Code 等，各自可以使用不同的模型。</string>
+    <string name="omni_tour_composer_title">开始对话</string>
+    <string name="omni_tour_composer_body">在这里输入即可开始。进入对话后，“+”添加文件，“/”打开命令，上下文环显示已用容量。</string>
+    <string name="omni_tour_skip">跳过</string>
+    <string name="omni_tour_next">下一步</string>
+    <string name="omni_tour_done">知道了</string>
 </resources>

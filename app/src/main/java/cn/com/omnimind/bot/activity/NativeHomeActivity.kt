@@ -150,6 +150,7 @@ class NativeHomeActivity : ComponentActivity() {
         ViewModelProvider(this, NativeMemoryCenterViewModel.Factory(this))[NativeMemoryCenterViewModel::class.java]
     }
     private var languageOption: String? = null
+    private var firstUseTour by mutableStateOf(false)
     private var localeTag: String? = null
 
     override fun attachBaseContext(newBase: Context) {
@@ -199,6 +200,10 @@ class NativeHomeActivity : ComponentActivity() {
             refresh = viewModel::refresh,
         )
         val tabletPanePreferences = TabletPanePreferences(getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE))
+        // The first Home after onboarding shows the tour once (5f-1c). Saved state, not the
+        // launch extra, decides after a recreation: the system keeps the original Intent.
+        firstUseTour = savedInstanceState?.getBoolean(EXTRA_FIRST_USE_TOUR)
+            ?: intent.getBooleanExtra(EXTRA_FIRST_USE_TOUR, false)
         setContent {
             val state by viewModel.state.collectAsStateWithLifecycle()
             var tabletWidths by remember { mutableStateOf(tabletPanePreferences.read()) }
@@ -329,6 +334,8 @@ class NativeHomeActivity : ComponentActivity() {
                     tabletWidths = widths
                     tabletPanePreferences.write(widths)
                 },
+                showFirstUseTour = firstUseTour,
+                onFirstUseTourFinished = { firstUseTour = false },
                 workspaceFile = { path, edit, key, onBack ->
                     val fileViewModel = remember(key) {
                         ViewModelProvider(this@NativeHomeActivity,
@@ -358,6 +365,11 @@ class NativeHomeActivity : ComponentActivity() {
                 permissions = { onBack -> NativePermissionsRoute(permissions, permissionAccess, this@NativeHomeActivity, onBack) },
             )
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(EXTRA_FIRST_USE_TOUR, firstUseTour)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -502,5 +514,8 @@ class NativeHomeActivity : ComponentActivity() {
     companion object {
         /** The request key of a pending `SharedOpenDraftStore` draft to open natively. */
         const val EXTRA_SHARED_DRAFT_KEY = "native_shared_draft_key"
+
+        /** Set by onboarding: show the first-use tour over Home. */
+        const val EXTRA_FIRST_USE_TOUR = "native_first_use_tour"
     }
 }

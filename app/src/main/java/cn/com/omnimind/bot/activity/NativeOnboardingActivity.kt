@@ -115,7 +115,8 @@ class NativeOnboardingActivity : ComponentActivity() {
         if (!replay) {
             // Replaces the whole task, so no onboarding page is left below Home to come back to.
             startActivity(Intent(this, NativeHomeActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+                .putExtra(NativeHomeActivity.EXTRA_FIRST_USE_TOUR, true))
             @Suppress("DEPRECATION")
             overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
         }

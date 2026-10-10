@@ -803,7 +803,7 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
 |-------|-------|
 | 5f-1a | Pure rules: page flow and back stack, presets and tools, Provider options and form checks, scene defaults, install progress phases. |
 | 5f-1b ✅ | Native pages and ViewModel over the existing owners (`EmbeddedTerminalInitCoordinator`, `AppPermissionAccess`, `ProviderEditorRepository`, `ProviderModelCatalogService`, `SceneModelSettingsRepository`); the launcher opens it when native Home is on. Account login stays a Flutter hand-off. |
-| 5f-1c | The six-step first-use tour on the native chat page (Dart `ChatSpotlightTour`), anchored to the native controls. |
+| 5f-1c ✅ | The first-use tour on the native chat page (Dart `ChatSpotlightTour`), anchored to the native controls. |
 
 ### 5f-1a checkpoint: onboarding rules (source complete, unwired)
 
@@ -813,6 +813,40 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
   death), the scene defaults and embedding detection, the install phase
   and progress easing, and the connection form checks.
 - Verification: `OnboardingModelsTest` (8). Nothing uses it yet.
+
+### 5f-1c checkpoint: first-use tour on native Home (device-verified on the emulator)
+
+- After onboarding, native Home opens with a five-step spotlight tour
+  (`HomeSpotlightTour`). It covers:
+  - the menu;
+  - the chat/workspace island;
+  - the pet;
+  - Agents;
+  - the composer.
+
+  Dart's `ChatSpotlightTour` described the Flutter chat page (mode island,
+  tool island, model picker). Those controls are not on native Home, so
+  each step names a control that is on screen.
+- The controls report their bounds through `Modifier.homeTourAnchor`. This
+  costs nothing unless a tour is listening.
+- How the tour looks and moves:
+  - The hole in the scrim springs from one control to the next.
+  - An accent ring breathes around the hole.
+  - The card's content slides in the direction of travel, and the step dots
+    stretch.
+- Behaviour fixed instead of ported:
+  - Dart placed the card by step number, so a control that moved could end
+    up under its own card. `spotlightCardTop` now puts the card below the
+    control when it fits, otherwise above it, always inside the safe area.
+  - Dart offered no way out except tapping through every step. Skip now
+    ends the tour, and back goes to the previous step.
+  - The tour shows once. `EXTRA_FIRST_USE_TOUR` is kept in saved state, so
+    rotating after the tour ends does not bring it back.
+- Verification:
+  - Tests: `HomeSpotlightTourTest` (4).
+  - Emulator: onboarding completion opens the tour, the hole sits on each
+    control, the card flips above the composer, "Got it" closes the tour,
+    and rotating afterwards does not reopen it.
 
 ### 5f-1b checkpoint: native onboarding (device-verified on the emulator)
 
@@ -865,8 +899,8 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
     unchanged.
   - The completed-install state is kept across process death, so completion
     no longer shows "set up later" after a successful install.
-- Not yet native: the six-step chat tour (5f-1c). Completion goes straight
-  to Home, and Dart's "skip to the chat guide" is now "Skip for now".
+- Dart's "skip to the chat guide" is now "Skip for now"; the tour runs on
+  Home after completion instead (5f-1c).
 - Verification:
   - Tests: `OnboardingModelsTest` (16).
   - Emulator, from `pm clear` with `-Pomnibot.nativeHome=true`:
