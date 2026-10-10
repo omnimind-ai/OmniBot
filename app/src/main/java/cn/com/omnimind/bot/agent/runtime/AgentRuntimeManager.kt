@@ -630,6 +630,7 @@ class AgentRuntimeManager private constructor(
             invalidateLocalProbeCache()
             clearPendingEvents()
             allLocalRuntimes().forEach { it.disconnect() }
+            officialAgentGateway.close()
             activeRuntime = null
             activeLocalDistributionId = null
             clearActiveTurns()
@@ -1976,7 +1977,11 @@ class AgentRuntimeManager private constructor(
         // Harness.  Dependency installation belongs exclusively to the
         // explicit `agent/prepare` request above.
         val sharedProviderProfile = currentAgentProviderProfile()
-        val sharedProvider = currentAgentProviderCredentials()
+        val sharedProvider = currentAgentProviderCredentials()?.let { credentials ->
+            if (usesSharedProvider && OmniOfficialProvider.isOfficialProfile(sharedProviderProfile?.id)) {
+                officialAgentGateway.credentials(credentials)
+            } else credentials
+        }
         val boundModel = currentAgentBoundModel()
         if (usesSharedProvider) {
             checkNotNull(sharedProviderProfile) {
@@ -2129,6 +2134,8 @@ class AgentRuntimeManager private constructor(
     private suspend fun prepareSharedProviderBinding() {
         ensureSharedAgentProviderBinding()
     }
+
+    private val officialAgentGateway = OfficialAgentGateway()
 
     private fun currentAgentProviderProfile(): ModelProviderProfile? =
         AgentDispatchConfiguration.providerProfile()

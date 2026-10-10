@@ -12,6 +12,15 @@ import org.junit.Test
 
 class AgentConfigAdaptersTest {
     @Test
+    fun openCodePreservesProviderWireIdentityEvenWhenSessionCatalogIsStale() {
+        assertEquals("omnibot/deepseek-v4-flash-0731",
+            AcpHarnessAdapters.openCode.providerModelValue("deepseek-v4-flash-0731"))
+        assertEquals("omnibot/org/model", AcpHarnessAdapters.openCode.providerModelValue("org/model"))
+        assertEquals("omnibot/model", AcpHarnessAdapters.openCode.providerModelValue("omnibot/model"))
+        assertEquals("model", AcpHarnessAdapters.codex.providerModelValue("model"))
+    }
+
+    @Test
     fun deepSeekLaunchRereadsSavedPermissionsAndReasoningWithProviderPatch() {
         for (mode in listOf("danger-full-access", "read-only", "workspace-write")) {
             val input = AgentProviderMappingInput(
