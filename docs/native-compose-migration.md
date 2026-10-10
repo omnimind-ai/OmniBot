@@ -793,6 +793,18 @@ The variants carry an edition dimension, so the install task is
 (`installDevelopDebug` is ambiguous). Earlier hand-offs named the wrong
 task.
 
+### Fix: native Home skipped first-use onboarding (2026-10-10)
+
+- With `omnibot.nativeHome=true`, `LauncherActivity` sent a plain launch to
+  `NativeHomeActivity`, so a fresh install never saw onboarding (the guard
+  lives in the Flutter router, `welcome_completed`) and never set up a
+  Provider. The launcher now opens native Home only once
+  `flutter.welcome_completed` is set; until then it starts `MainActivity`,
+  whose router shows `/welcome/choice`. Onboarding itself is still Flutter.
+- Verified on the emulator: after `pm clear`, launch lands on the Flutter
+  onboarding; with the flag set, launch lands on native Home. Launch routing
+  only, no unit test (it reads the stored flag in the Activity).
+
 ### 5e-9 checkpoint: Sub Agent conversations open natively (source complete; turn not device-verified)
 
 - Scheduled Sub Agent runs (`mode = subagent`, with a parent and a task id)

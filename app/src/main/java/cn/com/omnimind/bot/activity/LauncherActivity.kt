@@ -45,10 +45,16 @@ class LauncherActivity : ComponentActivity() {
     }
 
 
+    private fun welcomeCompleted(): Boolean =
+        getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            .getBoolean("flutter.welcome_completed", false)
+
     private fun startMainActivity() {
         // Explicit native routes/notification intents continue to use their existing owner.
         val hasRoutedIntent = intent.data != null || intent.extras?.isEmpty == false
-        val destination = if (BuildConfig.NATIVE_HOME_ENABLED && !hasRoutedIntent)
+        // Onboarding is still the Flutter flow, guarded by its router (`welcome_completed`).
+        // Native Home skipped it entirely, so a fresh install never set up a Provider (5e-10).
+        val destination = if (BuildConfig.NATIVE_HOME_ENABLED && !hasRoutedIntent && welcomeCompleted())
             NativeHomeActivity::class.java else MainActivity::class.java
         val intent = Intent(this, destination).apply {
             // 传递原始 Intent 的数据（用于 Deep Link 处理）
