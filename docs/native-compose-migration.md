@@ -793,6 +793,27 @@ The variants carry an edition dimension, so the install task is
 (`installDevelopDebug` is ambiguous). Earlier hand-offs named the wrong
 task.
 
+## Batch 5f plan: first-use onboarding (2026-10-10)
+
+The Flutter onboarding (`welcome/pages/onboarding`, about 6,700 lines) is
+the first thing a new user sees. Until it is native, `LauncherActivity`
+sends a user without `flutter.welcome_completed` to the Flutter flow.
+
+| Slice | Scope |
+|-------|-------|
+| 5f-1a | Pure rules: page flow and back stack, presets and tools, Provider options and form checks, scene defaults, install progress phases. |
+| 5f-1b | Native pages and ViewModel over the existing owners (`EmbeddedTerminalInitCoordinator`, `AppPermissionAccess`, `ProviderEditorRepository`, `ProviderModelCatalogService`, `SceneModelSettingsRepository`); the launcher opens it when native Home is on. Account login stays a Flutter hand-off. |
+| 5f-1c | The six-step first-use tour on the native chat page (Dart `ChatSpotlightTour`), anchored to the native controls. |
+
+### 5f-1a checkpoint: onboarding rules (source complete, unwired)
+
+- `OnboardingModels.kt` ports `onboarding_definitions.dart` (pages,
+  presets, tools, Provider options, scenes), `OnboardingFlowController`
+  (as an immutable `OnboardingFlow` so it can be saved across process
+  death), the scene defaults and embedding detection, the install phase
+  and progress easing, and the connection form checks.
+- Verification: `OnboardingModelsTest` (8). Nothing uses it yet.
+
 ### Fix: native Home skipped first-use onboarding (2026-10-10)
 
 - With `omnibot.nativeHome=true`, `LauncherActivity` sent a plain launch to
