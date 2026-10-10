@@ -39,6 +39,11 @@ class GoRouterManager {
   static String? _initialRoute;
   static bool _isSubEngine = false;
 
+  /// Set once a native host opens a compatibility page. Native onboarding
+  /// owns first use there (5f-1b), so the welcome guard must not turn a
+  /// hand-off such as account sign-in into the Flutter onboarding.
+  static bool _hostedByNative = false;
+
   /// 全局 RouteObserver，用于监听页面生命周期
   static final RouteObserver<ModalRoute<void>> routeObserver =
       RouteObserver<ModalRoute<void>>();
@@ -199,6 +204,7 @@ class GoRouterManager {
       redirect: _isSubEngine
           ? null
           : (context, state) {
+              if (_hostedByNative) return null;
               final completed =
                   StorageService.getBool(
                     StorageKeys.welcomeCompleted,
@@ -367,6 +373,7 @@ class GoRouterManager {
   /// A blank root gives both toolbar and system back a real route to pop. The
   /// native caller closes its Flutter Activity after the pushed route completes.
   static Future<void> openLegacyPage(String route) async {
+    _hostedByNative = true;
     await WidgetsBinding.instance.endOfFrame;
     final context = _rootNavigatorKey.currentContext;
     if (context == null || !context.mounted) {

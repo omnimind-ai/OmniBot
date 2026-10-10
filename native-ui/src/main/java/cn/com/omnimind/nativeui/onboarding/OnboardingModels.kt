@@ -236,3 +236,127 @@ fun validateProviderForm(
     option.id != "custom" && apiKey.isBlank() -> ProviderFormError.MissingApiKey
     else -> null
 }
+
+/**
+ * Dart `_tutorialNextAction`: where the footer arrow leads, or null while the
+ * page still needs input. Tools skips the install. Provider skips the model
+ * setup, or, once a Provider is connected, continues to its models (Dart
+ * always skipped, so returning to a configured Provider needed a detour
+ * through the connection form). The chat tour joins in 5f-1c.
+ */
+fun onboardingNextPage(page: OnboardingPage, connected: Boolean, hasModels: Boolean): OnboardingPage? = when (page) {
+    OnboardingPage.System -> OnboardingPage.Development
+    OnboardingPage.Development -> OnboardingPage.Tools
+    OnboardingPage.Tools -> OnboardingPage.Permissions
+    OnboardingPage.Permissions -> OnboardingPage.Provider
+    OnboardingPage.Provider -> if (connected) OnboardingPage.ModelInventory else OnboardingPage.Completion
+    OnboardingPage.ProviderConnection -> OnboardingPage.ModelInventory.takeIf { connected }
+    OnboardingPage.ModelInventory -> OnboardingPage.PrimaryScenes.takeIf { hasModels }
+    OnboardingPage.PrimaryScenes -> OnboardingPage.MemoryScenes.takeIf { hasModels }
+    else -> null
+}
+
+/** What onboarding needs to know about a stored Provider profile. */
+@Immutable
+data class OnboardingProfile(
+    val id: String,
+    val name: String,
+    val baseUrl: String,
+    val apiKey: String,
+    val sourceType: String,
+    /** A built-in profile seeded with an endpoint but no key (`*-official`). */
+    val builtIn: Boolean,
+)
+
+/**
+ * The profile onboarding resumes with. Dart picked any profile with a Base
+ * URL, and every install seeds keyless built-in profiles (DeepSeek, Kimi,
+ * Mimo…), so a fresh install opened the Provider page "connected" to a
+ * DeepSeek profile without a key whose model fetch could only fail (fixed
+ * in 5f-1b). Only a profile the user can actually call counts: a key, or a
+ * compatible endpoint of their own that needs none.
+ */
+fun resumableOnboardingProfile(profiles: List<OnboardingProfile>, editingId: String?): OnboardingProfile? {
+    val usable = profiles.filter { it.baseUrl.isNotBlank() && (it.apiKey.isNotBlank() || !it.builtIn && it.sourceType == "custom") }
+    return usable.firstOrNull { it.id == editingId } ?: usable.firstOrNull()
+}
+
+/**
+ * Dart `_applyExistingProfile`: the option a stored profile belongs to — the
+ * same source type, else the same endpoint, else the compatible API.
+ * [sameEndpoint] is the app's canonical endpoint comparison.
+ */
+fun providerOptionFor(profile: OnboardingProfile, sameEndpoint: (String, String) -> Boolean): ProviderOption =
+    PROVIDER_OPTIONS.firstOrNull { option ->
+        option.id != "custom" && (
+            option.sourceType != "custom" && option.sourceType == profile.sourceType ||
+                option.baseUrl.isNotBlank() && sameEndpoint(option.baseUrl, profile.baseUrl)
+            )
+    } ?: PROVIDER_OPTIONS.last()
+
+/**
+ * Dart `configure`: the profile a connection overwrites — one of the same
+ * source type for a vendor option, else one at the same endpoint.
+ */
+fun profileToOverwrite(
+    option: ProviderOption,
+    baseUrl: String,
+    profiles: List<OnboardingProfile>,
+    sameEndpoint: (String, String) -> Boolean,
+): OnboardingProfile? = profiles.firstOrNull { profile ->
+    if (option.sourceType != "custom") profile.sourceType == option.sourceType
+    else profile.baseUrl.isNotBlank() && sameEndpoint(profile.baseUrl, baseUrl)
+}
+
+private val ENVIRONMENT_STAGE_EN = linkedMapOf(
+    "开始准备内嵌终端环境" to "Starting the local terminal environment",
+    "正在准备 workspace 和运行目录" to "Preparing the workspace and runtime directories",
+    "正在初始化宿主终端运行时" to "Initializing the terminal runtime",
+    "正在校验终端环境运行资源" to "Checking runtime resources",
+    "正在安装终端环境运行资源" to "Installing runtime resources",
+    "宿主终端环境校验完成" to "Runtime resources verified",
+    "正在检查所选开发工具" to "Checking selected development tools",
+    "正在安装所选开发工具" to "Installing selected development tools",
+    "正在验证所选开发工具" to "Verifying selected development tools",
+    "开发环境配置完成" to "Development environment ready",
+    "所选开发工具已就绪" to "Selected development tools are ready",
+)
+
+/**
+ * Dart `_localizedStage`: the installer reports Chinese stage text; English
+ * shows the known stages translated and anything else as is. Null asks the
+ * page for its own "the terminal is ready, tools are next" line.
+ */
+fun localizedEnvironmentStage(stage: String, english: Boolean): String? {
+    if ("基础 Agent CLI 包尚未完成预装" in stage) return null
+    if (!english) return stage
+    return ENVIRONMENT_STAGE_EN.entries.firstOrNull { it.key in stage }?.value ?: stage
+}
+
+/** [OnboardingFlow] as one string for `SavedStateHandle`: `page|history|visited`. */
+fun OnboardingFlow.encode(): String =
+    listOf(listOf(page), history, visited.toList()).joinToString("|") { pages -> pages.joinToString(",") { it.name } }
+
+/** Inverse of [encode]; an unreadable value starts over rather than failing. */
+fun decodeOnboardingFlow(value: String?): OnboardingFlow {
+    val parts = value?.split('|') ?: return OnboardingFlow()
+    if (parts.size != 3) return OnboardingFlow()
+    fun pages(text: String): List<OnboardingPage>? {
+        val names = text.split(',').filter { it.isNotEmpty() }
+        val pages = names.mapNotNull { name -> OnboardingPage.entries.firstOrNull { it.name == name } }
+        return pages.takeIf { it.size == names.size }
+    }
+    val page = pages(parts[0])?.singleOrNull() ?: return OnboardingFlow()
+    val history = pages(parts[1]) ?: return OnboardingFlow()
+    val visited = pages(parts[2])?.toSet() ?: return OnboardingFlow()
+    return OnboardingFlow(page, history, visited + OnboardingPage.System)
+}
+
+/**
+ * Scene picks after the model list changed: the defaults for [models], with
+ * the scenes the user chose by hand ([picked]) kept. Dart re-derived every
+ * scene and so dropped hand-made picks when a model was added; keeping all
+ * current picks instead would leave a newly added embedding model unused.
+ */
+fun rebalancedSceneSelections(models: List<String>, current: Map<String, String>, picked: Set<String>): Map<String, String> =
+    defaultSceneSelections(models) + current.filter { (scene, model) -> scene in picked && model in models }

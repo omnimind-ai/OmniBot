@@ -52,10 +52,13 @@ class LauncherActivity : ComponentActivity() {
     private fun startMainActivity() {
         // Explicit native routes/notification intents continue to use their existing owner.
         val hasRoutedIntent = intent.data != null || intent.extras?.isEmpty == false
-        // Onboarding is still the Flutter flow, guarded by its router (`welcome_completed`).
-        // Native Home skipped it entirely, so a fresh install never set up a Provider (5e-10).
-        val destination = if (BuildConfig.NATIVE_HOME_ENABLED && !hasRoutedIntent && welcomeCompleted())
-            NativeHomeActivity::class.java else MainActivity::class.java
+        // Native Home skipped onboarding entirely, so a fresh install never set up a Provider (5e-10);
+        // with native Home on, first use now runs the native onboarding (5f-1b).
+        val destination = when {
+            !BuildConfig.NATIVE_HOME_ENABLED || hasRoutedIntent -> MainActivity::class.java
+            welcomeCompleted() -> NativeHomeActivity::class.java
+            else -> NativeOnboardingActivity::class.java
+        }
         val intent = Intent(this, destination).apply {
             // 传递原始 Intent 的数据（用于 Deep Link 处理）
             data = this@LauncherActivity.intent.data

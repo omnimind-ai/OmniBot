@@ -119,7 +119,7 @@ private fun PermissionTrailing(label: String, granted: Boolean) {
 }
 
 @Composable
-private fun PermissionDialogs(state: PermissionsState, actions: PermissionsActions) {
+internal fun PermissionDialogs(state: PermissionsState, actions: PermissionsActions) {
     val palette = LocalOmniPalette.current
     OverlayDialog(show = state.prompt == PermissionPrompt.Accessibility, title = stringResource(R.string.omni_accessibility_prompt_title), onDismissRequest = actions.dismissPrompt) {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -151,7 +151,7 @@ private fun PermissionNotice.messageResource() = when (this) {
     PermissionNotice.ShizukuDenied -> R.string.omni_shizuku_denied
 }
 
-private fun ShizukuAccess.labelResource() = when (code) {
+internal fun ShizukuAccess.labelResource() = when (code) {
     "GRANTED_ROOT" -> R.string.omni_shizuku_granted_root
     "GRANTED_ADB" -> R.string.omni_shizuku_granted_adb
     "PERMISSION_DENIED" -> R.string.omni_shizuku_permission_denied
@@ -161,7 +161,7 @@ private fun ShizukuAccess.labelResource() = when (code) {
     else -> R.string.omni_permissions_reading
 }
 
-private fun ShizukuAccess.guideResource() = when (code) {
+internal fun ShizukuAccess.guideResource() = when (code) {
     "GRANTED_ROOT" -> R.string.omni_shizuku_guide_root
     "GRANTED_ADB" -> R.string.omni_shizuku_guide_adb
     "PERMISSION_DENIED" -> R.string.omni_shizuku_guide_permission

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import cn.com.omnimind.bot.activity.MainActivity
+import cn.com.omnimind.bot.activity.NativeOnboardingActivity
 import cn.com.omnimind.nativeui.LegacyDestination
 import cn.com.omnimind.nativeui.LegacyDestination.Page
 import java.util.UUID
@@ -11,6 +12,12 @@ import java.util.UUID
 /** Remove each mapping when its feature has moved to Compose. Never dispatches an Agent prompt. */
 internal class LegacyHomeNavigator(private val activity: Activity) {
     fun open(destination: LegacyDestination) {
+        // Quick start replays the native onboarding (5f-1b).
+        if (destination == Page.QuickStart) {
+            activity.startActivity(Intent(activity, NativeOnboardingActivity::class.java)
+                .putExtra(NativeOnboardingActivity.EXTRA_REPLAY, true))
+            return
+        }
         val route = when (destination) {
             is LegacyDestination.Conversation -> Uri.Builder().path("/home/chat")
                 .appendQueryParameter("conversationId", destination.id.toString())
@@ -44,7 +51,7 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 // Flutter page, whose scanner autosaves through the same store (batch 4h-2).
                 Page.RemoteBridge -> "/home/remote_codex_setting"
                 Page.Chat -> "/home/chat"
-                Page.QuickStart -> "/home/first_use_tutorial/setup"
+                Page.QuickStart -> return
                 Page.UserGuide -> "/my/about/user-guide"
             }
             // Native pages since 5e-8a; NativeHomeApp opens them and never hands them over.

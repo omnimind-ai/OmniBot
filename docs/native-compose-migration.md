@@ -802,7 +802,7 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
 | Slice | Scope |
 |-------|-------|
 | 5f-1a | Pure rules: page flow and back stack, presets and tools, Provider options and form checks, scene defaults, install progress phases. |
-| 5f-1b | Native pages and ViewModel over the existing owners (`EmbeddedTerminalInitCoordinator`, `AppPermissionAccess`, `ProviderEditorRepository`, `ProviderModelCatalogService`, `SceneModelSettingsRepository`); the launcher opens it when native Home is on. Account login stays a Flutter hand-off. |
+| 5f-1b ✅ | Native pages and ViewModel over the existing owners (`EmbeddedTerminalInitCoordinator`, `AppPermissionAccess`, `ProviderEditorRepository`, `ProviderModelCatalogService`, `SceneModelSettingsRepository`); the launcher opens it when native Home is on. Account login stays a Flutter hand-off. |
 | 5f-1c | The six-step first-use tour on the native chat page (Dart `ChatSpotlightTour`), anchored to the native controls. |
 
 ### 5f-1a checkpoint: onboarding rules (source complete, unwired)
@@ -813,6 +813,75 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
   death), the scene defaults and embedding detection, the install phase
   and progress easing, and the connection form checks.
 - Verification: `OnboardingModelsTest` (8). Nothing uses it yet.
+
+### 5f-1b checkpoint: native onboarding (device-verified on the emulator)
+
+- With native Home on, `LauncherActivity` now opens `NativeOnboardingActivity`
+  until `flutter.welcome_completed` is set, and completion opens native Home
+  in a fresh task. Settings › Miscellaneous › Quick Start replays it
+  (`EXTRA_REPLAY`): back on the first page and completion just close it.
+- `OnboardingScreen` (native-ui) shows the nine steps of the Flutter flow
+  plus the install progress and completion pages. The design differs from
+  the Flutter pages where the Flutter ones were weak:
+  - A step rail at the top replaces the dotted footer. Visited steps can be
+    tapped; the current step is a longer accent segment that springs between
+    widths.
+  - Each page slides in the direction of travel and fades.
+  - Options are Miuix `Card`s with sink feedback, an outline and tint that
+    animate on selection, and a radio or checkbox that only renders.
+  - The install ring tweens between the 350 ms progress ticks, so it never
+    jumps. Milestones fill as phases complete.
+  - A permission grant pops a check in with a spring.
+  - Completion shows what was configured and what was left for later.
+- `NativeOnboardingViewModel` uses the existing owners directly:
+  - the terminal coordinator (`prepare` with the selected packages, its
+    snapshot and cancel);
+  - `ProviderEditorRepository`, `ProviderModelCatalogService` and
+  - `SceneModelSettingsRepository`;
+  - the permissions page reuses `NativePermissionsViewModel` and its
+    dialogs.
+
+  The page, back stack and choices live in `SavedStateHandle`, so process
+  death returns to the same step. An install that is still running when
+  the page comes back is followed rather than restarted. The API key is
+  never written to saved state.
+- Account sign-in stays a Flutter hand-off (`Page.Account`). The Flutter
+  router's welcome guard no longer redirects pages opened through
+  `openLegacyPage`, so sign-in no longer turns into the Flutter onboarding
+  while `welcome_completed` is unset.
+- Behaviour fixed instead of ported:
+  - Fresh installs seed keyless built-in Provider profiles. Dart resumed the
+    first one with a Base URL, so a new user saw DeepSeek "connected"
+    without a key and a model fetch that could only fail. Only a keyed
+    profile, or a user's own compatible endpoint, now counts
+    (`resumableOnboardingProfile`).
+  - The Provider page always "skipped" in Dart. With a Provider already
+    connected, it now continues to that Provider's models.
+  - Adding a model re-derived every scene in Dart, which dropped picks the
+    user had made by hand. Hand-made picks are now kept, and a newly added
+    embedding model still becomes the embedding default
+    (`rebalancedSceneSelections`).
+  - Distribution choice no longer closes terminal sessions when it is
+    unchanged.
+  - The completed-install state is kept across process death, so completion
+    no longer shows "set up later" after a successful install.
+- Not yet native: the six-step chat tour (5f-1c). Completion goes straight
+  to Home, and Dart's "skip to the chat guide" is now "Skip for now".
+- Verification:
+  - Tests: `OnboardingModelsTest` (16).
+  - Emulator, from `pm clear` with `-Pomnibot.nativeHome=true`:
+    - system, preset and tool choice;
+    - a real Ubuntu + Python + Codex install to 100%;
+    - a permissions round trip through system settings;
+    - the Compatible API form: validation, an unreachable endpoint saved
+      with "models could not be fetched", then two manual models with
+      `bge-m3` picked for Memory Embed;
+    - the scene save;
+    - completion to native Home, after which back leaves the app and a
+      relaunch opens Home;
+    - the skip path;
+    - a process kill on step 4, which came back with the choices intact;
+    - the Quick Start replay.
 
 ### Fix: native Home skipped first-use onboarding (2026-10-10)
 
