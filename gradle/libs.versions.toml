@@ -55,6 +55,8 @@ miuix = "0.9.4"
 markwon = "4.6.2"
 androidSvg = "1.4"
 [libraries]
+# Already on the runtime classpath through a dependency; declared for the user guide's Custom Tab (5g).
+androidx-browser = { group = "androidx.browser", name = "browser", version = "1.9.0" }
 miuix-nav = { module = "top.yukonga.miuix.kmp:miuix-nav", version.ref = "miuix" }
 miuix-ui = { module = "top.yukonga.miuix.kmp:miuix-ui", version.ref = "miuix" }
 markwon-core = { module = "io.noties.markwon:core", version.ref = "markwon" }

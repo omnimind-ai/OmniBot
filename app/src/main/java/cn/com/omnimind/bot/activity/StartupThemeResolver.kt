@@ -23,14 +23,15 @@ object StartupThemeResolver {
         }
     }
 
-    fun resolveSplashTheme(context: Context): Int {
-        val useDark = when (readStoredThemeMode(context)) {
-            StartupThemeMode.DARK -> true
-            StartupThemeMode.LIGHT -> false
-            StartupThemeMode.SYSTEM -> isSystemDark(context)
-        }
+    /** Whether the stored theme preference resolves to dark right now. */
+    fun isDark(context: Context): Boolean = when (readStoredThemeMode(context)) {
+        StartupThemeMode.DARK -> true
+        StartupThemeMode.LIGHT -> false
+        StartupThemeMode.SYSTEM -> isSystemDark(context)
+    }
 
-        return if (useDark) {
+    fun resolveSplashTheme(context: Context): Int {
+        return if (isDark(context)) {
             R.style.Theme_OmnibotApp_Splash_Dark
         } else {
             R.style.Theme_OmnibotApp_Splash

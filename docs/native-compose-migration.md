@@ -814,6 +814,29 @@ sends a user without `flutter.welcome_completed` to the Flutter flow.
   and progress easing, and the connection form checks.
 - Verification: `OnboardingModelsTest` (8). Nothing uses it yet.
 
+### 5g checkpoint: the user guide opens in a Custom Tab (device-verified on the emulator)
+
+- About › User guide (`Page.UserGuide`) no longer opens the Flutter
+  WebView page. `WebLinks.open` shows the docs in a Custom Tab:
+  - the toolbar uses the app's page color for light or dark;
+  - the page title is shown;
+  - the tab stays in the app's task, so back returns to About;
+  - without a Custom Tabs browser it opens any browser.
+
+  The address follows the UI language, as in Dart (`userGuideUrl`).
+- Why not a native WebView: the guide is a public website. A Custom Tab
+  gives sign-in, autofill, a share menu and the browser's own security
+  updates, and takes no WebView code to maintain. A Flutter `WebViewPage`
+  remains only where the page needs app-provided content.
+- `LegacyHomeNavigator.openNatively` now collects the destinations that left
+  Flutter but are not native Home pages (Quick Start, User guide).
+- `androidx.browser` 1.9.0 was already on the runtime classpath through a
+  dependency. It is now declared directly.
+- Verification:
+  - Tests: `WebLinksTest`.
+  - Emulator: About › User guide opens a Custom Tab in the app's task, and
+    back returns to About.
+
 ### 5f-1 cleanup: onboarding structure and a paused install (2026-10-10)
 
 - `OnboardingRepository` now owns every platform call onboarding makes:

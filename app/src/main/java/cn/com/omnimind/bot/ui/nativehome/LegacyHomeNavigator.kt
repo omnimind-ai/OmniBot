@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import cn.com.omnimind.bot.activity.MainActivity
 import cn.com.omnimind.bot.activity.NativeOnboardingActivity
+import cn.com.omnimind.bot.ui.WebLinks
 import cn.com.omnimind.nativeui.LegacyDestination
 import cn.com.omnimind.nativeui.LegacyDestination.Page
 import java.util.UUID
@@ -12,12 +13,7 @@ import java.util.UUID
 /** Remove each mapping when its feature has moved to Compose. Never dispatches an Agent prompt. */
 internal class LegacyHomeNavigator(private val activity: Activity) {
     fun open(destination: LegacyDestination) {
-        // Quick start replays the native onboarding (5f-1b).
-        if (destination == Page.QuickStart) {
-            activity.startActivity(Intent(activity, NativeOnboardingActivity::class.java)
-                .putExtra(NativeOnboardingActivity.EXTRA_REPLAY, true))
-            return
-        }
+        if (openNatively(destination)) return
         val route = when (destination) {
             is LegacyDestination.Conversation -> Uri.Builder().path("/home/chat")
                 .appendQueryParameter("conversationId", destination.id.toString())
@@ -51,14 +47,30 @@ internal class LegacyHomeNavigator(private val activity: Activity) {
                 // Flutter page, whose scanner autosaves through the same store (batch 4h-2).
                 Page.RemoteBridge -> "/home/remote_codex_setting"
                 Page.Chat -> "/home/chat"
-                Page.QuickStart -> return
-                Page.UserGuide -> "/my/about/user-guide"
+                // Opened by openNatively.
+                Page.QuickStart, Page.UserGuide -> return
             }
             // Native pages since 5e-8a; NativeHomeApp opens them and never hands them over.
             is LegacyDestination.Workspace, is LegacyDestination.WorkspaceFile -> return
         }
         activity.startActivity(Intent(activity, MainActivity::class.java)
             .putExtra(EXTRA_NATIVE_DESTINATION, route))
+    }
+
+    /** Pages that moved to native screens outside native Home; true when handled. */
+    private fun openNatively(destination: LegacyDestination): Boolean = when (destination) {
+        // Quick start replays the native onboarding (5f-1b).
+        Page.QuickStart -> {
+            activity.startActivity(Intent(activity, NativeOnboardingActivity::class.java)
+                .putExtra(NativeOnboardingActivity.EXTRA_REPLAY, true))
+            true
+        }
+        // The manual opens in a Custom Tab instead of the Flutter WebView (5g).
+        Page.UserGuide -> {
+            WebLinks.open(activity, WebLinks.userGuideUrl(activity.resources.configuration.locales[0]))
+            true
+        }
+        else -> false
     }
 
     companion object {
