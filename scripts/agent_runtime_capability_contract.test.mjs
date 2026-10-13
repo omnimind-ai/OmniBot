@@ -317,7 +317,7 @@ test("no chat path can reintroduce automatic context compaction or a second turn
 
   assert.deepEqual(compactionCallers, [
     "chat_page_openclaw.dart",
-    "services/chat_conversation_runtime_coordinator.dart",
+    path.join("services", "chat_conversation_runtime_coordinator.dart"),
   ]);
   for (const { content } of chatSources) {
     assert.doesNotMatch(content, /trigger\s*[:=]\s*['\"]auto['\"]/);
