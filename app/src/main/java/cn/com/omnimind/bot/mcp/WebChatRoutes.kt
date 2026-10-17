@@ -216,8 +216,16 @@ object WebChatRoutes {
                 call.response.header(HttpHeaders.Connection, "keep-alive")
                 call.respondTextWriter(contentType = ContentType.Text.EventStream) {
                     write(": connected\n\n")
+                    // A reconnect may have missed the device's account change.
+                    // Revalidate Na caches through the ordinary metadata path.
+                    write("event: conversation_updated\n")
+                    write("data: {\"reason\":\"na_history_owner_changed\"}\n\n")
                     flush()
                     RealtimeHub.stream().collect { event ->
+                        val conversationId = (event.data["conversationId"] as? Number)?.toLong()
+                        if (conversationId != null && !conversationService.canReadConversation(conversationId)) {
+                            return@collect
+                        }
                         write("id: ${event.id}\n")
                         write("event: ${event.event}\n")
                         write("data: ${gson.toJson(event.data)}\n\n")

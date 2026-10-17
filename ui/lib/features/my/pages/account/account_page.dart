@@ -110,6 +110,13 @@ class _AccountPageState extends State<AccountPage> {
           // unavailable state so the page can offer an explicit retry.
         }
       }
+      if (!mounted) return;
+      // Local credentials remain authoritative when the account server is
+      // unavailable. Keep sign-out reachable without retaining a stale overview.
+      setState(() {
+        _session = session;
+        _overview = null;
+      });
       AccountOverview? overview;
       if (session.configured &&
           session.signedIn &&
@@ -118,7 +125,6 @@ class _AccountPageState extends State<AccountPage> {
       }
       if (!mounted) return;
       setState(() {
-        _session = session;
         _overview = overview;
       });
     } on PlatformException catch (error) {
@@ -990,7 +996,8 @@ class _AccountPageState extends State<AccountPage> {
     if (!session.cloudServiceAccessAllowed) {
       return _buildCloudServiceBlocked(session);
     }
-    if (!session.signedIn || _overview == null) return _buildAuthForm();
+    if (!session.signedIn) return _buildAuthForm();
+    if (_overview == null) return _buildErrorState();
     if (widget.authOnly) return _buildAuthenticatedAuthState(_overview!);
     return _buildSignedIn(_overview!);
   }
@@ -1047,6 +1054,15 @@ class _AccountPageState extends State<AccountPage> {
               onPressed: _loadAccount,
               child: Text(_text('重试', 'Retry')),
             ),
+            if (_session?.signedIn == true) ...[
+              const SizedBox(height: 8),
+              TextButton.icon(
+                key: const ValueKey('account-error-logout-action'),
+                onPressed: _busy ? null : _logout,
+                icon: const Icon(LucideIcons.logOut, size: 18),
+                label: Text(_text('退出当前设备', 'Sign out on this device')),
+              ),
+            ],
           ],
         ),
       ),

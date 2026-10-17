@@ -1073,6 +1073,7 @@ class AgentRuntimeService {
 
   static Future<Map<String, dynamic>> writeAgentConfig(
     String agentId, {
+    String? connectionMode,
     String? baseUrl,
     String? model,
     String? apiKey,
@@ -1083,6 +1084,7 @@ class AgentRuntimeService {
   }) {
     return _invokeMap('agent/config/write', {
       'agentId': agentId.trim(),
+      if (connectionMode != null) 'connectionMode': connectionMode,
       if (baseUrl != null) 'baseUrl': baseUrl,
       if (model != null) 'model': model,
       if (apiKey != null) 'apiKey': apiKey,

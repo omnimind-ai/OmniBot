@@ -51,6 +51,7 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
                 accessExpiresAt = accessExpiresAt,
                 refreshToken = refreshToken,
                 refreshExpiresAt = refreshExpiresAt,
+                localUserId = store.getString(KEY_LOCAL_USER_ID, null),
             )
         } catch (error: Exception) {
             preferences = null
@@ -68,6 +69,7 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
                 .putString(KEY_ACCESS_EXPIRES_AT, tokens.accessExpiresAt)
                 .putString(KEY_REFRESH_TOKEN, tokens.refreshToken)
                 .putString(KEY_REFRESH_EXPIRES_AT, tokens.refreshExpiresAt)
+                .putString(KEY_LOCAL_USER_ID, tokens.localUserId)
                 .commit() && read() == tokens
         } catch (_: Exception) {
             preferences = null
@@ -86,6 +88,7 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
                     KEY_ACCESS_EXPIRES_AT,
                     KEY_REFRESH_TOKEN,
                     KEY_REFRESH_EXPIRES_AT,
+                    KEY_LOCAL_USER_ID,
                 ).none(store::contains)
         } catch (_: Exception) {
             preferences = null
@@ -126,6 +129,7 @@ class EncryptedAccountTokenStore(context: Context) : AccountTokenStore {
         private const val KEY_ACCESS_EXPIRES_AT = "access_expires_at"
         private const val KEY_REFRESH_TOKEN = "refresh_token"
         private const val KEY_REFRESH_EXPIRES_AT = "refresh_expires_at"
+        private const val KEY_LOCAL_USER_ID = "local_user_id"
     }
 }
 

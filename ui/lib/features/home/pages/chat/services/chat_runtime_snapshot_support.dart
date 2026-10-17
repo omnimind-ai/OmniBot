@@ -30,6 +30,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     ChatBrowserSessionSnapshot? browserSessionSnapshot,
     bool preserveLiveStreamingState = false,
   }) {
+    if (_hiddenNaHistoryViews.contains(conversationId)) return;
     var normalizedMessages = _normalizeIdleAgentRequestCards(
       _normalizeIdleThinkingCards(
         _dedupeEquivalentAgentUserMessages(messages),
@@ -204,6 +205,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     ConversationModel? conversation,
     bool allowHistoryRemoval = false,
   }) async {
+    if (_hiddenNaHistoryViews.contains(conversationId)) return;
     final runtime = ensureRuntime(
       conversationId: conversationId,
       mode: mode,

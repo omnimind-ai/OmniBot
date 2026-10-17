@@ -11,6 +11,67 @@ import org.junit.Test
 import java.time.Instant
 
 class AccountRepositoryTest {
+    @Test fun cloudReadsRefreshOnceAndWritesAreNeverReplayed() = runBlocking {
+        val initial = session("old", "refresh").tokens.copy(accessExpiresAt = "2099-01-01T00:00:00Z")
+        val store = FakeTokenStore(initial)
+        val remote = FakeAccountRemote().apply {
+            userHandler = { session(it, "unused").user }
+            refreshHandler = { session("new", "new-refresh").let { it.copy(tokens = it.tokens.copy(accessExpiresAt = "2099-01-01T00:00:00Z")) } }
+        }
+        val repository = AccountRepository(remote, store)
+        val seen = mutableListOf<String>()
+        val result = repository.withCloudAccessToken { _, token ->
+            seen += token
+            if (token == "old") throw AccountApiException(401, "expired", "expired")
+            "ok"
+        }
+        assertEquals("ok", result)
+        assertEquals(listOf("old", "new"), seen)
+        var writes = 0
+        val error = runCatching { repository.withCloudAccessToken(retryUnauthorized = false) { _, _ ->
+            writes++
+            throw AccountApiException(401, "expired", "expired")
+        } }.exceptionOrNull()
+        assertTrue(error is AccountApiException)
+        assertEquals(1, writes)
+        assertEquals(1, remote.refreshTokens.size)
+    }
+
+    @Test fun logoutFencesLateRefreshAndCloudResponses() = runBlocking {
+        val store = FakeTokenStore(session("old", "refresh").tokens)
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val remote = FakeAccountRemote().apply {
+            refreshHandler = { started.complete(Unit); finish.await(); session("late", "late-refresh") }
+            logoutHandler = { }
+        }
+        val repository = AccountRepository(remote, store)
+        val refresh = async { runCatching { repository.refreshSession() } }
+        started.await()
+        val oldGeneration = repository.sessionGeneration.value
+        repository.logout()
+        finish.complete(Unit)
+        assertTrue(refresh.await().exceptionOrNull() is AccountNotAuthenticatedException)
+        assertNull(store.tokens)
+        assertTrue(runCatching { repository.requireSessionGeneration(oldGeneration) }.isFailure)
+    }
+
+    @Test fun switchedAccountCannotUseOldCloudContextOrReturnItsResponse() = runBlocking {
+        val fresh = session("alice", "refresh").let { it.copy(tokens = it.tokens.copy(accessExpiresAt = "2099-01-01T00:00:00Z")) }
+        val store = FakeTokenStore(fresh.tokens)
+        val remote = FakeAccountRemote().apply { userHandler = { fresh.user }; logoutHandler = { } }
+        val repository = AccountRepository(remote, store)
+        val expected = repository.sessionGeneration.value
+        val result = runCatching { repository.withCloudAccessToken { _, _ -> repository.logout(); "late result" } }
+        assertTrue(result.exceptionOrNull() is AccountNotAuthenticatedException)
+        store.write(fresh.tokens.copy(accessToken = "another-login"))
+        var called = false
+        assertTrue(runCatching { repository.withCloudAccessToken(expectedGeneration = expected) { _, _ -> called = true } }.isFailure)
+        assertFalse(called)
+        assertTrue(runCatching { repository.withCloudAccessToken(expectedUserId = "another-user") { _, _ -> called = true } }.isFailure)
+        assertFalse(called)
+    }
+
     @Test
     fun foregroundRefreshRotatesAnExpiringAccessToken() = runBlocking {
         val store = FakeTokenStore(
@@ -389,6 +450,33 @@ class AccountRepositoryTest {
         assertNull(modeStore.mode)
     }
 
+    @Test fun verifiedHistoryIdentitySurvivesOfflineRestartAndClearsOnLogout() = runBlocking {
+        val remote = FakeAccountRemote().apply {
+            loginHandler = { _, _ -> session("a", "r") }
+            logoutHandler = { }
+        }
+        val store = FakeTokenStore()
+        val account = AccountRepository(remote, store)
+        account.login("alice@example.test", "test-password")
+        assertEquals("user-1", account.cachedCloudUserId())
+        // No remote handler is installed: local visibility cannot need a request.
+        val restarted = AccountRepository(FakeAccountRemote().apply { logoutHandler = { } }, store)
+        assertEquals("user-1", restarted.cachedCloudUserId())
+        assertEquals("user-1", restarted.localUserId.value)
+        restarted.logout()
+        assertNull(restarted.cachedCloudUserId())
+        assertNull(restarted.localUserId.value)
+    }
+
+    @Test fun legacyCredentialsStayUnattributedUntilServerIdentityIsVerified() = runBlocking {
+        val store = FakeTokenStore(session("a", "r").tokens)
+        val remote = FakeAccountRemote().apply { userHandler = { session("a", "r").user } }
+        val account = AccountRepository(remote, store)
+        assertNull(account.cachedCloudUserId())
+        account.currentUser()
+        assertEquals("user-1", AccountRepository(FakeAccountRemote(), store).cachedCloudUserId())
+    }
+
     private fun session(accessToken: String, refreshToken: String) = AccountSession(
         user = AccountUser(
             id = "user-1",
@@ -454,6 +542,7 @@ private class FakeTokenStore(initial: AccountTokens? = null) : AccountTokenStore
 }
 
 private class FakeAccountRemote : AccountRemoteDataSource {
+    var userHandler: suspend (String) -> AccountUser = { unused() }
     var loginHandler: suspend (String, String) -> AccountSession = { _, _ -> unused() }
     var refreshHandler: suspend (String) -> AccountSession = { unused() }
     var logoutHandler: suspend (String) -> Unit = { unused() }
@@ -484,7 +573,7 @@ private class FakeAccountRemote : AccountRemoteDataSource {
 
     override suspend fun logout(refreshToken: String) = logoutHandler(refreshToken)
 
-    override suspend fun getCurrentUser(accessToken: String): AccountUser = unused()
+    override suspend fun getCurrentUser(accessToken: String): AccountUser = userHandler(accessToken)
 
     override suspend fun getAiSettings(accessToken: String): AiSettings =
         getSettingsHandler(accessToken)

@@ -197,6 +197,11 @@ class AgentToolEventData {
 }
 
 class AssistsMessageService {
+  // Native account/connection changes fence in-flight history reads. This is
+  // visibility metadata; ACP retains ownership of all execution transitions.
+  static int conversationVisibilityRevision = 0;
+  static bool hasNaHistoryOwnerSnapshot = false;
+  static String? visibleNaOwnerPrefix;
   static const MethodChannel assistCore = MethodChannel(
     'cn.com.omnimind.bot/AssistCoreEvent',
   );
@@ -243,6 +248,11 @@ class AssistsMessageService {
           break;
 
         case 'onConversationListChanged':
+          if ((call.arguments as Map?)?['reason'] == 'na_history_owner_changed') {
+            conversationVisibilityRevision++;
+            hasNaHistoryOwnerSnapshot = true;
+            visibleNaOwnerPrefix = (call.arguments as Map?)?['naOwnerPrefix'] as String?;
+          }
           _conversationListChangedController.add(
             Map<String, dynamic>.from(
               (call.arguments as Map?) ?? const <String, dynamic>{},

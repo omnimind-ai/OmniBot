@@ -54,7 +54,36 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     unawaited(AppUpdateService.initialize());
     _conversationListChangedSubscription = AssistsMessageService
         .conversationListChangedStream
-        .listen((_) {
+        .listen((event) {
+          if (event['reason'] == 'na_history_owner_changed') {
+            final activeNa =
+                _activeMode == ChatPageMode.agent &&
+                (_activeAcpAgentId == 'na-cloud' ||
+                    _currentConversation?.agentId == 'na-cloud');
+            final cachedNa =
+                _modeState(ChatPageMode.agent).currentConversation?.agentId ==
+                    'na-cloud' ||
+                (_activeAgentThreadId?.startsWith('na:') ?? false);
+            // Invalidate history/snapshot awaits before any later callback can
+            // restore the account that just left this device.
+            _beginConversationTargetRequest();
+            invalidateConversationLifecycle();
+            _runtimeCoordinator.discardNaHistoryViews();
+            if (activeNa || cachedNa)
+              _resetLocalConversationState(ChatPageMode.agent);
+            if (activeNa) {
+              _messageController.clear();
+              _pendingAttachments.clear();
+              unawaited(
+                _applyConversationThreadTarget(
+                  _newAgentThreadTarget(
+                    agentId: 'na-cloud',
+                    agentRuntime: 'na',
+                  ),
+                ),
+              );
+            }
+          }
           unawaited(_handleExternalConversationListChanged());
         });
     _conversationMessagesChangedSubscription = AssistsMessageService

@@ -26,6 +26,7 @@ val omnibotImageModel = prop("OMNIBOT_IMAGE_MODEL")
     .ifBlank { "gpt-image-2" }
 val omnibotImageApiKey = prop("OMNIBOT_IMAGE_API_KEY")
 val omnibotBaseUrl = prop("OMNIBOT_BASE_URL")
+val omnibotCloudUrl = prop("OMNIBOT_CLOUD_URL").ifBlank { "https://cloud.omnimind.com.cn" }
 val appUpdateWorkerUrl = prop("OMNIBOT_UPDATE_WORKER_URL")
     .ifBlank { "https://omnibot.omnimind.com.cn" }
 val llmThuApiBase = prop("LLMTHU_API_BASE")
@@ -175,6 +176,7 @@ android {
         versionCode = 18
         versionName = "0.6.3.3"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
+        buildConfigField("String", "CLOUD_URL", buildConfigString(omnibotCloudUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
         buildConfigField("String", "IMAGE_API_KEY", buildConfigString(omnibotImageApiKey))
         buildConfigField("String", "DEBUG_OMNIMIND_API_BASE", buildConfigString(""))

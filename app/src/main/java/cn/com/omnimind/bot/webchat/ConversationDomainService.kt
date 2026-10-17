@@ -13,6 +13,8 @@ import cn.com.omnimind.bot.agent.AgentConversationHistorySupport
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentTextSanitizer
 import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
+import cn.com.omnimind.bot.agent.runtime.NaConversationAccess
+import cn.com.omnimind.bot.agent.runtime.NA_AGENT_ID
 
 private const val WEB_CONVERSATION_TITLE_LIMIT = 20
 
@@ -65,6 +67,10 @@ class ConversationDomainService(
     private val acpAgentProfileStore by lazy {
         AcpAgentProfileStore(context)
     }
+    private val naAccess by lazy { NaConversationAccess(context) }
+
+    internal suspend fun canReadConversation(conversationId: Long): Boolean =
+        naAccess.canRead(conversationId)
 
     private companion object {
         const val AGENT_MODE_STORAGE_VALUE = "agent"
@@ -100,22 +106,22 @@ class ConversationDomainService(
         excludeHidden: Boolean = false,
     ): List<Map<String, Any?>> {
         val hidden = if (excludeHidden) ChatConversationPreferences(context).hiddenIds() else emptySet()
+        val owner = naAccess.captureOwner()
+        val agentBindingByConversationId = mutableMapOf<Long, cn.com.omnimind.baselib.database.AgentSessionBinding>()
         val conversations = visibleConversationPage(
-            offset, limit, hidden.isNotEmpty(),
-            visible = { row: Conversation -> !isAgentMode(row.mode) || row.id !in hidden },
-            readPage = { start, count -> DatabaseHelper.getConversationDisplayPage(
-                start, count, includeArchived, archivedOnly, mode?.let(::normalizeConversationMode),
-            ) },
+            offset, limit, true,
+            visible = { row: Conversation -> (!isAgentMode(row.mode) || row.id !in hidden) &&
+                naAccess.canReadStored(row.id, agentBindingByConversationId[row.id]?.threadId, owner) },
+            readPage = { start, count ->
+                val rows = DatabaseHelper.getConversationDisplayPage(
+                    start, count, includeArchived, archivedOnly, mode?.let(::normalizeConversationMode),
+                )
+                DatabaseHelper.getAgentSessionBindingsByConversationIds(rows.filter { isAgentMode(it.mode) }.map { it.id })
+                    .forEach { agentBindingByConversationId[it.conversationId] = it }
+                rows
+            },
         )
-        val agentConversationIds = conversations
-            .filter { isAgentMode(it.mode) }
-            .map { it.id }
-        val agentBindings = DatabaseHelper.getAgentSessionBindingsByConversationIds(
-            agentConversationIds
-        )
-        val agentBindingByConversationId =
-            agentBindings.associateBy { binding -> binding.conversationId }
-        return conversations.map { conversation ->
+        val payloads = conversations.map { conversation ->
             val agentBinding = agentBindingByConversationId[conversation.id]
             val agentId = if (isAgentMode(conversation.mode)) {
                 resolveConversationHarnessOwner(
@@ -135,6 +141,14 @@ class ConversationDomainService(
                 agentId = agentId
             )
         }
+        // Room page reads suspend. A switch while a later page is loaded
+        // must also fence the Na rows already projected earlier in this page.
+        return if (owner == naAccess.captureOwner()) payloads else payloads.filter { payload ->
+            val id = (payload["id"] as Number).toLong()
+            payload["agentId"] != NA_AGENT_ID &&
+                NaConversationAccess.sessionOwner(agentBindingByConversationId[id]?.threadId) == null &&
+                acpAgentProfileStore.naOwnerForConversation(id) == null
+        }
     }
 
     suspend fun archiveConversationsUpdatedBefore(cutoff: Long): Int {
@@ -149,6 +163,8 @@ class ConversationDomainService(
     }
 
     suspend fun getConversationPayload(conversationId: Long): Map<String, Any?>? {
+        val owner = naAccess.captureOwner()
+        if (!naAccess.canRead(conversationId, owner)) return null
         val conversation = DatabaseHelper.getConversationById(conversationId) ?: return null
         val agentBinding = if (isAgentMode(conversation.mode)) {
             DatabaseHelper.getAgentSessionBindingByConversationId(conversation.id)
@@ -167,6 +183,7 @@ class ConversationDomainService(
         } else {
             null
         }
+        if (!naAccess.canRead(conversationId, owner)) return null
         return conversationToPayload(
             conversation,
             agentCwd = agentBinding?.cwd,
@@ -189,6 +206,9 @@ class ConversationDomainService(
             conversationMode = normalizedMode,
             requestedAgentId = agentId
         )
+        val naOwner = if (resolvedAgentId == NA_AGENT_ID) {
+            requireNotNull(naAccess.captureOwner()) { "请先登录账号再创建云端会话。" }
+        } else null
         val conversation = Conversation(
             id = 0,
             title = title.ifBlank { "新对话" },
@@ -210,6 +230,8 @@ class ConversationDomainService(
         resolvedAgentId?.let {
             acpAgentProfileStore.bindConversation(inserted.id, it)
         }
+        naOwner?.let { acpAgentProfileStore.bindNaConversationOwner(inserted.id, it) }
+        check(naAccess.canRead(inserted.id, naOwner)) { "账号已切换，请重新创建会话。" }
         val payload = conversationToPayload(inserted, agentId = resolvedAgentId)
         publishConversationEvent("conversation_created", inserted, resolvedAgentId)
         return payload
@@ -221,6 +243,7 @@ class ConversationDomainService(
     ): Map<String, Any?> {
         val conversationId = conversationMap.readLong("id")
             ?: throw IllegalArgumentException("conversation.id is invalid")
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
         val incomingContextSummary = conversationMap["contextSummary"]?.toString()?.trim()
@@ -297,6 +320,7 @@ class ConversationDomainService(
         conversationId: Long,
         newTitle: String
     ): Map<String, Any?> {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
         val updated = existing.copy(
@@ -312,6 +336,7 @@ class ConversationDomainService(
         conversationId: Long,
         firstUserMessage: String?
     ): Map<String, Any?> {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
         val nextTitle = deriveWebConversationTitle(firstUserMessage)
@@ -335,6 +360,7 @@ class ConversationDomainService(
         conversationId: Long,
         promptTokenThreshold: Int
     ): Map<String, Any?> {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         DatabaseHelper.updateConversationPromptThreshold(conversationId, promptTokenThreshold)
         val updated = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
@@ -346,6 +372,7 @@ class ConversationDomainService(
         conversationId: Long,
         archived: Boolean
     ): Map<String, Any?> {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
         val updated = existing.copy(
@@ -358,6 +385,7 @@ class ConversationDomainService(
     }
 
     suspend fun completeConversation(conversationId: Long): Map<String, Any?> {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
         val updated = existing.copy(
@@ -370,6 +398,7 @@ class ConversationDomainService(
     }
 
     suspend fun deleteConversation(conversationId: Long) {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: return
         historyRepository.deleteConversation(conversationId)
@@ -406,11 +435,11 @@ class ConversationDomainService(
         conversationMode: String,
         finalizeInterruptedEntries: Boolean = true
     ): List<Map<String, Any?>> {
-        return historyRepository.listConversationMessages(
+        return naAccess.read(conversationId) { historyRepository.listConversationMessages(
             conversationId = conversationId,
             conversationMode = normalizeConversationMode(conversationMode),
             finalizeInterruptedEntries = finalizeInterruptedEntries
-        )
+        ) }
     }
 
     suspend fun listConversationMessagesPaged(
@@ -419,12 +448,12 @@ class ConversationDomainService(
         limit: Int,
         offset: Int
     ): Map<String, Any?> {
-        val page = historyRepository.listConversationMessagesPaged(
+        val page = naAccess.read(conversationId) { historyRepository.listConversationMessagesPaged(
             conversationId = conversationId,
             conversationMode = normalizeConversationMode(conversationMode),
             limit = limit,
             offset = offset
-        )
+        ) }
         return mapOf("messages" to page.messages, "hasMore" to page.hasMore, "nextOffset" to page.nextOffset)
     }
 
@@ -434,6 +463,7 @@ class ConversationDomainService(
         messages: List<Map<String, Any?>>,
         allowHistoryRemoval: Boolean = false
     ) {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val normalizedMode = normalizeConversationMode(conversationMode)
         historyRepository.replaceThreadMessagesFromUiSnapshot(
             conversationId = conversationId,
@@ -452,6 +482,7 @@ class ConversationDomainService(
         attachments: List<Map<String, Any?>> = emptyList(),
         createdAt: Long = System.currentTimeMillis()
     ) {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val normalizedMode = normalizeConversationMode(conversationMode)
         historyRepository.upsertUserMessage(
             conversationId = conversationId,
@@ -483,6 +514,7 @@ class ConversationDomainService(
         cardData: Map<String, Any?>,
         createdAt: Long
     ) {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val normalizedMode = normalizeConversationMode(conversationMode)
         historyRepository.upsertUiCard(
             conversationId = conversationId,
@@ -500,6 +532,7 @@ class ConversationDomainService(
         modelOverride: AgentModelOverride?,
         reasoningEffort: String? = null
     ): Map<String, Any?> {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val normalizedMode = normalizeConversationMode(conversationMode)
         val compactor = AgentConversationContextCompactor(
             historyRepository = historyRepository,
@@ -527,6 +560,7 @@ class ConversationDomainService(
         conversationId: Long,
         conversationMode: String
     ) {
+        check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val normalizedMode = normalizeConversationMode(conversationMode)
         historyRepository.clearConversationMessages(
             conversationId = conversationId,
@@ -620,11 +654,18 @@ class ConversationDomainService(
         conversationMode: String,
         reason: String = "messages_replaced"
     ) {
-        RealtimeHub.publishSnapshot("messages_replaced") {
+        val owner = naAccess.captureOwner()
+        RealtimeHub.publishSnapshot(
+            "messages_replaced",
+            isVisible = { naAccess.canRead(conversationId, owner) },
+        ) {
             mapOf(
                 "conversationId" to conversationId,
                 "mode" to conversationMode,
-                "messages" to listConversationMessages(conversationId, conversationMode)
+                "messages" to historyRepository.listConversationMessages(
+                    conversationId = conversationId,
+                    conversationMode = normalizeConversationMode(conversationMode),
+                )
             )
         }
         FlutterChatSyncBridge.dispatchConversationMessagesChanged(

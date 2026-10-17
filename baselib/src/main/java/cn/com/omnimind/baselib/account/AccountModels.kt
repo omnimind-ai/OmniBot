@@ -25,6 +25,9 @@ data class AccountTokens(
     val accessExpiresAt: String,
     val refreshToken: String,
     val refreshExpiresAt: String,
+    /** Verified account response identity, encrypted with these credentials.
+     * Local history visibility only; never substitutes for server authorization. */
+    val localUserId: String? = null,
 )
 
 data class AccountSession(

@@ -1,4 +1,5 @@
 import 'package:ui/widgets/conversation_model_selector.dart';
+import 'package:ui/core/router/go_router_manager.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -43,6 +44,9 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   bool _obscureApiKey = true;
   bool _enabled = true;
   bool _changed = false;
+  bool _naDevelopment = false;
+  bool _naDevelopmentAvailable = false;
+  bool _naSignedIn = false;
   String? _reasoningEffort;
   String? _permissionMode;
   bool _sharedModelLoading = true;
@@ -133,6 +137,9 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   }
 
   void _syncPayload(Map<String, dynamic> payload) {
+    _naDevelopment = payload['connectionMode'] == 'development';
+    _naDevelopmentAvailable = payload['developmentAvailable'] == true;
+    _naSignedIn = payload['signedIn'] == true;
     _configRevision = switch (payload['revision']) {
       int value => value,
       num value => value.toInt(),
@@ -273,11 +280,21 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         case 'na-cloud':
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
-            baseUrl: _baseUrlController.text.trim(),
-            apiKey: _apiKeyController.text.trim(),
+            connectionMode: _naDevelopment ? 'development' : 'managed',
+            baseUrl: _naDevelopment ? _baseUrlController.text.trim() : null,
+            apiKey: _naDevelopment ? _apiKeyController.text.trim() : null,
           );
           if (!mounted) return;
           _syncPayload(payload);
+          if (!_naDevelopment) {
+            final status = await AgentRuntimeService.testAgent(_agent!.id);
+            if (status['connected'] != true) {
+              throw StateError(
+                status['error']?.toString() ??
+                    _text('暂时无法连接云端。', 'Cloud is unavailable.'),
+              );
+            }
+          }
           break;
         case 'codex':
           final payload = await AgentRuntimeService.writeAgentConfig(
@@ -362,13 +379,18 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       if (!mounted) return;
       setState(() => _changed = true);
       showToast(
-        _text('配置已保存。', 'Configuration saved.'),
+        _kind == 'na-cloud' && !_naDevelopment
+            ? _text('已连接你的云端空间。', 'Connected to your cloud workspace.')
+            : _text('配置已保存。', 'Configuration saved.'),
         type: ToastType.success,
       );
     } catch (error) {
       if (!mounted) return;
-      setState(() => _error = error.toString());
-      showToast(error.toString(), type: ToastType.error);
+      final message = error is StateError
+          ? error.message.toString()
+          : error.toString();
+      setState(() => _error = message);
+      showToast(message, type: ToastType.error);
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -487,7 +509,13 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                       const SizedBox(height: 18),
                       FilledButton.icon(
                         key: const Key('agent-config-save'),
-                        onPressed: _saving ? null : _save,
+                        onPressed:
+                            _saving ||
+                                (_kind == 'na-cloud' &&
+                                    !_naDevelopment &&
+                                    !_naSignedIn)
+                            ? null
+                            : _save,
                         icon: _saving
                             ? const SizedBox(
                                 width: 16,
@@ -497,7 +525,11 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
                                 ),
                               )
                             : const Icon(LucideIcons.save),
-                        label: Text(_text('保存配置', 'Save configuration')),
+                        label: Text(
+                          _kind == 'na-cloud' && !_naDevelopment
+                              ? _text('连接我的云端空间', 'Connect my workspace')
+                              : _text('保存配置', 'Save configuration'),
+                        ),
                       ),
                     ],
                   ],
@@ -525,8 +557,8 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   String get _pageSubtitle {
     return switch (_kind) {
       'na-cloud' => _text(
-        'Na 的模型、密钥和执行权限由云端管理。这里只配置服务地址与账户访问令牌；令牌仅保留在本次 App 进程中。',
-        'Na manages its model, API key and permissions in the cloud. Configure the address and account access token here; the token stays in this App process.',
+        'Na 自动使用当前登录账号连接你的云端空间。模型与使用额度由平台管理。',
+        'Na connects to your workspace using your signed-in account. The platform manages models and usage.',
       ),
       'codex' => _text(
         '默认直接复用统一 Provider；这里仅查看或覆盖官方 Codex 文件，保存后下一次启动 ACP 时生效。',
@@ -567,37 +599,83 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        TextField(
-          key: const Key('na-service-address'),
-          controller: _baseUrlController,
-          keyboardType: TextInputType.url,
-          autocorrect: false,
-          decoration: InputDecoration(
-            labelText: _text('服务地址', 'Service address'),
+        if (_naDevelopmentAvailable)
+          SwitchListTile(
+            key: const Key('na-development-connection'),
+            contentPadding: EdgeInsets.zero,
+            title: Text(_text('使用独立测试服务', 'Use a development server')),
+            value: _naDevelopment,
+            onChanged: _saving
+                ? null
+                : (value) => setState(() {
+                    _naDevelopment = value;
+                    _apiKeyController.clear();
+                    if (value) {
+                      _baseUrlController.text = 'http://127.0.0.1:8787';
+                    }
+                  }),
           ),
-        ),
-        const SizedBox(height: 14),
-        TextField(
-          key: const Key('na-access-token'),
-          controller: _apiKeyController,
-          obscureText: _obscureApiKey,
-          autocorrect: false,
-          enableSuggestions: false,
-          decoration: InputDecoration(
-            labelText: _text('账户访问令牌', 'Account access token'),
-            suffixIcon: IconButton(
-              onPressed: () => setState(() => _obscureApiKey = !_obscureApiKey),
-              icon: Icon(_obscureApiKey ? LucideIcons.eye : LucideIcons.eyeOff),
+        if (!_naDevelopment) ...[
+          Text(
+            _naSignedIn
+                ? _text(
+                    '已登录。首次连接会自动领取已授权的空间；重新打开 App 无需填写访问令牌。',
+                    'Signed in. Your authorized workspace is allocated automatically. No token entry is needed after restarting the App.',
+                  )
+                : _text(
+                    '请先登录已开通 Na 权限的账号。',
+                    'Sign in with an account that has Na access.',
+                  ),
+          ),
+          const SizedBox(height: 14),
+          TextButton(
+            key: const Key('na-account'),
+            onPressed: () async {
+              await GoRouterManager.pushForResult('/my/account');
+              if (mounted) await _load();
+            },
+            child: Text(
+              _naSignedIn
+                  ? _text('管理账号', 'Manage account')
+                  : _text('登录账号', 'Sign in'),
             ),
           ),
-        ),
-        const SizedBox(height: 14),
-        Text(
-          _text(
-            '保存后，在聊天页的 Agent 列表选择 Na。',
-            'After saving, choose Na from the Agent list in chat.',
+        ] else ...[
+          TextField(
+            key: const Key('na-service-address'),
+            controller: _baseUrlController,
+            keyboardType: TextInputType.url,
+            autocorrect: false,
+            decoration: InputDecoration(
+              labelText: _text('服务地址', 'Service address'),
+            ),
           ),
-        ),
+          const SizedBox(height: 14),
+          TextField(
+            key: const Key('na-access-token'),
+            controller: _apiKeyController,
+            obscureText: _obscureApiKey,
+            autocorrect: false,
+            enableSuggestions: false,
+            decoration: InputDecoration(
+              labelText: _text('账户访问令牌', 'Account access token'),
+              suffixIcon: IconButton(
+                onPressed: () =>
+                    setState(() => _obscureApiKey = !_obscureApiKey),
+                icon: Icon(
+                  _obscureApiKey ? LucideIcons.eye : LucideIcons.eyeOff,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            _text(
+              '保存后，在聊天页的 Agent 列表选择 Na。',
+              'After saving, choose Na from the Agent list in chat.',
+            ),
+          ),
+        ],
       ],
     );
   }

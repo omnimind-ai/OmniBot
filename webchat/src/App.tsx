@@ -10,6 +10,7 @@ import {
   isPersistedConversation,
 } from "./conversationDraft";
 import { appendConversationNavigation } from "./conversationNavigation";
+import { isNaConversation, withoutNaHistory } from "./conversationVisibility";
 import { conversationKey } from "./format";
 import { useRealtime } from "./hooks/useRealtime";
 import { reconcileCodexMessages } from "./messageReconciliation";
@@ -73,6 +74,7 @@ export default function App() {
   const [archivedLoading, setArchivedLoading] = useState(false);
   const [selectedConversation, setSelectedConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [chatViewRevision, setChatViewRevision] = useState(0);
   const [sending, setSending] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState<string | null>(null);
   const [activeRenderTaskId, setActiveRenderTaskId] = useState<string | null>(null);
@@ -98,6 +100,7 @@ export default function App() {
   const workspacePathRef = useRef("");
   const toastTimerRef = useRef<number | null>(null);
   const autoLoginToken = useRef(initialToken());
+  const historyVisibilityRevision = useRef(0);
 
   function showError(error: unknown) {
     setGlobalError(errorMessage(error));
@@ -159,11 +162,13 @@ export default function App() {
 
   async function loadMessages(conversation = selectedRef.current) {
     if (!conversation || !isPersistedConversation(conversation)) return;
+    const visibility = historyVisibilityRevision.current;
     try {
       const payload = await request<ChatMessage[]>(`/conversations/${conversation.id}/messages`, {
         query: { mode: conversation.mode ?? "normal" },
       });
-      if (conversationKey(conversation) === conversationKey(selectedRef.current)) {
+      if ((!isNaConversation(conversation) || visibility === historyVisibilityRevision.current)
+          && conversationKey(conversation) === conversationKey(selectedRef.current)) {
         const incoming = Array.isArray(payload) ? payload : [];
         setMessages((current) => (
           normalizeConversationMode(conversation.mode) === "codex"
@@ -177,9 +182,11 @@ export default function App() {
   }
 
   async function loadConversations(preserveSelection = true) {
+    const visibility = historyVisibilityRevision.current;
     const payload = await request<Conversation[]>("/conversations", {
       query: { includeArchived: false },
     });
+    if (visibility !== historyVisibilityRevision.current) return;
     const previousKey = preserveSelection ? conversationKey(selectedRef.current) : null;
     const nextConversations = (Array.isArray(payload) ? payload : [])
       .filter((item) => !item.isArchived)
@@ -210,11 +217,13 @@ export default function App() {
   }
 
   async function loadArchivedConversations(reportError = true) {
+    const visibility = historyVisibilityRevision.current;
     setArchivedLoading(true);
     try {
       const payload = await request<Conversation[]>("/conversations", {
         query: { includeArchived: true, archivedOnly: true },
       });
+      if (visibility !== historyVisibilityRevision.current) return;
       setArchivedConversations(
         (Array.isArray(payload) ? payload : [])
           .filter((item) => item.isArchived)
@@ -352,6 +361,9 @@ export default function App() {
   }
 
   async function sendMessage(text: string, attachments: Attachment[]): Promise<boolean> {
+    const visibility = historyVisibilityRevision.current;
+    const accountScoped = isNaConversation(selectedRef.current);
+    const visibilityChanged = () => accountScoped && visibility !== historyVisibilityRevision.current;
     setGlobalError("");
     setSending(true);
     let conversationCreatedForSend: Conversation | null = null;
@@ -378,6 +390,7 @@ export default function App() {
             agentId: draftAgentId,
           },
         });
+        if (visibilityChanged()) return false;
         conversation = {
           ...conversation,
           mode: draftMode,
@@ -424,6 +437,7 @@ export default function App() {
           attachments,
         },
       });
+      if (visibilityChanged()) return false;
       if (result?.conversation) {
         const updatedConversation = {
           ...result.conversation,
@@ -446,6 +460,7 @@ export default function App() {
       void loadConversations(true).catch(showError);
       return true;
     } catch (error) {
+      if (visibilityChanged()) return false;
       showError(error);
       setActiveTaskId(null);
       setActiveRenderTaskId(null);
@@ -462,8 +477,10 @@ export default function App() {
             `/conversations/${createdConversation.id}/messages`,
             { query: { mode: createdConversation.mode ?? "normal" } },
           );
+          if (visibilityChanged()) return false;
           if (!persistedMessages.length) {
             await request(`/conversations/${createdConversation.id}`, { method: "DELETE" });
+            if (visibilityChanged()) return false;
             if (
               Number(selectedRef.current?.id ?? 0) ===
               Number(createdConversation.id)
@@ -488,7 +505,7 @@ export default function App() {
       }
       return false;
     } finally {
-      setSending(false);
+      if (!visibilityChanged()) setSending(false);
     }
   }
 
@@ -568,6 +585,25 @@ export default function App() {
   }
 
   function handleRealtimeEvent(eventName: RealtimeEventName, data: RealtimeEventData) {
+    if (eventName === "conversation_updated" && data.reason === "na_history_owner_changed") {
+      historyVisibilityRevision.current += 1;
+      setConversations(withoutNaHistory);
+      setArchivedConversations(withoutNaHistory);
+      if (isNaConversation(selectedRef.current)) {
+        selectedRef.current = null;
+        setSelectedConversation(null);
+        setMessages([]);
+        setChatViewRevision((revision) => revision + 1);
+        setSending(false);
+        setGlobalError("");
+        setActiveTaskId(null);
+        setActiveRenderTaskId(null);
+        setClarifyTaskId(null);
+      }
+      void loadConversations(true).catch(showError);
+      void loadArchivedConversations(false);
+      return;
+    }
     if (["conversation_created", "conversation_updated", "conversation_deleted"].includes(eventName)) {
       void loadConversations(true).catch(showError);
       void loadArchivedConversations(false);
@@ -754,6 +790,7 @@ export default function App() {
           onDelete={(conversation) => deleteConversation(conversation)}
         />
         <ChatPanel
+          key={chatViewRevision}
           conversation={selectedConversation}
           messages={messages}
           globalError={globalError}

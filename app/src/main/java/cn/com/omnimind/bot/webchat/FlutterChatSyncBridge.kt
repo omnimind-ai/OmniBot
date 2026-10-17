@@ -36,6 +36,15 @@ object FlutterChatSyncBridge {
         )
     }
 
+    fun dispatchNaHistoryOwnerChanged(context: android.content.Context) {
+        // Reuse the existing metadata notification; this is not an ACP state.
+        RealtimeHub.publish("conversation_updated", mapOf("reason" to "na_history_owner_changed"))
+        dispatch("onConversationListChanged", mapOf(
+            "reason" to "na_history_owner_changed",
+            "naOwnerPrefix" to cn.com.omnimind.bot.agent.runtime.NaConversationAccess.currentOwnerPrefix(context),
+        ))
+    }
+
     fun dispatchConversationMessagesChanged(
         conversationId: Long,
         mode: String,

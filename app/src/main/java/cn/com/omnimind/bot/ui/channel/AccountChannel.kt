@@ -29,6 +29,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Job
+import cn.com.omnimind.bot.webchat.FlutterChatSyncBridge
 
 class AccountChannel {
     companion object {
@@ -38,13 +40,24 @@ class AccountChannel {
 
     private var channel: MethodChannel? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var historyOwnerObserver: Job? = null
 
     fun setChannel(flutterEngine: FlutterEngine) {
         channel = MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL_NAME)
         channel?.setMethodCallHandler(::handleMethodCall)
+        historyOwnerObserver?.cancel()
+        if (OmniAccount.isConfigured()) historyOwnerObserver = scope.launch {
+            // The existing history notification invalidates all Flutter engines'
+            // cached Na views, including refresh rejection and remote revocation.
+            OmniAccount.repository().localUserId.collect {
+                FlutterChatSyncBridge.dispatchNaHistoryOwnerChanged(cn.com.omnimind.bot.App.instance)
+            }
+        }
     }
 
     fun clear() {
+        historyOwnerObserver?.cancel()
+        historyOwnerObserver = null
         channel?.setMethodCallHandler(null)
         channel = null
     }

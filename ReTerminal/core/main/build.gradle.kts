@@ -198,8 +198,18 @@ fun unpackDebData(debFile: File, targetDir: File) {
     extractDebMember(debFile, "data.tar.xz", dataArchive)
     targetDir.deleteRecursively()
     targetDir.mkdirs()
+    // Windows cannot create the package's documentation/library symlinks
+    // without elevated privileges. Only these regular files enter the APK.
+    val windowsMembers = if (System.getProperty("os.name").startsWith("Windows")) {
+        val prefix = "./data/data/com.termux/files/usr/"
+        when (debFile.name) {
+            "proot.deb" -> listOf("bin/proot", "libexec/proot/loader", "libexec/proot/loader32")
+            "libtalloc.deb" -> listOf("lib/libtalloc.so.2.5.0")
+            else -> error("Unexpected embedded runtime package: ${debFile.name}")
+        }.map { prefix + it }
+    } else emptyList()
     providers.exec {
-        commandLine("tar", "-xJf", dataArchive.absolutePath, "-C", targetDir.absolutePath)
+        commandLine(listOf("tar", "-xJf", dataArchive.absolutePath, "-C", targetDir.absolutePath) + windowsMembers)
     }.result.get().assertNormalExitValue()
 }
 

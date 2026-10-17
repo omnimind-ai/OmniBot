@@ -281,10 +281,24 @@ internal class AcpAgentProfileStore(context: Context) {
             ?.takeUnless { it in catalog.retiredAgentIds }
     }
 
+    fun naOwnerForConversation(conversationId: Long): String? =
+        preferences.getString("na_owner:$conversationId", null)
+
+    @Synchronized
+    fun bindNaConversationOwner(conversationId: Long, prefix: String) {
+        require(NaConversationAccess.sessionOwner(prefix) == prefix)
+        val existing = naOwnerForConversation(conversationId)
+        check(existing == null || existing == prefix) { "Cloud conversation ownership cannot change." }
+        check(preferences.edit().putString("na_owner:$conversationId", prefix).commit()) {
+            "Unable to persist Cloud conversation ownership."
+        }
+    }
+
     @Synchronized
     fun unbindConversation(conversationId: Long) {
         if (conversationId <= 0L) return
         val bindings = conversationBindings().toMutableMap()
+        preferences.edit().remove("na_owner:$conversationId").apply()
         if (bindings.remove(conversationId.toString()) != null) {
             preferences.edit()
                 .putString(KEY_CONVERSATION_BINDINGS, gson.toJson(bindings))

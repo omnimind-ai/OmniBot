@@ -652,7 +652,13 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
           toolInfo.toolType,
           itemType: itemType,
         );
-        final cardId = '$itemId-agent-$toolKind';
+        // ACP snapshots retain the same session/tool identity as live updates.
+        // Legacy snapshots without that identity keep their existing entry id.
+        final identity = AgentToolIdentity.fromMaps(raw: item);
+        final cardId = identity.cardId(
+          suffix: toolKind,
+          fallback: '$itemId-agent-$toolKind',
+        );
         final itemActivity = _remoteCodexActivityFromValue(
           item['status'] ?? item['state'],
         );
@@ -714,6 +720,12 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
           'displayName': toolInfo.displayName,
           'toolTitle': toolTitle,
           'cardId': cardId,
+          if (identity.hasAcpIdentity) ...{
+            'sessionId': identity.sessionId,
+            'turnId': identity.turnId ?? turnId,
+            'toolCallId': identity.toolCallId,
+            'toolKey': identity.toolKey,
+          },
           'toolType': toolInfo.toolType,
           if (toolInfo.serverName != null) 'serverName': toolInfo.serverName,
           'status': status,

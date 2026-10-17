@@ -1427,6 +1427,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     ConversationModel? conversation,
     List<ChatMessageModel> messages,
   ) {
+    if (conversation != null) {
+      _runtimeCoordinator.restoreNaHistoryView(conversation);
+    }
     final pageMode = _pageModeForConversationMode(mode);
     final runtime = _runtimeCoordinator.runtimeFor(
       conversationId: conversationId,

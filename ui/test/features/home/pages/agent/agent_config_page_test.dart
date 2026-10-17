@@ -52,16 +52,24 @@ void main() {
       Map<String, dynamic>? saved;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
-            if (call.method == 'agent/list')
+            if (call.method == 'agent/list') {
               return _catalog(_agent('na-cloud', 'Na'));
-            if (call.method == 'agent/config/read')
-              return {'kind': 'na-cloud', 'baseUrl': 'http://127.0.0.1:8787'};
+            }
+            if (call.method == 'agent/config/read') {
+              return {
+                'kind': 'na-cloud',
+                'baseUrl': 'http://127.0.0.1:8787',
+                'connectionMode': 'development',
+                'developmentAvailable': true,
+              };
+            }
             if (call.method == 'agent/config/write') {
               saved = Map<String, dynamic>.from(call.arguments as Map);
               return {
                 'kind': 'na-cloud',
                 'baseUrl': saved!['baseUrl'],
                 'apiKey': saved!['apiKey'],
+                'connectionMode': 'development',
               };
             }
             return null;
@@ -92,12 +100,77 @@ void main() {
       await tester.pumpAndSettle();
       expect(saved, {
         'agentId': 'na-cloud',
+        'connectionMode': 'development',
         'baseUrl': 'https://na.example.test',
         'apiKey': 'fixture-account-token',
       });
       expect(providerCalls, isEmpty);
     },
   );
+
+  testWidgets(
+    'managed Na uses account connection without exposing credentials',
+    (tester) async {
+      final calls = <MethodCall>[];
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            calls.add(call);
+            if (call.method == 'agent/list') {
+              return _catalog(_agent('na-cloud', 'Na'));
+            }
+            if (call.method == 'agent/config/read' ||
+                call.method == 'agent/config/write') {
+              return {
+                'kind': 'na-cloud',
+                'connectionMode': 'managed',
+                'signedIn': true,
+                'developmentAvailable': false,
+              };
+            }
+            if (call.method == 'agent/test') return {'connected': true};
+            return null;
+          });
+      await _pumpPage(tester, 'na-cloud');
+      expect(find.byKey(const Key('na-service-address')), findsNothing);
+      expect(find.byKey(const Key('na-access-token')), findsNothing);
+      expect(find.byKey(const Key('na-development-connection')), findsNothing);
+      expect(find.byKey(const Key('na-account')), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const Key('agent-config-save')));
+      await tester.tap(find.byKey(const Key('agent-config-save')));
+      await tester.pumpAndSettle();
+      expect(
+        calls
+            .singleWhere((call) => call.method == 'agent/config/write')
+            .arguments,
+        {'agentId': 'na-cloud', 'connectionMode': 'managed'},
+      );
+      expect(calls.where((call) => call.method == 'agent/test'), hasLength(1));
+    },
+  );
+
+  testWidgets('managed Na shows a useful entitlement error', (tester) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method == 'agent/list') {
+            return _catalog(_agent('na-cloud', 'Na'));
+          }
+          if (call.method == 'agent/test') {
+            return {'connected': false, 'error': '当前账号尚未开通 Na 云端使用权限。'};
+          }
+          return {
+            'kind': 'na-cloud',
+            'connectionMode': 'managed',
+            'signedIn': true,
+            'developmentAvailable': false,
+          };
+        });
+    await _pumpPage(tester, 'na-cloud');
+    await tester.ensureVisible(find.byKey(const Key('agent-config-save')));
+    await tester.tap(find.byKey(const Key('agent-config-save')));
+    await tester.pumpAndSettle();
+    expect(find.text('当前账号尚未开通 Na 云端使用权限。'), findsOneWidget);
+    expect(find.textContaining('Bad state:'), findsNothing);
+  });
 
   testWidgets('custom Agent launch edits survive saving and reopening', (
     tester,

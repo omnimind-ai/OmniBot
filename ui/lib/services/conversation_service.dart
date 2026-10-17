@@ -5,6 +5,7 @@ import 'package:flutter/services.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/services/assists_core_service.dart';
 
 class ConversationService {
   static const Duration recentConversationWindow = Duration(days: 7);
@@ -54,6 +55,7 @@ class ConversationService {
     bool archivedOnly = false,
     int? archiveBefore,
   }) async {
+    final visibility = AssistsMessageService.conversationVisibilityRevision;
     try {
       final result = await _assistCore.invokeMethod<List<dynamic>>(
         'getConversations',
@@ -64,7 +66,14 @@ class ConversationService {
         },
       );
       if (result == null) return [];
-      return _normalizeConversations(result);
+      return _normalizeConversations(result)
+          .where(
+            (row) =>
+                row.agentId != 'na-cloud' ||
+                visibility ==
+                    AssistsMessageService.conversationVisibilityRevision,
+          )
+          .toList();
     } on PlatformException catch (e) {
       debugPrint('[ConversationService] 获取对话列表失败: ${e.message}');
       return [];
@@ -107,6 +116,7 @@ class ConversationService {
     bool archivedOnly = false,
     ConversationMode? mode,
   }) async {
+    final visibility = AssistsMessageService.conversationVisibilityRevision;
     try {
       final result = await _assistCore.invokeListMethod<dynamic>(
         'getConversationsByPage',
@@ -118,7 +128,14 @@ class ConversationService {
           if (mode != null) 'mode': mode.storageValue,
         },
       );
-      return _normalizeConversations(result ?? const []);
+      return _normalizeConversations(result ?? const [])
+          .where(
+            (row) =>
+                row.agentId != 'na-cloud' ||
+                visibility ==
+                    AssistsMessageService.conversationVisibilityRevision,
+          )
+          .toList();
     } catch (error) {
       debugPrint('获取会话页失败: $error');
       return [];

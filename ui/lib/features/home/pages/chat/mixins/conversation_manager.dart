@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../../../models/conversation_model.dart';
 import '../../../../../models/conversation_thread_target.dart';
 import '../../../../../models/chat_message_model.dart';
@@ -323,6 +324,12 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
         );
       } catch (_) {
         conversation = null;
+      }
+      // Na history must still be admitted by the native account-aware list.
+      // A stale local cache cannot restore a conversation hidden after logout.
+      if (conversation == null && inMemoryConversation?.agentId == 'na-cloud') {
+        onConversationMissing(operationMode, conversationId);
+        return;
       }
       final resolvedConversation = inMemoryConversation ?? conversation;
 

@@ -73,6 +73,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   // never finish after a newer one and move durable history backwards.
   final Map<String, Future<void>> _persistenceTails = <String, Future<void>>{};
   final Set<String> _ephemeralRuntimeKeys = <String>{};
+  final Set<int> _hiddenNaHistoryViews = <int>{};
 
   bool _initialized = false;
 
@@ -86,6 +87,10 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     unawaited(VoicePlaybackCoordinator.instance.ensureInitialized());
 
     AssistsMessageService.initialize();
+    AssistsMessageService.conversationListChangedStream.listen((event) {
+      if (event['reason'] == 'na_history_owner_changed')
+        discardNaHistoryViews();
+    });
     AssistsMessageService.addOnExternalUserMessageAppendedCallback(
       _handleExternalUserMessageAppended,
     );
@@ -96,6 +101,35 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     required String mode,
   }) {
     return _runtimes[_runtimeKey(conversationId: conversationId, mode: mode)];
+  }
+
+  /// Evict display caches, never durable messages. Pending ACP responses lose
+  /// their local view binding; logging back in reloads the native Conversation.
+  void discardNaHistoryViews() {
+    final views = _runtimes.values
+        .where(
+          (runtime) =>
+              runtime.conversation?.agentId == 'na-cloud' ||
+              (runtime.activeAcpSessionId?.startsWith('na:') ?? false) ||
+              runtime.knownAcpSessionIds.any((id) => id.startsWith('na:')),
+        )
+        .toList();
+    for (final runtime in views) {
+      _hiddenNaHistoryViews.add(runtime.conversationId);
+      runtime.persistenceGeneration++;
+      discardConversationRuntime(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+      );
+    }
+  }
+
+  // Only a fresh native Conversation load may readmit an evicted local view.
+  // Streaming events and delayed snapshots cannot make it visible again.
+  void restoreNaHistoryView(ConversationModel conversation) {
+    if (conversation.agentId == 'na-cloud') {
+      _hiddenNaHistoryViews.remove(conversation.id);
+    }
   }
 
   /// Conversation ids with live work in the shared ACP projection.
@@ -559,6 +593,18 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     ConversationModel? conversation,
   }) {
     ensureInitialized();
+    if (_hiddenNaHistoryViews.contains(conversationId)) {
+      return const AgentReduceResult(handled: false, affectsActiveTurn: false);
+    }
+    final incomingSession = acpEventSessionId(event);
+    if (incomingSession?.startsWith('na:') == true &&
+        AssistsMessageService.hasNaHistoryOwnerSnapshot &&
+        (AssistsMessageService.visibleNaOwnerPrefix == null ||
+            !incomingSession!.startsWith(
+              AssistsMessageService.visibleNaOwnerPrefix!,
+            ))) {
+      return const AgentReduceResult(handled: false, affectsActiveTurn: false);
+    }
     final runtime = ensureRuntime(
       conversationId: conversationId,
       mode: mode,
@@ -1015,6 +1061,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     _runtimes.clear();
     _taskBindings.clear();
     _ephemeralRuntimeKeys.clear();
+    _hiddenNaHistoryViews.clear();
   }
 
   void clearConversationRuntimeSession({

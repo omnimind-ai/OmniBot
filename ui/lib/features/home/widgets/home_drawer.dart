@@ -205,7 +205,20 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     _restoreDrawerSnapshotCache();
     _conversationListChangedSubscription = AssistsMessageService
         .conversationListChangedStream
-        .listen((_) {
+        .listen((event) {
+          if (event['reason'] == 'na_history_owner_changed') {
+            setState(() {
+              _allConversations = _allConversations
+                  .where((row) => row.agentId != 'na-cloud')
+                  .toList();
+              _searchGeneration++;
+              _searchResults = _searchResults
+                  .where((result) => result.conversation.agentId != 'na-cloud')
+                  .toList();
+              _conversationSearchCache.clear();
+            });
+            _syncConversationSnapshotCache();
+          }
           unawaited(_loadConversations());
         });
     _sidebarPolicyChangedSubscription = ConversationService
@@ -219,7 +232,8 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
     // Without a snapshot there is nothing to show; load at once. The host's
     // open callback runs before this state exists (Scaffold builds the drawer
     // on the next frame), so the deferred refresh is scheduled here.
-    if (widget.deferInitialLoad && HomeDrawerState._hasConversationSnapshotCache) {
+    if (widget.deferInitialLoad &&
+        HomeDrawerState._hasConversationSnapshotCache) {
       isLoadingConversations = false;
       reloadAfterSettle();
       return;

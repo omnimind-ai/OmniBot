@@ -87,6 +87,7 @@ class ConversationHistoryService {
     int conversationId, {
     ConversationMode mode = ConversationMode.agent,
   }) async {
+    final visibility = AssistsMessageService.conversationVisibilityRevision;
     final payload = await _assistCore.invokeMethod<String>(
       'getConversationTranscript',
       {
@@ -95,7 +96,9 @@ class ConversationHistoryService {
         'format': 'json',
       },
     );
-    if (payload == null) return false;
+    if (payload == null ||
+        visibility != AssistsMessageService.conversationVisibilityRevision)
+      return false;
     return OmnibotResourceService.shareText(payload);
   }
 
@@ -108,6 +111,7 @@ class ConversationHistoryService {
     int conversationId, {
     ConversationMode mode = ConversationMode.agent,
   }) async {
+    final visibility = AssistsMessageService.conversationVisibilityRevision;
     final text = await _assistCore.invokeMethod<String>(
       'getConversationTranscript',
       {
@@ -116,7 +120,10 @@ class ConversationHistoryService {
         'format': 'text',
       },
     );
-    if (text == null || text.isEmpty) return false;
+    if (text == null ||
+        text.isEmpty ||
+        visibility != AssistsMessageService.conversationVisibilityRevision)
+      return false;
     return AssistsMessageService.copyToClipboard(text);
   }
 
@@ -250,10 +257,14 @@ class ConversationHistoryService {
     ConversationMode mode = ConversationMode.agent,
     int? expectedMessageCount,
   }) async {
+    final visibility = AssistsMessageService.conversationVisibilityRevision;
     final result = await _assistCore.invokeMethod<List<dynamic>>(
       'getConversationMessages',
       {'conversationId': conversationId, 'mode': mode.canonicalStorageValue},
     );
+    if (visibility != AssistsMessageService.conversationVisibilityRevision) {
+      throw StateError('Account changed while reading conversation history');
+    }
     return _decodeMessageList(result, mode: mode);
   }
 
@@ -267,6 +278,7 @@ class ConversationHistoryService {
     int offset = 0,
     int? expectedMessageCount,
   }) async {
+    final visibility = AssistsMessageService.conversationVisibilityRevision;
     final result = await _assistCore.invokeMethod<Map<dynamic, dynamic>>(
       'getConversationMessagesPaged',
       {
@@ -276,6 +288,9 @@ class ConversationHistoryService {
         'offset': offset,
       },
     );
+    if (visibility != AssistsMessageService.conversationVisibilityRevision) {
+      throw StateError('Account changed while reading conversation history');
+    }
     if (result == null) {
       throw StateError('Native conversation paging returned no result');
     }

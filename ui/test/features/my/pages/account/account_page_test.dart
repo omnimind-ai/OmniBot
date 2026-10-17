@@ -117,6 +117,131 @@ void main() {
     expect(find.text('操作失败，请稍后重试'), findsNothing);
   });
 
+  testWidgets('can sign out locally when the account overview is offline', (
+    tester,
+  ) async {
+    _setPhoneViewport(tester);
+    var signedIn = true;
+    var logoutCalls = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          switch (call.method) {
+            case 'getSessionState':
+              return <String, Object?>{
+                'configured': true,
+                'signedIn': signedIn,
+              };
+            case 'getOverview':
+              throw PlatformException(code: 'ACCOUNT_REQUEST_FAILED');
+            case 'logout':
+              logoutCalls += 1;
+              // The native repository clears local credentials before trying
+              // to revoke the remote session, which can fail while offline.
+              signedIn = false;
+              throw PlatformException(code: 'ACCOUNT_REQUEST_FAILED');
+          }
+          return null;
+        });
+
+    await tester.pumpWidget(_testApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('云服务开小差啦，请稍后重试'), findsOneWidget);
+    expect(find.text('重试'), findsOneWidget);
+    expect(find.byKey(const ValueKey('submit-auth')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('account-error-logout-action')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('sign-out-sheet')), findsOneWidget);
+    await tester.tap(find.text('退出'));
+    await tester.pumpAndSettle();
+
+    expect(logoutCalls, 1);
+    expect(signedIn, isFalse);
+    expect(find.text('登录小万账号'), findsOneWidget);
+    expect(find.byKey(const ValueKey('submit-auth')), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('account-error-logout-action')),
+      findsNothing,
+    );
+    expect(find.text('learner@example.com'), findsNothing);
+  });
+
+  testWidgets('failed overview refresh hides stale details and can retry', (
+    tester,
+  ) async {
+    _setPhoneViewport(tester);
+    var offline = false;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getSessionState') {
+            return <String, Object?>{'configured': true, 'signedIn': true};
+          }
+          if (call.method == 'getOverview') {
+            if (offline) {
+              throw PlatformException(code: 'ACCOUNT_REQUEST_FAILED');
+            }
+            return _signedInOverview();
+          }
+          return null;
+        });
+
+    await tester.pumpWidget(_testApp());
+    await tester.pumpAndSettle();
+    expect(find.text('learner@example.com'), findsOneWidget);
+    offline = true;
+    unawaited(
+      tester.state<RefreshIndicatorState>(find.byType(RefreshIndicator)).show(),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('learner@example.com'), findsNothing);
+    expect(find.byKey(const ValueKey('submit-auth')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('account-error-logout-action')),
+      findsOneWidget,
+    );
+    offline = false;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('learner@example.com'), findsOneWidget);
+    expect(find.text('云服务开小差啦，请稍后重试'), findsNothing);
+    expect(
+      find.byKey(const ValueKey('account-error-logout-action')),
+      findsNothing,
+    );
+  });
+
+  testWidgets('unknown local session errors keep retry without sign-out', (
+    tester,
+  ) async {
+    var unavailable = true;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async {
+          if (call.method == 'getSessionState') {
+            if (unavailable) {
+              throw PlatformException(code: 'ACCOUNT_UNAVAILABLE');
+            }
+            return <String, Object?>{'configured': true, 'signedIn': false};
+          }
+          return null;
+        });
+
+    await tester.pumpWidget(_testApp());
+    await tester.pumpAndSettle();
+
+    expect(find.text('重试'), findsOneWidget);
+    expect(find.byKey(const ValueKey('submit-auth')), findsNothing);
+    expect(
+      find.byKey(const ValueKey('account-error-logout-action')),
+      findsNothing,
+    );
+    unavailable = false;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.text('登录小万账号'), findsOneWidget);
+  });
+
   testWidgets(
     'blocks account UI on old versions while preserving BYOK guidance',
     (tester) async {
