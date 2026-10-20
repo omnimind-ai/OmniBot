@@ -1,3 +1,5 @@
+import 'package:ui/config/jackery_ces_config.dart';
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -362,7 +364,8 @@ class HomeDrawerState extends ConsumerState<HomeDrawer> {
           children: [
             const SizedBox(height: 16),
             Expanded(child: _buildConversationSection()),
-            if (_webQuickActions.isNotEmpty) _buildWebQuickLaunchBar(),
+            if (!JackeryCesConfig.enabled && _webQuickActions.isNotEmpty)
+              _buildWebQuickLaunchBar(),
             _buildFooterShortcutBar(),
             // Aligns this row's bottom edge with the chat composer's bottom
             // edge (both sit this far above the shared SafeArea bottom).

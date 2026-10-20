@@ -162,6 +162,39 @@ class ChatAppBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
+    if (JackeryCesConfig.enabled) {
+      return ColoredBox(
+        color: JackeryCesConfig.background,
+        child: SizedBox(
+          height: 66,
+          child: Row(
+            children: [
+              if (showMenuButton)
+                IconButton(
+                  key: const ValueKey('chat-app-bar-menu-button'),
+                  tooltip: 'Open menu',
+                  onPressed: onMenuTap,
+                  icon: const Icon(LucideIcons.menu, color: Color(0xFF303030)),
+                )
+              else
+                const SizedBox(width: 48),
+              Expanded(
+                child: Text(
+                  JackeryCesConfig.productName,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF303030),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 48),
+            ],
+          ),
+        ),
+      );
+    }
     final iconTint = translucent
         ? visualProfile.appBarIconColor
         : context.isDarkTheme

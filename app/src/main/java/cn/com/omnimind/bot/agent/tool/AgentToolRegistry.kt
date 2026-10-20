@@ -1,6 +1,9 @@
 package cn.com.omnimind.bot.agent
 
 import android.content.Context
+import cn.com.omnimind.bot.BuildConfig
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
+import cn.com.omnimind.bot.jackery.JackeryCesAudiencePolicy
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.shizuku.PrivilegedActionPolicy
 import cn.com.omnimind.baselib.shizuku.ShizukuBackend
@@ -154,8 +157,11 @@ class AgentToolRegistry(
                 )
             }
         }
-        val conversationDefinitions = AgentConversationModePolicy
-            .filterToolDefinitionsForConversationMode(runtimeDefinitions, conversationMode)
+        val conversationDefinitions = (if (JackeryCesProvisioning.enabled) {
+            JackeryCesAudiencePolicy.searchTools(runtimeDefinitions,
+                BuildConfig.JACKERY_SEARCH_TOOL_NAMES.split(',').map { it.trim() }.toSet())
+        } else AgentConversationModePolicy
+            .filterToolDefinitionsForConversationMode(runtimeDefinitions, conversationMode))
             .sortedBy { definition ->
                 ((definition["function"] as? JsonObject)
                     ?.get("name") as? JsonPrimitive)

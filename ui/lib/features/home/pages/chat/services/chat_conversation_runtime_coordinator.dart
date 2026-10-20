@@ -75,6 +75,35 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   final Set<String> _ephemeralRuntimeKeys = <String>{};
 
   bool _initialized = false;
+  bool _demoResetInProgress = false;
+
+  bool get demoResetInProgress => _demoResetInProgress;
+
+  /// Called only after the native reset owner has cancelled and drained ACP
+  /// prompts. Stop new persistence before draining all already admitted tails.
+  Future<void> prepareForDemoReset() async {
+    _demoResetInProgress = true;
+    await flushAllPendingPersistence(forDemoReset: true);
+  }
+
+  /// Native reset has deleted the durable conversations and fenced its sessions.
+  /// Discard the same projections so deleted history cannot be written back by
+  /// later page disposal or an old queued persistence callback.
+  Future<void> clearAfterDemoReset() async {
+    for (final runtime in _runtimes.values.toList(growable: false)) {
+      discardConversationRuntime(
+        conversationId: runtime.conversationId,
+        mode: runtime.mode,
+      );
+    }
+    _demoResetInProgress = false;
+    notifyListeners();
+  }
+
+  Future<void> abortDemoReset() async {
+    _demoResetInProgress = false;
+    notifyListeners();
+  }
 
   bool get _isEnglish => LegacyTextLocalizer.isEnglish;
 
@@ -1004,6 +1033,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
 
   @visibleForTesting
   void resetForTest() {
+    _demoResetInProgress = false;
     for (final request in _pendingPersistence.values) {
       request.timer.cancel();
     }

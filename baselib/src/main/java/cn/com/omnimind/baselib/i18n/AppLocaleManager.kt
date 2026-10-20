@@ -53,6 +53,7 @@ data class LocalizedText(
 }
 
 object AppLocaleManager {
+    @Volatile var brandOverride: String? = null
     private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
     private const val FLUTTER_LANGUAGE_KEY = "flutter.language_option"
 
@@ -111,6 +112,7 @@ object AppLocaleManager {
     }
 
     fun brandName(locale: PromptLocale): String {
+        brandOverride?.let { return it }
         return when (locale) {
             PromptLocale.ZH_CN -> "小万"
             PromptLocale.EN_US -> "Omnibot"

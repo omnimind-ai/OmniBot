@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/widgets/omnibot_error_widget.dart';
 
 void main() {
@@ -19,7 +20,14 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: fallback));
 
     expect(find.byType(OmnibotSafeErrorWidget), findsOneWidget);
-    expect(find.text('内容暂时无法显示'), findsOneWidget);
+    expect(
+      find.text(
+        JackeryCesConfig.enabled
+            ? 'Content is temporarily unavailable'
+            : '内容暂时无法显示',
+      ),
+      findsOneWidget,
+    );
   });
 
   testWidgets('safe error widget does not expose Flutter red error UI', (
@@ -27,7 +35,14 @@ void main() {
   ) async {
     await tester.pumpWidget(const MaterialApp(home: OmnibotSafeErrorWidget()));
 
-    expect(find.text('内容暂时无法显示'), findsOneWidget);
+    expect(
+      find.text(
+        JackeryCesConfig.enabled
+            ? 'Content is temporarily unavailable'
+            : '内容暂时无法显示',
+      ),
+      findsOneWidget,
+    );
     expect(tester.takeException(), isNull);
   });
 }

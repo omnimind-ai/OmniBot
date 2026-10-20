@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 
 enum AppBackgroundSourceType { none, local, remote }
 
@@ -369,6 +370,11 @@ class AppBackgroundService {
       visualProfileNotifier.value;
 
   static Future<void> load() async {
+    if (JackeryCesConfig.enabled) {
+      notifier.value = AppBackgroundConfig.defaults;
+      visualProfileNotifier.value = AppBackgroundVisualProfile.defaultProfile;
+      return;
+    }
     final raw = StorageService.getString(_storageKey);
     if (raw == null || raw.trim().isEmpty) {
       notifier.value = AppBackgroundConfig.defaults;
@@ -567,9 +573,8 @@ class AppBackgroundService {
           if (response.statusCode < 200 || response.statusCode >= 300) {
             return null;
           }
-          return await consolidateHttpClientResponseBytes(
-            response,
-          ).timeout(const Duration(seconds: 4));
+          return await consolidateHttpClientResponseBytes(response)
+              .timeout(const Duration(seconds: 4));
         } catch (_) {
           return null;
         } finally {

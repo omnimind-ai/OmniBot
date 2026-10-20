@@ -1,5 +1,5 @@
-import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 
@@ -9,9 +9,15 @@ final appThemeModeProvider =
     );
 
 class AppThemeController extends StateNotifier<AppThemeMode> {
-  AppThemeController() : super(StorageService.getThemeMode());
+  AppThemeController()
+    : super(
+        JackeryCesConfig.enabled
+            ? AppThemeMode.light
+            : StorageService.getThemeMode(),
+      );
 
   Future<void> setThemeMode(AppThemeMode mode) async {
+    if (JackeryCesConfig.enabled) return;
     if (state == mode) {
       return;
     }

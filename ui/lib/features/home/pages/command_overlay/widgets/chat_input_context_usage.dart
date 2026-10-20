@@ -10,7 +10,9 @@ class _ContextUsageRing extends StatelessWidget {
     final normalized = ratio.isFinite ? ratio : 0.0;
     final progress = normalized.clamp(0.0, 1.0).toDouble();
     final palette = context.omniPalette;
-    final color = context.isDarkTheme
+    final color = JackeryCesConfig.enabled
+        ? JackeryCesConfig.accent
+        : context.isDarkTheme
         ? normalized >= 1.0
               ? const Color(0xFFB97862)
               : normalized >= 0.85

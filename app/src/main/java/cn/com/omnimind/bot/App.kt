@@ -27,6 +27,7 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.update.AppUpdateManager
 import cn.com.omnimind.bot.util.NestedBackgroundStateUtil
 import cn.com.omnimind.bot.vlm.DebugOmniMindProviderBootstrap
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import com.rk.resources.Res
 import com.tencent.mmkv.MMKV
@@ -79,6 +80,7 @@ class App : BaseApplication() {
             "App super.onCreate cost: ${System.currentTimeMillis() - appStartTime}ms"
         )
         instance = this
+        JackeryCesProvisioning.applyAppearance(this)
         StartupThemeResolver.applyStoredApplicationNightMode(this)
         AppLocaleManager.applyAppLocale(this)
         com.rk.libcommons.application = this
@@ -88,7 +90,7 @@ class App : BaseApplication() {
         CredentialEndpointSecurity.configureDebugLoopback(BuildConfig.DEBUG)
         AppSecretStore.initialize(this)
         ModelProviderConfigStore.initialize(this)
-        DebugOmniMindProviderBootstrap.install(this)
+        if (!JackeryCesProvisioning.enabled) DebugOmniMindProviderBootstrap.install(this)
         OfficialOmniPluginProviders.register()
         OmniAccount.initialize(
             context = this,
@@ -100,6 +102,9 @@ class App : BaseApplication() {
             },
         )
         AgentPromptSettingsStore.initializeAndCleanupLegacyFiles(this)
+        runCatching { JackeryCesProvisioning.install(this) }.onFailure {
+            OmniLog.e("JackeryCES", "Staff device provisioning could not be loaded. Check its configuration.")
+        }
         LegacyLocalModelDataCleanup.start(this)
         setupUncaughtExceptionHandler()
 
@@ -207,6 +212,7 @@ class App : BaseApplication() {
     }
 
     fun initSDKsAfterPrivacyConsent() {
+        if (JackeryCesProvisioning.enabled) return
         OmniLog.d("AppStartup", "initSDKsAfterPrivacyConsent start")
         AppUpdateManager.schedulePeriodicChecks(this)
         CoroutineScope(Dispatchers.IO).launch {

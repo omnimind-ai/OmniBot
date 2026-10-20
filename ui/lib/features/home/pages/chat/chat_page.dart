@@ -1,3 +1,9 @@
+import 'package:ui/services/jackery_ces_service.dart';
+import 'package:ui/config/jackery_ces_config.dart';
+import 'package:ui/features/jackery/jackery_device_widgets.dart';
+import 'package:ui/features/home/pages/chat/utils/jackery_chat_policy.dart';
+import 'package:ui/features/home/pages/chat/widgets/jackery_model_picker.dart';
+
 import 'widgets/acp_config_button.dart';
 // ignore_for_file: unused_element, unused_element_parameter
 
@@ -5,6 +11,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
+
 import 'package:file_picker/file_picker.dart';
 import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
@@ -12,6 +19,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher_string.dart';
+
 import '../../../../models/conversation_model.dart';
 import '../../../../models/conversation_thread_target.dart';
 import '../../../../models/chat_link_preview.dart';
@@ -24,13 +32,16 @@ import '../authorize/authorize_page_args.dart';
 import '../command_overlay/widgets/chat_input_area.dart';
 import '../command_overlay/services/manual_recording_flow_controller.dart';
 import '../command_overlay/services/manual_recording_result_card.dart';
+
 import 'package:ui/features/task/run_log/omniflow_tool_client.dart';
+
 import '../command_overlay/services/tool_card_detail_gesture_gate.dart';
 import '../common/openclaw_connection_checker.dart';
 import '../omnibot_workspace/widgets/omnibot_workspace_browser.dart';
 import 'services/chat_conversation_lifecycle_guard.dart';
 import 'services/chat_conversation_runtime_coordinator.dart';
 import 'state/chat_page_mode_state.dart';
+
 import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/services/app_update_service.dart';
@@ -86,6 +97,7 @@ import 'widgets/chat_message_anchor_bar.dart';
 import 'widgets/pet_overlay_permission_sheet.dart';
 import 'widgets/chat_tool_activity_strip.dart';
 import 'widgets/chat_spotlight_tour.dart';
+
 import 'package:ui/widgets/app_update_dialog.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/conversation_model_selector.dart';
@@ -214,7 +226,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   ChatSurfaceMode _activeSurfaceMode = ChatSurfaceMode.normal;
   // The default Xiaowan surface is the built-in ACP Agent. `normal` remains
   // a compatibility page state for old routes, not a second runtime mode.
-  ChatPageMode _activeConversationMode = ChatPageMode.agent;
+  ChatPageMode _activeConversationMode = JackeryCesConfig.enabled
+      ? ChatPageMode.normal
+      : ChatPageMode.agent;
   bool _showSlashCommandPanel = false;
   bool _showModelMentionPanel = false;
   bool _openClawPanelExpanded = false;
@@ -340,7 +354,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   ChatPageMode get _activeMode => _activeConversationMode;
 
   bool get _isFirstUseTourActive =>
-      widget.showFirstUseTour && !_firstUseTourClosing;
+      !JackeryCesConfig.enabled &&
+      widget.showFirstUseTour &&
+      !_firstUseTourClosing;
 
   GlobalKey get _firstUseTourAnchorKey => switch (_firstUseTourStep) {
     0 => _firstUseTourMenuAnchorKey,
@@ -407,9 +423,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final runtimeMessages = resolveVisibleChatMessages(
       runtimeMessages: _runtimeForMode(ChatPageMode.agent)?.messages,
       fallbackMessages: _modeState(ChatPageMode.agent).messages,
-      preserveFallbackDuringHandoff: _modeState(
-        ChatPageMode.agent,
-      ).isAiResponding,
+      preserveFallbackDuringHandoff: _modeState(ChatPageMode.agent)
+          .isAiResponding,
     );
     for (final message in runtimeMessages.reversed) {
       final messageAgentId = message.agentId?.trim() ?? '';
@@ -520,6 +535,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String? get _appBarActiveAcpAgentId => _activeAcpAgentId;
 
   ConversationMode _conversationModeForPageMode(ChatPageMode mode) {
+    if (JackeryCesConfig.enabled) return ConversationMode.chatOnly;
     if (mode == ChatPageMode.agent) {
       return ConversationMode.agent;
     }
@@ -595,6 +611,12 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   @override
   bool isConversationLifecycleTokenCurrent(int token) =>
       _conversationLifecycleGuard.isCurrent(token);
+  @override
+  bool canContinueConversationPersistence(int lifecycleToken) =>
+      !JackeryCesConfig.enabled ||
+      (mounted &&
+          !JackeryCesService.isResetting &&
+          isConversationLifecycleTokenCurrent(lifecycleToken));
   @override
   void invalidateConversationLifecycle() {
     _conversationLifecycleGuard.invalidate();
@@ -772,7 +794,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       _conversationModeForPageMode(ChatPageMode.normal) ==
       ConversationMode.chatOnly;
 
-  bool get _isPureChatToggleLocked => false;
+  bool get _isPureChatToggleLocked => JackeryCesConfig.enabled;
 
   Future<void> _handleAgentModeShortcutTap() async {
     if (_activeMode == ChatPageMode.normal && !_isPureChatSelected) {
@@ -1560,7 +1582,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final taskId = taskIdOverride?.trim().isNotEmpty == true
         ? taskIdOverride!.trim()
         : runtime?.currentDispatchTurnId;
-    final displayError = formatAgentRuntimeErrorForUser(error);
+    final displayError = cesVisibleMessage(
+      formatAgentRuntimeErrorForUser(error),
+    );
     if (runtime == null || taskId == null || taskId.trim().isEmpty) {
       if (mounted) showToast(displayError, type: ToastType.error);
       return;
@@ -1683,9 +1707,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     final nextChromeSignature = _runtimeChromeSignature(runtime);
     final previousChromeSignature = _modeState(mode).runtimeChromeSignature;
     final nextMutationRevision = runtime.messages.lastMutationRevision;
-    final previousMutationRevision = _modeState(
-      mode,
-    ).runtimeMessageMutationRevision;
+    final previousMutationRevision = _modeState(mode)
+        .runtimeMessageMutationRevision;
     final hasChromeChange = nextChromeSignature != previousChromeSignature;
     final hasMessageMutation = nextMutationRevision != previousMutationRevision;
 

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="launcher_icon_background">#FFFFFFFF</color>
+    <color name="jackery_accent">#FFFF6727</color>
+    <color name="jackery_background">#FFF8F7F5</color>
+    <color name="jackery_text">#FF303030</color>
+</resources>

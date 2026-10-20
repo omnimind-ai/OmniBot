@@ -159,6 +159,40 @@ class _ChatMessageListState extends State<ChatMessageList> {
   static const String _kListEntryKeyPrefix = 'chat-timeline-entry:';
   static const _forwardSliverKey = ValueKey('chat-timeline-forward');
   String? _historyAnchorEntryKey;
+  final Set<String> _naSeenMessageIds = <String>{};
+  final Set<String> _naEntranceIds = <String>{};
+  DateTime _naOpenedAt = DateTime.now();
+  bool get _isNaConversation => widget.activeAcpAgentId == 'na-cloud';
+
+  void _trackNaMessages({bool reset = false}) {
+    if (!_isNaConversation) return;
+    final messages = _observableMessages ?? widget.messages;
+    if (reset) {
+      _naOpenedAt = DateTime.now();
+      _naSeenMessageIds.clear();
+      _naEntranceIds.clear();
+    }
+    final previousNewest = _naNewestTime;
+    for (final message in messages) {
+      if (_naSeenMessageIds.add(message.id) &&
+          !reset &&
+          isNaConversationMessage(message) &&
+          !message.createAt.isBefore(_naOpenedAt) &&
+          (previousNewest == null ||
+              !message.createAt.isBefore(previousNewest))) {
+        _naEntranceIds.add(message.id);
+      }
+    }
+    if (messages.isNotEmpty) {
+      _naNewestTime = messages
+          .map((message) => message.createAt)
+          .reduce((a, b) => a.isAfter(b) ? a : b);
+    } else {
+      _naNewestTime = null;
+    }
+  }
+
+  DateTime? _naNewestTime;
 
   Set<String> get _expandedAgentRunTaskIds =>
       widget.expandedAgentRunTaskIds ?? _localExpandedAgentRunTaskIds;
@@ -180,6 +214,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
     super.initState();
     widget.navigator?._attach(this);
     _bindObservableMessages(widget.messages);
+    _trackNaMessages(reset: true);
     _scheduleStickToBottom();
   }
 
@@ -193,6 +228,14 @@ class _ChatMessageListState extends State<ChatMessageList> {
     _bindObservableMessages(widget.messages);
     final scrollControllerChanged =
         oldWidget.scrollController != widget.scrollController;
+    _trackNaMessages(
+      reset:
+          scrollControllerChanged ||
+          oldWidget.activeAcpAgentId != widget.activeAcpAgentId ||
+          (oldWidget.messages is ObservableChatMessageList &&
+              widget.messages is ObservableChatMessageList &&
+              !identical(oldWidget.messages, widget.messages)),
+    );
     if (scrollControllerChanged) {
       _historyAnchorEntryKey = null;
       _navigatorJumpSerial++;
@@ -324,6 +367,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
       _scheduleStickToLatest();
       return;
     }
+    _trackNaMessages();
     setState(() {});
   }
 
@@ -680,15 +724,26 @@ class _ChatMessageListState extends State<ChatMessageList> {
   List<AgentRunTimelineEntry> _resolveTimelineEntries(
     List<ChatMessageModel> messageSource,
   ) {
+    List<AgentRunTimelineEntry> project() => JackeryCesConfig.enabled
+        ? messageSource
+              .where(isCesConversationMessage)
+              .map(AgentRunTimelineEntry.message)
+              .toList(growable: false)
+        : _isNaConversation
+        ? messageSource
+              .where(isNaConversationMessage)
+              .map(AgentRunTimelineEntry.message)
+              .toList(growable: false)
+        : buildAgentRunTimelineEntries(
+            List<ChatMessageModel>.from(messageSource),
+            activeTaskIds: widget.activeAgentTurnIds,
+            conversationAgentId: widget.activeAcpAgentId,
+          );
     final observable = messageSource is ObservableChatMessageList
         ? messageSource
         : null;
     if (observable == null) {
-      return buildAgentRunTimelineEntries(
-        List<ChatMessageModel>.from(messageSource),
-        activeTaskIds: widget.activeAgentTurnIds,
-        conversationAgentId: widget.activeAcpAgentId,
-      );
+      return project();
     }
     final cached = _timelineEntriesCache;
     if (cached != null &&
@@ -698,11 +753,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
         _timelineCacheAgentId == widget.activeAcpAgentId) {
       return cached;
     }
-    final entries = buildAgentRunTimelineEntries(
-      List<ChatMessageModel>.from(observable),
-      activeTaskIds: widget.activeAgentTurnIds,
-      conversationAgentId: widget.activeAcpAgentId,
-    );
+    final entries = project();
     _timelineEntriesCache = entries;
     _timelineCacheSource = observable;
     _timelineCacheStructureRevision = observable.structureRevision;
@@ -727,10 +778,81 @@ class _ChatMessageListState extends State<ChatMessageList> {
     required AgentRunTimelineEntry entry,
     required String? latestUserMessageId,
     required EdgeInsets padding,
+    DateTime? conversationTime,
   }) {
     final rowKey = ValueKey('chat-message-list-item-${entry.key}');
 
     Widget buildRow(AgentRunTimelineEntry rowEntry, {Key? key}) {
+      if (JackeryCesConfig.enabled && rowEntry.message != null) {
+        final message = cesConversationMessage(rowEntry.message!);
+        return Padding(
+          key: key,
+          padding: padding,
+          child: MessageBubble(
+            key: ValueKey('jackery-message-${message.id}'),
+            message: message,
+            personalAgentPresentation: true,
+            forceTextFinal: !widget.activeAgentTurnIds.contains(
+              message.turnId ?? message.runId,
+            ),
+            onUserMessageLongPressStart: widget.onUserMessageLongPressStart,
+            onRetryAgentMessage: () =>
+                widget.onRetryAgentMessage?.call(rowEntry.message!),
+            visualProfile: AppBackgroundVisualProfile.defaultProfile,
+            appearanceConfig: AppBackgroundConfig.defaults,
+          ),
+        );
+      }
+      if (_isNaConversation && rowEntry.message != null) {
+        final message = naConversationMessage(rowEntry.message!);
+        if ((message.text ?? '').isEmpty &&
+            !message.isLoading &&
+            !message.isError &&
+            (message.content?['attachments'] as List?)?.isNotEmpty != true) {
+          return SizedBox.shrink(key: key);
+        }
+        // Consume the entrance once, so scrolling and history hydration cannot
+        // replay the send animation. Canonical message identity stays intact.
+        final animate = _naEntranceIds.remove(message.id);
+        return Column(
+          key: key,
+          children: [
+            if (conversationTime != null)
+              Padding(
+                key: ValueKey('na-conversation-time-${message.id}'),
+                padding: const EdgeInsets.only(top: 22, bottom: 12),
+                child: Text(
+                  naConversationTimeLabel(
+                    conversationTime,
+                    english: LegacyTextLocalizer.isEnglish,
+                  ),
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: context.omniPalette.textSecondary,
+                  ),
+                ),
+              ),
+            NaMessageEntrance(
+              key: ValueKey('na-message-entrance-${message.id}'),
+              animate: animate,
+              isUser: message.user == 1,
+              child: MessageBubble(
+                key: ValueKey('na-message-${message.id}'),
+                message: message,
+                personalAgentPresentation: true,
+                forceTextFinal: !widget.activeAgentTurnIds.contains(
+                  message.turnId ?? message.runId,
+                ),
+                onUserMessageLongPressStart: widget.onUserMessageLongPressStart,
+                onRetryAgentMessage: () =>
+                    widget.onRetryAgentMessage?.call(rowEntry.message!),
+                visualProfile: widget.visualProfile,
+                appearanceConfig: widget.appearanceConfig,
+              ),
+            ),
+          ],
+        );
+      }
       return _ChatTimelineListRow(
         key: key,
         entry: rowEntry,
@@ -807,6 +929,24 @@ class _ChatMessageListState extends State<ChatMessageList> {
         : null;
 
     final Widget content;
+    if (widget.messages.isEmpty && JackeryCesConfig.enabled) {
+      _historyAnchorEntryKey = null;
+      return SingleChildScrollView(
+        key: const ValueKey('jackery-empty-home'),
+        padding: EdgeInsets.fromLTRB(24, 10, 24, reservedBottomInset + 16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const JackeryDeviceCard(),
+            const SizedBox(height: 28),
+            ChatEmptyGreeting(
+              quickPrompts: widget.emptyGreetingQuickPrompts,
+              onQuickPromptSelected: widget.onQuickPromptSelected,
+            ),
+          ],
+        ),
+      );
+    }
     if (widget.messages.isEmpty) {
       _historyAnchorEntryKey = null;
       final usePaletteText =
@@ -892,6 +1032,17 @@ class _ChatMessageListState extends State<ChatMessageList> {
             entry: entry,
             latestUserMessageId: latestUserMessageId,
             padding: EdgeInsets.only(top: needTopPadding ? 24.0 : 0.0),
+            conversationTime:
+                _isNaConversation &&
+                    entry.message != null &&
+                    showNaConversationTime(
+                      entry.message!.createAt,
+                      dataIndex + 1 < timelineEntries.length
+                          ? timelineEntries[dataIndex + 1].message?.createAt
+                          : null,
+                    )
+                ? entry.message!.createAt
+                : null,
           ),
         ),
       );

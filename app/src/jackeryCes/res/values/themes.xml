@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.OmnibotApp" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:windowBackground">@color/jackery_background</item>
+        <item name="android:colorAccent">@color/jackery_accent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:enforceNavigationBarContrast">false</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+    </style>
+    <style name="Theme.OmnibotApp.Splash" parent="Theme.OmnibotApp">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:statusBarColor">@color/jackery_background</item>
+    </style>
+    <style name="Theme.OmnibotApp.Splash.Dark" parent="Theme.OmnibotApp.Splash" />
+</resources>

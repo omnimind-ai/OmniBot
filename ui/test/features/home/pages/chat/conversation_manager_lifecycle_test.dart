@@ -157,6 +157,80 @@ void main() {
   );
 
   testWidgets(
+    'demo reset stops a pending draft create before later history writes',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final create = Completer<int>();
+      final methods = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        methods.add(call.method);
+        if (call.method == 'createConversation') return create.future;
+        return 'SUCCESS';
+      });
+      final key = GlobalKey<_ConversationManagerHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(home: _ConversationManagerHarness(key)),
+      );
+      final state = key.currentState!..gateDemoPersistence = true;
+      state.seedDraftMessages([ChatMessageModel.userMessage('before reset')]);
+      final pending = state.persistConversationSnapshot(markComplete: true);
+      await tester.pump();
+      state.resetInProgress = true;
+      state.simulateThreadSwitchToBlank();
+      // Native create was already admitted; reset owns deleting that identity.
+      create.complete(501);
+      await pending;
+      expect(methods, ['createConversation']);
+      expect(state.currentConversationId, isNull);
+      expect(state.persistedConversationIds, isEmpty);
+      state.resetInProgress = false;
+      // A queued operation holding the old lifecycle still cannot continue.
+      await state.persistConversationSnapshot(
+        allowEmpty: true,
+        lifecycleToken: 0,
+      );
+      expect(methods, ['createConversation']);
+    },
+  );
+
+  testWidgets(
+    'demo reset stops an admitted metadata update before completion or cards',
+    (tester) async {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      final updated = Completer<String>();
+      final methods = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        methods.add(call.method);
+        if (call.method == 'updateConversation') return updated.future;
+        return 'SUCCESS';
+      });
+      final key = GlobalKey<_ConversationManagerHarnessState>();
+      await tester.pumpWidget(
+        MaterialApp(home: _ConversationManagerHarness(key)),
+      );
+      final state = key.currentState!..gateDemoPersistence = true;
+      state.seedDraftMessages([ChatMessageModel.userMessage('old history')]);
+      state.currentConversationId = 502;
+      final pending = state.persistConversationSnapshot(markComplete: true);
+      for (
+        var attempt = 0;
+        attempt < 10 && !methods.contains('updateConversation');
+        attempt++
+      ) {
+        await tester.pump();
+      }
+      expect(methods, contains('updateConversation'));
+      state.resetInProgress = true;
+      state.simulateThreadSwitchToBlank();
+      updated.complete('SUCCESS');
+      await pending;
+      expect(methods, isNot(contains('completeConversation')));
+      expect(methods, isNot(contains('upsertConversationUiCard')));
+      expect(state.persistedConversationIds, isEmpty);
+    },
+  );
+
+  testWidgets(
     'loadConversation forwards the in-memory runtime snapshot after refresh',
     (tester) async {
       SharedPreferences.setMockInitialValues(<String, Object>{});
@@ -358,6 +432,8 @@ class _ConversationManagerHarnessState
   int _lifecycleToken = 0;
   int loadedConversationCount = 0;
   bool sharedRuntimeList = false;
+  bool gateDemoPersistence = false;
+  bool resetInProgress = false;
   List<ChatMessageModel>? runtimeBeforeLoadCallback;
   final List<int> persistedConversationIds = <int>[];
   final Map<int, List<ChatMessageModel>> _inMemorySnapshots =
@@ -412,6 +488,11 @@ class _ConversationManagerHarnessState
   @override
   bool isConversationLifecycleTokenCurrent(int token) =>
       token == _lifecycleToken;
+
+  @override
+  bool canContinueConversationPersistence(int token) =>
+      !gateDemoPersistence ||
+      (!resetInProgress && isConversationLifecycleTokenCurrent(token));
 
   @override
   void invalidateConversationLifecycle() {

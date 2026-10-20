@@ -37,7 +37,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
     WidgetsBinding.instance.addObserver(this);
     _loadHdPadPanePreferences();
-    unawaited(_syncPetOverlayState());
+    if (!JackeryCesConfig.enabled) unawaited(_syncPetOverlayState());
 
     SchedulerBinding.instance.addPostFrameCallback((_) {
       checkConversationExists();
@@ -45,13 +45,20 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
     _runtimeCoordinator.ensureInitialized();
     _runtimeCoordinator.addListener(_handleRuntimeCoordinatorChanged);
+    if (JackeryCesConfig.enabled) {
+      JackeryCesService.demoReset.addListener(_handleDemoReset);
+    }
     HomeGreetingSettingsService.notifier.addListener(
       _handleHomeGreetingSettingsChanged,
     );
     unawaited(HomeGreetingSettingsService.load());
-    AppUpdateService.statusNotifier.addListener(_handleAppUpdateStatusChanged);
-    _appUpdateStatus = AppUpdateService.statusNotifier.value;
-    unawaited(AppUpdateService.initialize());
+    if (!JackeryCesConfig.enabled) {
+      AppUpdateService.statusNotifier.addListener(
+        _handleAppUpdateStatusChanged,
+      );
+      _appUpdateStatus = AppUpdateService.statusNotifier.value;
+      unawaited(AppUpdateService.initialize());
+    }
     _conversationListChangedSubscription = AssistsMessageService
         .conversationListChangedStream
         .listen((_) {
@@ -145,7 +152,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     ConversationThreadTarget? incomingTarget, {
     ConversationMode? preferredMode,
   }) async {
-    final normalizedPreferredMode = preferredMode == ConversationMode.openclaw
+    final normalizedPreferredMode = JackeryCesConfig.enabled
+        ? ConversationMode.chatOnly
+        : preferredMode == ConversationMode.openclaw
         ? ConversationMode.normal
         : preferredMode;
     final normalizedIncomingTarget = _normalizeVisibleThreadTarget(
@@ -197,6 +206,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (target == null) {
       return null;
     }
+    if (JackeryCesConfig.enabled) return cesConversationTarget(target);
     if (target.mode == ConversationMode.openclaw) {
       return null;
     }
@@ -244,7 +254,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     invalidateConversationLifecycle();
     final lifecycleToken = captureConversationLifecycleToken();
     final effectiveTarget = await _overrideTargetWithSharedDraftIfNeeded(
-      target,
+      JackeryCesConfig.enabled ? cesConversationTarget(target) : target,
     );
     if (isStaleRequest()) return;
     final targetMode = _pageModeForConversationMode(effectiveTarget.mode);
@@ -566,6 +576,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
   @override
   Future<void> _persistVisibleThreadTargetIfNeeded() async {
+    final lifecycleToken = captureConversationLifecycleToken();
+    if (!canContinueConversationPersistence(lifecycleToken)) return;
     final visibleTarget = _visibleThreadTarget;
     if (visibleTarget == null) {
       return;
@@ -577,10 +589,12 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
     await ConversationHistoryService.saveLastVisibleThreadTarget(visibleTarget);
+    if (!canContinueConversationPersistence(lifecycleToken)) return;
     await ConversationHistoryService.saveCurrentConversationTarget(
       visibleTarget,
       mode: visibleTarget.mode,
     );
+    if (!canContinueConversationPersistence(lifecycleToken)) return;
     await ConversationService.setCurrentConversationTarget(visibleTarget);
   }
 
@@ -703,6 +717,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       _subscribedRoute = null;
     }
     _runtimeCoordinator.removeListener(_handleRuntimeCoordinatorChanged);
+    JackeryCesService.demoReset.removeListener(_handleDemoReset);
     HomeGreetingSettingsService.notifier.removeListener(
       _handleHomeGreetingSettingsChanged,
     );
@@ -723,6 +738,32 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _agentEventSubscription?.cancel();
     _omniLinkEventSubscription?.cancel();
     super.dispose();
+  }
+
+  void _handleDemoReset() {
+    if (!mounted) return;
+    _normalAcpSessionId = null;
+    _normalAcpSessionConversationId = null;
+    _normalAcpTurnId = null;
+    _activeAgentThreadId = null;
+    _activeAgentTurnId = null;
+    _pendingConversationModelOverride = null;
+    _conversationModelOverride = null;
+    _conversationReasoningEffort = null;
+    _pendingConversationReasoningEffort = null;
+    for (final mode in ChatPageMode.values) {
+      _resetLocalConversationState(mode);
+    }
+    _messageController.clear();
+    _inputFocusNode.unfocus();
+    _drawerKey.currentState?.reloadConversations();
+    _embeddedDrawerKey.currentState?.reloadConversations();
+    final target = ConversationThreadTarget.newConversation(
+      mode: ConversationMode.chatOnly,
+      requestKey: 'demo-reset-${JackeryCesService.demoReset.value}',
+    );
+    unawaited(_applyConversationThreadTarget(target));
+    unawaited(_loadNormalChatModelContext());
   }
 
   void _handleOmniLinkEvent(Map<String, dynamic> event) {
@@ -1198,8 +1239,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
     if (state == AppLifecycleState.resumed) {
       unawaited(_syncVisibleChatConversation());
-      unawaited(_syncPetOverlayState());
-      unawaited(AppUpdateService.refreshIfNeeded());
+      if (!JackeryCesConfig.enabled) {
+        unawaited(_syncPetOverlayState());
+        unawaited(AppUpdateService.refreshIfNeeded());
+      }
       unawaited(_loadNormalChatModelContext());
       unawaited(_refreshLiveBrowserSessionSnapshot(syncRuntime: true));
     }

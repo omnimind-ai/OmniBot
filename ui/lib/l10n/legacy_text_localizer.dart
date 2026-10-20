@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 
 typedef _TextRewriter = String Function(RegExpMatch match);
 
@@ -117,8 +118,7 @@ class LegacyTextLocalizer {
     '文件': 'Files',
     '复制到 workspace 并在提示词中发送文件路径':
         'Copy to workspace and send file paths in the prompt',
-    '添加到 workspace，附加到对话，并在提示词中发送文件路径':
-        'Add to workspace, attach to chat, and send the file path in the prompt',
+    '添加到 workspace，附加到对话，并在提示词中发送文件路径': 'Add to workspace, attach to chat, and send the file path in the prompt',
     '存入 workspace 并发送路径': 'Save to workspace and send path',
     '图片填入对话，其他文件走文件传输':
         'Attach images to chat; send other files through file transfer',
@@ -325,8 +325,7 @@ class LegacyTextLocalizer {
         'The latest 10 AI requests are shown in reverse chronological order.',
     '点击条目展开查看请求与响应正文。':
         'Tap an entry to expand the request and response payloads.',
-    '最近 200 条错误和崩溃日志，按时间倒序展示。':
-        'The latest 200 error and crash logs are shown in reverse chronological order.',
+    '最近 200 条错误和崩溃日志，按时间倒序展示。': 'The latest 200 error and crash logs are shown in reverse chronological order.',
     '含堆栈的条目可展开查看。': 'Entries with stack traces can be expanded for details.',
     '导出运行日志': 'Export runtime logs',
     '已复制全部运行日志': 'All runtime logs copied',
@@ -344,8 +343,7 @@ class LegacyTextLocalizer {
     '已开启': 'Enabled',
     '去开启': 'Enable',
     '清除缓存': 'Clear cache',
-    '查看并配置悬浮窗、后台运行、Shizuku 等权限':
-        'Review overlay, background operation, Shizuku, and related permissions',
+    '查看并配置悬浮窗、后台运行、Shizuku 等权限': 'Review overlay, background operation, Shizuku, and related permissions',
     '权限检查中...': 'Checking permissions...',
     '继续任务': 'Continue task',
     '继续任务仅要求': 'Continue requires only',
@@ -354,12 +352,10 @@ class LegacyTextLocalizer {
         'Optional: allow the Agent to run terminal commands via Termux',
     '可选': 'Optional',
     '让小万带你执行一次任务吧！': 'Let Omnibot walk you through one task!',
-    '其中 Termux 终端能力为可选项，未开启也不影响基础功能':
-        'Termux capability is optional; leaving it off will not affect basic features',
+    '其中 Termux 终端能力为可选项，未开启也不影响基础功能': 'Termux capability is optional; leaving it off will not affect basic features',
     '未绑定': 'Unbound',
     '恢复默认': 'Restore default',
-    '点击右侧按钮后，可按 Provider 搜索、折叠并选择模型。':
-        'After tapping the button on the right, you can search, collapse, and select models by Provider.',
+    '点击右侧按钮后，可按 Provider 搜索、折叠并选择模型。': 'After tapping the button on the right, you can search, collapse, and select models by Provider.',
     '使用内置模型服务': 'Use Built-in Model Service',
     '内置模型服务': 'Built-in Model Service',
     '内置模型服务已启用': 'Built-in model service enabled',
@@ -398,12 +394,10 @@ class LegacyTextLocalizer {
     '云端': 'Cloud',
     '无消耗': 'No usage',
     '长期记忆未就绪': 'Long-term memory is not ready',
-    '完成记忆初始化后，这里会展示跨会话沉淀的偏好与事实。':
-        'After memory initialization, cross-session preferences and facts will appear here.',
+    '完成记忆初始化后，这里会展示跨会话沉淀的偏好与事实。': 'After memory initialization, cross-session preferences and facts will appear here.',
     '长期记忆暂时不可用': 'Long-term memory is temporarily unavailable',
     '长期记忆还是空的': 'Long-term memory is still empty',
-    '当 Agent 主动写入长期偏好后，这里会逐渐丰富起来。':
-        'After the Agent writes long-term preferences, this section will gradually fill up.',
+    '当 Agent 主动写入长期偏好后，这里会逐渐丰富起来。': 'After the Agent writes long-term preferences, this section will gradually fill up.',
     '新增长期记忆': 'Add long-term memory',
     '刷新长期记忆': 'Refresh long-term memory',
     '刚刚': 'Just now',
@@ -584,6 +578,7 @@ class LegacyTextLocalizer {
   }
 
   static Locale get _resolvedLocale {
+    if (JackeryCesConfig.enabled) return const Locale('en');
     final activeLocale = _activeLocale;
     if (activeLocale != null) {
       return activeLocale;
@@ -598,20 +593,29 @@ class LegacyTextLocalizer {
   static bool get isEnglish => _resolvedLocale.languageCode == 'en';
 
   static String localize(String text, {Locale? locale}) {
-    final targetLocale = locale ?? _resolvedLocale;
+    final targetLocale = JackeryCesConfig.enabled
+        ? const Locale('en')
+        : locale ?? _resolvedLocale;
     if (targetLocale.languageCode != 'en') {
       return text;
     }
     final exact = _exactEn[text];
     if (exact != null) {
-      return exact;
+      return _brand(exact);
     }
     for (final (pattern, rewrite) in _regexEn) {
       final match = pattern.firstMatch(text);
       if (match != null) {
-        return rewrite(match);
+        return _brand(rewrite(match));
       }
     }
-    return text;
+    return _brand(text);
   }
+
+  static String _brand(String text) => JackeryCesConfig.enabled
+      ? text
+            .replaceAll('Omnibot', JackeryCesConfig.productName)
+            .replaceAll('OmniAi', JackeryCesConfig.productName)
+            .replaceAll('小万', JackeryCesConfig.productName)
+      : text;
 }

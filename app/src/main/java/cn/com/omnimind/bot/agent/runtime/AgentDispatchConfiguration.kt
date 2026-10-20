@@ -6,6 +6,7 @@ import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
 
 /**
  * Read-only view of the Provider and model selected for Dispatch execution.
@@ -19,6 +20,9 @@ internal object AgentDispatchConfiguration {
 
     fun providerProfile(): ModelProviderProfile? = runCatching {
         val binding = SceneModelBindingStore.getBinding(DISPATCH_SCENE_ID)
+        if (JackeryCesProvisioning.enabled && binding?.providerProfileId != JackeryCesProvisioning.PROFILE_ID) {
+            return@runCatching null
+        }
         val configuredProfile = binding
             ?.providerProfileId
             ?.let(ModelProviderConfigStore::getProfile)
@@ -47,6 +51,9 @@ internal object AgentDispatchConfiguration {
 
     fun modelId(): String? = runCatching {
         val binding = SceneModelBindingStore.getBinding(DISPATCH_SCENE_ID)
+        if (JackeryCesProvisioning.enabled && binding?.providerProfileId != JackeryCesProvisioning.PROFILE_ID) {
+            return@runCatching null
+        }
         binding?.let {
             resolveAgentProviderProfile(
                 boundProviderProfileId = it.providerProfileId,

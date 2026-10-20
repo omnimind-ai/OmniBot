@@ -90,7 +90,10 @@ void main() {
       previewKind: 'office_word',
     );
 
-    expect(preview.kindLabel, 'Word 预览');
+    expect(
+      preview.kindLabel,
+      LegacyTextLocalizer.isEnglish ? 'Word Preview' : 'Word 预览',
+    );
     expect(preview.sections.single.lines, <String>['第一段', '第二段']);
   });
 
@@ -140,7 +143,10 @@ void main() {
       previewKind: 'office_sheet',
     );
 
-    expect(preview.kindLabel, 'Excel 预览');
+    expect(
+      preview.kindLabel,
+      LegacyTextLocalizer.isEnglish ? 'Excel Preview' : 'Excel 预览',
+    );
     expect(preview.sections.single.title, 'Sheet1');
     expect(preview.sections.single.tableRows, <List<String>>[
       <String>['标题', '数值'],
@@ -173,7 +179,10 @@ void main() {
       previewKind: 'office_slide',
     );
 
-    expect(preview.kindLabel, 'PowerPoint 预览');
+    expect(
+      preview.kindLabel,
+      LegacyTextLocalizer.isEnglish ? 'PowerPoint Preview' : 'PowerPoint 预览',
+    );
     expect(preview.sections.single.lines, <String>['第一页标题', '第一页说明']);
   });
 }

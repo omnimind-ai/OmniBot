@@ -47,8 +47,9 @@ class WorkspaceMemoryRollupScheduler(
     }
 
     fun onAlarmTriggered() {
+        if (!memoryService.isRollupEnabled()) return
         memoryService.rollupDay()
-        scheduleNext()
+        ensureScheduledIfEnabled()
     }
 
     private fun scheduleNext() {

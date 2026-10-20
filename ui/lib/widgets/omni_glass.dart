@@ -1,6 +1,7 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/theme/omni_theme_palette.dart';
 import 'package:ui/theme/theme_context.dart';
 
@@ -43,8 +44,13 @@ class OmniGlassPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = forceDark ? OmniThemePalette.dark : context.omniPalette;
-    final isDark = forceDark || context.isDarkTheme;
+    final palette = JackeryCesConfig.enabled
+        ? OmniThemePalette.jackeryCes
+        : forceDark
+        ? OmniThemePalette.dark
+        : context.omniPalette;
+    final isDark =
+        !JackeryCesConfig.enabled && (forceDark || context.isDarkTheme);
     final topTint = isDark
         ? palette.surfacePrimary.withValues(alpha: 0.26)
         : Colors.white.withValues(alpha: 0.40);
@@ -55,7 +61,9 @@ class OmniGlassPanel extends StatelessWidget {
     // 看起来就是"PPT 描边",完全没有玻璃感。真玻璃在暗环境里是"边线几乎消
     // 失、顶部高光独自承担定义边界",所以这里把均匀边线退到肉眼几乎觉察不到,
     // 让 [highlightColor] 的顶部 1px 渐变去做"光打在玻璃顶上"的活儿。
-    final borderColor = isDark
+    final borderColor = JackeryCesConfig.enabled
+        ? palette.borderSubtle
+        : isDark
         ? Colors.white.withValues(alpha: 0.08)
         : Colors.white.withValues(alpha: 0.82);
     final highlightColor = isDark
@@ -67,22 +75,22 @@ class OmniGlassPanel extends StatelessWidget {
 
     final borderSide = BorderSide(color: borderColor);
     final BoxBorder border = omitTopBorder
-        ? Border(
-            left: borderSide,
-            right: borderSide,
-            bottom: borderSide,
-          )
+        ? Border(left: borderSide, right: borderSide, bottom: borderSide)
         : Border.all(color: borderColor);
 
     // 磨砂模式:实心底 + 去掉渐变 tint(渐变在拼接胶囊里会让接缝两截深浅
     // 断层),背后模糊也省掉——底既然不透明,模糊看不见还白费 GPU。
-    final bool frosted = surfaceColor != null;
+    final bool frosted = JackeryCesConfig.enabled || surfaceColor != null;
 
     final Widget decorated = DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: borderRadius,
         border: border,
-        color: frosted ? surfaceColor : null,
+        color: JackeryCesConfig.enabled
+            ? palette.pageBackground
+            : frosted
+            ? surfaceColor
+            : null,
         gradient: frosted
             ? null
             : LinearGradient(
@@ -93,7 +101,7 @@ class OmniGlassPanel extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          if (showTopHighlight)
+          if (showTopHighlight && !JackeryCesConfig.enabled)
             // 顶部高光横向覆盖更广(8 vs 之前 18),让"光面"延伸出去,
             // 不再只是中段一小截亮线——配合深色模式下基本消失的边框,
             // 视觉上更接近真实玻璃顶边的反光。
@@ -130,11 +138,12 @@ class OmniGlassPanel extends StatelessWidget {
             blurRadius: isDark ? 42 : 30,
             offset: const Offset(0, 18),
           ),
-          BoxShadow(
-            color: accentGlow,
-            blurRadius: 28,
-            offset: const Offset(0, -8),
-          ),
+          if (!JackeryCesConfig.enabled)
+            BoxShadow(
+              color: accentGlow,
+              blurRadius: 28,
+              offset: const Offset(0, -8),
+            ),
         ],
       ),
       child: ClipRRect(

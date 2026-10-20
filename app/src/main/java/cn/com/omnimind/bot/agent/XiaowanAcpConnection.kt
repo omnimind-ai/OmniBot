@@ -15,6 +15,7 @@ import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentConversationModePolicy
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentResult
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
@@ -499,6 +500,18 @@ private class XiaowanAgentSupport(
 
     private suspend fun loadXiaowanModels(): XiaowanModels {
         var existingBinding = SceneModelBindingStore.getBinding("scene.dispatch.model")
+        if (JackeryCesProvisioning.enabled) {
+            val configuredBase = JackeryCesProvisioning.modelApiBase(context)
+            val configuredModel = JackeryCesProvisioning.modelId(context)
+            val configuredProfile = ModelProviderConfigStore.getProfile(JackeryCesProvisioning.PROFILE_ID)
+            check(configuredBase.isNotBlank() && configuredModel.isNotBlank() &&
+                existingBinding?.providerProfileId == JackeryCesProvisioning.PROFILE_ID &&
+                existingBinding?.modelId == configuredModel &&
+                configuredProfile != null &&
+                ModelProviderConfigStore.sameCanonicalEndpoint(configuredProfile.baseUrl, configuredBase)) {
+                "AI unavailable. Please ask exhibition staff to connect the device."
+            }
+        }
         if (!hasUsableSharedProviderBinding(existingBinding)) {
             // The in-process Xiaowan adapter does not run the external
             // Harness preparation callback. Re-read the persisted binding at
@@ -792,7 +805,7 @@ private class XiaowanAgentSession(
                         ?.takeIf { it.isNotEmpty() }
                 }.getOrNull()
             }
-        val conversationMode = persistedConversationMode
+        val conversationMode = if (JackeryCesProvisioning.enabled) AgentConversationModePolicy.CHAT_ONLY_MODE else persistedConversationMode
             ?: requestedConversationMode
             ?: AgentConversationModePolicy.AGENT_MODE
         Log.i(

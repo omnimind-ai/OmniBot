@@ -19,6 +19,8 @@ import 'package:ui/theme/app_theme_mode.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/startup_account_prompt.dart';
 import 'package:ui/widgets/omnibot_error_widget.dart';
+import 'package:ui/config/jackery_ces_config.dart';
+import 'package:ui/l10n/app_language_mode.dart';
 
 import 'core/router/go_router_manager.dart';
 import 'services/event_bus.dart';
@@ -61,6 +63,14 @@ Future<void> bootstrapMain(List<String> args) async {
   // retry from their own pages after the shell is visible.
   try {
     await StorageService.init();
+    if (JackeryCesConfig.enabled) {
+      await StorageService.setThemeMode(AppThemeMode.light);
+      await StorageService.setLanguageMode(AppLanguageMode.en);
+      await StorageService.setBool('welcome_completed', true);
+      await StorageService.setBool(StorageService.kPetOverlayVisibleKey, false);
+      await AppBackgroundService.reset();
+      await JackeryCesConfig.initialize();
+    }
   } catch (error, stackTrace) {
     debugPrint('[FlutterStartup] StorageService.init failed: $error');
     debugPrint('$stackTrace');
@@ -89,14 +99,16 @@ Future<void> bootstrapMain(List<String> args) async {
 
 Future<void> _initializeDeferredStartupServices() async {
   await Future.wait(<Future<void>>[
-    _runDeferredStartupStep(
-      'AppBackgroundService.load',
-      AppBackgroundService.load,
-    ),
-    _runDeferredStartupStep(
-      'ScheduledTaskSchedulerService.initialize',
-      ScheduledTaskSchedulerService.initialize,
-    ),
+    if (!JackeryCesConfig.enabled)
+      _runDeferredStartupStep(
+        'AppBackgroundService.load',
+        AppBackgroundService.load,
+      ),
+    if (!JackeryCesConfig.enabled)
+      _runDeferredStartupStep(
+        'ScheduledTaskSchedulerService.initialize',
+        ScheduledTaskSchedulerService.initialize,
+      ),
     _runDeferredStartupStep(
       'OmnibotResourceService.ensureWorkspacePathsLoaded',
       () async {
@@ -169,7 +181,9 @@ class _MyAppState extends ConsumerState<MyApp> {
     debugPrint('🎨 [FlutterStartup] MyApp build start');
 
     final widgetBuildStart = DateTime.now();
-    final themeMode = ref.watch(appThemeModeProvider).materialThemeMode;
+    final themeMode = JackeryCesConfig.enabled
+        ? ThemeMode.light
+        : ref.watch(appThemeModeProvider).materialThemeMode;
     final resolvedLocale = ref.watch(appResolvedLocaleProvider);
     final predictiveBackEnabled = ref.watch(predictiveBackEnabledProvider);
     // Imperative Material routes share the GoRouter motion and geometry.
@@ -186,18 +200,22 @@ class _MyAppState extends ConsumerState<MyApp> {
     final darkTheme = AppTheme.darkTheme.copyWith(
       pageTransitionsTheme: pageTransitionsTheme,
     );
-    LegacyTextLocalizer.setResolvedLocale(resolvedLocale.locale);
+    final locale = JackeryCesConfig.enabled
+        ? const Locale('en')
+        : resolvedLocale.locale;
+    LegacyTextLocalizer.setResolvedLocale(locale);
     final widget = MaterialApp.router(
       debugShowCheckedModeBanner: false,
-      onGenerateTitle: (context) =>
-          AppLocalizations.of(context)?.appName ?? 'Omnibot',
+      onGenerateTitle: (context) => JackeryCesConfig.enabled
+          ? JackeryCesConfig.productName
+          : AppLocalizations.of(context)?.appName ?? 'Omnibot',
       theme: lightTheme,
       darkTheme: darkTheme,
       themeMode: themeMode,
       themeAnimationCurve: Curves.easeInOutCubic,
       themeAnimationDuration: const Duration(milliseconds: 220),
       routerConfig: _router,
-      locale: resolvedLocale.locale,
+      locale: locale,
       builder: (context, child) {
         final theme = Theme.of(context);
         final brightness = theme.brightness;
@@ -212,10 +230,13 @@ class _MyAppState extends ConsumerState<MyApp> {
             child: Stack(
               fit: StackFit.expand,
               children: [
-                StartupAccountPrompt(
-                  routeListenable: _router.routeInformationProvider,
-                  child: child ?? const SizedBox.shrink(),
-                ),
+                if (JackeryCesConfig.enabled)
+                  child ?? const SizedBox.shrink()
+                else
+                  StartupAccountPrompt(
+                    routeListenable: _router.routeInformationProvider,
+                    child: child ?? const SizedBox.shrink(),
+                  ),
               ],
             ),
           ),

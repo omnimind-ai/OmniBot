@@ -47,10 +47,14 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
     final textInputAction = useKeyboardNewline
         ? TextInputAction.newline
         : TextInputAction.send;
-    final textColor = context.isDarkTheme
+    final textColor = JackeryCesConfig.enabled
+        ? const Color(0xFF303030)
+        : context.isDarkTheme
         ? palette.textPrimary
         : const Color(0xFF353E53);
-    final hintColor = context.isDarkTheme
+    final hintColor = JackeryCesConfig.enabled
+        ? const Color(0xFF96918A)
+        : context.isDarkTheme
         ? palette.textTertiary
         : const Color(0x80353E53);
     final textStyle = TextStyle(
@@ -107,7 +111,9 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
           contextMenuBuilder: (context, editableTextState) =>
               TextInputContextMenu(editableTextState: editableTextState),
           decoration: InputDecoration(
-            hintText: Localizations.localeOf(context).languageCode == 'en'
+            hintText: JackeryCesConfig.enabled
+                ? 'Ask Jackery Power AI…'
+                : Localizations.localeOf(context).languageCode == 'en'
                 ? 'Type your message'
                 : '请输入内容',
             hintStyle: TextStyle(

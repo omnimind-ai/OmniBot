@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Temporary J AI text mark. Replace with the brand-approved CES icon before delivery. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M0,0H108V108H0Z" />
+    <!-- Plain block letter J; this is not the selected Jackery trademark artwork. -->
+    <path
+        android:fillColor="#FF6727"
+        android:pathData="M21,30H43V57C43,69 36,76 26,76C17,76 12,70 12,61H20C20,66 22,69 26,69C31,69 35,65 35,57V38H21Z" />
+    <!-- Plain block letter A. -->
+    <path
+        android:fillColor="#FF6727"
+        android:fillType="evenOdd"
+        android:pathData="M57,30H66L82,75H73L69,64H54L50,75H42ZM61.5,40L56.5,57H66.5Z" />
+    <!-- Plain block letter I. -->
+    <path
+        android:fillColor="#FF6727"
+        android:pathData="M85,30H93V75H85Z" />
+</vector>

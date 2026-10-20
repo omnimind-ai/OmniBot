@@ -1,5 +1,7 @@
 import 'package:ui/widgets/predictive_back_route.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/config/jackery_ces_config.dart';
+import 'package:ui/features/jackery_settings/pages/jackery_ces_settings_page.dart';
 import 'package:flutter_switch/flutter_switch.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/edit_profile/edit_profile_page.dart';
@@ -36,6 +38,7 @@ class MyPageState extends State<MyPage> {
   @override
   void initState() {
     super.initState();
+    if (JackeryCesConfig.enabled) return;
     _loadVibrationState();
     _loadUserData();
   }
@@ -75,6 +78,7 @@ class MyPageState extends State<MyPage> {
 
   @override
   Widget build(BuildContext context) {
+    if (JackeryCesConfig.enabled) return const JackeryCesSettingsPage();
     final bg = Colors.white;
     final displayName = nickname.trim();
 

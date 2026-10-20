@@ -1,4 +1,7 @@
 import 'package:flutter/widgets.dart';
+import 'package:ui/config/jackery_ces_config.dart';
+import 'package:ui/features/jackery_settings/pages/jackery_ces_settings_page.dart';
+import 'package:ui/features/jackery_settings/pages/jackery_ces_model_provider_page.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/models/conversation_model.dart';
@@ -12,6 +15,7 @@ import 'package:ui/features/home/pages/agent/agent_config_page.dart';
 import 'package:ui/features/home/pages/chat_history/chat_history_page.dart';
 import 'package:ui/features/home/pages/permission_guide/permission_guide_detail_page.dart';
 import 'package:ui/features/home/pages/permission_guide/permission_guide_page.dart';
+
 import 'pages/authorize/authorize_page.dart';
 import 'pages/authorize/authorize_page_args.dart';
 import 'pages/chat/chat_page.dart';
@@ -31,10 +35,13 @@ import 'pages/mcp/remote_mcp_servers_page.dart';
 import 'pages/skill_store/skill_store_page.dart';
 import 'pages/plugin_market/plugin_market_page.dart';
 import 'pages/plugin_market/plugin_detail_page.dart';
+
 import 'package:ui/models/omni_plugin_item.dart';
+
 import 'pages/termux_setting/termux_setting_page.dart';
 import 'pages/scene_model_setting/scene_model_setting_page.dart';
 import 'pages/model_provider_setting/model_provider_setting_page.dart';
+
 import 'package:ui/features/welcome/pages/onboarding/onboarding_choice_page.dart';
 
 /// Home模块路由配置
@@ -294,7 +301,9 @@ List<GoRoute> homeRoutes = [
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
       key: state.pageKey,
       name: 'home/settings',
-      child: const SettingsPage(),
+      child: JackeryCesConfig.enabled
+          ? const JackeryCesSettingsPage()
+          : const SettingsPage(),
     ),
   ),
 
@@ -447,7 +456,9 @@ List<GoRoute> homeRoutes = [
     pageBuilder: (context, state) => GoRouterManager.buildActivitySlidePage(
       key: state.pageKey,
       name: 'home/model_provider_setting',
-      child: const ModelProviderSettingPage(),
+      child: JackeryCesConfig.enabled
+          ? const JackeryCesModelProviderPage()
+          : const ModelProviderSettingPage(),
     ),
   ),
   GoRoute(

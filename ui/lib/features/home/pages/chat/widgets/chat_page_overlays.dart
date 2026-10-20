@@ -23,7 +23,9 @@ class _UserMessageQuickMenuContent extends StatelessWidget {
   }) {
     final palette = context.omniPalette;
     final isDark = context.isDarkTheme;
-    final foregroundColor = isDark
+    final foregroundColor = JackeryCesConfig.enabled
+        ? JackeryCesConfig.text
+        : isDark
         ? palette.textPrimary
         : const Color(0xFF172033);
     return InkWell(
@@ -52,7 +54,9 @@ class _UserMessageQuickMenuContent extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final dividerColor = context.isDarkTheme
+    final dividerColor = JackeryCesConfig.enabled
+        ? JackeryCesConfig.border
+        : context.isDarkTheme
         ? palette.borderSubtle.withValues(alpha: 0.58)
         : Colors.white.withValues(alpha: 0.62);
     return SizedBox(

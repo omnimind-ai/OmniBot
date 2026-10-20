@@ -406,6 +406,12 @@ object DatabaseHelper {
     suspend fun <T> withTransaction(block: suspend () -> T): T =
         getDatabase().withTransaction(block)
 
+    /** The caller has quiesced Agent and UI persistence before resetting demo content. */
+    suspend fun clearDemoConversationContent() = withTransaction {
+        listOf("agent_conversation_entries", "codex_thread_bindings", "token_usage_records", "messages", "conversations")
+            .forEach { table -> getDatabase().openHelper.writableDatabase.execSQL("DELETE FROM $table") }
+    }
+
     fun getDatabase(): AppDatabase {
         return database ?: throw IllegalStateException("Database not initialized")
     }

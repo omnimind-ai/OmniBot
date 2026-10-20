@@ -4,6 +4,9 @@ import android.annotation.SuppressLint
 import android.content.Context
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
+import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
+import cn.com.omnimind.bot.jackery.JackeryCesAudiencePolicy
 import cn.com.omnimind.bot.manager.AssistsCoreManager
 import cn.com.omnimind.bot.omniflow.OmniFlowToolChannel
 import io.flutter.embedding.engine.FlutterEngine
@@ -34,7 +37,22 @@ class AssistsCoreChannel {
         if (flutterEngine == App.getCachedMainEngine()) {
             AssistsCoreManager.bindMainEngineChannel(channel!!)
         }
-        channel!!.setMethodCallHandler { call, result ->
+        channel!!.setMethodCallHandler { call, rawResult ->
+            if (JackeryCesProvisioning.enabled && JackeryCesAudiencePolicy.blocksMutation(call.method)) {
+                rawResult.error("CES_SETTINGS_LOCKED", "This setting is managed by exhibition staff.", null)
+                return@setMethodCallHandler
+            }
+            val result = if (JackeryCesProvisioning.enabled && call.method in DemoHistoryMutationResult.methods) {
+                val runtime = AgentRuntimeManager.getInstance(App.instance)
+                val reservation = try {
+                    runtime.admitDemoHistoryMutation(call.method in DemoHistoryMutationResult.persistenceMethods)
+                } catch (error: IllegalStateException) {
+                    rawResult.error("DEMO_RESET_IN_PROGRESS", error.message, null)
+                    return@setMethodCallHandler
+                }
+                DemoHistoryMutationResult(rawResult) { runtime.releaseDemoHistoryMutation(reservation) }
+            } else rawResult
+            try {
             OmniLog.d(TAG, "setMethodCallHandler " + call.method)
             if (omniFlowToolChannel?.handle(call, result) == true) {
                 return@setMethodCallHandler
@@ -310,6 +328,9 @@ class AssistsCoreChannel {
                 }
                 else -> result.notImplemented()
         }
+            } catch (error: Exception) {
+                result.error("NATIVE_METHOD_FAILED", error.message, null)
+            }
     }
 
     }

@@ -73,6 +73,7 @@ Future<String?> _prepareAcpSessionForTurn({
 
 mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   void _persistDeepThinkingCardIfNeeded(ChatMessageModel message) {
+    if (JackeryCesConfig.enabled && JackeryCesService.isResetting) return;
     final conversationId = _currentConversationId;
     final cardData = message.cardData;
     if (conversationId == null ||
@@ -407,7 +408,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     messenger?.hideCurrentSnackBar();
     messenger?.showSnackBar(
       SnackBar(
-        content: Text(message),
+        content: Text(cesVisibleMessage(message)),
         duration: const Duration(milliseconds: 1200),
         behavior: SnackBarBehavior.floating,
       ),
@@ -525,7 +526,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
     if (mounted) {
       showToast(
-        LegacyTextLocalizer.localize('请先配置ai服务商和模型'),
+        JackeryCesConfig.enabled
+            ? 'AI unavailable. Please ask a staff member to connect the device.'
+            : LegacyTextLocalizer.localize('请先配置ai服务商和模型'),
         type: ToastType.warning,
       );
     }
@@ -537,6 +540,13 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     String? text,
     bool waitForBootstrap = true,
   }) async {
+    if (JackeryCesConfig.enabled && JackeryCesService.isResetting) return;
+    final demoResetGeneration = JackeryCesService.demoReset.value;
+    bool canContinueAfterReset() =>
+        !JackeryCesConfig.enabled ||
+        (mounted &&
+            !JackeryCesService.isResetting &&
+            JackeryCesService.demoReset.value == demoResetGeneration);
     // A Harness switch changes both the native ACP adapter and the visible
     // conversation runtime. Let a user submit queue behind that atomic
     // transition instead of registering it against the old target.
@@ -552,7 +562,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       final switched = await _harnessSwitchSendBarrier.waitUntilIdle();
       // A failed switch must not deliver the queued prompt to the old Agent.
       // The preserved composer remains editable for the user to send later.
-      if (!mounted || !switched) return;
+      if (!mounted || !switched || !canContinueAfterReset()) return;
     }
     // Acquire the per-target submit lock immediately after the transition
     // barrier. Two queued UI submit paths wake in the same microtask turn, so
@@ -573,17 +583,20 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (waitForBootstrap && bootstrapFuture != null) {
         await bootstrapFuture;
       }
+      if (!canContinueAfterReset()) return;
       final messageText = (submittedText ?? text ?? _messageController.text)
           .trim();
       final inputAttachments = submittedAttachments ?? _pendingAttachments;
       final hasAttachments = inputAttachments.isNotEmpty;
       if ((messageText.isEmpty && !hasAttachments) || _isAiResponding) return;
-      if (!hasAttachments &&
+      if (!JackeryCesConfig.enabled &&
+          !hasAttachments &&
           ManualRecordingFlowController.isCommand(messageText)) {
         await _startManualRecordingCommand(messageText);
         return;
       }
       if (!await _ensureNormalChatModelConfigurationForSend()) return;
+      if (!canContinueAfterReset()) return;
 
       final attachments = inputAttachments.map((item) => item.toMap()).toList();
       await _dispatchUserMessage(
@@ -681,6 +694,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     TextEditingValue? restoreInputValue,
     String? retainedUserMessageId,
   }) async {
+    final dispatchTargetRequestId = _conversationTargetRequestId;
+    final demoResetGeneration = JackeryCesService.demoReset.value;
+    bool canContinueDispatch() =>
+        !JackeryCesConfig.enabled ||
+        (!JackeryCesService.isResetting &&
+            JackeryCesService.demoReset.value == demoResetGeneration &&
+            _isConversationTargetRequestCurrent(dispatchTargetRequestId));
+    if (!canContinueDispatch()) return;
     if ((messageText.isEmpty && attachments.isEmpty) || _isAiResponding) {
       return;
     }
@@ -691,6 +712,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         attachments: attachments,
       );
       if (handledSlash) return;
+      if (!canContinueDispatch()) return;
     }
 
     if (_isOpenClawSurface && _openClawBaseUrl.trim().isEmpty) {
@@ -699,6 +721,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       return;
     }
     if (!await _ensureNormalChatModelConfigurationForSend()) return;
+    if (!canContinueDispatch()) return;
 
     _inputFocusNode.unfocus();
     final retainedUserMessageIndex = retainedUserMessageId == null
@@ -750,11 +773,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     try {
       await _ensureActiveConversationReadyForStreaming();
     } catch (error) {
-      if (mounted) {
+      if (mounted && canContinueDispatch()) {
         handleAgentError('Conversation setup failed. Please retry. $error');
       }
       return;
     }
+    if (!canContinueDispatch()) return;
 
     if (activeConversationModeValue == ConversationMode.chatOnly) {
       await _sendPureChatMessage(messageIds.aiMessageId);
@@ -938,6 +962,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   @override
   Future<void> _sendPureChatMessage(String aiMessageId) async {
     final dispatchTargetGeneration = _conversationTargetRequestId;
+    final demoResetGeneration = JackeryCesService.demoReset.value;
     final dispatchMode = _activeMode;
     final dispatchModeKey = _modeKey(dispatchMode);
     final dispatchConversationMode = activeConversationModeValue;
@@ -955,7 +980,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         _activeDispatchSceneSelection;
     final dispatchTerminalEnvironment = _buildAgentTerminalEnvironmentPayload();
     bool isDispatchTargetCurrent() =>
-        mounted && dispatchTargetGeneration == _conversationTargetRequestId;
+        mounted &&
+        dispatchTargetGeneration == _conversationTargetRequestId &&
+        (!JackeryCesConfig.enabled ||
+            (!JackeryCesService.isResetting &&
+                JackeryCesService.demoReset.value == demoResetGeneration));
 
     var conversationId = dispatchConversationId;
     if (conversationId == null) {

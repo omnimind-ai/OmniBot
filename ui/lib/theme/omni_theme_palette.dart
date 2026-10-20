@@ -72,6 +72,25 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
     shadowColor: Color(0x26000000),
   );
 
+  /// Exhibition palette. Surfaces stay neutral; orange marks actions and state.
+  static const OmniThemePalette jackeryCes = OmniThemePalette(
+    pageBackground: Color(0xFFF8F7F5),
+    surfacePrimary: Color(0xFFFFFFFF),
+    surfaceSecondary: Color(0xFFFFFFFF),
+    surfaceElevated: Color(0xFFFFFFFF),
+    borderSubtle: Color(0xFFE8E5E1),
+    borderStrong: Color(0xFFE8E5E1),
+    textPrimary: Color(0xFF303030),
+    textSecondary: Color(0xFF303030),
+    textTertiary: Color(0x99303030),
+    accentPrimary: Color(0xFFFF6727),
+    segmentTrack: Color(0xFFF8F7F5),
+    segmentThumb: Color(0xFFFFFFFF),
+    overlayScrim: Color(0x4D303030),
+    previewFallback: Color(0xFFF8F7F5),
+    shadowColor: Color(0x14303030),
+  );
+
   @override
   OmniThemePalette copyWith({
     Color? pageBackground,

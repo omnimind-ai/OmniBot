@@ -119,12 +119,14 @@ extension _HomeDrawerConversationList on HomeDrawerState {
                   textColor: _drawerTextColor,
                 ),
               ),
-              const SizedBox(width: 10),
-              _buildSectionActionButton(
-                iconPath: 'assets/home/archive_icon.svg',
-                tooltip: context.l10n.homeDrawerArchive,
-                onTap: () => _navigateTo('/home/archived_conversations'),
-              ),
+              if (!JackeryCesConfig.enabled) ...[
+                const SizedBox(width: 10),
+                _buildSectionActionButton(
+                  iconPath: 'assets/home/archive_icon.svg',
+                  tooltip: context.l10n.homeDrawerArchive,
+                  onTap: () => _navigateTo('/home/archived_conversations'),
+                ),
+              ],
               const SizedBox(width: 10),
               _buildSectionActionButton(
                 iconPath: 'assets/home/chat_add_icon.svg',
@@ -210,7 +212,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
 
     final scheduledGroups = _scheduledConversationGroups;
     final pinnedResults = _pinnedConversationResults;
-    if (scheduledGroups.isNotEmpty) {
+    if (!JackeryCesConfig.enabled && scheduledGroups.isNotEmpty) {
       addSection(_buildScheduledConversationSection(scheduledGroups));
     }
     if (pinnedResults.isNotEmpty) {
@@ -227,7 +229,14 @@ extension _HomeDrawerConversationList on HomeDrawerState {
         ),
       );
     }
-    if (chatOnlyResults.isNotEmpty) {
+    if (JackeryCesConfig.enabled && chatOnlyResults.isNotEmpty) {
+      addSection(
+        _buildModeTimelineConversationEntries(
+          dateSectionNamespace: _kChatOnlyDateSectionNamespace,
+          results: chatOnlyResults,
+        ),
+      );
+    } else if (chatOnlyResults.isNotEmpty) {
       addSection(
         _buildModeTimelineConversationSection(
           sectionKey: _kChatOnlyConversationSectionKey,

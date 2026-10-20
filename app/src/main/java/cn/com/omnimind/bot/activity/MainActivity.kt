@@ -146,7 +146,9 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.onActivityResumed(this)
-        AppUpdateManager.requestSilentCheckIfDue(this)
+        if (!cn.com.omnimind.bot.jackery.JackeryCesProvisioning.enabled) {
+            AppUpdateManager.requestSilentCheckIfDue(this)
+        }
         lifecycleScope.launch {
             runCatching {
                 if (OmniAccount.isConfigured()) {

@@ -50,6 +50,12 @@ internal class NaCloudRuntime(
     private val activeRuns = ConcurrentHashMap<String, String>()
     private val cancelPending = ConcurrentHashMap.newKeySet<String>()
     private var cachedStatus: Map<String, Any?> = emptyMap()
+
+    internal suspend fun cancelActivePromptsForDemoReset() {
+        activeRuns.keys.toList().forEach { id -> cancel(mapOf("sessionId" to id)) }
+        val pending = prompts.values.filterNot { it.isCompleted }
+        withTimeout(15_000L) { pending.forEach { it.await() } }
+    }
     private val baseUrl get() = preferences.getString("baseUrl", "http://127.0.0.1:8787")!!
     private val prefix get() = "na:" + MessageDigest.getInstance("SHA-256")
         .digest(baseUrl.toByteArray()).take(8).joinToString("") { "%02x".format(it) } + ":"
@@ -366,6 +372,14 @@ internal fun naThreadSnapshot(sessionId: String, response: Map<String, Any?>): M
             "hostMessageId" to run["clientUserMessageId"]))
         (run["items"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.forEach { item ->
             items += item.entries.associate { it.key.toString() to it.value } + ("id" to "$turnId-${item["id"]}")
+        }
+        // Import the owning run's cancellation result as the same concise
+        // message emitted by the shared PromptResponse reducer. This is a
+        // history item, never a second turn terminal event or a tool result.
+        val hasReply = items.any { it["type"] in setOf("agent_message", "agentMessage") && !it["text"].toString().isBlank() }
+        if (run["status"] == "cancelled" && !hasReply) {
+            items += mapOf("id" to "$turnId-cancelled", "hostMessageId" to "$turnId-cancelled",
+                "type" to "agentMessage", "text" to "任务已取消", "createdAt" to (run["completedAt"] ?: run["createdAt"]))
         }
         mapOf("id" to turnId, "status" to run["status"], "startedAt" to run["createdAt"], "items" to items)
     } ?: emptyList()

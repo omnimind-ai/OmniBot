@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+
 import '../../../../../models/conversation_model.dart';
 import '../../../../../models/conversation_thread_target.dart';
 import '../../../../../models/chat_message_model.dart';
@@ -15,12 +16,14 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     int conversationId,
     List<ChatMessageModel> snapshotMessages,
     ConversationMode mode,
+    int lifecycleToken,
   ) async {
     final candidates = snapshotMessages.where((message) {
       final cardData = message.cardData;
       return message.type == 2 && cardData?['type'] == 'deep_thinking';
     });
     for (final message in candidates) {
+      if (!canContinueConversationPersistence(lifecycleToken)) return;
       final cardData = message.cardData;
       if (cardData == null) continue;
       await ConversationHistoryService.upsertConversationUiCard(
@@ -54,6 +57,11 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
   int captureConversationLifecycleToken();
   bool isConversationLifecycleTokenCurrent(int token);
   void invalidateConversationLifecycle();
+
+  /// Editions with a destructive demo reset can stop an admitted snapshot at
+  /// the next await boundary using the existing conversation lifecycle token.
+  /// Ordinary page switches keep the app's durable detached-snapshot behavior.
+  bool canContinueConversationPersistence(int lifecycleToken) => true;
   List<ChatMessageModel>? getInMemoryMessagesForConversation(
     int conversationId,
     ConversationMode mode,
@@ -692,6 +700,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
   }) async {
     if (messages.isEmpty && !allowEmpty) return;
     final token = lifecycleToken ?? captureConversationLifecycleToken();
+    if (!canContinueConversationPersistence(token)) return;
 
     // 立即捕获状态，防止异步操作期间上下文切换导致的脏读
     final snapshotMessages = List<ChatMessageModel>.from(messages);
@@ -733,6 +742,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
                 conversationHistory: conversationHistory,
               );
       }
+      if (!canContinueConversationPersistence(token)) return;
 
       int? targetId = snapshotConversationId;
 
@@ -746,6 +756,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
               : null,
           rethrowOnError: rethrowOnFailure,
         );
+        if (!canContinueConversationPersistence(token)) return;
 
         if (newConversationId != null) {
           targetId = newConversationId;
@@ -777,10 +788,12 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
               newConversationId,
               mode: snapshotMode,
             );
+            if (!canContinueConversationPersistence(token)) return;
             await ConversationHistoryService.saveCurrentConversationId(
               newConversationId,
               mode: snapshotMode,
             );
+            if (!canContinueConversationPersistence(token)) return;
           }
         }
       }
@@ -797,10 +810,12 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
             targetId,
             mode: snapshotMode,
           );
+          if (!canContinueConversationPersistence(token)) return;
           await ConversationHistoryService.saveCurrentConversationId(
             targetId,
             mode: snapshotMode,
           );
+          if (!canContinueConversationPersistence(token)) return;
         }
 
         final baseConversation =
@@ -828,12 +843,15 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           updatedConversation,
           preserveLatestMetadata: true,
         );
+        if (!canContinueConversationPersistence(token)) return;
 
         await _persistDeepThinkingCardsForConversation(
           targetId,
           snapshotMessages,
           snapshotMode,
+          token,
         );
+        if (!canContinueConversationPersistence(token)) return;
 
         if (_isConversationOperationCurrent(token) &&
             currentConversationId == targetId) {

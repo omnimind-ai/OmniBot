@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 
 /// Installs the app-wide rendering fallback.
 ///
@@ -32,13 +32,22 @@ class OmnibotSafeErrorWidget extends StatelessWidget {
     return Container(
       // Keep this independent of Theme: an ErrorWidget can be created while
       // the Theme/MaterialApp itself is being built.
-      color: const Color(0xFFF6F8FC),
+      color: JackeryCesConfig.enabled
+          ? JackeryCesConfig.background
+          : const Color(0xFFF6F8FC),
       alignment: Alignment.center,
       padding: const EdgeInsets.all(16),
       child: Text(
-        '内容暂时无法显示',
+        JackeryCesConfig.enabled
+            ? 'Content is temporarily unavailable'
+            : '内容暂时无法显示',
         textAlign: TextAlign.center,
-        style: const TextStyle(color: Color(0xFF667085), fontSize: 14),
+        style: const TextStyle(
+          color: JackeryCesConfig.enabled
+              ? JackeryCesConfig.text
+              : Color(0xFF667085),
+          fontSize: 14,
+        ),
       ),
     );
   }

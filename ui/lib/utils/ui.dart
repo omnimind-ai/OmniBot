@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+
 import 'dart:async';
 import 'dart:ui' show ImageFilter;
+
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/theme/omni_theme_palette.dart';
@@ -35,12 +38,11 @@ class Loading {
 
     final context = navigatorState.overlay!.context;
     _overlayEntry = OverlayEntry(
-      builder: (_) =>
-          Center(
-            child: _CustomLoadingWidget(
-              message: LegacyTextLocalizer.localize(message ?? '加载中'),
-            ),
-          ),
+      builder: (_) => Center(
+        child: _CustomLoadingWidget(
+          message: LegacyTextLocalizer.localize(message ?? '加载中'),
+        ),
+      ),
     );
     Navigator.of(context).overlay!.insert(_overlayEntry!);
   }
@@ -92,12 +94,7 @@ class AppToast {
     ToastType type = ToastType.info,
     Duration duration = const Duration(seconds: 2),
     ToastPosition position = ToastPosition.top,
-  }) => _show(
-    message,
-    type: type,
-    duration: duration,
-    position: position,
-  );
+  }) => _show(message, type: type, duration: duration, position: position);
 
   static AppToastHandle loading(
     String message, {
@@ -335,11 +332,14 @@ class _ToastContainerState extends State<_ToastContainer>
                       vertical: isMultiLine ? 10 : 8,
                     ),
                     decoration: ShapeDecoration(
-                      gradient: LinearGradient(
-                        begin: const Alignment(0.25, 0.21),
-                        end: const Alignment(0.97, 1.01),
-                        colors: surfaceColors.gradientColors,
-                      ),
+                      color: surfaceColors.backgroundColor,
+                      gradient: surfaceColors.backgroundColor == null
+                          ? LinearGradient(
+                              begin: const Alignment(0.25, 0.21),
+                              end: const Alignment(0.97, 1.01),
+                              colors: surfaceColors.gradientColors,
+                            )
+                          : null,
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(
                           isMultiLine ? 18 : 50,
@@ -417,12 +417,14 @@ class _ToastContainerState extends State<_ToastContainer>
 }
 
 class _ToastSurfaceColors {
+  final Color? backgroundColor;
   final List<Color> gradientColors;
   final Color borderColor;
   final Color textColor;
   final List<BoxShadow> shadows;
 
   const _ToastSurfaceColors({
+    this.backgroundColor,
     required this.gradientColors,
     required this.borderColor,
     required this.textColor,
@@ -433,6 +435,15 @@ class _ToastSurfaceColors {
     required OmniThemePalette palette,
     required bool isDark,
   }) {
+    if (JackeryCesConfig.enabled) {
+      return const _ToastSurfaceColors(
+        backgroundColor: JackeryCesConfig.background,
+        gradientColors: [],
+        borderColor: JackeryCesConfig.border,
+        textColor: JackeryCesConfig.text,
+        shadows: [],
+      );
+    }
     if (isDark) {
       return _ToastSurfaceColors(
         gradientColors: [
@@ -485,10 +496,17 @@ class _ToastColors {
         return _ToastColors(const Color(0xFFF64C30), Icons.error_rounded);
       case ToastType.info:
         // 使用品牌主色
-        return _ToastColors(const Color(0xFF00AEF7), Icons.info_rounded);
+        return _ToastColors(
+          JackeryCesConfig.enabled
+              ? JackeryCesConfig.accent
+              : const Color(0xFF00AEF7),
+          Icons.info_rounded,
+        );
       case ToastType.loading:
         return _ToastColors(
-          const Color(0xFF00AEF7),
+          JackeryCesConfig.enabled
+              ? JackeryCesConfig.accent
+              : const Color(0xFF00AEF7),
           Icons.hourglass_top_rounded,
         );
     }
@@ -614,7 +632,8 @@ class AppDialog {
   /// 加载对话框 - 显示loading状态
   static void loading(
     BuildContext context, {
-    String title = '加载中', // Will be localized via LegacyTextLocalizer.localize in widget
+    String title =
+        '加载中', // Will be localized via LegacyTextLocalizer.localize in widget
     dynamic content,
     bool barrierDismissible = false,
   }) {
@@ -735,7 +754,7 @@ class _AppDialogWidgetState extends State<_AppDialogWidget> {
       backgroundColor: Colors.transparent,
       alignment: Alignment.center,
       insetPadding: const EdgeInsets.symmetric(horizontal: 25, vertical: 50),
-      child: widget.glassStyle
+      child: widget.glassStyle || JackeryCesConfig.enabled
           ? OmniGlassPanel(
               width: 325,
               borderRadius: BorderRadius.circular(20),

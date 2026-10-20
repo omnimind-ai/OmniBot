@@ -4,6 +4,7 @@ enum _WebQuickMenuAction { open, stop }
 
 extension _HomeDrawerHeaderFooter on HomeDrawerState {
   Color get _drawerBackgroundColor {
+    if (JackeryCesConfig.enabled) return JackeryCesConfig.background;
     if (!context.isDarkTheme) {
       return AppColors.background;
     }
@@ -11,6 +12,7 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
   }
 
   Color get _drawerTextColor {
+    if (JackeryCesConfig.enabled) return const Color(0xFF303030);
     if (!context.isDarkTheme) {
       return AppColors.text;
     }
@@ -18,6 +20,7 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
   }
 
   Color get _drawerSecondaryTextColor {
+    if (JackeryCesConfig.enabled) return const Color(0xFF77736D);
     if (!context.isDarkTheme) {
       return AppColors.text.withValues(alpha: 0.4);
     }
@@ -278,6 +281,18 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
   }
 
   Widget _buildFooterShortcutBar() {
+    if (JackeryCesConfig.enabled) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        child: TextButton.icon(
+          key: const ValueKey('jackery-drawer-settings'),
+          onPressed: () => _navigateTo('/home/settings'),
+          icon: const Icon(LucideIcons.settings, size: 19),
+          label: const Text('Settings'),
+          style: TextButton.styleFrom(foregroundColor: _drawerTextColor),
+        ),
+      );
+    }
     final items = <_DrawerShortcutAction>[
       _DrawerShortcutAction(
         label: context.l10n.settingsTitle,

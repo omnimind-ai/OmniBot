@@ -72,6 +72,7 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
 
   @override
   void _handleSlashCommandInput() {
+    if (JackeryCesConfig.enabled) return;
     if (_editingUserMessageId != null) {
       if (!mounted ||
           (!_showSlashCommandPanel &&
@@ -255,6 +256,7 @@ mixin _ChatPageOpenClawMixin on _ChatPageStateBase {
     String messageText, {
     List<Map<String, dynamic>> attachments = const [],
   }) async {
+    if (JackeryCesConfig.enabled) return false;
     final trimmed = messageText.trim();
     if (!trimmed.startsWith('/')) return false;
     if (_activeMode == ChatPageMode.agent) {

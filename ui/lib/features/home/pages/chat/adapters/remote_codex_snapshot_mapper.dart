@@ -410,7 +410,7 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
           continue;
         }
         seq += 1;
-        final messageId = '$itemId-agent-message';
+        final messageId = _asAgentString(item['hostMessageId']) ?? '$itemId-agent-message';
         final isFinal = !isActiveTurn;
         chronological.add(
           ChatMessageModel(

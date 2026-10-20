@@ -58,12 +58,16 @@ extension _ChatInputAttachmentSupport on _ChatInputAreaStateBase {
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: context.isDarkTheme
+                color: JackeryCesConfig.enabled
+                    ? JackeryCesConfig.border
+                    : context.isDarkTheme
                     ? palette.borderSubtle
                     : const Color(0xFFD3E3FB),
                 width: 1,
               ),
-              color: context.isDarkTheme
+              color: JackeryCesConfig.enabled
+                  ? Colors.white
+                  : context.isDarkTheme
                   ? palette.surfaceSecondary
                   : const Color(0xFFF1F6FF),
             ),
@@ -73,11 +77,13 @@ extension _ChatInputAttachmentSupport on _ChatInputAreaStateBase {
               child: Image.file(
                 File(item.path),
                 fit: BoxFit.cover,
-                errorBuilder: (_, __, ___) => const Center(
+                errorBuilder: (_, __, ___) => Center(
                   child: Icon(
                     Icons.image_not_supported_outlined,
                     size: 20,
-                    color: Color(0xFF6A83AA),
+                    color: JackeryCesConfig.enabled
+                        ? JackeryCesConfig.text
+                        : const Color(0xFF6A83AA),
                   ),
                 ),
               ),
@@ -92,16 +98,24 @@ extension _ChatInputAttachmentSupport on _ChatInputAreaStateBase {
   Widget _buildFileAttachmentTile(ChatInputAttachment item) {
     final sizeText = _formatAttachmentSize(item.size);
     final palette = context.omniPalette;
-    final tileColor = context.isDarkTheme
+    final tileColor = JackeryCesConfig.enabled
+        ? Colors.white
+        : context.isDarkTheme
         ? palette.surfaceSecondary
         : const Color(0xFFF1F6FF);
-    final tileBorderColor = context.isDarkTheme
+    final tileBorderColor = JackeryCesConfig.enabled
+        ? JackeryCesConfig.border
+        : context.isDarkTheme
         ? palette.borderSubtle
         : const Color(0xFFD3E3FB);
-    final textColor = context.isDarkTheme
+    final textColor = JackeryCesConfig.enabled
+        ? JackeryCesConfig.text
+        : context.isDarkTheme
         ? palette.textSecondary
         : const Color(0xFF35517A);
-    final iconColor = context.isDarkTheme
+    final iconColor = JackeryCesConfig.enabled
+        ? JackeryCesConfig.accent
+        : context.isDarkTheme
         ? palette.accentPrimary
         : const Color(0xFF3B6FD6);
     return Stack(

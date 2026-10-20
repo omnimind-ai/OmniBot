@@ -9,7 +9,9 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool persistMessages = false,
     bool allowEphemeralPersistence = false,
     bool allowHistoryRemoval = false,
+    bool allowDuringDemoReset = false,
   }) async {
+    if (_demoResetInProgress && !allowDuringDemoReset) return;
     _cancelPendingPersistence(conversationId: conversationId, mode: mode);
     if (isEphemeralRuntime(conversationId: conversationId, mode: mode) &&
         !allowEphemeralPersistence) {
@@ -141,7 +143,10 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       // Metadata I/O can overlap streamed chunks and PromptResponse. Capture
       // message content at the write boundary, not before that await. Keep the
       // admitted snapshot if this runtime was replaced/reset in the meantime.
-      if (identical(runtimeFor(conversationId: conversationId, mode: mode), runtime) &&
+      if (identical(
+            runtimeFor(conversationId: conversationId, mode: mode),
+            runtime,
+          ) &&
           runtime.persistenceGeneration == persistenceGeneration) {
         _flushRuntimeStreamingText(runtime);
         snapshotMessages = List<ChatMessageModel>.from(runtime.messages);
@@ -186,6 +191,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool persistMessages = false,
     Duration delay = const Duration(milliseconds: 350),
   }) {
+    if (_demoResetInProgress) return;
     final key = _runtimeKey(conversationId: conversationId, mode: mode);
     if (_ephemeralRuntimeKeys.contains(key)) {
       return;
@@ -247,7 +253,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     );
   }
 
-  Future<void> flushAllPendingPersistence() async {
+  Future<void> flushAllPendingPersistence({bool forDemoReset = false}) async {
     final requests = _pendingPersistence.values.toList(growable: false);
     _pendingPersistence.clear();
     for (final request in requests) {
@@ -258,6 +264,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
         generateSummary: request.generateSummary,
         markComplete: request.markComplete,
         persistMessages: request.persistMessages,
+        allowDuringDemoReset: forDemoReset,
       );
     }
     // A timer is not the only source of persistence. ACP deltas and lifecycle

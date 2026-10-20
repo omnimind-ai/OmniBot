@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
 
 import 'go_router_config.dart';
@@ -182,12 +183,17 @@ class GoRouterManager {
 
     // Determine effective initial location with onboarding guard
     final welcomeCompleted =
-        StorageService.getBool(
-          StorageKeys.welcomeCompleted,
-          defaultValue: false,
-        ) ??
-        false;
-    final requestedInitial = _initialRoute ?? homeRoute;
+        JackeryCesConfig.enabled ||
+        (StorageService.getBool(
+              StorageKeys.welcomeCompleted,
+              defaultValue: false,
+            ) ??
+            false);
+    final requestedInitial =
+        JackeryCesConfig.enabled &&
+            !JackeryCesConfig.allowsRoute(_initialRoute ?? homeRoute)
+        ? homeRoute
+        : _initialRoute ?? homeRoute;
     final effectiveInitial =
         (!welcomeCompleted &&
             !requestedInitial.startsWith('/welcome') &&
@@ -198,9 +204,14 @@ class GoRouterManager {
     return GoRouter(
       navigatorKey: _rootNavigatorKey,
       initialLocation: effectiveInitial,
-      redirect: _isSubEngine
+      redirect: _isSubEngine && !JackeryCesConfig.enabled
           ? null
           : (context, state) {
+              if (JackeryCesConfig.enabled) {
+                return JackeryCesConfig.allowsRoute(state.matchedLocation)
+                    ? null
+                    : homeRoute;
+              }
               final completed =
                   StorageService.getBool(
                     StorageKeys.welcomeCompleted,

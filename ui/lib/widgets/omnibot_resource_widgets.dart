@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/services/office_preview_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/pdf_preview_service.dart';
@@ -18,11 +19,83 @@ import 'package:video_player/video_player.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
 
-typedef OmnibotResourceOpenCallback =
-    Future<void> Function(
-      BuildContext context,
-      OmnibotResourceMetadata metadata,
-    );
+// Keep the standard previews unchanged while applying the exhibition palette.
+abstract final class _ResourceColors {
+  static const cardBorder = JackeryCesConfig.enabled
+      ? JackeryCesConfig.border
+      : Color(0xFFD8E4F8);
+  static const iconBackground = JackeryCesConfig.enabled
+      ? JackeryCesConfig.background
+      : Color(0xFFEAF3FF);
+  static const iconAccent = JackeryCesConfig.enabled
+      ? JackeryCesConfig.accent
+      : Color(0xFF1F4ED8);
+  static const title = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF0F172A);
+  static const metadata = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF64748B);
+  static const shadow = JackeryCesConfig.enabled
+      ? Color(0x12303030)
+      : Color(0x12243258);
+  static const pdfIcon = JackeryCesConfig.enabled
+      ? JackeryCesConfig.accent
+      : Color(0xFFDC2626);
+  static const pageBackground = JackeryCesConfig.enabled
+      ? JackeryCesConfig.background
+      : Color(0xFFF8FAFC);
+  static const pageBorder = JackeryCesConfig.enabled
+      ? JackeryCesConfig.border
+      : Color(0xFFE2E8F0);
+  static const errorBackground = JackeryCesConfig.enabled
+      ? JackeryCesConfig.surface
+      : Color(0xFFFFFBEB);
+  static const errorIcon = JackeryCesConfig.enabled
+      ? JackeryCesConfig.accent
+      : Color(0xFFB45309);
+  static const errorText = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF92400E);
+  static const mutedIcon = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF94A3B8);
+  static const body = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF334155);
+  static const toolbarShadow = JackeryCesConfig.enabled
+      ? Color(0x22303030)
+      : Color(0x220F172A);
+  static const officeBackground = JackeryCesConfig.enabled
+      ? JackeryCesConfig.background
+      : Color(0xFFF8FBFF);
+  static const summary = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF35517A);
+  static const sectionBorder = JackeryCesConfig.enabled
+      ? JackeryCesConfig.border
+      : Color(0xFFE1EAF8);
+  static const bullet = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF4F6FAE);
+  static const tableHeader = JackeryCesConfig.enabled
+      ? JackeryCesConfig.background
+      : Color(0xFFF1F6FF);
+  static const secondaryBody = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Color(0xFF475569);
+  static const errorBorder = JackeryCesConfig.enabled
+      ? JackeryCesConfig.border
+      : Color(0xFFF2D4A5);
+  static final truncatedText = JackeryCesConfig.enabled
+      ? JackeryCesConfig.text
+      : Colors.blueGrey.withValues(alpha: 0.78);
+}
+
+typedef OmnibotResourceOpenCallback = Future<void> Function(
+  BuildContext context,
+  OmnibotResourceMetadata metadata,
+);
 
 class OmnibotInlineResourceEmbed extends StatelessWidget {
   final OmnibotResourceMetadata metadata;
@@ -108,13 +181,17 @@ class OmnibotResourceLinkCard extends StatelessWidget {
     final surfaceColor = plainStyle
         ? Colors.transparent
         : (isDark ? palette.surfaceSecondary : Colors.white);
-    final borderColor = isDark ? palette.borderSubtle : const Color(0xFFD8E4F8);
+    final borderColor = isDark
+        ? palette.borderSubtle
+        : _ResourceColors.cardBorder;
     final iconBackgroundColor = isDark
         ? palette.surfaceElevated
-        : const Color(0xFFEAF3FF);
-    final iconColor = isDark ? palette.accentPrimary : const Color(0xFF1F4ED8);
-    final titleColor = isDark ? palette.textPrimary : const Color(0xFF0F172A);
-    final metaColor = isDark ? palette.textSecondary : const Color(0xFF64748B);
+        : _ResourceColors.iconBackground;
+    final iconColor = isDark
+        ? palette.accentPrimary
+        : _ResourceColors.iconAccent;
+    final titleColor = isDark ? palette.textPrimary : _ResourceColors.title;
+    final metaColor = isDark ? palette.textSecondary : _ResourceColors.metadata;
     final icon = switch (metadata.previewKind) {
       'pdf' => Icons.picture_as_pdf_outlined,
       'html' => Icons.language_outlined,
@@ -139,7 +216,7 @@ class OmnibotResourceLinkCard extends StatelessWidget {
               ? null
               : const [
                   BoxShadow(
-                    color: Color(0x12243258),
+                    color: _ResourceColors.shadow,
                     blurRadius: 10,
                     offset: Offset(0, 4),
                   ),
@@ -228,7 +305,7 @@ class _OmnibotInlineImageCard extends StatelessWidget {
           borderRadius: BorderRadius.circular(16),
           border: plainStyle
               ? null
-              : Border.all(color: const Color(0xFFD8E4F8)),
+              : Border.all(color: _ResourceColors.cardBorder),
           color: plainStyle ? Colors.transparent : Colors.white,
         ),
         child: ClipRRect(
@@ -357,12 +434,12 @@ class _OmnibotInlineAudioPlayerState extends State<_OmnibotInlineAudioPlayer> {
             borderRadius: BorderRadius.circular(16),
             border: widget.plainStyle
                 ? null
-                : Border.all(color: const Color(0xFFD8E4F8)),
+                : Border.all(color: _ResourceColors.cardBorder),
             boxShadow: widget.plainStyle
                 ? null
                 : const [
                     BoxShadow(
-                      color: Color(0x12243258),
+                      color: _ResourceColors.shadow,
                       blurRadius: 10,
                       offset: Offset(0, 4),
                     ),
@@ -398,7 +475,7 @@ class _OmnibotInlineAudioPlayerState extends State<_OmnibotInlineAudioPlayer> {
                           : _formatDuration(_duration!),
                       style: const TextStyle(
                         fontSize: 11,
-                        color: Color(0xFF64748B),
+                        color: _ResourceColors.metadata,
                       ),
                     ),
                   ],
@@ -535,7 +612,7 @@ class _OmnibotInlineVideoPlayerState extends State<_OmnibotInlineVideoPlayer> {
           borderRadius: BorderRadius.circular(16),
           border: widget.plainStyle
               ? null
-              : Border.all(color: const Color(0xFFD8E4F8)),
+              : Border.all(color: _ResourceColors.cardBorder),
         ),
         child: const CircularProgressIndicator(),
       );
@@ -546,12 +623,12 @@ class _OmnibotInlineVideoPlayerState extends State<_OmnibotInlineVideoPlayer> {
         borderRadius: BorderRadius.circular(16),
         border: widget.plainStyle
             ? null
-            : Border.all(color: const Color(0xFFD8E4F8)),
+            : Border.all(color: _ResourceColors.cardBorder),
         boxShadow: widget.plainStyle
             ? null
             : const [
                 BoxShadow(
-                  color: Color(0x12243258),
+                  color: _ResourceColors.shadow,
                   blurRadius: 10,
                   offset: Offset(0, 4),
                 ),
@@ -1050,12 +1127,12 @@ class _OmnibotPdfScrollablePreviewState
         borderRadius: BorderRadius.circular(16),
         border: widget.plainStyle
             ? null
-            : Border.all(color: const Color(0xFFD8E4F8)),
+            : Border.all(color: _ResourceColors.cardBorder),
         boxShadow: widget.plainStyle
             ? null
             : const [
                 BoxShadow(
-                  color: Color(0x12243258),
+                  color: _ResourceColors.shadow,
                   blurRadius: 10,
                   offset: Offset(0, 4),
                 ),
@@ -1072,7 +1149,7 @@ class _OmnibotPdfScrollablePreviewState
                 const Icon(
                   Icons.picture_as_pdf_outlined,
                   size: 18,
-                  color: Color(0xFFDC2626),
+                  color: _ResourceColors.pdfIcon,
                 ),
                 const SizedBox(width: 8),
                 Expanded(
@@ -1083,7 +1160,7 @@ class _OmnibotPdfScrollablePreviewState
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF0F172A),
+                      color: _ResourceColors.title,
                     ),
                   ),
                 ),
@@ -1091,7 +1168,7 @@ class _OmnibotPdfScrollablePreviewState
                   _fileSizeLabel(widget.metadata.path),
                   style: const TextStyle(
                     fontSize: 11,
-                    color: Color(0xFF64748B),
+                    color: _ResourceColors.metadata,
                   ),
                 ),
               ],
@@ -1178,9 +1255,9 @@ class _PdfPageTile extends StatelessWidget {
         );
         return DecoratedBox(
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
+            color: _ResourceColors.pageBackground,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            border: Border.all(color: _ResourceColors.pageBorder),
           ),
           child: ClipRRect(
             borderRadius: BorderRadius.circular(12),
@@ -1219,7 +1296,7 @@ class _PdfPagePlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFF8FAFC),
+      color: _ResourceColors.pageBackground,
       alignment: Alignment.center,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
@@ -1230,7 +1307,10 @@ class _PdfPagePlaceholder extends StatelessWidget {
             LegacyTextLocalizer.isEnglish
                 ? 'Page ${pageIndex + 1} loading'
                 : '第 ${pageIndex + 1} 页加载中',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF64748B)),
+            style: const TextStyle(
+              fontSize: 12,
+              color: _ResourceColors.metadata,
+            ),
           ),
         ],
       ),
@@ -1246,18 +1326,24 @@ class _PdfPageError extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFFFFBEB),
+      color: _ResourceColors.errorBackground,
       alignment: Alignment.center,
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          const Icon(Icons.error_outline_rounded, color: Color(0xFFB45309)),
+          const Icon(
+            Icons.error_outline_rounded,
+            color: _ResourceColors.errorIcon,
+          ),
           const SizedBox(height: 8),
           Text(
             LegacyTextLocalizer.isEnglish
                 ? 'Page ${pageIndex + 1} render failed'
                 : '第 ${pageIndex + 1} 页渲染失败',
-            style: const TextStyle(fontSize: 12, color: Color(0xFF92400E)),
+            style: const TextStyle(
+              fontSize: 12,
+              color: _ResourceColors.errorText,
+            ),
           ),
         ],
       ),
@@ -1457,7 +1543,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
           children: [
             const Icon(
               Icons.error_outline_rounded,
-              color: Color(0xFF94A3B8),
+              color: _ResourceColors.mutedIcon,
               size: 28,
             ),
             const SizedBox(height: 10),
@@ -1468,7 +1554,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF334155),
+                color: _ResourceColors.body,
               ),
             ),
             if (_errorMessage != null && _errorMessage!.isNotEmpty) ...[
@@ -1481,7 +1567,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
                 style: const TextStyle(
                   fontSize: 11,
                   height: 1.4,
-                  color: Color(0xFF64748B),
+                  color: _ResourceColors.metadata,
                 ),
               ),
             ],
@@ -1517,12 +1603,12 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
         borderRadius: BorderRadius.circular(16),
         border: widget.plainStyle
             ? null
-            : Border.all(color: const Color(0xFFD8E4F8)),
+            : Border.all(color: _ResourceColors.cardBorder),
         boxShadow: widget.plainStyle
             ? null
             : const [
                 BoxShadow(
-                  color: Color(0x12243258),
+                  color: _ResourceColors.shadow,
                   blurRadius: 10,
                   offset: Offset(0, 4),
                 ),
@@ -1567,7 +1653,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
                     borderRadius: BorderRadius.circular(12),
                     boxShadow: const [
                       BoxShadow(
-                        color: Color(0x220F172A),
+                        color: _ResourceColors.toolbarShadow,
                         blurRadius: 8,
                         offset: Offset(0, 2),
                       ),
@@ -1677,12 +1763,12 @@ class _OmnibotInlineOfficePreviewCardState
         borderRadius: BorderRadius.circular(16),
         border: widget.plainStyle
             ? null
-            : Border.all(color: const Color(0xFFD8E4F8)),
+            : Border.all(color: _ResourceColors.cardBorder),
         boxShadow: widget.plainStyle
             ? null
             : const [
                 BoxShadow(
-                  color: Color(0x12243258),
+                  color: _ResourceColors.shadow,
                   blurRadius: 10,
                   offset: Offset(0, 4),
                 ),
@@ -1699,13 +1785,13 @@ class _OmnibotInlineOfficePreviewCardState
                   width: 38,
                   height: 38,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFEAF3FF),
+                    color: _ResourceColors.iconBackground,
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(
                     _officeIconForKind(widget.metadata.previewKind),
                     size: 20,
-                    color: const Color(0xFF1F4ED8),
+                    color: _ResourceColors.iconAccent,
                   ),
                 ),
                 const SizedBox(width: 10),
@@ -1721,7 +1807,7 @@ class _OmnibotInlineOfficePreviewCardState
                         style: const TextStyle(
                           fontSize: 13,
                           fontWeight: FontWeight.w600,
-                          color: Color(0xFF0F172A),
+                          color: _ResourceColors.title,
                         ),
                       ),
                       const SizedBox(height: 3),
@@ -1729,7 +1815,7 @@ class _OmnibotInlineOfficePreviewCardState
                         _officeKindLabel(widget.metadata.previewKind),
                         style: const TextStyle(
                           fontSize: 11,
-                          color: Color(0xFF64748B),
+                          color: _ResourceColors.metadata,
                         ),
                       ),
                     ],
@@ -1753,7 +1839,7 @@ class _OmnibotInlineOfficePreviewCardState
             width: double.infinity,
             margin: const EdgeInsets.fromLTRB(12, 0, 12, 12),
             decoration: BoxDecoration(
-              color: const Color(0xFFF8FBFF),
+              color: _ResourceColors.officeBackground,
               borderRadius: BorderRadius.circular(14),
             ),
             child: SizedBox(
@@ -1807,7 +1893,7 @@ class _OfficePreviewBody extends StatelessWidget {
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF35517A),
+              color: _ResourceColors.summary,
             ),
           ),
           const SizedBox(height: 10),
@@ -1823,7 +1909,7 @@ class _OfficePreviewBody extends StatelessWidget {
                   : '内容较多，当前仅展示前面一部分。',
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.blueGrey.withValues(alpha: 0.78),
+                color: _ResourceColors.truncatedText,
               ),
             ),
           ],
@@ -1846,7 +1932,7 @@ class _OfficePreviewSectionView extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE1EAF8)),
+        border: Border.all(color: _ResourceColors.sectionBorder),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1856,14 +1942,17 @@ class _OfficePreviewSectionView extends StatelessWidget {
             style: const TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: Color(0xFF0F172A),
+              color: _ResourceColors.title,
             ),
           ),
           if (section.subtitle != null && section.subtitle!.isNotEmpty) ...[
             const SizedBox(height: 4),
             Text(
               section.subtitle!,
-              style: const TextStyle(fontSize: 11, color: Color(0xFF64748B)),
+              style: const TextStyle(
+                fontSize: 11,
+                color: _ResourceColors.metadata,
+              ),
             ),
           ],
           if (section.lines.isNotEmpty) ...[
@@ -1877,7 +1966,7 @@ class _OfficePreviewSectionView extends StatelessWidget {
                     child: Icon(
                       Icons.circle,
                       size: 5,
-                      color: Color(0xFF4F6FAE),
+                      color: _ResourceColors.bullet,
                     ),
                   ),
                   const SizedBox(width: 8),
@@ -1887,7 +1976,7 @@ class _OfficePreviewSectionView extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 12,
                         height: 1.45,
-                        color: Color(0xFF334155),
+                        color: _ResourceColors.body,
                       ),
                     ),
                   ),
@@ -1924,13 +2013,13 @@ class _OfficePreviewTable extends StatelessWidget {
 
     return Table(
       defaultColumnWidth: const IntrinsicColumnWidth(),
-      border: TableBorder.all(color: const Color(0xFFD8E4F8), width: 1),
+      border: TableBorder.all(color: _ResourceColors.cardBorder, width: 1),
       children: [
         for (var rowIndex = 0; rowIndex < rows.length; rowIndex++)
           TableRow(
             decoration: BoxDecoration(
               color: rowIndex == 0
-                  ? const Color(0xFFF1F6FF)
+                  ? _ResourceColors.tableHeader
                   : const Color(0xFFFFFFFF),
             ),
             children: [
@@ -1949,7 +2038,7 @@ class _OfficePreviewTable extends StatelessWidget {
                         fontWeight: rowIndex == 0
                             ? FontWeight.w600
                             : FontWeight.w400,
-                        color: const Color(0xFF334155),
+                        color: _ResourceColors.body,
                       ),
                     ),
                   ),
@@ -1978,7 +2067,7 @@ class _OfficePreviewErrorView extends StatelessWidget {
             const Icon(
               Icons.insert_drive_file_outlined,
               size: 28,
-              color: Color(0xFF64748B),
+              color: _ResourceColors.metadata,
             ),
             const SizedBox(height: 10),
             Text(
@@ -1989,7 +2078,7 @@ class _OfficePreviewErrorView extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 12,
                 height: 1.5,
-                color: Color(0xFF475569),
+                color: _ResourceColors.secondaryBody,
               ),
             ),
             const SizedBox(height: 12),
@@ -2028,15 +2117,17 @@ class _MissingResourceCard extends StatelessWidget {
       child: Ink(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
-          color: plainStyle ? Colors.transparent : const Color(0xFFFFFBEB),
+          color: plainStyle
+              ? Colors.transparent
+              : _ResourceColors.errorBackground,
           borderRadius: BorderRadius.circular(14),
           border: plainStyle
               ? null
-              : Border.all(color: const Color(0xFFF2D4A5)),
+              : Border.all(color: _ResourceColors.errorBorder),
         ),
         child: Row(
           children: [
-            Icon(icon, size: 20, color: const Color(0xFFB45309)),
+            Icon(icon, size: 20, color: _ResourceColors.errorIcon),
             const SizedBox(width: 10),
             Expanded(
               child: Column(
@@ -2057,7 +2148,7 @@ class _MissingResourceCard extends StatelessWidget {
                     subtitle,
                     style: const TextStyle(
                       fontSize: 11,
-                      color: Color(0xFF92400E),
+                      color: _ResourceColors.errorText,
                     ),
                   ),
                 ],
@@ -2067,7 +2158,7 @@ class _MissingResourceCard extends StatelessWidget {
             const Icon(
               Icons.open_in_new_rounded,
               size: 18,
-              color: Color(0xFF92400E),
+              color: _ResourceColors.errorText,
             ),
           ],
         ),
@@ -2139,9 +2230,8 @@ int _resolvePdfTargetWidthPx(BuildContext context, BoxConstraints constraints) {
   final logicalWidth = constraints.maxWidth.isFinite
       ? constraints.maxWidth
       : MediaQuery.sizeOf(context).width;
-  final devicePixelRatio = MediaQuery.devicePixelRatioOf(
-    context,
-  ).clamp(1.0, 3.0);
+  final devicePixelRatio = MediaQuery.devicePixelRatioOf(context)
+      .clamp(1.0, 3.0);
   return (logicalWidth * devicePixelRatio).round().clamp(240, 1800);
 }
 

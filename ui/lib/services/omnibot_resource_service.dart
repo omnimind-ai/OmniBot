@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/services.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/authorize/authorize_page_args.dart';
@@ -322,6 +323,15 @@ class OmnibotResourceService {
     };
     if (granted) {
       return true;
+    }
+    // The audience edition has no permission settings route. Do not push a
+    // hidden route and wait indefinitely for a result after its redirect.
+    if (JackeryCesConfig.enabled) {
+      throw PlatformException(
+        code: 'CES_RESOURCE_ACCESS_UNAVAILABLE',
+        message:
+            'File access is unavailable. Please ask a staff member for help.',
+      );
     }
     final result = await GoRouterManager.pushForResult<bool>(
       '/home/authorize',

@@ -1,7 +1,10 @@
+import 'package:ui/config/jackery_ces_config.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
 import 'dart:typed_data';
+
 import 'package:dotted_border/dotted_border.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/features/home/pages/omnibot_workspace/omnibot_artifact_preview_page.dart';
@@ -11,6 +14,7 @@ import 'package:ui/models/chat_link_preview.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/app_background_service.dart';
 import '../../../../../services/voice_playback_coordinator.dart';
@@ -19,6 +23,7 @@ import '../../../../../theme/theme_context.dart';
 import '../../../../../widgets/streaming_text.dart';
 import 'thinking_dots_indicator.dart';
 import 'cards/card_widget_factory.dart';
+
 import 'package:flutter_svg/flutter_svg.dart';
 
 export 'package:ui/widgets/streaming_text.dart'
@@ -48,6 +53,9 @@ class MessageBubble extends StatelessWidget {
   /// 是否允许使用 ACP Agent 的行内工具调用样式。
   final bool useAgentToolPresentation;
 
+  /// Na uses individual conversation bubbles without runtime metrics.
+  final bool personalAgentPresentation;
+
   /// 强制覆盖深度思考卡片的头像显示
   final bool? showThinkingAvatarOverride;
 
@@ -75,6 +83,7 @@ class MessageBubble extends StatelessWidget {
     this.enableThinkingCollapse = false,
     this.thinkingAutoCollapseOnComplete = true,
     this.useAgentToolPresentation = true,
+    this.personalAgentPresentation = false,
     this.showThinkingAvatarOverride,
     this.forceTextFinal = false,
     this.parentScrollController,
@@ -109,12 +118,22 @@ class MessageBubble extends StatelessWidget {
   }
 
   Color _resolvedUserPrimaryTextColor(BuildContext context) {
+    if (JackeryCesConfig.enabled) return JackeryCesConfig.text;
+    if (personalAgentPresentation && _usesThemeDrivenText()) {
+      return Colors.white;
+    }
     return _usesThemeDrivenText()
         ? context.omniPalette.textPrimary
         : visualProfile.primaryTextColor;
   }
 
   Color _resolvedUserBubbleColor(BuildContext context) {
+    if (JackeryCesConfig.enabled) return Colors.white;
+    if (personalAgentPresentation && _usesThemeDrivenText()) {
+      return context.isDarkTheme
+          ? const Color(0xFF45688B)
+          : const Color(0xFF7C9EC5);
+    }
     if (!_usesThemeDrivenText()) {
       return visualProfile.userBubbleColor;
     }
@@ -165,6 +184,63 @@ class MessageBubble extends StatelessWidget {
     final isUserMessage = message.user == 1;
     final isCardMessage = message.type == 2; // 卡片消息
 
+    if (personalAgentPresentation && !isCardMessage) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        child: Align(
+          alignment: isUserMessage
+              ? Alignment.centerRight
+              : Alignment.centerLeft,
+          child: isUserMessage
+              ? _buildTextMessage(context, true)
+              : LayoutBuilder(
+                  builder: (context, constraints) => Container(
+                    key: ValueKey(
+                      '${JackeryCesConfig.enabled ? 'jackery' : 'na'}-agent-bubble-${message.id}',
+                    ),
+                    constraints: BoxConstraints(
+                      maxWidth: constraints.maxWidth * 0.92,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 11,
+                    ),
+                    decoration: BoxDecoration(
+                      color: JackeryCesConfig.enabled
+                          ? Colors.white
+                          : _usesThemeDrivenText()
+                          ? (context.isDarkTheme
+                                ? context.omniPalette.surfaceSecondary
+                                : const Color(0xFFF0F0F0))
+                          : visualProfile.attachmentSurfaceColor,
+                      borderRadius: BorderRadius.circular(22),
+                      border: JackeryCesConfig.enabled
+                          ? Border.all(color: JackeryCesConfig.border)
+                          : null,
+                    ),
+                    child: JackeryCesConfig.enabled
+                        ? Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Jackery Power AI',
+                                style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w600,
+                                  color: Color(0xFF303030),
+                                ),
+                              ),
+                              const SizedBox(height: 10),
+                              _buildTextMessage(context, false),
+                            ],
+                          )
+                        : _buildTextMessage(context, false),
+                  ),
+                ),
+        ),
+      );
+    }
     // 卡片消息特殊布局：撑满整个聊天框宽度
     if (isCardMessage) {
       return Container(
@@ -223,7 +299,8 @@ class MessageBubble extends StatelessWidget {
           final availableWidth = constraints.maxWidth.isFinite
               ? constraints.maxWidth
               : fallbackMaxWidth;
-          final maxBubbleWidth = availableWidth * 0.78;
+          final maxBubbleWidth =
+              availableWidth * (personalAgentPresentation ? 0.84 : 0.78);
           return GestureDetector(
             behavior: HitTestBehavior.opaque,
             onLongPressStart: onUserMessageLongPressStart == null
@@ -232,11 +309,16 @@ class MessageBubble extends StatelessWidget {
             child: Container(
               key: ValueKey('user-message-bubble-${message.id}'),
               constraints: BoxConstraints(maxWidth: maxBubbleWidth),
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+              padding: EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: personalAgentPresentation ? 10 : 6,
+              ),
               decoration: ShapeDecoration(
                 color: _resolvedUserBubbleColor(context),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(4),
+                  borderRadius: BorderRadius.circular(
+                    personalAgentPresentation ? 22 : 4,
+                  ),
                 ),
               ),
               child: Column(
@@ -970,9 +1052,8 @@ class MessageBubble extends StatelessWidget {
     if (onEditTap == null) {
       return textWidget;
     }
-    final underlineColor = _resolvedUserPrimaryTextColor(
-      context,
-    ).withValues(alpha: 0.52);
+    final underlineColor = _resolvedUserPrimaryTextColor(context)
+        .withValues(alpha: 0.52);
     return Semantics(
       button: true,
       label: context.trLegacy('编辑消息'),
@@ -1086,11 +1167,13 @@ class MessageBubble extends StatelessWidget {
     String text, {
     required bool includeTurnUsageFooter,
   }) {
-    final speed = _decodeTokensPerSecond;
+    final speed = personalAgentPresentation ? null : _decodeTokensPerSecond;
     final aiText = _buildAiText(
       context,
       text,
-      trailing: _buildVoiceAction(context, text),
+      trailing: personalAgentPresentation
+          ? null
+          : _buildVoiceAction(context, text),
     );
     final retryingStatus = _buildAgentRetryingStatus(context);
     final errorFooter = _buildAgentErrorFooter(context, text);
@@ -1110,9 +1193,8 @@ class MessageBubble extends StatelessWidget {
             '${speed.toStringAsFixed(1)} tok/s',
             style: TextStyle(
               fontSize: 11,
-              color: _resolvedAiSecondaryTextColor(
-                context,
-              ).withValues(alpha: 0.6),
+              color: _resolvedAiSecondaryTextColor(context)
+                  .withValues(alpha: 0.6),
               fontWeight: FontWeight.w400,
             ),
           ),
@@ -1308,6 +1390,7 @@ class MessageBubble extends StatelessWidget {
   }
 
   Widget? _buildTurnUsageFooter(BuildContext context) {
+    if (personalAgentPresentation) return null;
     final usage = message.turnUsage;
     if (usage == null || usage.isEmpty) return null;
     final input = _readIntValue(usage['in']);
@@ -1317,9 +1400,8 @@ class MessageBubble extends StatelessWidget {
     final durationMs = _readIntValue(usage['durationMs']);
     final hasUsage = input != null || output != null || cache != null;
     if (!hasUsage && endedAt == null) return null;
-    final textColor = _resolvedAiSecondaryTextColor(
-      context,
-    ).withValues(alpha: 0.72);
+    final textColor = _resolvedAiSecondaryTextColor(context)
+        .withValues(alpha: 0.72);
     final ended = endedAt == null
         ? null
         : DateTime.fromMillisecondsSinceEpoch(endedAt).toLocal();

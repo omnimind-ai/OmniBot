@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 
 enum AppThemeMode { system, light, dark }
 
@@ -27,6 +28,7 @@ extension AppThemeModeX on AppThemeMode {
   }
 
   ThemeMode get materialThemeMode {
+    if (JackeryCesConfig.enabled) return ThemeMode.light;
     switch (this) {
       case AppThemeMode.light:
         return ThemeMode.light;

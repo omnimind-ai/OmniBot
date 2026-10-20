@@ -598,6 +598,12 @@ internal class LocalAcpRuntime(
 
     fun hasActiveTurns(): Boolean = turnOwnership.hasActiveTurns()
 
+    internal suspend fun cancelActivePromptsForDemoReset() {
+        turnOwnership.activeRecords().forEach { record ->
+            handleMethod("session/cancel", mapOf("sessionId" to record.sessionId))
+        }
+    }
+
     /**
      * Returns the host-owned turn currently running in an ACP session.
      *

@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/omni_theme_palette.dart';
 
 class AppTheme {
   AppTheme._();
 
-  static ThemeData get lightTheme => _lightTheme;
-  static ThemeData get darkTheme => _darkTheme;
+  static ThemeData get lightTheme =>
+      JackeryCesConfig.enabled ? jackeryCesTheme : _lightTheme;
+  static ThemeData get darkTheme =>
+      JackeryCesConfig.enabled ? jackeryCesTheme : _darkTheme;
+
+  static final ThemeData jackeryCesTheme = _buildTheme(
+    brightness: Brightness.light,
+    palette: OmniThemePalette.jackeryCes,
+    exhibition: true,
+  );
 
   static final ThemeData _lightTheme = _buildTheme(
     brightness: Brightness.light,
@@ -22,21 +31,25 @@ class AppTheme {
   static ThemeData _buildTheme({
     required Brightness brightness,
     required OmniThemePalette palette,
+    bool exhibition = false,
   }) {
     final isDark = brightness == Brightness.dark;
     final onAccentColor = _foregroundForAccent(palette.accentPrimary);
     final globalInputDecorationTheme = _buildInputDecorationTheme(
       palette: palette,
       isDark: isDark,
+      exhibition: exhibition,
     );
-    final colorScheme =
+    var colorScheme =
         ColorScheme.fromSeed(
           seedColor: palette.accentPrimary,
           brightness: brightness,
         ).copyWith(
           primary: palette.accentPrimary,
           onPrimary: onAccentColor,
-          secondary: isDark
+          secondary: exhibition
+              ? palette.accentPrimary
+              : isDark
               ? _secondaryAccentForDark(palette)
               : AppColors.gradientAux,
           onSecondary: isDark ? onAccentColor : palette.textPrimary,
@@ -48,6 +61,30 @@ class AppTheme {
           outlineVariant: palette.borderSubtle,
           surfaceTint: Colors.transparent,
         );
+
+    if (exhibition) {
+      colorScheme = colorScheme.copyWith(
+        primaryContainer: palette.pageBackground,
+        onPrimaryContainer: palette.textPrimary,
+        secondaryContainer: palette.surfacePrimary,
+        onSecondaryContainer: palette.textPrimary,
+        tertiary: palette.accentPrimary,
+        onTertiary: onAccentColor,
+        tertiaryContainer: palette.surfacePrimary,
+        onTertiaryContainer: palette.textPrimary,
+        surfaceDim: palette.pageBackground,
+        surfaceBright: palette.surfacePrimary,
+        surfaceContainerLowest: palette.surfacePrimary,
+        surfaceContainerLow: palette.pageBackground,
+        surfaceContainer: palette.pageBackground,
+        surfaceContainerHigh: palette.surfacePrimary,
+        surfaceContainerHighest: palette.surfacePrimary,
+        onSurfaceVariant: palette.textPrimary,
+        inverseSurface: palette.textPrimary,
+        onInverseSurface: palette.surfacePrimary,
+        inversePrimary: palette.accentPrimary,
+      );
+    }
 
     final baseTheme = ThemeData(
       useMaterial3: true,
@@ -86,6 +123,53 @@ class AppTheme {
         space: 1,
       ),
       inputDecorationTheme: globalInputDecorationTheme,
+      cardTheme: exhibition
+          ? CardThemeData(
+              color: palette.surfacePrimary,
+              surfaceTintColor: Colors.transparent,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+                side: BorderSide(color: palette.borderSubtle),
+              ),
+            )
+          : null,
+      popupMenuTheme: exhibition
+          ? PopupMenuThemeData(
+              color: palette.pageBackground,
+              surfaceTintColor: Colors.transparent,
+            )
+          : null,
+      snackBarTheme: exhibition
+          ? SnackBarThemeData(
+              backgroundColor: palette.pageBackground,
+              contentTextStyle: TextStyle(color: palette.textPrimary),
+              actionTextColor: palette.accentPrimary,
+              closeIconColor: palette.textPrimary,
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: palette.borderSubtle),
+              ),
+            )
+          : null,
+      tooltipTheme: exhibition
+          ? TooltipThemeData(
+              decoration: BoxDecoration(
+                color: palette.pageBackground,
+                border: Border.all(color: palette.borderSubtle),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              textStyle: TextStyle(color: palette.textPrimary, fontSize: 12),
+            )
+          : null,
+      textSelectionTheme: exhibition
+          ? TextSelectionThemeData(
+              cursorColor: palette.accentPrimary,
+              selectionColor: palette.accentPrimary.withValues(alpha: 0.16),
+              selectionHandleColor: palette.accentPrimary,
+            )
+          : null,
       chipTheme: ChipThemeData(
         backgroundColor: palette.surfaceElevated,
         selectedColor: palette.segmentThumb,
@@ -131,14 +215,18 @@ class AppTheme {
         iconColor: palette.textSecondary,
       ),
       bottomSheetTheme: BottomSheetThemeData(
-        backgroundColor: palette.surfacePrimary,
+        backgroundColor: exhibition
+            ? palette.pageBackground
+            : palette.surfacePrimary,
         surfaceTintColor: Colors.transparent,
         shape: const RoundedRectangleBorder(
           borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
       ),
       dialogTheme: DialogThemeData(
-        backgroundColor: palette.surfacePrimary,
+        backgroundColor: exhibition
+            ? palette.pageBackground
+            : palette.surfacePrimary,
         surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       ),
@@ -155,10 +243,11 @@ class AppTheme {
   static InputDecorationTheme _buildInputDecorationTheme({
     required OmniThemePalette palette,
     required bool isDark,
+    bool exhibition = false,
   }) {
-    final fillColor = palette.surfaceSecondary.withValues(
-      alpha: isDark ? 0.72 : 0.64,
-    );
+    final fillColor = exhibition
+        ? palette.surfacePrimary
+        : palette.surfaceSecondary.withValues(alpha: isDark ? 0.72 : 0.64);
     final radius = BorderRadius.circular(10);
     return InputDecorationTheme(
       filled: true,
@@ -174,7 +263,9 @@ class AppTheme {
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: radius,
-        borderSide: BorderSide.none,
+        borderSide: exhibition
+            ? BorderSide(color: palette.borderSubtle)
+            : BorderSide.none,
       ),
       disabledBorder: OutlineInputBorder(
         borderRadius: radius,

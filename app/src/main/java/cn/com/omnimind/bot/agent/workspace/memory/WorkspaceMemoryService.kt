@@ -13,6 +13,7 @@ import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.workspace.memory.LongTermMemoryIndex
+import cn.com.omnimind.bot.jackery.JackeryDemoReset
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.tencent.mmkv.MMKV
@@ -563,7 +564,17 @@ class WorkspaceMemoryService(
         )
     }
 
-    fun rollupDay(date: LocalDate = LocalDate.now()): Map<String, Any?> {
+    internal fun clearAllForDemoReset() = synchronized(memoryWriteLock()) {
+        val directory = workspaceManager.longTermMemoryMarkdownFile().parentFile!!
+        JackeryDemoReset.deleteOwnedTree(directory)
+        mmkv?.removeValuesForKeys(arrayOf(KEY_ROLLUP_LAST_RUN_AT, KEY_ROLLUP_LAST_SUMMARY))
+    }
+
+    fun rollupDay(date: LocalDate = LocalDate.now()): Map<String, Any?> = synchronized(memoryWriteLock()) {
+        rollupDayLocked(date)
+    }
+
+    private fun rollupDayLocked(date: LocalDate): Map<String, Any?> {
         ensureInitialized()
         val dailyFile = workspaceManager.dailyShortMemoryFile(date)
         if (!dailyFile.exists()) {

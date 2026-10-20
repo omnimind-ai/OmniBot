@@ -185,6 +185,12 @@ android {
         buildConfigField("String", "DEBUG_LLMTHU_MODEL", buildConfigString(""))
         buildConfigField("boolean", "ENABLE_LLMTHU_BOOTSTRAP", "false")
         buildConfigField("String", "OMNIBOT_PROFILE", buildConfigString(omnibotProfile))
+        buildConfigField("String", "JACKERY_MODEL_API_BASE", buildConfigString(prop("JACKERY_MODEL_API_BASE")))
+        buildConfigField("String", "JACKERY_MODEL_ID", buildConfigString(prop("JACKERY_MODEL_ID")))
+        buildConfigField("String", "JACKERY_STATUS_URL", buildConfigString(prop("JACKERY_STATUS_URL")))
+        buildConfigField("String", "JACKERY_SEARCH_TOOL_NAMES", buildConfigString(
+            prop("JACKERY_SEARCH_TOOL_NAMES").ifBlank { "web_search,web_run,search,brave_web_search,tavily_search" }
+        ))
         buildConfigField("boolean", "ALLOW_PACKAGED_PLUGIN_FALLBACK", "true")
         buildConfigField(
             "boolean",
@@ -217,6 +223,12 @@ android {
         create("standard") {
             dimension = "edition"
             buildConfigField("String", "APP_EDITION", "\"standard\"")
+        }
+        create("jackeryCes") {
+            dimension = "edition"
+            applicationId = "com.jackery.powerai.ces"
+            buildConfigField("String", "APP_EDITION", "\"jackeryCes\"")
+            versionNameSuffix = "-ces"
         }
     }
     signingConfigs {

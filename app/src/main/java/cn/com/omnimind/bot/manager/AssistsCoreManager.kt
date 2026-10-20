@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.manager
 
 import android.Manifest
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
@@ -1077,7 +1078,8 @@ class AssistsCoreManager(private val context: Context) {
     fun getModelProviderConfig(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
-                val config = PlatformAiProvisioner.officialProfileOrNull()?.let { profile ->
+                val config = if (JackeryCesProvisioning.enabled) ModelProviderConfigStore.getConfig()
+                    .copy(name = JackeryCesProvisioning.MODEL_DISPLAY_NAME, readOnly = true) else PlatformAiProvisioner.officialProfileOrNull()?.let { profile ->
                     ModelProviderConfig(
                         id = profile.id,
                         name = profile.name,
@@ -1363,7 +1365,9 @@ class AssistsCoreManager(private val context: Context) {
             try {
                 val allProfiles = ModelProviderConfigStore.listProfiles()
                 val official = PlatformAiProvisioner.officialProfileOrNull()
-                val profiles = allProfiles
+                val profiles = if (JackeryCesProvisioning.enabled) allProfiles
+                    .filter { it.id == JackeryCesProvisioning.PROFILE_ID }
+                    .map { it.copy(name = JackeryCesProvisioning.MODEL_DISPLAY_NAME, readOnly = true) } else allProfiles
                     .filterNot { OmniOfficialProvider.isOfficialProfile(it.id) }
                     .toMutableList()
                     .apply { if (official != null) add(official) }
@@ -1596,6 +1600,13 @@ class AssistsCoreManager(private val context: Context) {
     }
 
     fun fetchProviderModels(call: MethodCall, result: MethodChannel.Result) {
+        if (JackeryCesProvisioning.enabled) {
+            val profile = ModelProviderConfigStore.getProfile(JackeryCesProvisioning.PROFILE_ID)
+            val models = profile?.takeIf { it.isConfigured() }
+                ?.let { ModelProviderConfigStore.cachedModels(context, it) }.orEmpty()
+            result.success(models.map { it.copy(displayName = JackeryCesProvisioning.MODEL_DISPLAY_NAME).toMap() })
+            return
+        }
         val baseUrlArg = call.argument<String>("apiBase")?.trim().orEmpty()
         val apiKeyArg = call.argument<String>("apiKey")?.trim().orEmpty()
         val customHeadersArg = ProviderCustomHeaderUtils.coerceStringMap(

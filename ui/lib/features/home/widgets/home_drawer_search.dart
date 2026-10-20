@@ -9,13 +9,21 @@ extension _HomeDrawerSearch on HomeDrawerState {
 
   List<_ConversationSearchResult> get _visibleConversationResults {
     if (_isSearchActive) {
-      return _searchResults;
+      return JackeryCesConfig.enabled
+          ? _searchResults
+                .where(
+                  (item) => item.conversation.mode == ConversationMode.chatOnly,
+                )
+                .toList(growable: false)
+          : _searchResults;
     }
     final reservedThreadKeys = _promotedConversationThreadKeys;
     return _allConversations
         .where(
           (conversation) =>
               !conversation.isArchived &&
+              (!JackeryCesConfig.enabled ||
+                  conversation.mode == ConversationMode.chatOnly) &&
               !conversation.isPinned &&
               !reservedThreadKeys.contains(conversation.threadKey),
         )
@@ -50,6 +58,8 @@ extension _HomeDrawerSearch on HomeDrawerState {
         .where(
           (conversation) =>
               !conversation.isArchived &&
+              (!JackeryCesConfig.enabled ||
+                  conversation.mode == ConversationMode.chatOnly) &&
               conversation.isPinned &&
               !reservedThreadKeys.contains(conversation.threadKey),
         )

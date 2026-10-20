@@ -87,4 +87,24 @@ class NaItemProjectionTest {
         projection.updates(mapOf("id" to "m", "type" to "agent_message", "text" to "first"))
         projection.updates(mapOf("id" to "m", "type" to "agent_message", "text" to "replaced"))
     }
+    @Test fun cancelledHistoryRetainsThePromptResponseNoticeIdentity() {
+        val snapshot = naThreadSnapshot("na:test", mapOf("runs" to listOf(mapOf(
+            "id" to "cloud-run", "clientMessageId" to "host-turn", "input" to "sleep", "status" to "cancelled",
+            "completedAt" to "2026-10-10T08:39:32Z", "items" to listOf(mapOf("id" to "tool", "type" to "command_execution"))))))
+        val turn = (snapshot["turns"] as List<*>).single() as Map<*, *>
+        val notice = (turn["items"] as List<*>).filterIsInstance<Map<*, *>>().single { it["type"] == "agentMessage" }
+        assertEquals("host-turn-cancelled", notice["hostMessageId"])
+        assertEquals("任务已取消", notice["text"])
+        assertEquals("cancelled", turn["status"])
+    }
+    @Test fun cancelledHistoryWithPartialReplyDoesNotDuplicateAssistantContent() {
+        val snapshot = naThreadSnapshot("na:test", mapOf("runs" to listOf(mapOf(
+            "id" to "cloud-run", "input" to "hello", "status" to "cancelled",
+            "items" to listOf(mapOf("id" to "text", "type" to "agent_message", "text" to "partial"))))))
+        val turn = (snapshot["turns"] as List<*>).single() as Map<*, *>
+        val replies = (turn["items"] as List<*>).filterIsInstance<Map<*, *>>().filter { it["type"] in setOf("agentMessage", "agent_message") }
+        assertEquals(1, replies.size)
+        assertEquals("partial", replies.single()["text"])
+    }
+
 }

@@ -191,7 +191,8 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
 
     final contextUsageRatio = widget.contextUsageRatio;
     final rightActions = <Widget>[
-      if (contextUsageRatio != null ||
+      if (JackeryCesConfig.enabled ||
+          contextUsageRatio != null ||
           widget.onLongPressContextUsageRing != null) ...[
         _ContextUsageRingButton(
           ratio: contextUsageRatio,
@@ -212,7 +213,17 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         _buildModelPickerButton(compact: false),
         const SizedBox(width: 4),
       ],
-      if (_shouldShowAgentPermissionSelector) ...[
+      if (JackeryCesConfig.enabled) ...[
+        Tooltip(
+          message: 'Protected demo settings',
+          child: Icon(
+            Icons.shield_outlined,
+            size: 22,
+            color: JackeryCesConfig.accent,
+          ),
+        ),
+        const SizedBox(width: 4),
+      ] else if (_shouldShowAgentPermissionSelector) ...[
         SizedBox(
           width: 28,
           height: 28,
@@ -220,12 +231,14 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         ),
         const SizedBox(width: 4),
       ],
-      SizedBox(
-        width: 28,
-        height: 28,
-        child: _buildTerminalButton(iconSize: 22),
-      ),
-      const SizedBox(width: 6),
+      if (!JackeryCesConfig.enabled) ...[
+        SizedBox(
+          width: 28,
+          height: 28,
+          child: _buildTerminalButton(iconSize: 22),
+        ),
+        const SizedBox(width: 6),
+      ],
       SizedBox(width: 28, height: 28, child: _buildLargeSendOrStopButton()),
     ];
 
@@ -233,7 +246,8 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         SizedBox(width: 28, height: 28, child: _buildLargeAddButton()),
-        if (widget.onTriggerSlashCommand != null) ...[
+        if (!JackeryCesConfig.enabled &&
+            widget.onTriggerSlashCommand != null) ...[
           const SizedBox(width: 4),
           SizedBox(
             width: 28,
@@ -444,7 +458,9 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         child: content,
         builder: (context, composerState, child) {
           final focused = composerState.hasFocus;
-          final inputSurfaceColor = context.isDarkTheme
+          final inputSurfaceColor = JackeryCesConfig.enabled
+              ? Colors.white
+              : context.isDarkTheme
               ? palette.surfacePrimary
               : const Color(0xFFF9FCFF);
           final shellSurfaceColor = useFrostedGlass
@@ -459,9 +475,10 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
           final innerRadius = math.max(0.0, shellRadius - borderInset);
           const contentPadding = EdgeInsets.fromLTRB(14, 8, 12, 8);
           final shouldGlowStrong = focused || hovered;
-          final innerBorderColor =
-              (context.isDarkTheme ? palette.borderStrong : Colors.white)
-                  .withValues(alpha: context.isDarkTheme ? 0.42 : 0.1);
+          final innerBorderColor = JackeryCesConfig.enabled
+              ? JackeryCesConfig.accent
+              : (context.isDarkTheme ? palette.borderStrong : Colors.white)
+                    .withValues(alpha: context.isDarkTheme ? 0.42 : 0.1);
 
           return AnimatedContainer(
             duration: const Duration(milliseconds: 220),
@@ -469,23 +486,25 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
             constraints: BoxConstraints(minHeight: minShellHeight),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(shellRadius),
-              boxShadow: [
-                BoxShadow(
-                  color:
-                      (context.isDarkTheme
-                              ? palette.accentPrimary
-                              : const Color(0xFF2F7BFF))
-                          .withValues(
-                            alpha: focused
-                                ? (context.isDarkTheme ? 0.18 : 0.2)
-                                : hovered
-                                ? (context.isDarkTheme ? 0.12 : 0.15)
-                                : (context.isDarkTheme ? 0.08 : 0.1),
-                          ),
-                  blurRadius: focused ? 18 : 12,
-                  offset: const Offset(0, 6),
-                ),
-              ],
+              boxShadow: JackeryCesConfig.enabled
+                  ? const <BoxShadow>[]
+                  : [
+                      BoxShadow(
+                        color:
+                            (context.isDarkTheme
+                                    ? palette.accentPrimary
+                                    : const Color(0xFF2F7BFF))
+                                .withValues(
+                                  alpha: focused
+                                      ? (context.isDarkTheme ? 0.18 : 0.2)
+                                      : hovered
+                                      ? (context.isDarkTheme ? 0.12 : 0.15)
+                                      : (context.isDarkTheme ? 0.08 : 0.1),
+                                ),
+                        blurRadius: focused ? 18 : 12,
+                        offset: const Offset(0, 6),
+                      ),
+                    ],
             ),
             child: Stack(
               children: [
@@ -520,27 +539,28 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
                     ),
                   ),
                 ),
-                Positioned.fill(
-                  child: IgnorePointer(
-                    // Only the border changes on each tick. Keep it from
-                    // repainting the shell and chat page under the drawer.
-                    child: RepaintBoundary(
-                      child: CustomPaint(
-                        painter: _ComposerFlowBorderPainter(
-                          progress: _composerFlowController,
-                          interactive: shouldGlowStrong,
-                          focused: focused,
-                          forceStrong: false,
-                          radius: shellRadius,
-                          strokeWidth: 1.5,
-                          gradientColors: context.isDarkTheme
-                              ? _kDarkComposerFlowGradientColors
-                              : _kLightComposerFlowGradientColors,
+                if (!JackeryCesConfig.enabled)
+                  Positioned.fill(
+                    child: IgnorePointer(
+                      // Only the border changes on each tick. Keep it from
+                      // repainting the shell and chat page under the drawer.
+                      child: RepaintBoundary(
+                        child: CustomPaint(
+                          painter: _ComposerFlowBorderPainter(
+                            progress: _composerFlowController,
+                            interactive: shouldGlowStrong,
+                            focused: focused,
+                            forceStrong: false,
+                            radius: shellRadius,
+                            strokeWidth: 1.5,
+                            gradientColors: context.isDarkTheme
+                                ? _kDarkComposerFlowGradientColors
+                                : _kLightComposerFlowGradientColors,
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
               ],
             ),
           );
@@ -559,7 +579,8 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
           openClawButton,
           const SizedBox(width: 2),
         ],
-        if (widget.onTriggerSlashCommand != null) ...[
+        if (!JackeryCesConfig.enabled &&
+            widget.onTriggerSlashCommand != null) ...[
           SizedBox(
             width: 24,
             height: 24,

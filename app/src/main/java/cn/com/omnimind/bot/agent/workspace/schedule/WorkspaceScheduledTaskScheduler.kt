@@ -31,6 +31,7 @@ class WorkspaceScheduledTaskScheduler(
 
         private const val TAG = "WorkspaceTaskScheduler"
         private const val PREFS_NAME = "workspace_scheduled_tasks_native"
+        private val alarmExecutionLock = Any()
         private const val KEY_TASKS_JSON = "workspace_scheduled_tasks_json_v1"
         private const val FLUTTER_PREFS_NAME = "FlutterSharedPreferences"
         private const val FLUTTER_PREF_PREFIX = "flutter."
@@ -194,7 +195,16 @@ class WorkspaceScheduledTaskScheduler(
         persistTaskMap(nextMap)
     }
 
-    fun onAlarmTriggered(taskId: String) {
+    fun clearAllForDemoReset() = synchronized(alarmExecutionLock) {
+        syncTasks(emptyList())
+        writeFlutterScheduledTaskMaps(emptyList())
+    }
+
+    fun onAlarmTriggered(taskId: String) = synchronized(alarmExecutionLock) {
+        onAlarmTriggeredLocked(taskId)
+    }
+
+    private fun onAlarmTriggeredLocked(taskId: String) {
         val normalizedId = taskId.trim()
         if (normalizedId.isEmpty()) return
         val taskMap = loadTaskMapMutable()

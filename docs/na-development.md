@@ -1,6 +1,6 @@
 # Na in the shared Agent mode
 
-Na is a built-in Agent profile (`na-cloud`) in the native catalog. Select **Na** from the existing chat mode menu. It uses the existing `ChatPage`, composer, message/tool cards, conversation drawer, cancellation, and `ChatConversationRuntimeCoordinator` / `AgentEventReducer`. There is no `/home/na` route or separate Na chat/configuration page.
+Na is a built-in Agent profile (`na-cloud`) in the native catalog. Select **Na** from the existing chat mode menu. It uses the existing `ChatPage`, composer, message rendering, conversation drawer, cancellation, and `ChatConversationRuntimeCoordinator` / `AgentEventReducer`. There is no `/home/na` route or separate Na chat/configuration page.
 
 Open **Settings → Agent mode → Na → Configure**. This opens the existing `AgentConfigPage`, with the service address and account access token. The App never receives the model-provider API key. Na's model, reasoning, tools and execution permissions remain server-owned; device Provider/model selectors and permission controls are hidden for Na.
 
@@ -33,12 +33,25 @@ Artifact: `app/build/outputs/apk/developStandard/debug/app-develop-standard-debu
 
 Earlier independent Na-page acceptance is historical and does not establish acceptance of this shared integration. Current build/test/device evidence is recorded in the sibling [Na App integration](../../codex/na/docs/app-integration.md). No repository commit or production rollout is implied.
 
-## Current delivery evidence (2026-10-09)
+## Shared integration evidence (2026-10-09)
 
 The shared integration passed 433 focused Flutter tests, then all four workspace tests including the added owner-switch regression; seven native adapter tests and 52 Na service tests passed. The APK builds successfully. Static analysis reports no errors; existing warnings and style infos remain. PJD110 fixture acceptance verified the original composer, tool cards, cancellation, unique history after reopening, workspace listing, Markdown preview and server-confirmed edited file content. This fixture uses public test credentials and a deterministic runner; the user subsequently authorized account-token entry, and real-model device acceptance also passed (see below).
 
-Final APK SHA-256: `dfcd71b2acc34f8c78b1a7a21227fa3c83af73f3f726f635f5b46f37ab8483f9`. The device configuration is restored to `http://127.0.0.1:8787`; no fixture token is retained. Na remains managed by `dev.omnimind.na.local`. Detailed device evidence lives in the sibling Na documentation.
+Historical APK SHA-256: `dfcd71b2acc34f8c78b1a7a21227fa3c83af73f3f726f635f5b46f37ab8483f9`. The device configuration is restored to `http://127.0.0.1:8787`; no fixture token is retained. Na remains managed by `dev.omnimind.na.local`. Detailed device evidence lives in the sibling Na documentation.
 
 ## Authorized real-model device acceptance (2026-10-09)
 
 PJD110 used the same delivered APK and existing chat/configuration/workspace pages against the live Na service. DeepSeek `deepseek-flash` at `https://api.deepseek.com` completed three runs; the original Stop button cancelled one real running shell tool. The same conversation continued successfully after cancellation. Actual command execution exited with code 0 and generated `na-app-live-20261009-2237.txt`; its contents were verified at the server and in the existing App file preview. Latest replies survived reopening the original history once each. No runs remain active. The account token stays in this App process; no provider key was transferred to the phone. Evidence: sibling `codex/na/test-results/shared-app-live.json`.
+
+
+## Na conversation presentation (2026-10-10)
+
+Na uses the shared chat list with one rounded bubble per assistant text item, a blue user bubble, and a neutral assistant bubble. Tool/reasoning cards, run groups, per-reply speed/usage/elapsed/end-time labels, activity strips and automatic tool-header changes are hidden only in Na mode. Runtime items remain stored by the same session/turn/item identities. Markdown, streaming text, user-message long press, the original composer, Stop and the workspace remain shared.
+
+The first visible message and gaps of at least five minutes (or a date change) show a centered local time. Newly arriving user/assistant messages use a 320 ms eased slide/fade/scale entrance. Restored or paginated history stays still; system reduced-motion preferences are honored. The owning Na cancelled-run snapshot imports the same concise cancellation item identity as the shared prompt reducer, preserving the notice after reopening without showing a tool card or producing a second terminal event.
+
+104 focused Flutter checks and nine native Na adapter checks passed. The ARM64 developer APK built and was installed on PJD110 with existing data retained. Final SHA-256: `598274fc8405bb3055863b01e5e4570a3ea14c490fbc058080d06bf0e7526dd7`; the phone's installed APK matches byte for byte. Static analysis reports no errors, with existing warnings/style infos remaining.
+
+Real DeepSeek-backed device checks covered a successful date command with only the returned Chinese prose visible, cancelling an active sleep command, continued conversation, history reopening with a unique cancellation notice/reply, and a new successful reply on the final APK. Na remains online at `http://127.0.0.1:8787` through ADB reverse; the authorized account token is present only in the App process, and its preferences contain only `baseUrl`. Local evidence: sibling `codex/na/test-results/na-chat-2026-10-10/verification.json`, `chat.png`, and `history.png`.
+
+Animation interpolation, no replay on history/scroll and reduced motion were verified with widget-frame checks. The Android screen-recording channel produced no frames and was not counted as acceptance evidence.

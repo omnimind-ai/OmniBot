@@ -110,6 +110,12 @@ internal fun resolveAgentProviderApiKey(
     profile: ModelProviderProfile,
     officialBearerToken: String?,
 ): String? {
+    // A staff-configured local device may expose an unauthenticated LAN API.
+    // Preserve its empty key instead of falling back to a cloud credential.
+    if (cn.com.omnimind.bot.jackery.JackeryCesProvisioning.enabled &&
+        profile.id == cn.com.omnimind.bot.jackery.JackeryCesProvisioning.PROFILE_ID && profile.isConfigured()) {
+        return profile.apiKey.trim()
+    }
     val key = if (OmniOfficialProvider.isOfficialProfile(profile.id)) {
         officialBearerToken
     } else {
@@ -202,6 +208,10 @@ class AgentRuntimeManager private constructor(
     private val appContext = context.applicationContext
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val sessionMutex = Mutex()
+    // Maintenance admission belongs to the shared ACP owner. Resetting demo
+    // storage must never race a new session/prompt or a late history binding.
+    private val demoResetMutex = Mutex()
+    private val maintenanceAdmission = AcpMaintenanceAdmission()
     private val threadStartMutexes = ConcurrentHashMap<Long, Mutex>()
     private val unboundThreadStartMutex = Mutex()
     // Preparing an official npm ACP adapter is an installation boundary, not
@@ -701,8 +711,9 @@ class AgentRuntimeManager private constructor(
     }
 
     suspend fun handleMethod(method: String, args: Map<String, Any?>): Any? {
-        val compatibilityRequest = AcpLegacyCompatibilityAdapter.adapt(method, args)
+        val completion = maintenanceAdmission.admitRequest()
         return try {
+            val compatibilityRequest = AcpLegacyCompatibilityAdapter.adapt(method, args)
             val response = AcpLegacyCompatibilityAdapter.adaptResponse(
                 compatibilityRequest,
                 handleCanonicalMethod(compatibilityRequest.method, compatibilityRequest.args),
@@ -714,10 +725,75 @@ class AgentRuntimeManager private constructor(
             } else response
         } catch (error: Throwable) {
             if (error !is kotlinx.coroutines.CancellationException) {
-                Log.e("AgentRuntimeManager", "ACP request failed method=${compatibilityRequest.method} " +
+                Log.e("AgentRuntimeManager", "ACP request failed method=$method " +
                     "type=${error.javaClass.simpleName} at=${error.stackTrace.take(5).joinToString()}")
             }
             throw error
+        } finally {
+            maintenanceAdmission.releaseRequest(completion)
+        }
+    }
+
+    /** Synchronous channel admission includes writes queued before reset begins. */
+    internal fun admitDemoHistoryMutation(persistenceDrain: Boolean) =
+        maintenanceAdmission.admitHistoryMutation(persistenceDrain)
+
+    internal fun releaseDemoHistoryMutation(completion: kotlinx.coroutines.CompletableDeferred<Unit>) =
+        maintenanceAdmission.releaseHistoryMutation(completion)
+
+    internal suspend fun drainDemoHistoryMutations() {
+        val pending = maintenanceAdmission.fenceHistoryMutations()
+        check(withTimeoutOrNull(15_000L) {
+            pending.forEach { it.await() }
+            true
+        } == true) { "Conversation history is still being saved. Try reset again." }
+    }
+
+    /**
+     * Stops admission, requests official ACP cancellation and waits for the
+     * existing prompt responses before deleting storage. An unresponsive
+     * Agent aborts reset; a timeout cannot declare its prompt completed.
+     */
+    suspend fun <T> withExclusiveDemoReset(operation: suspend () -> T): T = demoResetMutex.withLock {
+        val requests = maintenanceAdmission.startReset()
+        try {
+            val bindings = DatabaseHelper.getAllAgentSessionBindings()
+            bindings.forEach { binding ->
+                val agentId = acpAgentProfileStore.agentIdForSession(binding.threadId)
+                runCatching {
+                    handleCanonicalMethod("session/cancel", mapOf(
+                        "sessionId" to binding.threadId,
+                        "conversationId" to binding.conversationId,
+                        "agentId" to agentId,
+                    ))
+                }
+            }
+            // Active sessions need not have finished writing a binding yet.
+            allLocalRuntimes().forEach { runtime -> runtime.cancelActivePromptsForDemoReset() }
+            remoteTurnOwnership.activeRecords().forEach { record ->
+                runCatching { cancelRemoteAcpSession(mapOf("sessionId" to record.sessionId)) }
+            }
+            naRuntime.cancelActivePromptsForDemoReset()
+            val settled = withTimeoutOrNull(15_000L) {
+                requests.forEach { it.await() }
+                true
+            } == true
+            check(settled) { "The active AI request has not stopped. Wait for it to finish, then reset again." }
+            disconnect()
+            val projections = maintenanceAdmission.fenceProjections()
+            check(withTimeoutOrNull(15_000L) {
+                projections.forEach { it.await() }
+                true
+            } == true) { "AI history is still being saved. Try reset again." }
+            // Deliver already-queued official updates before the UI discards
+            // its history. No reset-specific Agent event or terminal is made.
+            withContext(Dispatchers.Main) { clearPendingEvents() }
+            // Only the existing coordinator's history persistence methods may
+            // drain now; new conversations and current-id mutations stay shut.
+            maintenanceAdmission.allowPersistenceDrain()
+            operation()
+        } finally {
+            maintenanceAdmission.finishReset()
         }
     }
 
@@ -2601,6 +2677,15 @@ class AgentRuntimeManager private constructor(
     }
 
     private suspend fun handleServerMessage(message: Map<String, Any?>) {
+        val completion = maintenanceAdmission.admitProjection() ?: return
+        try {
+            projectServerMessage(message)
+        } finally {
+            maintenanceAdmission.releaseProjection(completion)
+        }
+    }
+
+    private suspend fun projectServerMessage(message: Map<String, Any?>) {
         // Local ACP runtimes share this callback, while their processes may
         // remain alive after the user selects another profile. Keep the
         // source identity before consulting the global selected/active

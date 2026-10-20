@@ -6,6 +6,7 @@ import android.content.res.Configuration
 import android.os.Build
 import androidx.appcompat.app.AppCompatDelegate
 import cn.com.omnimind.bot.R
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
 
 object StartupThemeResolver {
     private const val FLUTTER_SHARED_PREFS_NAME = "FlutterSharedPreferences"
@@ -46,6 +47,7 @@ object StartupThemeResolver {
     }
 
     fun readStoredThemeMode(context: Context): StartupThemeMode {
+        if (JackeryCesProvisioning.enabled) return StartupThemeMode.LIGHT
         val storedPreference = runCatching {
             context.applicationContext.getSharedPreferences(
                 FLUTTER_SHARED_PREFS_NAME,

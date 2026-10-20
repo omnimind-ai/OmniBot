@@ -1,3 +1,5 @@
+import 'package:ui/config/jackery_ces_config.dart';
+
 // lib/widgets/chat_input_area.dart
 import 'dart:async';
 import 'dart:io';
@@ -50,8 +52,10 @@ const String _kAgentPermissionFullAccessIconAsset =
 
 enum AgentPermissionMode { readOnly, defaultMode, autoReview, fullAccess }
 
-typedef AgentRunSettingsChanged =
-    FutureOr<void> Function({String? modelId, String? reasoningEffort});
+typedef AgentRunSettingsChanged = FutureOr<void> Function({
+  String? modelId,
+  String? reasoningEffort,
+});
 
 class AgentRunSettings {
   const AgentRunSettings({
@@ -302,7 +306,17 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
       _kInputTerminalIconAsset,
       colorFilter: ColorFilter.mode(palette.accentPrimary, BlendMode.srcIn),
     );
-    _sendSvg = context.isDarkTheme
+    _sendSvg = JackeryCesConfig.enabled
+        ? _buildDarkActionButtonIcon(
+            size: 24,
+            backgroundColor: JackeryCesConfig.accent,
+            foreground: const Icon(
+              Icons.arrow_upward_rounded,
+              size: 15,
+              color: Colors.white,
+            ),
+          )
+        : context.isDarkTheme
         ? _buildDarkActionButtonIcon(
             size: 24,
             backgroundColor: Color.lerp(
@@ -321,7 +335,17 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
             width: 24,
             height: 24,
           );
-    _pauseSvg = context.isDarkTheme
+    _pauseSvg = JackeryCesConfig.enabled
+        ? _buildDarkActionButtonIcon(
+            size: 20,
+            backgroundColor: JackeryCesConfig.accent,
+            foreground: const Icon(
+              Icons.stop_rounded,
+              size: 13,
+              color: Colors.white,
+            ),
+          )
+        : context.isDarkTheme
         ? _buildDarkActionButtonIcon(
             size: 20,
             backgroundColor: Color.lerp(
@@ -343,7 +367,14 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
             width: 20,
             height: 20,
           );
-    _addSvg = context.isDarkTheme
+    _addSvg = JackeryCesConfig.enabled
+        ? _buildComposerIconAsset(
+            _kInputAttachmentIconAsset,
+            width: 20,
+            height: 20,
+            color: JackeryCesConfig.accent,
+          )
+        : context.isDarkTheme
         ? _buildComposerIconAsset(
             _kInputAttachmentIconAsset,
             width: 20,

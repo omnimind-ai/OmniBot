@@ -1,3 +1,5 @@
+import 'package:ui/config/jackery_ces_config.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -58,7 +60,9 @@ class ChatEmptyGreeting extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final isEnglish =
+        JackeryCesConfig.enabled ||
+        Localizations.localeOf(context).languageCode == 'en';
     final palette = context.omniPalette;
     final primaryColor = primaryTextColor ?? palette.textPrimary;
     final secondaryColor = secondaryTextColor ?? palette.textSecondary;
@@ -66,16 +70,36 @@ class ChatEmptyGreeting extends StatelessWidget {
     final disableAnimations =
         MediaQuery.maybeOf(context)?.disableAnimations ?? false;
     final resolvedAgentName = agentName?.trim() ?? '';
-    final displayAgentName = resolvedAgentName.isEmpty
+    final displayAgentName = JackeryCesConfig.enabled
+        ? JackeryCesConfig.productName
+        : resolvedAgentName.isEmpty
         ? (isEnglish ? 'Omnibot' : '小万')
         : resolvedAgentName;
-    final headline = isEnglish
+    final headline = JackeryCesConfig.enabled
+        ? "Hi, I'm ${JackeryCesConfig.productName}"
+        : isEnglish
         ? "Hi 👋, I'm $displayAgentName"
         : '你好👋，我是$displayAgentName';
-    final prefix = isEnglish ? 'I can help you' : '我可以帮助你';
+    final prefix = JackeryCesConfig.enabled
+        ? 'I can help you do'
+        : isEnglish
+        ? 'I can help you'
+        : '我可以帮助你';
     final workspaceName = agentWorkspaceName?.trim() ?? '';
-    final useAgentWorkspaceGreeting = workspaceName.isNotEmpty;
-    final words = isEnglish ? _kChatGreetingWordsEn : _kChatGreetingWordsZh;
+    final useAgentWorkspaceGreeting =
+        !JackeryCesConfig.enabled && workspaceName.isNotEmpty;
+    final words = JackeryCesConfig.enabled
+        ? const <String>[
+            'search',
+            'remember',
+            'build',
+            'summarize',
+            'plan',
+            'chat',
+          ]
+        : isEnglish
+        ? _kChatGreetingWordsEn
+        : _kChatGreetingWordsZh;
     final fontSize = compact ? 17.0 : 19.0;
     final headlineStyle = TextStyle(
       color: primaryColor,
@@ -109,7 +133,9 @@ class ChatEmptyGreeting extends StatelessWidget {
       ],
     );
 
-    final greetingSemanticsLabel = useAgentWorkspaceGreeting
+    final greetingSemanticsLabel = JackeryCesConfig.enabled
+        ? '$headline\nI can help you do search, remember, build, summarize, plan, and chat.'
+        : useAgentWorkspaceGreeting
         ? (isEnglish
               ? '$headline\nWhat can we do in $workspaceName?'
               : '$headline\n可以在$workspaceName中做点什么')
@@ -137,7 +163,9 @@ class ChatEmptyGreeting extends StatelessWidget {
         );
       },
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 28),
+        padding: EdgeInsets.symmetric(
+          horizontal: JackeryCesConfig.enabled ? 0 : 28,
+        ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -187,14 +215,20 @@ class ChatEmptyGreeting extends StatelessWidget {
                       ),
                     if (quickPrompts.isNotEmpty) ...[
                       const SizedBox(height: 14),
-                      _RandomQuickPromptPills(
-                        quickPrompts: quickPrompts,
-                        pinnedQuickPromptIds: pinnedQuickPromptIds,
-                        textColor: primaryColor,
-                        accentColor: keywordColor,
-                        compact: compact,
-                        onQuickPromptSelected: onQuickPromptSelected,
-                      ),
+                      if (JackeryCesConfig.enabled)
+                        _JackeryQuickTasks(
+                          prompts: quickPrompts,
+                          onSelected: onQuickPromptSelected,
+                        )
+                      else
+                        _RandomQuickPromptPills(
+                          quickPrompts: quickPrompts,
+                          pinnedQuickPromptIds: pinnedQuickPromptIds,
+                          textColor: primaryColor,
+                          accentColor: keywordColor,
+                          compact: compact,
+                          onQuickPromptSelected: onQuickPromptSelected,
+                        ),
                     ],
                   ],
                 ),
@@ -610,5 +644,75 @@ class _SlotWordRotatorState extends State<_SlotWordRotator>
       maxWidth = math.max(maxWidth, painter.width);
     }
     return maxWidth + 2;
+  }
+}
+
+class _JackeryQuickTasks extends StatelessWidget {
+  const _JackeryQuickTasks({required this.prompts, this.onSelected});
+
+  final List<HomeQuickPrompt> prompts;
+  final ValueChanged<HomeQuickPrompt>? onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Padding(
+          padding: EdgeInsets.only(top: 12, bottom: 12),
+          child: Text(
+            'TRY A TASK',
+            style: TextStyle(
+              color: Color(0xFF77736D),
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        for (final prompt in prompts.take(2))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Material(
+              color: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(color: JackeryCesConfig.border),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: ListTile(
+                key: ValueKey('jackery-task-${prompt.id}'),
+                onTap: onSelected == null ? null : () => onSelected!(prompt),
+                leading: Icon(
+                  homeQuickPromptIcon(prompt.iconKey),
+                  color: JackeryCesConfig.accent,
+                  size: 20,
+                ),
+                title: Text(
+                  prompt.resolveTitle(context),
+                  style: const TextStyle(
+                    color: Color(0xFF303030),
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                subtitle: Text(
+                  prompt.id == 'jackery-ces-highlights'
+                      ? 'Get current highlights with sources'
+                      : 'Check weather and estimate power use',
+                  style: const TextStyle(
+                    color: Color(0xFF77736D),
+                    fontSize: 12,
+                  ),
+                ),
+                trailing: const Icon(
+                  Icons.chevron_right_rounded,
+                  color: Color(0xFF77736D),
+                  size: 20,
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
   }
 }

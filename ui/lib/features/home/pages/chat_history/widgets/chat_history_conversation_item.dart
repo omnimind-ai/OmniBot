@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/features/home/widgets/conversation_slidable.dart';
 import 'package:ui/features/home/widgets/conversation_mode_badge.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
@@ -88,25 +89,30 @@ class ChatHistoryConversationItem extends StatelessWidget {
                     width: compact ? 36 : 40,
                     height: compact ? 36 : 40,
                     decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: context.isDarkTheme
-                            ? <Color>[
-                                Color.lerp(
-                                  palette.surfaceElevated,
-                                  palette.accentPrimary,
-                                  0.18,
-                                )!,
-                                Color.lerp(
-                                  palette.surfaceSecondary,
-                                  palette.accentPrimary,
-                                  0.3,
-                                )!,
-                              ]
-                            : const <Color>[
-                                Color(0xFF1930D9),
-                                Color(0xFF2CA5F0),
-                              ],
-                      ),
+                      color: JackeryCesConfig.enabled
+                          ? JackeryCesConfig.accent
+                          : null,
+                      gradient: JackeryCesConfig.enabled
+                          ? null
+                          : LinearGradient(
+                              colors: context.isDarkTheme
+                                  ? <Color>[
+                                      Color.lerp(
+                                        palette.surfaceElevated,
+                                        palette.accentPrimary,
+                                        0.18,
+                                      )!,
+                                      Color.lerp(
+                                        palette.surfaceSecondary,
+                                        palette.accentPrimary,
+                                        0.3,
+                                      )!,
+                                    ]
+                                  : const <Color>[
+                                      Color(0xFF1930D9),
+                                      Color(0xFF2CA5F0),
+                                    ],
+                            ),
                       borderRadius: BorderRadius.all(
                         Radius.circular(compact ? 7 : 8),
                       ),
@@ -147,11 +153,13 @@ class ChatHistoryConversationItem extends StatelessWidget {
                               ),
                             ),
                           ),
-                          SizedBox(width: compact ? 6 : 8),
-                          ConversationModeBadge(
-                            mode: conversation.mode,
-                            compact: true,
-                          ),
+                          if (!JackeryCesConfig.enabled) ...[
+                            SizedBox(width: compact ? 6 : 8),
+                            ConversationModeBadge(
+                              mode: conversation.mode,
+                              compact: true,
+                            ),
+                          ],
                         ],
                       ),
                       if ((conversation.summary ?? '').isNotEmpty) ...[

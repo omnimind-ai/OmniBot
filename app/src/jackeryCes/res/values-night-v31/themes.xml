@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.OmnibotApp.Splash" parent="Theme.OmnibotApp">
+        <item name="android:windowSplashScreenBackground">@color/jackery_background</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/jackery_brand_placeholder</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/jackery_background</item>
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:statusBarColor">@color/jackery_background</item>
+    </style>
+</resources>

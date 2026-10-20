@@ -17,6 +17,67 @@ enum _UserMessageQuickAction { copy, edit, retry }
 
 mixin _ChatPageUiMixin on _ChatPageStateBase {
   Widget _buildAcpConfigButton() {
+    if (JackeryCesConfig.enabled) {
+      return IconButton(
+        key: const ValueKey('jackery-model-picker-button'),
+        tooltip: 'Select model',
+        onPressed: _isAiResponding
+            ? null
+            : () async {
+                await _loadNormalChatModelContext();
+                if (!mounted) return;
+                final profile = _modelProviderProfiles
+                    .where(
+                      (item) =>
+                          item.id == 'jackery-ces-on-device' && item.configured,
+                    )
+                    .firstOrNull;
+                final models = profile == null
+                    ? const <ProviderModelOption>[]
+                    : (_modelOptionsByProfileId[profile.id] ??
+                              const <ProviderModelOption>[])
+                          .where(
+                            (model) => model.id == JackeryCesConfig.modelId,
+                          )
+                          .toList(growable: false);
+                _onPopupVisibilityChanged(true);
+                try {
+                  await showModalBottomSheet<void>(
+                    context: context,
+                    backgroundColor: JackeryCesConfig.background,
+                    shape: const RoundedRectangleBorder(
+                      borderRadius: BorderRadius.vertical(
+                        top: Radius.circular(24),
+                      ),
+                    ),
+                    builder: (sheetContext) => JackeryModelPicker(
+                      available: profile != null && models.isNotEmpty,
+                      onSelect: profile == null || models.isEmpty
+                          ? null
+                          : () {
+                              Navigator.of(sheetContext).pop();
+                              unawaited(
+                                _applyConversationModelOverride(
+                                  providerProfileId: profile.id,
+                                  modelId: models.first.id,
+                                ),
+                              );
+                            },
+                    ),
+                  );
+                } finally {
+                  if (mounted) _onPopupVisibilityChanged(false);
+                }
+              },
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints.tightFor(width: 28, height: 28),
+        icon: Icon(
+          Icons.tune_rounded,
+          size: 22,
+          color: JackeryCesConfig.accent,
+        ),
+      );
+    }
     if (_activeMode == ChatPageMode.agent && _activeAcpAgentId == 'na-cloud') {
       return TextButton.icon(
         key: const Key('na-cloud-settings'),
@@ -816,7 +877,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     required ChatPageMode mode,
     required AgentToolActivitySnapshot snapshot,
   }) {
-    if (mode != _activeMode ||
+    if (JackeryCesConfig.enabled ||
+        (mode == ChatPageMode.agent && _activeAcpAgentId == 'na-cloud') ||
+        mode != _activeMode ||
         !_isInputAreaVisible ||
         _showSlashCommandPanel ||
         _openClawPanelExpanded) {
@@ -1056,17 +1119,24 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       messages: visibleMessages,
       activeAgentTurnIds: activeAgentTurnIds,
       useAcpPresentation: useAcpPresentation,
-      activeAcpAgentId: activeAcpAgentId,
+      activeAcpAgentId:
+          mode != ChatPageMode.agent && activeAcpAgentId == 'na-cloud'
+          ? null
+          : activeAcpAgentId,
       onRetryAgentMessage: this._retryFailedAgentTurn,
       expandedAgentRunTaskIds: _expandedAgentRunTaskIdsForMode(mode),
       onExpandedAgentRunTaskIdsChanged: (taskIds) {
         _updateExpandedAgentRunTaskIds(mode, taskIds);
       },
-      showEmptyGreeting: homeGreetingSettings.greetingEnabled,
+      showEmptyGreeting:
+          JackeryCesConfig.enabled || homeGreetingSettings.greetingEnabled,
       liftEmptyGreeting: liftEmptyGreeting,
-      emptyGreetingQuickPrompts: homeGreetingSettings.quickPrompts,
-      emptyGreetingPinnedQuickPromptIds:
-          homeGreetingSettings.pinnedQuickPromptIds,
+      emptyGreetingQuickPrompts: JackeryCesConfig.enabled
+          ? jackeryDemoPrompts
+          : homeGreetingSettings.quickPrompts,
+      emptyGreetingPinnedQuickPromptIds: JackeryCesConfig.enabled
+          ? const <String>[]
+          : homeGreetingSettings.pinnedQuickPromptIds,
       onQuickPromptSelected: _applyHomeQuickPrompt,
       emptyGreetingAgentName: mode == ChatPageMode.agent
           ? _activeAcpAgentDisplayName
@@ -1246,6 +1316,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   }
 
   ChatIslandDisplayLayer _resolveChatPaneDisplayLayer() {
+    if (_activeMode == ChatPageMode.agent && _activeAcpAgentId == 'na-cloud') {
+      return ChatIslandDisplayLayer.mode;
+    }
     return _activeSurfaceMode == ChatSurfaceMode.normal
         ? _chatIslandDisplayLayer
         : ChatIslandDisplayLayer.mode;
@@ -1323,7 +1396,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
         ? _buildSlashCommandCards()
         : const <Map<String, dynamic>>[];
     final showSlashCommandStrip =
-        _isInputAreaVisible && slashCommandCards.isNotEmpty;
+        !JackeryCesConfig.enabled &&
+        _isInputAreaVisible &&
+        slashCommandCards.isNotEmpty;
     final showToolActivityStrip = _shouldShowToolActivityStripForMode(
       mode: _activeMode,
       snapshot: toolActivitySnapshot,
@@ -1458,7 +1533,22 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
               tutorialIslandAnchorKey: _firstUseTourIslandAnchorKey,
               tutorialModeAnchorKey: _firstUseTourModeAnchorKey,
             ),
-            Expanded(child: conversationBody),
+            if (JackeryCesConfig.enabled && _messages.isNotEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 24),
+                child: JackeryDeviceStatusBar(),
+              ),
+            Expanded(
+              child: JackeryCesConfig.enabled
+                  ? Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        if (_messages.isNotEmpty) const JackeryChatBackdrop(),
+                        conversationBody,
+                      ],
+                    )
+                  : conversationBody,
+            ),
           ],
         ),
         if (_isInputAreaVisible)
@@ -1497,7 +1587,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                       onCancelUserMessageEditing: this._stopUserMessageEditing,
                       onRemoveAttachment: _removePendingAttachment,
                       selectedModelOverrideId:
-                          _activeMode == ChatPageMode.normal &&
+                          !JackeryCesConfig.enabled &&
+                              _activeMode == ChatPageMode.normal &&
                               _showConversationModelMentionChip
                           ? _activeConversationModelOverrideSelection?.modelId
                           : null,
@@ -1509,7 +1600,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           ? null
                           : _buildContextUsageTooltipMessage(),
                       onLongPressContextUsageRing:
-                          _activeMode == ChatPageMode.openclaw
+                          (JackeryCesConfig.enabled ||
+                              _activeMode == ChatPageMode.openclaw)
                           ? null
                           : this._handleContextUsageRingLongPress,
                       modelPickerSettings: null,
@@ -1651,6 +1743,9 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     required bool showToolActivityStrip,
   }) {
     final mode = _primaryChatMessagePageMode;
+    if (mode == ChatPageMode.agent && _activeAcpAgentId == 'na-cloud') {
+      return const SizedBox.shrink();
+    }
     final runtime = _runtimeForMode(mode);
     final messages = resolveVisibleChatMessages(
       runtimeMessages: runtime?.messages,
@@ -2000,7 +2095,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
   @override
   Widget build(BuildContext context) {
     final mediaQuery = MediaQuery.of(context);
-    final isHdPadLandscape = _isHdPadLandscapeForMediaQuery(mediaQuery);
+    final isHdPadLandscape =
+        !JackeryCesConfig.enabled && _isHdPadLandscapeForMediaQuery(mediaQuery);
     final bottomInset = mediaQuery.viewInsets.bottom;
     final viewPaddingBottom = mediaQuery.viewPadding.bottom;
     final activeMessageListInputFocused = _isMessageListInputFocusedForMode(
@@ -2030,7 +2126,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
     final chatPage = ValueListenableBuilder<AppBackgroundConfig>(
       valueListenable: AppBackgroundService.notifier,
       builder: (context, backgroundConfig, _) {
-        final backgroundActive = backgroundConfig.isActive;
+        final backgroundActive =
+            !JackeryCesConfig.enabled && backgroundConfig.isActive;
         return ValueListenableBuilder<AppBackgroundVisualProfile>(
           valueListenable: AppBackgroundService.visualProfileNotifier,
           builder: (context, visualProfile, _) {
@@ -2117,13 +2214,16 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                               _handlePagePointerDown(event);
                             }
                           },
-                          onPointerMove: isHdPadLandscape
+                          onPointerMove:
+                              (isHdPadLandscape || JackeryCesConfig.enabled)
                               ? null
                               : _handlePagePointerMove,
-                          onPointerUp: isHdPadLandscape
+                          onPointerUp:
+                              (isHdPadLandscape || JackeryCesConfig.enabled)
                               ? null
                               : _handlePagePointerUp,
-                          onPointerCancel: isHdPadLandscape
+                          onPointerCancel:
+                              (isHdPadLandscape || JackeryCesConfig.enabled)
                               ? null
                               : _handlePagePointerCancel,
                           child: isHdPadLandscape
@@ -2152,32 +2252,48 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                                         child: NotificationListener<ScrollNotification>(
                                           onNotification:
                                               _handleModePageScrollNotification,
-                                          child: PageView(
-                                            controller: _modePageController,
-                                            onPageChanged:
-                                                _handleModePageChanged,
-                                            children: [
-                                              _buildModeMessagePage(
-                                                _primaryChatMessagePageMode,
-                                                backgroundConfig,
-                                                visualProfile,
-                                                bottomOverlayInset:
-                                                    _resolveNormalSurfaceComposerInset(
-                                                      inputBottomPadding:
-                                                          inputBottomPadding,
-                                                      keyboardSpacer:
-                                                          keyboardSpacer,
+                                          child: JackeryCesConfig.enabled
+                                              ? _buildModeMessagePage(
+                                                  _primaryChatMessagePageMode,
+                                                  AppBackgroundConfig.defaults,
+                                                  AppBackgroundVisualProfile
+                                                      .defaultProfile,
+                                                  bottomOverlayInset:
+                                                      _resolveNormalSurfaceComposerInset(
+                                                        inputBottomPadding:
+                                                            inputBottomPadding,
+                                                        keyboardSpacer:
+                                                            keyboardSpacer,
+                                                      ),
+                                                )
+                                              : PageView(
+                                                  controller:
+                                                      _modePageController,
+                                                  onPageChanged:
+                                                      _handleModePageChanged,
+                                                  children: [
+                                                    _buildModeMessagePage(
+                                                      _primaryChatMessagePageMode,
+                                                      backgroundConfig,
+                                                      visualProfile,
+                                                      bottomOverlayInset:
+                                                          _resolveNormalSurfaceComposerInset(
+                                                            inputBottomPadding:
+                                                                inputBottomPadding,
+                                                            keyboardSpacer:
+                                                                keyboardSpacer,
+                                                          ),
                                                     ),
-                                              ),
-                                              _buildWorkspaceSurfacePage(),
-                                            ],
-                                          ),
+                                                    _buildWorkspaceSurfacePage(),
+                                                  ],
+                                                ),
                                         ),
                                       ),
                                       hideWorkspaceOverlays:
                                           _isWorkspaceSurface,
                                       showMenuButton: true,
-                                      showSurfaceSwitcher: true,
+                                      showSurfaceSwitcher:
+                                          !JackeryCesConfig.enabled,
                                       onMenuTap: () {
                                         _dismissChatInputFocus();
                                         _scaffoldKey.currentState?.openDrawer();
@@ -2222,12 +2338,17 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
       return null;
     }
     if (conversation.promptTokenThreshold <= 0) {
+      if (JackeryCesConfig.enabled) return 'Context usage unavailable';
       return LegacyTextLocalizer.isEnglish
           ? 'No context threshold set\nLong press to adjust threshold'
           : '上下文阈值未设置\n长按可调整阈值';
     }
     final usedTokens = conversation.latestPromptTokens;
     final thresholdTokens = conversation.promptTokenThreshold;
+    if (JackeryCesConfig.enabled) {
+      return '${_formatTokenCount(usedTokens)} / '
+          '${_formatTokenCount(thresholdTokens)} tokens';
+    }
     return '${_formatTokenCount(usedTokens)} / '
         '${_formatTokenCount(thresholdTokens)} tokens'
         '\n${LegacyTextLocalizer.isEnglish ? 'Long press to adjust threshold' : '长按可调整阈值'}';

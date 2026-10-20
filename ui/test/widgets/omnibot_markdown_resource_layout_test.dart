@@ -166,11 +166,14 @@ void main() {
           }
 
           expectNoOverlap();
+          final summary = LegacyTextLocalizer.isEnglish
+              ? 'Extracted 35 paragraphs in total'
+              : '共提取 35 段正文';
           // File.readAsBytes has several asynchronous I/O phases. Alternate
           // real I/O and fake-frame pumps instead of settling an active spinner.
           for (
             var frame = 0;
-            frame < 40 && find.text('共提取 35 段正文').evaluate().isEmpty;
+            frame < 40 && find.text(summary).evaluate().isEmpty;
             frame++
           ) {
             await tester.runAsync(
@@ -179,7 +182,7 @@ void main() {
             );
             await tester.pump();
           }
-          expect(find.text('共提取 35 段正文'), findsOneWidget);
+          expect(find.text(summary), findsOneWidget);
           expectNoOverlap();
           await tester.drag(
             find.byType(OmnibotInlineResourceEmbed),

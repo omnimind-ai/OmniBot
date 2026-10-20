@@ -5,13 +5,16 @@ import 'package:ui/l10n/l10n.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:ui/config/jackery_ces_config.dart';
 import 'package:ui/core/router/go_router_manager.dart';
+import 'package:ui/features/home/pages/chat/utils/jackery_chat_policy.dart';
 import 'package:ui/features/home/pages/chat_history/widgets/chat_history_conversation_item.dart';
 import 'package:ui/features/home/widgets/conversation_slidable.dart';
 import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/conversation_service.dart';
+import 'package:ui/services/jackery_ces_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/cache_util.dart';
@@ -70,6 +73,9 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
   @override
   void initState() {
     super.initState();
+    if (JackeryCesConfig.enabled) {
+      JackeryCesService.demoReset.addListener(_reloadAfterDemoReset);
+    }
     _conversationListChangedSubscription = AssistsMessageService
         .conversationListChangedStream
         .listen((_) {
@@ -80,9 +86,14 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
 
   @override
   void dispose() {
+    if (JackeryCesConfig.enabled) {
+      JackeryCesService.demoReset.removeListener(_reloadAfterDemoReset);
+    }
     _conversationListChangedSubscription?.cancel();
     super.dispose();
   }
+
+  void _reloadAfterDemoReset() => unawaited(_loadConversations());
 
   Future<void> _loadConversations() async {
     if (mounted) {
@@ -95,14 +106,22 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
       final loadedConversations = await ConversationService.getAllConversations(
         archivedOnly: widget.archivedOnly,
       );
+      final visibleConversations = JackeryCesConfig.enabled
+          ? loadedConversations
+                .where(
+                  (conversation) =>
+                      conversation.mode == ConversationMode.chatOnly,
+                )
+                .toList(growable: false)
+          : loadedConversations;
       if (!mounted) {
         return;
       }
-      final sectionLabels = _buildConversationSections(
-        loadedConversations,
-      ).map((section) => section.label).toSet();
+      final sectionLabels = _buildConversationSections(visibleConversations)
+          .map((section) => section.label)
+          .toSet();
       setState(() {
-        _conversations = loadedConversations;
+        _conversations = visibleConversations;
         _expandedDateSections.removeWhere(
           (label, _) => !sectionLabels.contains(label),
         );
@@ -160,7 +179,9 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     });
 
     showToast(
-      deleted ? '\u5df2\u5220\u9664' : '\u5220\u9664\u5931\u8d25',
+      JackeryCesConfig.enabled
+          ? (deleted ? 'Deleted' : 'Delete failed')
+          : (deleted ? '\u5df2\u5220\u9664' : '\u5220\u9664\u5931\u8d25'),
       type: deleted ? ToastType.success : ToastType.error,
     );
   }
@@ -204,14 +225,19 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
       }
     });
 
+    final standardMessage = success
+        ? (archived
+              ? context.l10n.chatHistoryArchivedToast
+              : context.l10n.chatHistoryUnarchivedToast)
+        : (archived
+              ? context.l10n.chatHistoryArchiveFailed
+              : context.l10n.chatHistoryUnarchiveFailed);
     showToast(
-      success
-          ? (archived
-                ? context.l10n.chatHistoryArchivedToast
-                : context.l10n.chatHistoryUnarchivedToast)
-          : (archived
-                ? context.l10n.chatHistoryArchiveFailed
-                : context.l10n.chatHistoryUnarchiveFailed),
+      JackeryCesConfig.enabled
+          ? (success
+                ? (archived ? 'Archived' : 'Unarchived')
+                : (archived ? 'Archive failed' : 'Unarchive failed'))
+          : standardMessage,
       type: success ? ToastType.success : ToastType.error,
     );
   }
@@ -220,12 +246,13 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     if (_busyKeys.contains(conversation.threadKey)) {
       return;
     }
+    final target = ConversationThreadTarget.existing(
+      conversationId: conversation.id,
+      mode: conversation.mode,
+    );
     GoRouterManager.push(
       '/home/chat',
-      extra: ConversationThreadTarget.existing(
-        conversationId: conversation.id,
-        mode: conversation.mode,
-      ),
+      extra: JackeryCesConfig.enabled ? cesConversationTarget(target) : target,
     );
   }
 
@@ -233,17 +260,25 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     GoRouterManager.push(
       '/home/chat',
       extra: ConversationThreadTarget.newConversation(
-        mode: ConversationMode.agent,
+        mode: JackeryCesConfig.enabled
+            ? ConversationMode.chatOnly
+            : ConversationMode.agent,
         requestKey: DateTime.now().microsecondsSinceEpoch.toString(),
       ),
     );
   }
 
-  String get _pageTitle => widget.archivedOnly
+  String get _pageTitle => JackeryCesConfig.enabled
+      ? (widget.archivedOnly ? 'Archived conversations' : 'History')
+      : widget.archivedOnly
       ? context.l10n.chatHistoryArchivedTitle
       : context.l10n.chatHistoryTitle;
 
-  String get _emptyTitle => widget.archivedOnly
+  String get _emptyTitle => JackeryCesConfig.enabled
+      ? (widget.archivedOnly
+            ? 'No archived conversations'
+            : 'No conversations yet')
+      : widget.archivedOnly
       ? context.l10n.chatHistoryNoArchived
       : context.l10n.chatHistoryEmpty;
 
@@ -321,7 +356,9 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
                   size: 24,
                 ),
                 onPressed: _createConversation,
-                tooltip: '\u65b0\u5efa\u5bf9\u8bdd',
+                tooltip: JackeryCesConfig.enabled
+                    ? 'New conversation'
+                    : '\u65b0\u5efa\u5bf9\u8bdd',
               ),
       ),
       body: _buildBody(),
@@ -334,7 +371,7 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
       return Center(
         child: CircularProgressIndicator(
           valueColor: AlwaysStoppedAnimation<Color>(
-            context.isDarkTheme
+            JackeryCesConfig.enabled || context.isDarkTheme
                 ? palette.accentPrimary
                 : const Color(0xFF1930D9),
           ),
@@ -716,29 +753,34 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-              colors: context.isDarkTheme
-                  ? <Color>[
-                      Color.lerp(
-                        palette.surfaceElevated,
-                        palette.accentPrimary,
-                        0.24,
-                      )!,
-                      Color.lerp(
-                        palette.surfaceSecondary,
-                        palette.accentPrimary,
-                        0.36,
-                      )!,
-                    ]
-                  : const <Color>[Color(0xFF1930D9), Color(0xFF2CA5F0)],
-            ),
+            color: JackeryCesConfig.enabled ? JackeryCesConfig.accent : null,
+            gradient: JackeryCesConfig.enabled
+                ? null
+                : LinearGradient(
+                    colors: context.isDarkTheme
+                        ? <Color>[
+                            Color.lerp(
+                              palette.surfaceElevated,
+                              palette.accentPrimary,
+                              0.24,
+                            )!,
+                            Color.lerp(
+                              palette.surfaceSecondary,
+                              palette.accentPrimary,
+                              0.36,
+                            )!,
+                          ]
+                        : const <Color>[Color(0xFF1930D9), Color(0xFF2CA5F0)],
+                  ),
             borderRadius: BorderRadius.all(Radius.circular(24)),
             border: context.isDarkTheme
                 ? Border.all(color: palette.borderSubtle)
                 : null,
           ),
           child: Text(
-            '\u5f00\u59cb\u5bf9\u8bdd',
+            JackeryCesConfig.enabled
+                ? 'Start conversation'
+                : '\u5f00\u59cb\u5bf9\u8bdd',
             style: TextStyle(
               fontSize: 16,
               fontWeight: FontWeight.w500,
@@ -750,7 +792,9 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     }
 
     return Text(
-      context.l10n.chatHistoryArchiveHint,
+      JackeryCesConfig.enabled
+          ? 'Archived conversations appear here.'
+          : context.l10n.chatHistoryArchiveHint,
       style: TextStyle(
         fontSize: 13,
         color: context.isDarkTheme ? palette.textSecondary : Colors.grey[500],

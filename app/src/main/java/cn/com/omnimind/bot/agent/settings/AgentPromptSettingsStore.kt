@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import android.content.Context
+import cn.com.omnimind.bot.jackery.JackeryCesProvisioning
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.i18n.LocalizedText
 import cn.com.omnimind.baselib.i18n.PromptLocale
@@ -124,6 +125,7 @@ object AgentPromptSettingsStore {
     }
 
     fun readSoul(context: Context): String {
+        if (JackeryCesProvisioning.enabled) return JackeryCesProvisioning.CHAT_PROMPT
         initializeAndCleanupLegacyFiles(context)
         return runCatching { MMKV.defaultMMKV().decodeString(KEY_SOUL) }
             .getOrNull()
@@ -131,6 +133,7 @@ object AgentPromptSettingsStore {
     }
 
     fun readChatPrompt(context: Context): String {
+        if (JackeryCesProvisioning.enabled) return JackeryCesProvisioning.CHAT_PROMPT
         initializeAndCleanupLegacyFiles(context)
         return runCatching { MMKV.defaultMMKV().decodeString(KEY_CHAT_PROMPT) }
             .getOrNull()
