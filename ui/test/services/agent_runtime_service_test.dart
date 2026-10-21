@@ -32,6 +32,19 @@ void main() {
     messenger.setMockMethodCallHandler(channel, null);
   });
 
+  test('automatic Na health opts out of workspace claims, manual checks retain defaults', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return {'ok': true};
+    });
+    await AgentRuntimeService.testAgent('na-cloud', readOnly: true);
+    await AgentRuntimeService.testAgent('na-cloud');
+    expect(calls.map((call) => call.method), ['agent/test', 'agent/test']);
+    expect(calls.first.arguments, {'agentId': 'na-cloud', 'readOnly': true});
+    expect(calls.last.arguments, {'agentId': 'na-cloud'});
+  });
+
   test(
     'explicit reinstall reaches the installer with force, ordinary preparation does not',
     () async {

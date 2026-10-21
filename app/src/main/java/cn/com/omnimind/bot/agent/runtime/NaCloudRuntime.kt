@@ -84,10 +84,16 @@ internal class NaCloudRuntime(
     private suspend fun connection() = currentCoroutineContext()[NaCloudConnection]
         ?: error("Na connection attribution is missing")
 
-    private suspend fun <T> withConnection(operation: suspend () -> T): T {
+    private suspend fun <T> withConnection(
+        claimWorkspaceIfMissing: Boolean = true,
+        operation: suspend () -> T,
+    ): T {
         val connection = if (development) NaCloudConnection(baseUrl, developmentToken = token)
             else NaCloudConnection.managed(BuildConfig.CLOUD_URL, NaCloudEnvironment.developmentAvailable, OmniAccount.repository())
-        return withContext(connection) { connection.prepareWorkspace(client); operation() }
+        return withContext(connection) {
+            connection.prepareWorkspace(client, claimIfMissing = claimWorkspaceIfMissing)
+            operation()
+        }
     }
 
     fun config(): Map<String, Any?> = mapOf(
@@ -122,8 +128,10 @@ internal class NaCloudRuntime(
         return config()
     }
 
-    suspend fun status(): Map<String, Any?> {
-        val error = runCatching { withConnection { request("GET", "/api/status") } }
+    suspend fun status(readOnly: Boolean = false): Map<String, Any?> {
+        val error = runCatching {
+            withConnection(claimWorkspaceIfMissing = !readOnly) { request("GET", "/api/status") }
+        }
             .onSuccess { cachedStatus = it }.exceptionOrNull()
         val connected = error == null && cachedStatus["connected"] == true
         return mapOf(
@@ -135,8 +143,8 @@ internal class NaCloudRuntime(
         )
     }
 
-    suspend fun test(): Map<String, Any?> {
-        val status = status()
+    suspend fun test(readOnly: Boolean = false): Map<String, Any?> {
+        val status = status(readOnly = readOnly)
         val online = status["connected"] == true
         profiles.saveHealth(NA_AGENT_ID, AcpAgentHealth(
             status = if (online) AcpAgentHealth.STATUS_ONLINE else AcpAgentHealth.STATUS_OFFLINE,
@@ -164,7 +172,7 @@ internal class NaCloudRuntime(
     suspend fun handle(method: String, args: Map<String, Any?>): Any? = when (method) {
         "agent/config/read" -> config()
         "agent/config/write" -> configure(args)
-        "agent/test", "agent/prepare" -> test()
+        "agent/test", "agent/prepare" -> test(readOnly = args["readOnly"] == true)
         "initialize" -> status() + mapOf("agentInfo" to mapOf("name" to "Na", "version" to "0.1.0"))
         "model/list" -> mapOf("models" to emptyList<Any>())
         "collaborationMode/list" -> mapOf("collaborationModes" to emptyList<Any>())

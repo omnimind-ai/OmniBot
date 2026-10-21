@@ -67,6 +67,178 @@ void main() {
         .setMockMethodCallHandler(pluginPlatformChannel, null);
   });
 
+  Widget buildPage() => MaterialApp(
+    theme: AppTheme.lightTheme,
+    localizationsDelegates: AppLocalizations.localizationsDelegates,
+    supportedLocales: AppLocalizations.supportedLocales,
+    locale: const Locale('zh'),
+    home: const AgentModeSettingPage(),
+  );
+
+  testWidgets(
+    'Na is checked on every page entry without blocking the catalog',
+    (tester) async {
+      final firstCheck = Completer<Map<String, dynamic>>();
+      final calls = <MethodCall>[];
+      var status = 'offline';
+      var checks = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            calls.add(call);
+            if (call.method == 'agent/list') {
+              return {
+                'selectedAgentId': 'codex-acp',
+                'agents': [
+                  _agent('na-cloud', 'Na', 'na-cloud', status),
+                  _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
+                ],
+              };
+            }
+            if (call.method == 'agent/test') {
+              expect(call.arguments, {'agentId': 'na-cloud', 'readOnly': true});
+              checks++;
+              if (checks == 1) {
+                final result = await firstCheck.future;
+                status = 'online';
+                return result;
+              }
+              status = 'offline';
+              return {'ok': false, 'connected': false};
+            }
+            return null;
+          });
+
+      await tester.pumpWidget(buildPage());
+      await tester.pump(const Duration(milliseconds: 200));
+      final row = find.byKey(const Key('agent-config-na-cloud'));
+      expect(find.text('Codex'), findsOneWidget);
+      expect(
+        find.descendant(of: row, matching: find.text('检测中')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: row, matching: find.text('启动失败')),
+        findsNothing,
+      );
+      await tester.enterText(find.byType(TextField).first, 'Na');
+      await tester.pump();
+      expect(checks, 1);
+
+      firstCheck.complete({'ok': true, 'connected': true});
+      await tester.pumpAndSettle();
+      expect(
+        find.descendant(of: row, matching: find.text('可用')),
+        findsOneWidget,
+      );
+      expect(find.byType(SettingsDetailSheet), findsNothing);
+      expect(find.byType(AlertDialog), findsNothing);
+      expect(calls.where((call) => call.method == 'agent/refresh'), isEmpty);
+      expect(checks, 1);
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(buildPage());
+      await tester.pumpAndSettle();
+      expect(checks, 2);
+      expect(
+        find.descendant(of: row, matching: find.text('启动失败')),
+        findsOneWidget,
+      );
+      expect(find.descendant(of: row, matching: find.text('可用')), findsNothing);
+      expect(find.byType(SettingsDetailSheet), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'leaving the page during the Na check ignores the late response',
+    (tester) async {
+      final check = Completer<Map<String, dynamic>>();
+      var lists = 0;
+      var checks = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method == 'agent/list') {
+              lists++;
+              return {
+                'agents': [_agent('na-cloud', 'Na', 'na-cloud', 'offline')],
+              };
+            }
+            if (call.method == 'agent/test') {
+              checks++;
+              return check.future;
+            }
+            return null;
+          });
+      await tester.pumpWidget(buildPage());
+      await tester.pump(const Duration(milliseconds: 200));
+      expect(checks, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      check.complete({'ok': true, 'connected': true});
+      await tester.pumpAndSettle();
+      expect(lists, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('disabled Na is not automatically checked', (tester) async {
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          calls.add(call);
+          if (call.method == 'agent/list') {
+            return {
+              'agents': [
+                {
+                  ..._agent('na-cloud', 'Na', 'na-cloud', 'offline'),
+                  'enabled': false,
+                },
+              ],
+            };
+          }
+          return null;
+        });
+    await tester.pumpWidget(buildPage());
+    await tester.pumpAndSettle();
+    expect(find.text('已停用'), findsOneWidget);
+    expect(calls.where((call) => call.method == 'agent/test'), isEmpty);
+  });
+
+  testWidgets('an automatic Na check error still permits a manual check', (
+    tester,
+  ) async {
+    var checks = 0;
+    var status = 'offline';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method == 'agent/list') {
+            return {
+              'agents': [_agent('na-cloud', 'Na', 'na-cloud', status)],
+            };
+          }
+          if (call.method == 'agent/test') {
+            checks++;
+            if (checks == 1) {
+              throw PlatformException(code: 'AGENT_RUNTIME_CALL_FAILED');
+            }
+            status = 'online';
+            return {'ok': true, 'connected': true};
+          }
+          return null;
+        });
+    await tester.pumpWidget(buildPage());
+    await tester.pumpAndSettle();
+    expect(checks, 1);
+    expect(find.text('检测中'), findsNothing);
+    expect(find.byType(SettingsDetailSheet), findsNothing);
+    await tester.tap(find.byKey(const Key('agent-check-na-cloud')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(checks, 2);
+    expect(find.text('助手检查通过'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
   for (final configurationAvailable in [false, true]) {
     testWidgets(
       'Na configuration visibility follows native development policy: $configurationAvailable',
@@ -123,7 +295,7 @@ void main() {
         expect(find.text('助手检查通过'), findsOneWidget);
         expect(
           calls.where((call) => call.method == 'agent/test'),
-          hasLength(1),
+          hasLength(2), // Entry check, followed by the explicit manual check.
         );
         expect(
           calls.where((call) => call.method.startsWith('agent/config/')),
