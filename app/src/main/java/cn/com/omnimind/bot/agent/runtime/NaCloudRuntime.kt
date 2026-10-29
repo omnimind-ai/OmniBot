@@ -58,6 +58,11 @@ internal class NaCloudRuntime(
     private val client = OkHttpClient.Builder().retryOnConnectionFailure(false)
         .followRedirects(false).followSslRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+    // Long-lived subscriptions must not occupy the ordinary request queue:
+    // status reads and, especially, cancel POSTs must remain dispatchable.
+    private val eventClient = client.newBuilder().dispatcher(okhttp3.Dispatcher().apply {
+        maxRequestsPerHost = 50 // Na's maximum number of admitted active runs.
+    }).build()
     private val gson = Gson()
     private var token = "" // Debug standalone-instance token; managed credentials stay in AccountRepository.
     private val mutex = Mutex()
@@ -314,7 +319,7 @@ internal class NaCloudRuntime(
                             subscribe = { cursor, receive ->
                                 val request = Request.Builder().url(connection.apiBaseUrl + "/api/events?after=$cursor")
                                     .header("Accept", "text/event-stream").build()
-                                connection.execute(client, request, retryReads = false) { response ->
+                                connection.execute(eventClient, request, retryReads = false) { response ->
                                     if (response.code == 409) throw IOException("Na event history compacted")
                                     check(response.isSuccessful) { naCloudPublicError(response.code, null) }
                                     check(response.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
