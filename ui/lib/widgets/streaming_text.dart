@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
@@ -76,8 +78,8 @@ int _clampOmnibotTextToCodePointBoundary(String text, int requestedLength) {
 ///   [OmnibotPacedRevealText]，不随批次边界切换布局。
 /// - 只含加粗标记的正文使用同一个 RichText 逐字透出，不嵌套整段
 ///   WidgetSpan。
-/// - 标题、列表、代码等复杂 Markdown 按最新快照整体渲染，不混合两套
-///   段落布局；表格仍使用专用预览路径。
+/// - 复杂 Markdown 限频更新同一个文档；大批文字分步透出，避免瞬间撑高。
+///   表格保持完整行，最终态和历史记录立即显示。
 /// - 未启用 Markdown 时走 [OmnibotPacedRevealText] 做逐字透出（轻量）。
 class StreamingText extends StatefulWidget {
   /// 完整的文本内容（会随着流式推送逐渐增加）
@@ -132,6 +134,7 @@ class _StreamingTextState extends State<StreamingText> {
   late bool _requiresStructuredMarkdown;
   String? _lastSelectedContent; // 跟踪最后选中的内容
   int? _lastNotifiedDisplayLength;
+  int _displayedTextLength = 0;
 
   @override
   void initState() {
@@ -182,6 +185,7 @@ class _StreamingTextState extends State<StreamingText> {
   }
 
   void _notifyDisplayedTextChanged(int displayLength) {
+    _displayedTextLength = displayLength;
     if (_lastNotifiedDisplayLength == displayLength) {
       return;
     }
@@ -204,6 +208,9 @@ class _StreamingTextState extends State<StreamingText> {
     // 第一次build时，初始化_previousFullText
     if (_isFirstBuild) {
       _previousFullText = widget.fullText;
+      _displayedTextLength = animateInitialStreamingText
+          ? 0
+          : widget.fullText.length;
       _isFirstBuild = false;
     }
 
@@ -240,17 +247,18 @@ class _StreamingTextState extends State<StreamingText> {
     );
   }
 
-  // MarkdownBody reparses when data changes. Rendering does not wait for
-  // prompt completion or split a Markdown document at transport boundaries.
   Widget _buildMarkdownContent() {
-    _notifyDisplayedTextChanged(widget.fullText.length);
     return _wrapSelectable(
-      OmnibotMarkdownBody(
-        data: widget.fullText,
-        baseStyle: widget.style,
-        inlineResourcePlainStyle: true,
+      _SmoothedMarkdown(
+        text: widget.fullText,
+        initialVisibleLength: _previousFullText == kThinkingText
+            ? 0
+            : _displayedTextLength,
+        style: widget.style,
+        isFinal: widget.isFinal,
+        onDisplayed: _notifyDisplayedTextChanged,
         onResourceOpen: widget.onResourceOpen,
-        trailingInline: widget.trailing,
+        trailing: widget.trailing,
       ),
     );
   }
@@ -339,6 +347,114 @@ class _StreamingTextState extends State<StreamingText> {
         type: ToastType.error,
       );
     }
+  }
+}
+
+// Keep one Markdown document, so list numbering, references, selection and code
+// fences keep their meaning. Never split the document at network boundaries.
+class _SmoothedMarkdown extends StatefulWidget {
+  const _SmoothedMarkdown({
+    required this.text,
+    required this.initialVisibleLength,
+    required this.style,
+    required this.isFinal,
+    required this.onDisplayed,
+    this.onResourceOpen,
+    this.trailing,
+  });
+  final String text;
+  final int initialVisibleLength;
+  final TextStyle style;
+  final bool isFinal;
+  final ValueChanged<int> onDisplayed;
+  final OmnibotResourceOpenCallback? onResourceOpen;
+  final Widget? trailing;
+  @override
+  State<_SmoothedMarkdown> createState() => _SmoothedMarkdownState();
+}
+
+class _SmoothedMarkdownState extends State<_SmoothedMarkdown> {
+  static const interval = Duration(milliseconds: 80);
+  late String displayed;
+  Timer? timer;
+  Widget? cachedBody;
+
+  bool get showWhole =>
+      widget.isFinal || omnibotMarkdownContainsTableCandidate(widget.text);
+
+  @override
+  void initState() {
+    super.initState();
+    displayed = showWhole
+        ? widget.text
+        : widget.text.substring(
+            0,
+            _clampOmnibotTextToCodePointBoundary(
+              widget.text,
+              widget.initialVisibleLength < 128
+                  ? 128
+                  : widget.initialVisibleLength,
+            ),
+          );
+    schedule();
+  }
+
+  void schedule() {
+    if (timer != null || displayed == widget.text) return;
+    timer = Timer(interval, () {
+      timer = null;
+      if (!mounted) return;
+      final remaining = widget.text.length - displayed.length;
+      final step = (remaining / 8).ceil().clamp(128, 1000000);
+      final end = _clampOmnibotTextToCodePointBoundary(
+        widget.text,
+        displayed.length + step,
+      );
+      setState(() {
+        displayed = widget.text.substring(0, end);
+        cachedBody = null;
+      });
+      schedule();
+    });
+  }
+
+  @override
+  void didUpdateWidget(_SmoothedMarkdown oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.style != oldWidget.style ||
+        widget.trailing != oldWidget.trailing ||
+        widget.onResourceOpen != oldWidget.onResourceOpen) {
+      cachedBody = null;
+    }
+    if (widget.text == oldWidget.text && widget.isFinal == oldWidget.isFinal) {
+      return;
+    }
+    if (showWhole || !widget.text.startsWith(displayed)) {
+      timer?.cancel();
+      timer = null;
+      displayed = widget.text;
+      cachedBody = null;
+    } else {
+      schedule();
+    }
+  }
+
+  @override
+  void dispose() {
+    timer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    widget.onDisplayed(displayed.length);
+    return cachedBody ??= OmnibotMarkdownBody(
+      data: displayed,
+      baseStyle: widget.style,
+      inlineResourcePlainStyle: true,
+      onResourceOpen: widget.onResourceOpen,
+      trailingInline: widget.trailing,
+    );
   }
 }
 
