@@ -248,8 +248,9 @@ String _normalizeOmnibotHeadingLine(String line) {
 bool omnibotMarkdownContainsTableCandidate(String source) {
   source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');
+  final fencedLines = _markdownFencedLines(lines);
   for (var index = 0; index < lines.length; index++) {
-    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+    if (fencedLines[index]) {
       continue;
     }
     if (_tryParseMarkdownTable(lines, index) != null) {
@@ -265,6 +266,7 @@ bool omnibotMarkdownContainsTableCandidate(String source) {
 OmnibotStreamingTableBlock? omnibotMarkdownTrailingTableBlock(String source) {
   source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');
+  final fencedLines = _markdownFencedLines(lines);
   final lastContentIndex = lines.lastIndexWhere(
     (line) => line.trim().isNotEmpty,
   );
@@ -274,7 +276,7 @@ OmnibotStreamingTableBlock? omnibotMarkdownTrailingTableBlock(String source) {
 
   var index = 0;
   while (index <= lastContentIndex) {
-    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+    if (fencedLines[index]) {
       index += 1;
       continue;
     }
@@ -298,7 +300,7 @@ OmnibotStreamingTableBlock? omnibotMarkdownTrailingTableBlock(String source) {
   int? candidateStartIndex;
   index = 0;
   while (index <= lastContentIndex) {
-    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+    if (fencedLines[index]) {
       index += 1;
       continue;
     }
@@ -354,6 +356,7 @@ OmnibotStreamingTableBlock _buildTrailingTableBlock(
 String omnibotMarkdownWithoutTrailingTableCandidate(String source) {
   source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');
+  final fencedLines = _markdownFencedLines(lines);
   final lastContentIndex = lines.lastIndexWhere(
     (line) => line.trim().isNotEmpty,
   );
@@ -364,7 +367,7 @@ String omnibotMarkdownWithoutTrailingTableCandidate(String source) {
   int? candidateStartIndex;
   var index = 0;
   while (index <= lastContentIndex) {
-    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+    if (fencedLines[index]) {
       index += 1;
       continue;
     }
@@ -445,9 +448,10 @@ int _trailingTableCandidateRemovalStart(
 }
 
 bool _hasParsedMarkdownTableBefore(List<String> lines, int endIndex) {
+  final fencedLines = _markdownFencedLines(lines);
   var index = 0;
   while (index < endIndex) {
-    if (_isMarkdownLineInsideFencedCode(lines, index)) {
+    if (fencedLines[index]) {
       index += 1;
       continue;
     }
@@ -480,39 +484,28 @@ bool _paragraphAppearsEarlier(
 
 final RegExp _markdownFenceStartPattern = RegExp(r'^[ ]{0,3}(`{3,}|~{3,})');
 
-/// Returns whether [targetIndex] is part of a fenced code block.
-///
-/// The custom table splitter runs before flutter_markdown. Without this
-/// guard, a code sample containing a table-shaped payload is incorrectly
-/// promoted to a real Flutter [Table], which changes both its layout and the
-/// copied text. Fence lines themselves are included so they are never treated
-/// as table rows either.
-bool _isMarkdownLineInsideFencedCode(List<String> lines, int targetIndex) {
+/// Mark each fenced line once, including opening and closing fences. Reusing
+/// this mask keeps table detection/splitting linear for long streamed replies.
+List<bool> _markdownFencedLines(List<String> lines) {
+  final result = List<bool>.filled(lines.length, false);
   String? fenceCharacter;
   var fenceLength = 0;
-  for (var index = 0; index <= targetIndex; index += 1) {
+  for (var index = 0; index < lines.length; index += 1) {
+    result[index] = fenceCharacter != null;
     final match = _markdownFenceStartPattern.firstMatch(lines[index]);
-    if (match != null) {
-      final marker = match.group(1)!;
-      final character = marker.substring(0, 1);
-      if (fenceCharacter == null) {
-        fenceCharacter = character;
-        fenceLength = marker.length;
-        if (index == targetIndex) return true;
-        continue;
-      }
-      if (character == fenceCharacter && marker.length >= fenceLength) {
-        if (index == targetIndex) return true;
-        fenceCharacter = null;
-        fenceLength = 0;
-        continue;
-      }
-    }
-    if (index == targetIndex) {
-      return fenceCharacter != null;
+    if (match == null) continue;
+    final marker = match.group(1)!;
+    final character = marker.substring(0, 1);
+    if (fenceCharacter == null) {
+      fenceCharacter = character;
+      fenceLength = marker.length;
+      result[index] = true;
+    } else if (character == fenceCharacter && marker.length >= fenceLength) {
+      fenceCharacter = null;
+      fenceLength = 0;
     }
   }
-  return fenceCharacter != null;
+  return result;
 }
 
 MarkdownStyleSheet _resolveMarkdownStyleSheet(
@@ -761,6 +754,7 @@ class _OmnibotMarkdownSegment {
 
 List<_OmnibotMarkdownSegment> _splitMarkdownTableSegments(String source) {
   final lines = source.split('\n');
+  final fencedLines = _markdownFencedLines(lines);
   final segments = <_OmnibotMarkdownSegment>[];
   final textBuffer = StringBuffer();
   var index = 0;
@@ -774,7 +768,7 @@ List<_OmnibotMarkdownSegment> _splitMarkdownTableSegments(String source) {
   }
 
   while (index < lines.length) {
-    final table = _isMarkdownLineInsideFencedCode(lines, index)
+    final table = fencedLines[index]
         ? null
         : _tryParseMarkdownTable(lines, index);
     if (table == null) {
