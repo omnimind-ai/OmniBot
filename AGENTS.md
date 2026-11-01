@@ -279,10 +279,10 @@ flutter analyze --no-fatal-warnings --no-fatal-infos
 
 ### Platform Requirements
 - **Min SDK**: 29 (Android 10)
-- **Target SDK**: 34 (Android 14)
-- **Compile SDK**: 36
+- **Target SDK**: 37 (Android 17)
+- **Compile SDK**: 37
 - **NDK**: ARMv7 and ARM64 architectures
-- **JDK**: 11+
+- **JDK**: 17
 - **Flutter**: 3.9.2+
 - **Kotlin**: Latest (via Gradle plugin)
 

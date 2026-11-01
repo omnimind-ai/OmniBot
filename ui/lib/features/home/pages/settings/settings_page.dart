@@ -112,6 +112,7 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
 
   Future<void> _toggleMcpServer(bool enable) async {
     if (_mcpBusy) return;
+    final previousEnabled = _mcpEnabled;
     setState(() {
       _mcpBusy = true;
       _mcpEnabled = enable;
@@ -133,7 +134,13 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
       );
       if (enable) {
         final endpoint = info?.endpoint ?? '';
-        if (endpoint.isNotEmpty) {
+        if (info?.isLoopbackOnly == true) {
+          showToast(
+            Localizations.localeOf(context).languageCode == 'en'
+                ? 'Service is available on this device only. Connect to a local network to share it.'
+                : '服务当前仅在此设备可用，连接局域网后可供电脑访问。',
+          );
+        } else if (endpoint.isNotEmpty) {
           showToast(
             context.l10n.settingsMcpEnabledToast(endpoint),
             type: ToastType.success,
@@ -149,13 +156,13 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
         type: ToastType.error,
       );
       setState(() {
-        _mcpEnabled = !enable;
+        _mcpEnabled = previousEnabled;
       });
     } catch (e) {
       if (!mounted) return;
       showToast(context.l10n.settingsMcpToggleFailed, type: ToastType.error);
       setState(() {
-        _mcpEnabled = !enable;
+        _mcpEnabled = previousEnabled;
       });
     } finally {
       if (mounted) {
@@ -170,6 +177,7 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
     final info = _mcpInfo;
     if (info == null || info.endpoint.isEmpty) return;
     final l10n = context.l10n;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
 
     showSettingsDetailSheet<void>(
       context: context,
@@ -213,6 +221,15 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (info.isLoopbackOnly) ...[
+                Text(
+                  isEnglish
+                      ? 'This address works only on this device. To use the WebUI or MCP from a computer, connect to a local network and enable local network access.'
+                      : '此地址仅能在当前设备访问。电脑访问 WebUI 或 MCP 前，请连接局域网并开启局域网访问。',
+                  style: valueStyle,
+                ),
+                const SizedBox(height: 12),
+              ],
               buildInfoBox(l10n.settingsMcpAddress, info.endpoint),
               const SizedBox(height: 8),
               buildInfoBox(
@@ -223,6 +240,18 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
           ),
           actionsKey: const ValueKey('local-service-actions'),
           actions: [
+            if (info.isLoopbackOnly)
+              TextButton(
+                key: const ValueKey('local-service-enable-lan'),
+                style: actionStyle,
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  _toggleMcpServer(true);
+                },
+                child: Text(
+                  isEnglish ? 'Enable local network access' : '开启局域网访问',
+                ),
+              ),
             TextButton(
               style: actionStyle,
               onPressed: () {
@@ -263,7 +292,11 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
             ),
           ],
           footer: Text(
-            l10n.settingsMcpSecurityNotice,
+            info.isLoopbackOnly
+                ? (isEnglish
+                      ? 'The local service remains available to agents on this device.'
+                      : '本机 Agent 仍可使用本地服务。')
+                : l10n.settingsMcpSecurityNotice,
             style: TextStyle(fontSize: 12, color: sheetPalette.textSecondary),
           ),
         );
@@ -370,7 +403,11 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
           _SettingItem(
             icon: LucideIcons.monitorSmartphone,
             title: context.l10n.settingsLocalServiceTitle,
-            subtitle: context.l10n.settingsLocalServiceSubtitle,
+            subtitle: _mcpInfo?.isLoopbackOnly == true
+                ? (isEnglish
+                      ? 'Available on this device only; tap to enable local network access'
+                      : '当前仅本机可用，点击开启局域网访问')
+                : context.l10n.settingsLocalServiceSubtitle,
             trailing: OmniSettingsSwitch(
               value: _mcpEnabled,
               enabled: !_mcpBusy,

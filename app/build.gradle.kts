@@ -203,7 +203,7 @@ android {
     defaultConfig {
         applicationId = "cn.com.omnimind.bot"
         minSdk = 29
-        targetSdk = 36
+        targetSdk = 37
         // Keep the Android version code monotonic for installable updates.
         versionCode = 19
         versionName = "0.7.0.2"

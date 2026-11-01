@@ -745,8 +745,9 @@ private fun attachSessionToTerminalView(
     targetView.setTypeface(font)
     targetView.post {
         targetView.keepScreenOn = true
-        targetView.requestFocus()
         targetView.isFocusableInTouchMode = true
+        targetView.requestFocus()
+        mainActivity.restoreTerminalKeyboard(targetView)
 
         applyTerminalPalette(targetView)
 

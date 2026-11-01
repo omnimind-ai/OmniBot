@@ -1,5 +1,7 @@
 package cn.com.omnimind.bot.ui.channel
 
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
+
 import android.content.Context
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
@@ -73,7 +75,13 @@ class RemoteMcpConfigChannel {
                         }
                         "upsertServer" -> {
                             val raw = call.arguments<Map<String, Any?>>() ?: emptyMap()
-                            val saved = RemoteMcpConfigStore.upsertServer(RemoteMcpServerConfig.fromMap(raw))
+                            val config = RemoteMcpServerConfig.fromMap(raw)
+                            if (config.enabled) {
+                                LocalNetworkPermission.requestForEndpoint(
+                                    appContext ?: App.instance, config.endpointUrl,
+                                )
+                            }
+                            val saved = RemoteMcpConfigStore.upsertServer(config)
                             RemoteMcpDiscoveryRegistry.invalidate(saved.id)
                             invalidateAcpMcpSessions()
                             respondSuccess(result, saved.toMap())
@@ -88,6 +96,13 @@ class RemoteMcpConfigChannel {
                         "setServerEnabled" -> {
                             val serverId = call.argument<String>("id").orEmpty()
                             val enabled = call.argument<Boolean>("enabled") == true
+                            if (enabled) {
+                                RemoteMcpConfigStore.getServer(serverId)?.let { config ->
+                                    LocalNetworkPermission.requestForEndpoint(
+                                        appContext ?: App.instance, config.endpointUrl,
+                                    )
+                                }
+                            }
                             val updated = RemoteMcpConfigStore.setServerEnabled(serverId, enabled)
                             RemoteMcpDiscoveryRegistry.invalidate(serverId)
                             invalidateAcpMcpSessions()
@@ -97,6 +112,9 @@ class RemoteMcpConfigChannel {
                             val serverId = call.argument<String>("id").orEmpty()
                             val config = RemoteMcpConfigStore.getServer(serverId)
                                 ?: throw IllegalArgumentException("Server not found")
+                            LocalNetworkPermission.requestForEndpoint(
+                                appContext ?: App.instance, config.endpointUrl,
+                            )
                             val discovered = RemoteMcpDiscoveryRegistry.discoverServer(config, forceRefresh = true)
                             respondSuccess(
                                 result,

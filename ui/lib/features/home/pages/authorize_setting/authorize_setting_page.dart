@@ -35,6 +35,8 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   bool _overlayPermission = false;
   bool _installedAppsPermission = false;
   bool _publicStoragePermission = false;
+  bool _localNetworkPermissionRequired = false;
+  bool _localNetworkPermissionGranted = false;
   ShizukuStatusSnapshot _shizukuStatus = ShizukuStatusSnapshot.fallback();
   Map<String, PersonalContextCapability> _personalContext = {};
   bool _personalContextLoaded = false;
@@ -208,6 +210,24 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
           en: 'Enable when needed for broader system-level capabilities and compatibility.',
         ),
         items: [
+          if (_localNetworkPermissionRequired)
+            _AuthorizeSettingItem(
+              icon: LucideIcons.wifi,
+              title: _localeText(zh: '局域网访问', en: 'Local network'),
+              subtitle: _localeText(
+                zh: '连接同一网络中的电脑、模型和 MCP 服务，或让电脑访问小万。',
+                en: 'Connect to computers, model providers and MCP services on your network, or access Omnibot from a computer.',
+              ),
+              trailing: _buildPermissionTrailing(
+                label: context.trLegacy(
+                  _localNetworkPermissionGranted ? '已开启' : '去开启',
+                ),
+                color: _localNetworkPermissionGranted
+                    ? _tertiaryTextColor
+                    : _accentColor,
+              ),
+              onTap: _requestLocalNetworkAccess,
+            ),
           _AuthorizeSettingItem(
             icon: LucideIcons.folderOpen,
             title: _localeText(zh: '所有文件访问权限', en: 'All files access'),
@@ -471,6 +491,8 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
           ) ??
           false;
       final publicStoragePermission = await isPublicStorageAccessGranted();
+      final localNetworkStatus = await spePermission
+          .invokeMapMethod<String, dynamic>('getLocalNetworkPermissionStatus');
       final shizukuStatus = await getShizukuStatus();
 
       if (await waitForPageReady() && mounted) {
@@ -480,11 +502,56 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
           _overlayPermission = overlayPermission;
           _installedAppsPermission = installedAppsPermission;
           _publicStoragePermission = publicStoragePermission;
+          _localNetworkPermissionRequired =
+              localNetworkStatus?['required'] == true;
+          _localNetworkPermissionGranted =
+              localNetworkStatus?['granted'] == true;
           _shizukuStatus = shizukuStatus;
         });
       }
     } catch (e) {
       debugPrint('Error checking permissions: $e');
+    }
+  }
+
+  Future<void> _requestLocalNetworkAccess() async {
+    try {
+      if (_localNetworkPermissionGranted) {
+        await spePermission.invokeMethod('openAppDetailsSettings');
+        return;
+      }
+      final granted = await spePermission.invokeMethod<bool>(
+        'requestLocalNetworkPermission',
+      );
+      if (!mounted) return;
+      if (granted != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _localeText(
+                zh: '局域网访问未授权，可在系统应用权限中允许「附近的设备」。',
+                en: 'Local network access was denied. Allow Nearby devices in system app permissions.',
+              ),
+            ),
+            action: SnackBarAction(
+              label: _localeText(zh: '打开设置', en: 'Open settings'),
+              onPressed: () =>
+                  spePermission.invokeMethod('openAppDetailsSettings'),
+            ),
+          ),
+        );
+      }
+      await _checkPermissions();
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          _localeText(
+            zh: '无法申请局域网权限，请在系统应用权限中开启。',
+            en: 'Could not request local network access. Enable it in system app permissions.',
+          ),
+          type: ToastType.warning,
+        );
+      }
     }
   }
 
