@@ -32,6 +32,7 @@ class PermissionRequest : Activity() {
          */
         private val PERMISSION_PURPOSES: Map<String, String> = mapOf(
             android.Manifest.permission.POST_NOTIFICATIONS to "为及时向您推送消息通知",
+            android.Manifest.permission.ACCESS_LOCAL_NETWORK to "用于连接您配置的局域网电脑、模型服务和 MCP 服务，或通过局域网访问小万",
             android.Manifest.permission.BLUETOOTH_CONNECT to "为连接蓝牙设备以提供相关服务",
             android.Manifest.permission.BLUETOOTH_SCAN to "为扫描并发现蓝牙设备",
             android.Manifest.permission.RECORD_AUDIO to "用于在您主动使用语音输入、语音唤醒或语音转文字功能时采集声音",
@@ -139,6 +140,7 @@ class PermissionRequest : Activity() {
     private fun getPermissionLabelShort(permission: String): String {
         return when (permission) {
             android.Manifest.permission.POST_NOTIFICATIONS -> "通知权限使用说明："
+            android.Manifest.permission.ACCESS_LOCAL_NETWORK -> "局域网权限使用说明："
             android.Manifest.permission.BLUETOOTH_CONNECT -> "蓝牙连接权限使用说明："
             android.Manifest.permission.BLUETOOTH_SCAN -> "蓝牙扫描权限使用说明："
             android.Manifest.permission.RECORD_AUDIO -> "麦克风权限使用说明："

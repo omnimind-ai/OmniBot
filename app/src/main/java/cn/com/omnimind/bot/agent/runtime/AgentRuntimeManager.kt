@@ -1,5 +1,9 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
+import android.os.Build
+import cn.com.omnimind.bot.App
+
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
@@ -105,6 +109,9 @@ internal suspend fun fetchAgentProviderModels(
         if (forceRefresh) PlatformAiProvisioner.refreshAndGetModels()
         else PlatformAiProvisioner.ensureReadyAndGetModels()
     } else {
+        if (Build.VERSION.SDK_INT >= 37) {
+            LocalNetworkPermission.requireForEndpoint(App.instance, profile.baseUrl)
+        }
         HttpController.fetchProviderModels(
             apiBase = profile.baseUrl,
             apiKey = profile.apiKey,
@@ -458,6 +465,7 @@ class AgentRuntimeManager private constructor(
     private suspend fun ensureConnectedSession(): RemoteCodexAppServerSession = sessionMutex.withLock {
         val config = remoteConfigStore.read()
         check(config.enabled && config.isConfigured) { "Remote ACP bridge is not configured or enabled." }
+        LocalNetworkPermission.requireForEndpoint(context, config.bridgeUrl)
         session?.takeIf { it.isRunning }?.let { return@withLock it }
         session?.let { previous ->
             finishRemoteDisconnect()
@@ -1618,6 +1626,7 @@ class AgentRuntimeManager private constructor(
                 "cwd" to remoteConfig.cwd
             )
         }
+        LocalNetworkPermission.requestForEndpoint(context, remoteConfig.bridgeUrl)
         val probe = probeCodexRemoteBridge(remoteConfig)
         return linkedMapOf(
             "ok" to probe.ready,
@@ -1725,6 +1734,9 @@ class AgentRuntimeManager private constructor(
         preparation: AcpLaunchPreparation,
     ): PreparedAcpLaunch {
         val provider = currentAgentProviderProfile()
+        if (provider != null && AcpAgentProfileStore.usesSharedProvider(profile)) {
+            LocalNetworkPermission.requireForEndpoint(context, provider.baseUrl)
+        }
         if (!AcpAgentProfileStore.usesSharedProvider(profile) ||
             !ChatGptOAuthProvider.isOAuth(provider?.sourceType)) {
             return PreparedAcpLaunch(writeLocalAcpConfiguration(profile))
@@ -2877,6 +2889,11 @@ class AgentRuntimeManager private constructor(
         ).joinToString("|")
 
     private suspend fun probeRemoteCodex(config: CodexRemoteBridgeConfig): AgentRuntimeProbe {
+        try {
+            LocalNetworkPermission.requireForEndpoint(context, config.bridgeUrl)
+        } catch (error: SecurityException) {
+            return AgentRuntimeProbe(false, null, error.message)
+        }
         val probe = probeCodexRemoteBridge(config)
         return AgentRuntimeProbe(
             ready = probe.ready,

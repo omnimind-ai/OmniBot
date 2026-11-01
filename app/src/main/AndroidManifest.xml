@@ -7,6 +7,9 @@
     <uses-feature
         android:name="android.hardware.camera"
         android:required="false" />
+    <uses-feature
+        android:name="android.hardware.telephony"
+        android:required="false" />
 
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30"/>
@@ -23,6 +26,7 @@
     <!--允许写设备缓存，用于问题排查-->
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
     <uses-permission android:name="android.permission.INTERNET" /> <!-- 网络访问 -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" /> <!-- 检查wifi网络状态 -->
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> <!-- 检查网络状态 -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" /> <!-- 允许修改网络状态 -->
@@ -232,6 +236,10 @@
         <service
             android:name="cn.com.omnimind.bot.agent.AgentMusicPlaybackService"
             android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name="cn.com.omnimind.bot.voice.SceneVoicePlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
         <service

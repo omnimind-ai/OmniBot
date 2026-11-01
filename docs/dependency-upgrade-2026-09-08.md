@@ -1,5 +1,9 @@
 # Android / Flutter dependency upgrade
 
+This records the September dependency migration. The subsequent
+[Android 17 upgrade](android-17-upgrade-2026-11-01.md) raises the host target SDK
+from 36 to 37 with the compatibility changes described there.
+
 ## Supported build environment
 
 | Component | Version |

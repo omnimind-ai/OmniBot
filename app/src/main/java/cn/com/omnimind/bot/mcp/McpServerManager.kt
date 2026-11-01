@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.mcp
 
 import android.content.Context
 import android.content.pm.PackageManager
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
 import android.util.Base64
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.mcp.WebChatRoutes.receiveJson
@@ -126,7 +127,7 @@ object McpServerManager {
      * second private protocol or a second server lifecycle.
      */
     fun ensureRunning(context: Context): McpServerState {
-        val currentHost = resolveLanIp() ?: LOOPBACK_HOST
+        val currentHost = permittedAdvertisedHost(context)
         if (isRunning && activeHost == currentHost) return currentState()
         val port = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
         return startServer(context, port)
@@ -294,7 +295,7 @@ object McpServerManager {
             // Local ACP/DSH agents use loopback and must remain available even
             // when Wi-Fi is absent. WebChat still advertises the LAN address
             // whenever one exists.
-            val lanIp = resolveLanIp() ?: LOOPBACK_HOST
+            val lanIp = permittedAdvertisedHost(context)
             if (isRunning) {
                 val currentPort = mmkv.decodeInt(PREF_PORT, DEFAULT_PORT).takeIf { it > 0 } ?: DEFAULT_PORT
                 if (currentPort == port && activeHost == lanIp) {
@@ -571,6 +572,10 @@ object McpServerManager {
             .onFailure { OmniLog.e(TAG, "resolveLanIp failed: ${it.message}") }
             .getOrNull()
     }
+
+    private fun permittedAdvertisedHost(context: Context): String =
+        if (LocalNetworkPermission.isGranted(context)) resolveLanIp() ?: LOOPBACK_HOST
+        else LOOPBACK_HOST
 
     private fun resolveAdvertisedHost(): String? {
         val currentHost = resolveLanIp()

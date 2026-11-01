@@ -10,6 +10,7 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.baselib.permission.PermissionRequest
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
 import cn.com.omnimind.baselib.privileged.PrivilegedCapabilityManager
 import kotlinx.coroutines.SupervisorJob
@@ -398,6 +399,27 @@ class SpecialPermissionManager(private val context: Context) {
                 "Failed to request notification permission.",
                 e.message
             )
+        }
+    }
+
+    fun isLocalNetworkPermissionGranted(result: MethodChannel.Result) {
+        result.success(LocalNetworkPermission.isGranted(context))
+    }
+
+    fun getLocalNetworkPermissionStatus(result: MethodChannel.Result) {
+        result.success(mapOf(
+            "required" to (Build.VERSION.SDK_INT >= 37),
+            "granted" to LocalNetworkPermission.isGranted(context),
+        ))
+    }
+
+    fun requestLocalNetworkPermission(result: MethodChannel.Result) {
+        rootSettingsScope.launch {
+            try {
+                result.success(LocalNetworkPermission.request(context))
+            } catch (error: Exception) {
+                result.error("LOCAL_NETWORK_PERMISSION_FAILED", error.message, null)
+            }
         }
     }
 

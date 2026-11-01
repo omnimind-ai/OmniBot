@@ -76,4 +76,26 @@ void main() {
       isTrue,
     );
   });
+
+  test('local network permission is optional for ordinary chat', () {
+    expect(
+      PermissionRegistry.getPermissions(brand: 'other')
+          .any((item) => item.id == 'local_network'),
+      isFalse,
+    );
+    final localNetwork = PermissionRegistry.getPermissions(
+      brand: 'other',
+      includeOptionalAdvanced: true,
+    ).singleWhere((item) => item.id == 'local_network');
+    expect(localNetwork.openMethod, 'requestLocalNetworkPermission');
+    expect(localNetwork.checkMethod, 'isLocalNetworkPermissionGranted');
+    expect(
+      PermissionRegistry.getPermissionsByLevel(
+        brand: 'other',
+        level: PermissionLevel.fullExecution,
+        includeOptionalAdvanced: true,
+      ).any((item) => item.id == 'local_network'),
+      isFalse,
+    );
+  });
 }

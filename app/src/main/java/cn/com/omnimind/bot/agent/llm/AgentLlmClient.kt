@@ -1,5 +1,9 @@
 package cn.com.omnimind.bot.agent
 
+import android.os.Build
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
+import cn.com.omnimind.bot.App
+
 import cn.com.omnimind.assists.controller.http.HttpController
 import cn.com.omnimind.baselib.account.AiRequestTransportPolicy
 import cn.com.omnimind.baselib.account.OmniAccount
@@ -262,6 +266,9 @@ class HttpAgentLlmClient(
             modelOverride?.protocolType,
             modelOverride?.wireApi,
         )
+        if (Build.VERSION.SDK_INT >= 37) {
+            LocalNetworkPermission.requireForEndpoint(App.instance, routeInfo.apiBase.orEmpty())
+        }
         val namePlan = if (OpenAiWireApi.isResponses(routeInfo.wireApi)) {
             OpenAiResponsesFunctionNameCodec.planFor(request)
         } else null

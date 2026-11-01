@@ -18,6 +18,9 @@ class McpServerInfo {
 
   String get endpoint => host == null ? '' : 'http://$host:$port';
 
+  bool get isLoopbackOnly =>
+      running && (host == '127.0.0.1' || host == 'localhost' || host == '::1');
+
   static McpServerInfo? fromMap(Map<dynamic, dynamic>? raw) {
     if (raw == null) return null;
     return McpServerInfo(
@@ -31,7 +34,9 @@ class McpServerInfo {
 }
 
 class McpServerService {
-  static const MethodChannel _channel = MethodChannel('cn.com.omnimind.bot/McpServer');
+  static const MethodChannel _channel = MethodChannel(
+    'cn.com.omnimind.bot/McpServer',
+  );
 
   static Future<McpServerInfo?> getState() async {
     try {
@@ -47,10 +52,7 @@ class McpServerService {
     try {
       final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
         'setEnabled',
-        {
-          'enable': enable,
-          if (port != null) 'port': port,
-        },
+        {'enable': enable, if (port != null) 'port': port},
       );
       return McpServerInfo.fromMap(raw);
     } on PlatformException catch (e) {
@@ -61,7 +63,9 @@ class McpServerService {
 
   static Future<McpServerInfo?> refreshToken() async {
     try {
-      final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>('refreshToken');
+      final raw = await _channel.invokeMethod<Map<dynamic, dynamic>>(
+        'refreshToken',
+      );
       return McpServerInfo.fromMap(raw);
     } on PlatformException catch (e) {
       debugPrint('refreshToken failed: ${e.message}');

@@ -147,6 +147,8 @@ void main() {
   testWidgets('local service actions start at the left edge of the sheet', (
     tester,
   ) async {
+    var allowLanAccess = false;
+    final enableCalls = <MethodCall>[];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(mcpChannel, (call) async {
           if (call.method == 'state') {
@@ -154,6 +156,19 @@ void main() {
               'enabled': true,
               'running': true,
               'host': '127.0.0.1',
+              'port': 8765,
+              'token': 'test-token',
+            };
+          }
+          if (call.method == 'setEnabled') {
+            enableCalls.add(call);
+            if (!allowLanAccess) {
+              throw PlatformException(code: 'MCP_ERROR', message: '局域网权限未授权');
+            }
+            return <String, Object?>{
+              'enabled': true,
+              'running': true,
+              'host': '192.168.1.2',
               'port': 8765,
               'token': 'test-token',
             };
@@ -197,6 +212,21 @@ void main() {
     expect(find.text('复制地址'), findsOneWidget);
     expect(find.text('复制 Token'), findsOneWidget);
     expect(find.text('刷新 Token'), findsOneWidget);
+    expect(find.textContaining('此地址仅能在当前设备访问'), findsOneWidget);
+    final enableLan = find.byKey(const ValueKey('local-service-enable-lan'));
+    await tester.tap(enableLan);
+    await tester.pumpAndSettle();
+    expect(enableCalls.single.arguments, {'enable': true});
+
+    // Denial preserves the existing loopback service and its details entry.
+    await tester.tap(find.text('本机服务'));
+    await tester.pumpAndSettle();
+    expect(sheet, findsOneWidget);
+    allowLanAccess = true;
+    await tester.tap(enableLan);
+    await tester.pumpAndSettle();
+    expect(enableCalls.length, 2);
+    expect(find.textContaining('当前仅本机可用'), findsNothing);
   });
 
   testWidgets(

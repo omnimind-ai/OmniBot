@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.ui.channel
 import android.content.Context
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.mcp.McpServerManager
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,7 @@ class McpServerChannel {
                         "setEnabled" -> {
                             val enable = call.argument<Boolean>("enable") ?: false
                             val port = call.argument<Int>("port")
+                            if (enable) LocalNetworkPermission.requestForServer(context)
                             val state = McpServerManager.setEnabled(context, enable, port)
                             respondSuccess(result, state.toMap())
                         }
