@@ -318,24 +318,9 @@ List<String> _mergeAgentReasoningEffortOptions({
 }
 
 String? _normalizeAgentReasoningEffort(dynamic value) {
-  final text = value?.toString().trim().toLowerCase() ?? '';
-  if (text.isEmpty) {
-    return null;
-  }
-  return switch (text) {
-    'no' || 'none' || 'off' => 'none',
-    'min' || 'minimal' || 'minimum' => 'minimal',
-    'med' || 'medium' => 'medium',
-    'extra_high' ||
-    'extra-high' ||
-    'very_high' ||
-    'very-high' ||
-    'x-high' ||
-    'x high' ||
-    'xhigh' => 'xhigh',
-    'low' || 'high' => text,
-    _ => text,
-  };
+  // ACP option values are opaque identifiers owned by the active session.
+  final text = value?.toString().trim() ?? '';
+  return text.isEmpty ? null : text;
 }
 
 String? _remoteCodexOptionId(dynamic item) {

@@ -267,22 +267,11 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
     );
   }
 
-  String _agentReasoningEffortLabel(String effort, {bool compact = false}) {
-    final normalized = effort.trim().toLowerCase();
+  String _agentReasoningEffortLabel(String effort) {
+    final value = effort.trim();
+    if (value.isNotEmpty) return value;
     final english = Localizations.localeOf(context).languageCode == 'en';
-    return switch (normalized) {
-      'none' || 'no' => english ? 'No reasoning' : (compact ? '无' : '无推理'),
-      'minimal' || 'min' => english ? 'Minimal' : '极低',
-      'low' => english ? 'Low' : '低',
-      'medium' || 'med' => english ? 'Medium' : '中',
-      'high' => english ? 'High' : '高',
-      'xhigh' ||
-      'extra_high' ||
-      'extra-high' ||
-      'very_high' ||
-      'very-high' => english ? 'XHigh' : '超高',
-      _ => effort.trim().isEmpty ? (english ? 'Reasoning' : '推理') : effort,
-    };
+    return english ? 'Reasoning' : '推理';
   }
 
   List<String> _agentRunSettingsOptions({

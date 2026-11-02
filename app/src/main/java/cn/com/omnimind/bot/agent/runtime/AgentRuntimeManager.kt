@@ -1834,7 +1834,7 @@ class AgentRuntimeManager private constructor(
                 boundModel = boundModel
             )
         }
-        val providerModelsForAdapter = if (usesSharedProvider && providerModels.isEmpty()) {
+        val adapterModels = if (usesSharedProvider && providerModels.isEmpty()) {
             // A persisted binding is an explicit user choice. The adapter
             // still needs a one-item config document, but that document is
             // derived locally and does not imply a Provider catalog request.
@@ -1848,6 +1848,11 @@ class AgentRuntimeManager private constructor(
         } else {
             providerModels
         }
+        val providerModelsForAdapter = if (usesSharedProvider && sharedProviderProfile != null) {
+            val selectedCatalog = (adapterModels + ProviderModelOption(id = requireNotNull(resolvedModel)))
+                .distinctBy { it.id }
+            ModelProviderConfigStore.resolveModelCapabilities(appContext, sharedProviderProfile, selectedCatalog)
+        } else adapterModels
         val harnessAdapter = AcpHarnessAdapters.forProfile(profile)
         val mapping = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
@@ -1855,6 +1860,7 @@ class AgentRuntimeManager private constructor(
                 provider = sharedProvider,
                 model = resolvedModel,
                 harnessAdapter = harnessAdapter,
+                providerProfile = sharedProviderProfile,
             )
         )
         // Re-read editable files at process launch; the running process keeps its snapshot.
@@ -1882,6 +1888,7 @@ class AgentRuntimeManager private constructor(
                 provider = sharedProvider,
                 model = resolvedModel,
                 harnessAdapter = harnessAdapter,
+                providerProfile = sharedProviderProfile,
             ),
             mapping = mapping,
             providerModels = providerModelsForAdapter,

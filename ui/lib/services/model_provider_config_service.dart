@@ -209,6 +209,15 @@ class ProviderModelOption {
   final String? group;
   final bool? attachment;
   final bool? reasoning;
+  final List<String> supportedReasoningLevels;
+  final String? defaultReasoningLevel;
+  final bool? reasoningCanDisable;
+  final bool? reasoningDefaultEnabled;
+  final bool? reasoningSupportsAdaptive;
+  final String? reasoningWireFormat;
+  final bool? reasoningEffortSupported;
+  final bool? reasoningContentRequired;
+  final String? reasoningCapabilitySource;
   final bool? toolCall;
   final bool? structuredOutput;
   final bool? temperature;
@@ -229,6 +238,15 @@ class ProviderModelOption {
     this.group,
     this.attachment,
     this.reasoning,
+    this.supportedReasoningLevels = const [],
+    this.defaultReasoningLevel,
+    this.reasoningCanDisable,
+    this.reasoningDefaultEnabled,
+    this.reasoningSupportsAdaptive,
+    this.reasoningWireFormat,
+    this.reasoningEffortSupported,
+    this.reasoningContentRequired,
+    this.reasoningCapabilitySource,
     this.toolCall,
     this.structuredOutput,
     this.temperature,
@@ -251,6 +269,19 @@ class ProviderModelOption {
       group: _readNonEmptyString(map?['group']),
       attachment: _readBool(map?['attachment']),
       reasoning: _readBool(map?['reasoning']),
+      supportedReasoningLevels: _readStringList(
+        map?['supportedReasoningLevels'],
+      ),
+      defaultReasoningLevel: _readNonEmptyString(map?['defaultReasoningLevel']),
+      reasoningCanDisable: _readBool(map?['reasoningCanDisable']),
+      reasoningDefaultEnabled: _readBool(map?['reasoningDefaultEnabled']),
+      reasoningSupportsAdaptive: _readBool(map?['reasoningSupportsAdaptive']),
+      reasoningWireFormat: _readNonEmptyString(map?['reasoningWireFormat']),
+      reasoningEffortSupported: _readBool(map?['reasoningEffortSupported']),
+      reasoningContentRequired: _readBool(map?['reasoningContentRequired']),
+      reasoningCapabilitySource: _readNonEmptyString(
+        map?['reasoningCapabilitySource'],
+      ),
       toolCall: _readBool(map?['toolCall']),
       structuredOutput: _readBool(map?['structuredOutput']),
       temperature: _readBool(map?['temperature']),
@@ -273,6 +304,15 @@ class ProviderModelOption {
     String? group,
     bool? attachment,
     bool? reasoning,
+    List<String>? supportedReasoningLevels,
+    String? defaultReasoningLevel,
+    bool? reasoningCanDisable,
+    bool? reasoningDefaultEnabled,
+    bool? reasoningSupportsAdaptive,
+    String? reasoningWireFormat,
+    bool? reasoningEffortSupported,
+    bool? reasoningContentRequired,
+    String? reasoningCapabilitySource,
     bool? toolCall,
     bool? structuredOutput,
     bool? temperature,
@@ -294,6 +334,22 @@ class ProviderModelOption {
       group: group ?? this.group,
       attachment: attachment ?? this.attachment,
       reasoning: reasoning ?? this.reasoning,
+      supportedReasoningLevels:
+          supportedReasoningLevels ?? this.supportedReasoningLevels,
+      defaultReasoningLevel:
+          defaultReasoningLevel ?? this.defaultReasoningLevel,
+      reasoningCanDisable: reasoningCanDisable ?? this.reasoningCanDisable,
+      reasoningDefaultEnabled:
+          reasoningDefaultEnabled ?? this.reasoningDefaultEnabled,
+      reasoningSupportsAdaptive:
+          reasoningSupportsAdaptive ?? this.reasoningSupportsAdaptive,
+      reasoningWireFormat: reasoningWireFormat ?? this.reasoningWireFormat,
+      reasoningEffortSupported:
+          reasoningEffortSupported ?? this.reasoningEffortSupported,
+      reasoningContentRequired:
+          reasoningContentRequired ?? this.reasoningContentRequired,
+      reasoningCapabilitySource:
+          reasoningCapabilitySource ?? this.reasoningCapabilitySource,
       toolCall: toolCall ?? this.toolCall,
       structuredOutput: structuredOutput ?? this.structuredOutput,
       temperature: temperature ?? this.temperature,
@@ -317,6 +373,15 @@ class ProviderModelOption {
       'group': group,
       'attachment': attachment,
       'reasoning': reasoning,
+      'supportedReasoningLevels': supportedReasoningLevels,
+      'defaultReasoningLevel': defaultReasoningLevel,
+      'reasoningCanDisable': reasoningCanDisable,
+      'reasoningDefaultEnabled': reasoningDefaultEnabled,
+      'reasoningSupportsAdaptive': reasoningSupportsAdaptive,
+      'reasoningWireFormat': reasoningWireFormat,
+      'reasoningEffortSupported': reasoningEffortSupported,
+      'reasoningContentRequired': reasoningContentRequired,
+      'reasoningCapabilitySource': reasoningCapabilitySource,
       'toolCall': toolCall,
       'structuredOutput': structuredOutput,
       'temperature': temperature,
@@ -624,7 +689,8 @@ class ModelProviderConfigService {
       providerLogoUrl: metadataProvider?.logoUrl,
       family: metadata?.family,
       attachment: item.attachment ?? metadata?.attachment,
-      reasoning: item.reasoning ?? metadata?.reasoning,
+      // Shared Provider metadata owns executable reasoning capabilities.
+      reasoning: item.reasoning,
       toolCall: item.toolCall ?? metadata?.toolCall,
       structuredOutput: item.structuredOutput ?? metadata?.structuredOutput,
       temperature: item.temperature ?? metadata?.temperature,

@@ -400,6 +400,15 @@ class AssistsCoreManager(private val context: Context) {
             "group" to group,
             "attachment" to attachment,
             "reasoning" to reasoning,
+            "supportedReasoningLevels" to supportedReasoningLevels,
+            "defaultReasoningLevel" to defaultReasoningLevel,
+            "reasoningCanDisable" to reasoningCanDisable,
+            "reasoningDefaultEnabled" to reasoningDefaultEnabled,
+            "reasoningSupportsAdaptive" to reasoningSupportsAdaptive,
+            "reasoningWireFormat" to reasoningWireFormat,
+            "reasoningEffortSupported" to reasoningEffortSupported,
+            "reasoningContentRequired" to reasoningContentRequired,
+            "reasoningCapabilitySource" to reasoningCapabilitySource,
             "toolCall" to toolCall,
             "structuredOutput" to structuredOutput,
             "temperature" to temperature
@@ -1673,8 +1682,11 @@ class AssistsCoreManager(private val context: Context) {
                     ModelProviderConfigStore.sameCanonicalEndpoint(apiBase, profile.baseUrl)) {
                     ModelProviderConfigStore.rememberModels(context, profile, models)
                 }
+                val resolvedModels = ModelProviderConfigStore.resolveModelCapabilities(
+                    context, profile.copy(baseUrl = apiBase), models,
+                )
                 withContext(Dispatchers.Main) {
-                    result.success(models.map { it.toMap() })
+                    result.success(resolvedModels.map { it.toMap() })
                 }
             } catch (e: CancellationException) {
                 throw e

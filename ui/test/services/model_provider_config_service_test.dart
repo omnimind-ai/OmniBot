@@ -162,7 +162,20 @@ void main() {
           case 'fetchProviderModels':
             fetchCalls.add(call);
             return <Map<String, dynamic>>[
-              <String, dynamic>{'id': 'model-1', 'displayName': 'Model 1'},
+              <String, dynamic>{
+                'id': 'model-1',
+                'displayName': 'Model 1',
+                'reasoning': true,
+                'supportedReasoningLevels': ['none', 'low', 'high'],
+                'defaultReasoningLevel': 'high',
+                'reasoningCanDisable': true,
+                'reasoningDefaultEnabled': false,
+                'reasoningSupportsAdaptive': true,
+                'reasoningWireFormat': 'qwen',
+                'reasoningEffortSupported': false,
+                'reasoningContentRequired': true,
+                'reasoningCapabilitySource': 'provider',
+              },
             ];
           default:
             throw PlatformException(code: 'unexpected_method');
@@ -179,6 +192,29 @@ void main() {
       );
 
       expect(models.single.id, 'model-1');
+      final roundTrip = ProviderModelOption.fromMap(models.single.toMap());
+      expect(roundTrip.reasoning, isTrue);
+      expect(roundTrip.supportedReasoningLevels, ['none', 'low', 'high']);
+      expect(roundTrip.defaultReasoningLevel, 'high');
+      expect(roundTrip.reasoningCanDisable, isTrue);
+      expect(roundTrip.reasoningDefaultEnabled, isFalse);
+      expect(roundTrip.reasoningSupportsAdaptive, isTrue);
+      expect(roundTrip.reasoningWireFormat, 'qwen');
+      expect(roundTrip.reasoningEffortSupported, isFalse);
+      expect(roundTrip.reasoningContentRequired, isTrue);
+      expect(
+        ProviderModelOption.fromMap(
+          roundTrip.copyWith(reasoningSupportsAdaptive: false).toMap(),
+        ).reasoningSupportsAdaptive,
+        isFalse,
+      );
+      expect(
+        ProviderModelOption.fromMap(
+          roundTrip.copyWith(reasoningContentRequired: false).toMap(),
+        ).reasoningContentRequired,
+        isFalse,
+      );
+      expect(roundTrip.reasoningCapabilitySource, 'provider');
       final arguments = Map<dynamic, dynamic>.from(
         fetchCalls.single.arguments as Map,
       );
@@ -350,6 +386,15 @@ void main() {
     expect(option.displayName, 'Legacy Model');
     expect(option.contextLimit, isNull);
     expect(option.inputModalities, isEmpty);
+    expect(option.supportedReasoningLevels, isEmpty);
+    expect(option.defaultReasoningLevel, isNull);
+    expect(option.reasoningCanDisable, isNull);
+    expect(option.reasoningDefaultEnabled, isNull);
+    expect(option.reasoningSupportsAdaptive, isNull);
+    expect(option.reasoningWireFormat, isNull);
+    expect(option.reasoningEffortSupported, isNull);
+    expect(option.reasoningContentRequired, isNull);
+    expect(option.reasoningCapabilitySource, isNull);
   });
 
   test('enriches model options with models.dev metadata', () async {
@@ -373,6 +418,8 @@ void main() {
     expect(enriched.single.inputModalities, ['text', 'image', 'pdf']);
     expect(enriched.single.outputModalities, ['text']);
     expect(enriched.single.attachment, isTrue);
+    expect(enriched.single.reasoning, isNull);
+    expect(enriched.single.reasoningCapabilitySource, isNull);
     expect(enriched.single.toolCall, isTrue);
     expect(enriched.single.structuredOutput, isTrue);
     expect(enriched.single.temperature, isTrue);

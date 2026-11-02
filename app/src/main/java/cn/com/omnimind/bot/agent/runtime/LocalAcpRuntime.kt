@@ -3941,16 +3941,44 @@ internal class LocalAcpRuntime(
         // The existing profile store owns persistence and session deletion.
         val saved = profileStore.sessionConfiguration(sessionId)
         try {
-            for ((key, encoded) in saved) {
+            var keptAgentThoughtLevel = false
+            val modelConfigIds = sessionConfigOptions(session)
+                .filter { it.category == SessionConfigOptionCategory.MODEL }
+                .map { it.id.value }.toSet() + "model"
+            // The selected model owns the remaining config's available values.
+            // ACP option ordering is presentation data, not restoration order.
+            val ordered = saved.entries.sortedBy { (key, _) ->
+                if (key.startsWith("acp.config:") && key.removePrefix("acp.config:") in modelConfigIds) 0 else 1
+            }
+            for ((key, encoded) in ordered) {
                 if (!key.startsWith("acp.config:")) continue
                 val raw = Json.parseToJsonElement(encoded) as JsonPrimitive
                 val value: Any = if (raw.isString) raw.content else checkNotNull(raw.booleanOrNull)
+                val configId = key.removePrefix("acp.config:")
+                val options = sessionConfigOptions(session)
+                val option = options.firstOrNull { it.id.value == configId }
+                    ?: options.firstOrNull {
+                        configId == "reasoning_effort" && it.category == SessionConfigOptionCategory.THOUGHT_LEVEL
+                    }
+                if (value is String && option is SessionConfigOption.Select &&
+                    (option.category == SessionConfigOptionCategory.THOUGHT_LEVEL ||
+                        (option.category == null && option.id.value == "reasoning_effort"))) {
+                    val available = option.flatOptions().map { it.value.value }
+                    if (value !in available && option.currentValue.value in available) {
+                        // Model capabilities may change across load/refresh. The
+                        // Agent has already selected its valid session value;
+                        // an obsolete host preference must not replace it.
+                        keptAgentThoughtLevel = true
+                        continue
+                    }
+                }
                 setConfigOption(mapOf(
                     "sessionId" to sessionId,
-                    "configId" to key.removePrefix("acp.config:"),
+                    "configId" to configId,
                     "value" to value,
                 ))
             }
+            if (keptAgentThoughtLevel) persistSessionConfiguration(session)
         } catch (error: Throwable) {
             sessions.remove(sessionId, session)
             sessionCwds.remove(sessionId)

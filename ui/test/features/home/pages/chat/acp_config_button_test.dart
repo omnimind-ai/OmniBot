@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/widgets/acp_config_button.dart';
 import 'package:ui/widgets/conversation_model_selector.dart';
@@ -692,13 +693,16 @@ void main() {
       expect(refreshes, 2);
       await tester.tap(find.byKey(const ValueKey('acp-config-vendor_thought')));
       await tester.pumpAndSettle();
-      expect(find.text('High'), findsOneWidget);
+      expect(find.text('high'), findsOneWidget);
     },
   );
 
   testWidgets('select rejection restores the official value', (tester) async {
     await tester.pumpWidget(
       MaterialApp(
+        locale: const Locale('zh'),
+        supportedLocales: const [Locale('en'), Locale('zh')],
+        localizationsDelegates: GlobalMaterialLocalizations.delegates,
         home: Scaffold(
           body: AcpConfigPanel(
             load: () async => {
@@ -717,9 +721,10 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('acp-config-vendor_thought')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('High').last);
+    expect(find.text('思考强度'), findsOneWidget);
+    await tester.tap(find.text('high').last);
     await tester.pumpAndSettle();
-    expect(find.text('Low'), findsOneWidget);
+    expect(find.text('low'), findsOneWidget);
     expect(find.text('助手暂时无法完成操作，请重试。'), findsOneWidget);
   });
 

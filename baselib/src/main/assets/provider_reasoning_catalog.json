@@ -1,0 +1,1536 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "package": "@earendil-works/pi-ai",
+    "version": "1.4.0",
+    "providers": [
+      "anthropic",
+      "deepseek",
+      "minimax",
+      "minimax-cn",
+      "moonshotai",
+      "moonshotai-cn",
+      "openai",
+      "openai-codex",
+      "qwen-token-plan",
+      "qwen-token-plan-cn",
+      "qwen-token-plan-individual",
+      "xai",
+      "xiaomi",
+      "zai",
+      "zai-coding-cn"
+    ]
+  },
+  "routes": [
+    {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.anthropic.com",
+      "models": {
+        "claude-fable-5": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "claude-fable-5-1": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "claude-haiku-4-5": {
+          "reasoning": true
+        },
+        "claude-haiku-4-5-20251001": {
+          "reasoning": true
+        },
+        "claude-haiku-5-5": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ]
+        },
+        "claude-opus-4-5": {
+          "reasoning": true
+        },
+        "claude-opus-4-5-20251101": {
+          "reasoning": true
+        },
+        "claude-opus-4-6": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "max"
+          ]
+        },
+        "claude-opus-4-7": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "xhigh",
+            "max"
+          ]
+        },
+        "claude-opus-4-8": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "xhigh",
+            "max"
+          ]
+        },
+        "claude-opus-5": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "xhigh",
+            "max"
+          ]
+        },
+        "claude-opus-5-5": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "claude-sonnet-4-5": {
+          "reasoning": true
+        },
+        "claude-sonnet-4-5-20250929": {
+          "reasoning": true
+        },
+        "claude-sonnet-4-6": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "max"
+          ]
+        },
+        "claude-sonnet-5": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "xhigh",
+            "max"
+          ]
+        },
+        "claude-sonnet-5-5": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.minimax.io/anthropic",
+      "models": {
+        "MiniMax-M2.7": {
+          "reasoning": true
+        },
+        "MiniMax-M2.7-highspeed": {
+          "reasoning": true
+        },
+        "MiniMax-M3": {
+          "reasoning": true
+        },
+        "MiniMax-M3.1-Flash": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "anthropic-messages",
+      "baseUrl": "https://api.minimaxi.com/anthropic",
+      "models": {
+        "MiniMax-M2.7": {
+          "reasoning": true
+        },
+        "MiniMax-M2.7-highspeed": {
+          "reasoning": true
+        },
+        "MiniMax-M3": {
+          "reasoning": true
+        },
+        "MiniMax-M3.1-Flash": {
+          "reasoning": true,
+          "reasoningSupportsAdaptive": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-codex-responses",
+      "baseUrl": "https://chatgpt.com/backend-api",
+      "sourceType": "chatgpt_oauth",
+      "models": {
+        "gpt-5.6-luna": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "xhigh",
+            "max"
+          ]
+        },
+        "gpt-5.6-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "xhigh",
+            "max"
+          ]
+        },
+        "gpt-5.6-terra": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "xhigh",
+            "max"
+          ]
+        },
+        "gpt-6-astra": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-6-luna": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6.1-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://api.deepseek.com",
+      "models": {
+        "deepseek-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ]
+        },
+        "deepseek-v4-pro": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ]
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://api.moonshot.ai/v1",
+      "models": {
+        "kimi-k2.6": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false
+        },
+        "kimi-k2.7-code": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningCanDisable": false
+        },
+        "kimi-k2.7-code-highspeed": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningCanDisable": false
+        },
+        "kimi-k3": {
+          "reasoning": true,
+          "reasoningWireFormat": "openai",
+          "reasoningEffortSupported": true,
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://api.moonshot.cn/v1",
+      "models": {
+        "kimi-k2.6": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false
+        },
+        "kimi-k2.7-code": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningCanDisable": false
+        },
+        "kimi-k2.7-code-highspeed": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningCanDisable": false
+        },
+        "kimi-k3": {
+          "reasoning": true,
+          "reasoningWireFormat": "openai",
+          "reasoningEffortSupported": true,
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://api.openai.com/v1",
+      "models": {
+        "gpt-4": {
+          "reasoning": false
+        },
+        "gpt-4-turbo": {
+          "reasoning": false
+        },
+        "gpt-4.1": {
+          "reasoning": false
+        },
+        "gpt-4.1-mini": {
+          "reasoning": false
+        },
+        "gpt-4.1-nano": {
+          "reasoning": false
+        },
+        "gpt-4o": {
+          "reasoning": false
+        },
+        "gpt-4o-2024-05-13": {
+          "reasoning": false
+        },
+        "gpt-4o-2024-08-06": {
+          "reasoning": false
+        },
+        "gpt-4o-2024-11-20": {
+          "reasoning": false
+        },
+        "gpt-4o-mini": {
+          "reasoning": false
+        },
+        "gpt-5": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5-chat-latest": {
+          "reasoning": false
+        },
+        "gpt-5-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5-nano": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5.1": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.2": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.4": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.4-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.4-nano": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.5": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.6-luna": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.6-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.6-terra": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6-astra": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-6-luna": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6.1-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o1": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o3": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o3-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o4-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://api.xiaomimimo.com/v1",
+      "models": {
+        "mimo-v2.6-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "off",
+            "high"
+          ],
+          "reasoningCanDisable": true
+        },
+        "mimo-v2.6-pro": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "off",
+            "high"
+          ],
+          "reasoningCanDisable": true
+        },
+        "mimo-v2.6-pro-ultraspeed": {
+          "reasoning": true,
+          "reasoningWireFormat": "deepseek",
+          "reasoningEffortSupported": false,
+          "reasoningContentRequired": true,
+          "supportedReasoningLevels": [
+            "off",
+            "high"
+          ],
+          "reasoningCanDisable": true
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+      "models": {
+        "glm-4.7": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": false
+        },
+        "glm-5-turbo": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": false
+        },
+        "glm-5.2": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "none",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "glm-5.2-highspeed": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "none",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "glm-5.3": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5.3-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5.3-highspeed": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://open.bigmodel.cn/api/coding/paas/v4",
+      "models": {
+        "glm-4.6v": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": false
+        },
+        "glm-5.3": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5.3-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5.3-highspeed": {
+          "reasoning": true,
+          "reasoningWireFormat": "zai",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1",
+      "models": {
+        "deepseek-v3.2": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "deepseek-v4-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4-flash-0731": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4-pro": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4-pro-0813": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4.1-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4.1-flash-1017": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ]
+        },
+        "glm-5.1": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ]
+        },
+        "glm-5.2": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5.3": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "kimi-k2.5": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "kimi-k2.6": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "kimi-k2.7-code": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "MiniMax-M2.5": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.6-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.6-plus": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.7-max": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.7-plus": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.8-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "qwen3.8-max": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-completions",
+      "baseUrl": "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      "models": {
+        "deepseek-v3.2": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "deepseek-v4-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4-flash-0731": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4-pro": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4-pro-0813": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4.1-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "deepseek-v4.1-flash-1017": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ]
+        },
+        "glm-5.1": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ]
+        },
+        "glm-5.2": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "glm-5.3": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "high",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "kimi-k2.5": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "kimi-k2.6": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "kimi-k2.7-code": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "MiniMax-M2.5": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.6-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.6-plus": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.7-max": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.7-plus": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": false
+        },
+        "qwen3.8-flash": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "qwen3.8-max": {
+          "reasoning": true,
+          "reasoningWireFormat": "qwen",
+          "reasoningEffortSupported": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-responses",
+      "baseUrl": "https://api.openai.com/v1",
+      "models": {
+        "gpt-4": {
+          "reasoning": false
+        },
+        "gpt-4-turbo": {
+          "reasoning": false
+        },
+        "gpt-4.1": {
+          "reasoning": false
+        },
+        "gpt-4.1-mini": {
+          "reasoning": false
+        },
+        "gpt-4.1-nano": {
+          "reasoning": false
+        },
+        "gpt-4o": {
+          "reasoning": false
+        },
+        "gpt-4o-2024-05-13": {
+          "reasoning": false
+        },
+        "gpt-4o-2024-08-06": {
+          "reasoning": false
+        },
+        "gpt-4o-2024-11-20": {
+          "reasoning": false
+        },
+        "gpt-4o-mini": {
+          "reasoning": false
+        },
+        "gpt-5": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5-chat-latest": {
+          "reasoning": false
+        },
+        "gpt-5-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5-nano": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5-pro": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5.1": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.2": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.2-pro": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5.3-codex": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.3-codex-spark": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5.4": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.4-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.4-nano": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.4-pro": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5.5": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.5-pro": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-5.6-luna": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.6-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-5.6-terra": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6-astra": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-6-luna": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-6.1-sol": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": false
+        },
+        "gpt-daybreak-blue-latest": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-daybreak-red-latest": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "reasoningCanDisable": true
+        },
+        "gpt-realtime-2.1": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o1": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o1-pro": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o3": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o3-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o3-pro": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        },
+        "o4-mini": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    },
+    {
+      "api": "openai-responses",
+      "baseUrl": "https://api.x.ai/v1",
+      "models": {
+        "grok-4.3": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "none",
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": true
+        },
+        "grok-4.5": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "grok-4.6": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        },
+        "grok-4.7": {
+          "reasoning": true,
+          "supportedReasoningLevels": [
+            "low",
+            "medium",
+            "high",
+            "xhigh"
+          ],
+          "reasoningCanDisable": false
+        }
+      }
+    }
+  ]
+}

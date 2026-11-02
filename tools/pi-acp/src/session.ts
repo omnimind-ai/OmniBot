@@ -4,12 +4,13 @@ import {
   type RequestPermissionRequest, type RequestPermissionResponse,
   type SessionConfigOption, type SessionModeState, type SessionNotification,
 } from "@agentclientprotocol/sdk/unstable";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { AssistantMessage, OpenAICompletionsCompat } from "@earendil-works/pi-ai";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import {
   createAgentSession, createMcpExtension, DefaultResourceLoader, SessionManager, SettingsManager,
   type AgentSession, type AgentSessionEvent, type ExtensionFactory, type ModelRuntime, type ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
-import { type LaunchConfig, PROVIDER_ID } from "./config.js";
+import { createModelRuntime, type LaunchConfig, PROVIDER_ID, refreshedLaunchConfig, registerModelCatalog } from "./config.js";
 import { promptContent, toolDescription } from "./content.js";
 import { sessionMcpConfig } from "./mcp.js";
 import { PiProjection } from "./projection.js";
@@ -20,6 +21,17 @@ interface PromptOperation {
   lastAssistant?: AssistantMessage;
   settledAborted: boolean;
 }
+
+function sessionCatalog(config: LaunchConfig, modelId: string): LaunchConfig {
+  try { return refreshedLaunchConfig(config, modelId); }
+  catch (error) {
+    throw RequestError.invalidParams(undefined, error instanceof Error ? error.message : "Invalid shared Provider catalog.");
+  }
+}
+
+// These SDK formats emit a boolean/type switch when effort and token budgets
+// are explicitly unavailable. Custom templates may still encode level values.
+const TOGGLE_THINKING_FORMATS = new Set(["deepseek", "qwen", "zai", "together", "qwen-chat-template"]);
 
 export class PiAcpSession {
   private session!: AgentSession;
@@ -41,7 +53,14 @@ export class PiAcpSession {
     private client: AgentContext,
   ) {}
 
-  static async create(manager: SessionManager, config: LaunchConfig, models: ModelRuntime, client: AgentContext, servers: McpServer[]): Promise<PiAcpSession> {
+  static async create(manager: SessionManager, launchConfig: LaunchConfig, client: AgentContext, servers: McpServer[]): Promise<PiAcpSession> {
+    const branch = manager.getBranch();
+    const storedModel = manager.buildSessionContext().model;
+    const modelId = storedModel?.modelId || launchConfig.modelId;
+    const config = structuredClone(sessionCatalog(launchConfig, modelId));
+    // Registries are mutable SDK state. Each ACP session keeps its own snapshot
+    // so loading one conversation cannot change another conversation's next tool turn.
+    const models = await createModelRuntime(config);
     const owned = new PiAcpSession(manager, config, models, client);
     const mcpConfig = sessionMcpConfig(servers, manager.getCwd());
     const settings = SettingsManager.inMemory({
@@ -58,13 +77,15 @@ export class PiAcpSession {
       extensionFactories: [owned.permissions(), createMcpExtension({ loadConfig: () => mcpConfig })],
     });
     await resources.reload();
-    const storedModel = manager.buildSessionContext().model;
-    const modelId = storedModel?.modelId || config.modelId;
     const model = models.getModel(PROVIDER_ID, modelId);
     if (!model) throw RequestError.invalidParams(undefined, `Model ${modelId} is unavailable in the shared Provider.`);
     const result = await createAgentSession({
       cwd: manager.getCwd(), agentDir: config.agentDir, sessionManager: manager,
       settingsManager: settings, resourceLoader: resources, modelRuntime: models, model,
+      // The SDK's restore heuristic uses message count. Preserve the official
+      // stored selection even in a session closed before its first prompt.
+      thinkingLevel: (branch.findLast((entry) => entry.type === "thinking_level_change")?.thinkingLevel as ThinkingLevel | undefined) ??
+        (branch.length === 0 ? config.modelThinkingDefaults?.[modelId] : undefined),
       sessionStartEvent: { type: "session_start", reason: storedModel ? "resume" : "startup" },
     });
     owned.session = result.session;
@@ -84,6 +105,31 @@ export class PiAcpSession {
   get id(): string { return this.manager.getSessionId(); }
   get cwd(): string { return this.manager.getCwd(); }
   get busy(): boolean { return this.operation !== undefined || this.mutation !== undefined; }
+  get launchConfig(): LaunchConfig { return structuredClone(this.config); }
+
+  async refreshCatalog(): Promise<void> {
+    await this.withIdleSession(async () => {
+      const previousModel = this.session.model!;
+      const next = sessionCatalog(this.config, previousModel.id);
+      if (next === this.config) return;
+      const previousThinking = this.session.thinkingLevel;
+      try {
+        registerModelCatalog(this.models, next);
+        await this.session.setModel(this.models.getModel(PROVIDER_ID, previousModel.id)!);
+      } catch (error) {
+        registerModelCatalog(this.models, this.config);
+        if (this.session.model !== previousModel) {
+          await this.session.setModel(previousModel);
+          this.session.setThinkingLevel(previousThinking);
+        }
+        throw RequestError.invalidParams(undefined, error instanceof Error ? error.message : "Could not refresh the shared Provider catalog.");
+      }
+      this.config = next;
+      this.publish({ sessionUpdate: "config_option_update", configOptions: this.configOptions() });
+      this.publishUsage();
+      await this.drain();
+    });
+  }
 
   modes(): SessionModeState {
     return {
@@ -97,16 +143,42 @@ export class PiAcpSession {
 
   configOptions(): SessionConfigOption[] {
     const modelIds = this.config.provider.models?.map((model) => model.id) || [this.config.modelId];
+    const sdkLevels = this.session.getAvailableThinkingLevels();
+    const toggle = this.hasThinkingToggle();
+    const thinkingLevels = toggle
+      ? [...(sdkLevels.includes("off") ? ["off"] : []), ...(sdkLevels.some((level) => level !== "off") ? ["on"] : [])]
+      : sdkLevels;
     return [
       { id: "model", name: "Model", category: "model", type: "select",
         currentValue: this.session.model!.id,
         options: modelIds.map((id) => ({ value: id, name: this.models.getModel(PROVIDER_ID, id)?.name || id })),
       },
       { id: "thought_level", name: "Thinking", category: "thought_level", type: "select",
-        currentValue: this.session.thinkingLevel,
-        options: this.session.getAvailableThinkingLevels().map((value) => ({ value, name: value })),
+        currentValue: toggle && this.session.thinkingLevel !== "off" ? "on" : this.session.thinkingLevel,
+        options: thinkingLevels.map((value) => ({ value, name: value })),
       },
     ];
+  }
+
+  private hasThinkingToggle(): boolean {
+    const model = this.session.model;
+    if (model?.api !== "openai-completions" || !model.reasoning) return false;
+    const compat = model.compat as OpenAICompletionsCompat | undefined;
+    return compat?.supportsReasoningEffort === false &&
+      TOGGLE_THINKING_FORMATS.has(compat.thinkingFormat ?? "") &&
+      compat.thinkingTokenBudgetField === undefined && compat.supportsThinkingTokenBudget !== true &&
+      !Object.keys(model.samplingParamsByThinkingLevel ?? {}).length;
+  }
+
+  private thinkingLevelFor(value: string): ThinkingLevel | undefined {
+    const available = this.session.getAvailableThinkingLevels();
+    if (!this.hasThinkingToggle()) return available.find((level) => level === value);
+    if (value === "off") return available.find((level) => level === "off");
+    if (value !== "on") return undefined;
+    // ACP's on value is a projection only. The SDK level remains the sole
+    // session state and is persisted through its normal thinking-level entry.
+    return [this.session.thinkingLevel, this.config.modelThinkingDefaults?.[this.session.model!.id], ...available]
+      .find((level): level is ThinkingLevel => level !== undefined && level !== "off" && available.includes(level));
   }
 
   async setConfig(id: string, value: string | boolean): Promise<SessionConfigOption[]> {
@@ -119,7 +191,7 @@ export class PiAcpSession {
         }
         await this.session.setModel(model);
       } else if (id === "thought_level") {
-        const level = this.session.getAvailableThinkingLevels().find((level) => level === value);
+        const level = this.thinkingLevelFor(value);
         if (!level) throw RequestError.invalidParams(undefined, "Unsupported thinking level.");
         this.session.setThinkingLevel(level);
       } else throw RequestError.invalidParams(undefined, `Unknown config option: ${id}`);
