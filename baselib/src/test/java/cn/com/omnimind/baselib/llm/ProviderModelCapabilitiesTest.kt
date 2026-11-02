@@ -1,6 +1,7 @@
 package cn.com.omnimind.baselib.llm
 
 import com.google.gson.Gson
+import java.net.URI
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import org.junit.Assert.assertEquals
@@ -28,7 +29,7 @@ class ProviderModelCapabilitiesTest {
     fun deepSeekAnthropicRouteUsesDeclaredEffortsThroughAdaptiveThinking() {
         for (base in listOf(
             "https://api.deepseek.com/anthropic", "https://api.deepseek.com/anthropic/v1/",
-            "https://api.deepseek.com:443/anthropic",
+            anthropicEndpointWithPort(443),
         )) {
             val model = parse("""
                 {"effort":{"supported_levels":["low","high","max"],"default_level":"high"}}
@@ -58,7 +59,7 @@ class ProviderModelCapabilitiesTest {
     fun deepSeekCompatibleNamesAndNonOfficialRoutesDoNotGainProtocolDefaults() {
         for (base in listOf(
             "https://proxy.invalid/anthropic", "https://api.deepseek.com.proxy.invalid/anthropic",
-            "http://api.deepseek.com/anthropic", "https://api.deepseek.com:8443/anthropic",
+            "http://api.deepseek.com/anthropic", anthropicEndpointWithPort(8443),
             "https://user@api.deepseek.com/anthropic", "https://api.deepseek.com/anthropic?route=custom",
             "https://api.deepseek.com/anthropic#custom", "https://api.deepseek.com/proxy/anthropic",
             "https://api.deepseek.com/anthropic/v2", "https://api.deepseek.com/v1?route=custom",
@@ -301,6 +302,9 @@ class ProviderModelCapabilitiesTest {
         assertTrue(normalized.supportedReasoningLevels.isEmpty())
         assertNull(normalized.reasoningCanDisable)
     }
+
+    private fun anthropicEndpointWithPort(port: Int): String =
+        URI("https", null, "api.deepseek.com", port, "/anthropic", null, null).toString()
 
     private fun parse(metadata: String, apiBase: String? = null): ProviderModelOption =
         ProviderModelCapabilities.applyDeclared(
