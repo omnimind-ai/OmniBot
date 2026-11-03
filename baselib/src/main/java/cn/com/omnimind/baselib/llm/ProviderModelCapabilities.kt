@@ -127,28 +127,36 @@ object ProviderModelCapabilities {
 
     /** Preserve unknown capability data and keep explicit rejection stronger than inferred support. */
     fun normalize(model: ProviderModelOption): ProviderModelOption {
-        if (model.reasoning == false) {
-            return model.copy(
+        // Older cached JSON can omit constructor-default fields. Restore those
+        // defaults before copy() validates the non-null model properties.
+        val restored = model.copy(
+            displayName = model.displayName.orEmpty().ifEmpty { model.id },
+            inputModalities = model.inputModalities.orEmpty(),
+            outputModalities = model.outputModalities.orEmpty(),
+            supportedReasoningLevels = model.supportedReasoningLevels.orEmpty(),
+        )
+        if (restored.reasoning == false) {
+            return restored.copy(
                 supportedReasoningLevels = emptyList(),
                 defaultReasoningLevel = null,
                 reasoningCanDisable = null,
                 reasoningDefaultEnabled = false,
             )
         }
-        val declaredLevels = model.supportedReasoningLevels.orEmpty()
+        val declaredLevels = restored.supportedReasoningLevels
             .map { it.trim().lowercase() }.filter(String::isNotEmpty).distinct()
-        val canDisable = model.reasoningCanDisable
+        val canDisable = restored.reasoningCanDisable
             ?: true.takeIf { declaredLevels.any(disabledLevels::contains) }
         val levels = if (canDisable == false) declaredLevels.filterNot(disabledLevels::contains) else declaredLevels
-        val defaultLevel = model.defaultReasoningLevel?.trim()?.lowercase()?.takeIf {
+        val defaultLevel = restored.defaultReasoningLevel?.trim()?.lowercase()?.takeIf {
             it in levels || (it in disabledLevels && canDisable == true)
         }
-        return model.copy(
-            reasoning = model.reasoning ?: true.takeIf { levels.any { it !in disabledLevels } },
+        return restored.copy(
+            reasoning = restored.reasoning ?: true.takeIf { levels.any { it !in disabledLevels } },
             supportedReasoningLevels = levels,
             defaultReasoningLevel = defaultLevel,
             reasoningCanDisable = canDisable,
-            reasoningDefaultEnabled = model.reasoningDefaultEnabled
+            reasoningDefaultEnabled = restored.reasoningDefaultEnabled
                 ?: false.takeIf { defaultLevel in disabledLevels },
         )
     }

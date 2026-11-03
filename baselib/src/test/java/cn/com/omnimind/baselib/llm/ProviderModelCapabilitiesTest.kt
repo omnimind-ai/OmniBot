@@ -303,6 +303,24 @@ class ProviderModelCapabilitiesTest {
         assertNull(normalized.reasoningCanDisable)
     }
 
+    @Test
+    fun oldCachedModelsRestoreMissingConstructorDefaultsWithoutInventingCapabilities() {
+        for (reasoning in listOf(null, true, false)) {
+            val fields = if (reasoning == null) "" else ",\"reasoning\":$reasoning"
+            val model = Gson().fromJson("""{"id":"legacy"$fields}""", ProviderModelOption::class.java)
+
+            val normalized = ProviderModelCapabilities.normalize(model)
+
+            assertEquals("legacy", normalized.id)
+            assertEquals("legacy", normalized.displayName)
+            assertTrue(normalized.inputModalities.isEmpty())
+            assertTrue(normalized.outputModalities.isEmpty())
+            assertTrue(normalized.supportedReasoningLevels.isEmpty())
+            assertEquals(reasoning, normalized.reasoning)
+            assertNull(normalized.defaultReasoningLevel)
+        }
+    }
+
     private fun anthropicEndpointWithPort(port: Int): String =
         URI("https", null, "api.deepseek.com", port, "/anthropic", null, null).toString()
 
