@@ -21,6 +21,7 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
 import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -560,11 +561,18 @@ internal fun naHistoryAttachments(sessionId: String, value: Any?): List<Map<Stri
 /** One transport owner for safe reads. Writes, including a lost prompt POST
  * response, are never retried. A read snapshot cannot admit another turn. */
 internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, retryReads: Boolean = true, consume: (Response) -> T): T {
+    // A peer can close an idle HTTP/1 connection before OkHttp probes it again.
+    // Writes cannot safely recover by replaying after an ambiguous I/O failure,
+    // so start each write with an empty pool and retire its connection afterward.
+    // Keep the shared dispatcher/TLS settings and the existing read/SSE policy.
+    val requestClient = if (request.method == "GET" || request.method == "HEAD") client else
+        client.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+            .retryOnConnectionFailure(false).build()
     var failures = 0
     while (true) {
         try {
             return suspendCancellableCoroutine { continuation ->
-                val call = client.newCall(request)
+                val call = requestClient.newCall(request)
                 continuation.invokeOnCancellation { call.cancel() }
                 call.enqueue(object : Callback {
                     override fun onFailure(call: Call, error: IOException) {
