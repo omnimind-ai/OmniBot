@@ -1,0 +1,152 @@
+{
+  "sourceBefore": "0a6269f539a86fceee08e0a0cfd633f59fbd32f0",
+  "sourceAfter": "8a94906e009d90e306392e0389231ef25ab6a6c7",
+  "apkSHA256": "19e6a100646e269effd034a7af66bf64f9c2762ddedb5dadbd15c8b885c44aec",
+  "device": "2407FRK8EC / Android API 36",
+  "entrypoint": "lib/main_standard.dart",
+  "fixture": {
+    "mode": "legacy",
+    "keepAliveTimeoutMs": 5000,
+    "keepAliveTimeoutBufferMs": 1000
+  },
+  "nativeTests": {
+    "before": {
+      "tests": 3,
+      "failures": 1
+    },
+    "after": {
+      "tests": 46,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "phoneErrors": {
+    "acpRequestFailures": 0,
+    "flutterExceptions": 0,
+    "fatalCrashes": 0
+  },
+  "cases": [
+    {
+      "case": "before-idle-7s",
+      "idleSeconds": 7.001,
+      "completed": false,
+      "failed": true,
+      "createRequests": 0,
+      "messageRequests": 0,
+      "runs": 0,
+      "statusSocket": 7,
+      "writeSockets": []
+    },
+    {
+      "case": "after-idle-7s",
+      "idleSeconds": 7.001,
+      "completed": true,
+      "failed": false,
+      "createRequests": 1,
+      "messageRequests": 1,
+      "runs": 1,
+      "statusSocket": 16,
+      "writeSockets": [
+        17,
+        18
+      ]
+    },
+    {
+      "case": "after-idle-9s",
+      "idleSeconds": 9.001,
+      "completed": true,
+      "failed": false,
+      "createRequests": 1,
+      "messageRequests": 1,
+      "runs": 1,
+      "statusSocket": 20,
+      "writeSockets": [
+        21,
+        22
+      ]
+    },
+    {
+      "case": "after-idle-12s",
+      "idleSeconds": 12.001,
+      "completed": true,
+      "failed": false,
+      "createRequests": 1,
+      "messageRequests": 1,
+      "runs": 1,
+      "statusSocket": 24,
+      "writeSockets": [
+        25,
+        26
+      ]
+    }
+  ],
+  "videos": [
+    {
+      "file": "after-idle-12s.mp4",
+      "duration": "00:00:21.01",
+      "decodeExit": 0,
+      "bytes": 3333741
+    },
+    {
+      "file": "after-idle-7s.mp4",
+      "duration": "00:00:16.84",
+      "decodeExit": 0,
+      "bytes": 2710842
+    },
+    {
+      "file": "after-idle-9s.mp4",
+      "duration": "00:00:24.47",
+      "decodeExit": 0,
+      "bytes": 3272056
+    },
+    {
+      "file": "before-idle-7s.mp4",
+      "duration": "00:00:16.24",
+      "decodeExit": 0,
+      "bytes": 2363284
+    }
+  ],
+  "files": [
+    {
+      "file": "before-idle-7s.png",
+      "bytes": 106082,
+      "sha256": "3704d6a773b52f7e06712e6ea115fe4b51ac04ce2a6ce375e82b26b6e5a4fbd2"
+    },
+    {
+      "file": "before-idle-7s.mp4",
+      "bytes": 2363284,
+      "sha256": "9cabbf1564986e5cc958ae17a69ed6559349cd26e8fe85d6259de33e72440975"
+    },
+    {
+      "file": "after-idle-7s.png",
+      "bytes": 181121,
+      "sha256": "39afa9c827c13825ba4fc12afd1a1d20c96faeafab4042d81ced4c000395b8ad"
+    },
+    {
+      "file": "after-idle-7s.mp4",
+      "bytes": 2710842,
+      "sha256": "416c661dfbb7003fb5ef7e0542fa33c88d5a689f1440a776cf247b7e1fe6e3ef"
+    },
+    {
+      "file": "after-idle-9s.png",
+      "bytes": 181173,
+      "sha256": "7c0e5df0f24a450985fec138f6252aa4936e301941435634f439f57041dfca4b"
+    },
+    {
+      "file": "after-idle-9s.mp4",
+      "bytes": 3272056,
+      "sha256": "1d274e1ac9895ab78605580ef5b230a77986df211609e04f2831c83ae4219107"
+    },
+    {
+      "file": "after-idle-12s.png",
+      "bytes": 180399,
+      "sha256": "bdfeb7b76583f60fef18f6538f3baa0f1c2602fe6e2a79ec28ba9b5b47cd656a"
+    },
+    {
+      "file": "after-idle-12s.mp4",
+      "bytes": 3333741,
+      "sha256": "242a62cf6170a9063f8239803ad2f7bba55cdba9d8b39f6555bab3dca4dfcbf3"
+    }
+  ]
+}
