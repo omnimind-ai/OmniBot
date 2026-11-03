@@ -31,6 +31,7 @@ import cn.com.omnimind.baselib.llm.OpenAiResponsesFunctionNameCodec
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.ProviderModelCapabilities
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
 import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
@@ -1624,7 +1625,10 @@ object HttpController {
         }
     }
 
-    private fun parseProviderModelsResponse(responseBody: String?): List<ProviderModelOption> {
+    private fun parseProviderModelsResponse(responseBody: String?): List<ProviderModelOption> =
+        parseProviderModelsResponse(responseBody, null)
+
+    private fun parseProviderModelsResponse(responseBody: String?, apiBase: String?): List<ProviderModelOption> {
         val payload = runCatching {
             completionJson.parseToJsonElement(responseBody ?: "{}") as? KxJsonObject
         }.getOrNull() ?: return emptyList()
@@ -1669,8 +1673,8 @@ object HttpController {
                     directKeys = listOf("outputModalities", "output_modalities"),
                     nestedValueKeys = listOf("output", "outputs")
                 )
-                add(
-                    ProviderModelOption(
+                add(ProviderModelCapabilities.applyDeclared(
+                    model = ProviderModelOption(
                         id = id,
                         displayName = displayName,
                         ownedBy = ownedBy,
@@ -1684,19 +1688,6 @@ object HttpController {
                             directKeys = listOf("attachment", "attachments", "vision"),
                             nestedValueKeys = listOf("attachment", "attachments", "vision", "image")
                         ),
-                        reasoning = parseProviderModelBoolean(
-                            itemObj = itemObj,
-                            directKeys = listOf("reasoning", "thinking"),
-                            nestedValueKeys = listOf("reasoning", "thinking")
-                        ),
-                        supportedReasoningLevels =
-                            (itemObj["supported_reasoning_levels"] as? KxJsonArray)
-                                ?.mapNotNull { level ->
-                                    ((level as? KxJsonObject)?.get("effort") as? JsonPrimitive)
-                                        ?.contentOrNull?.takeIf { it.isNotBlank() }
-                                }?.distinct().orEmpty(),
-                        defaultReasoningLevel =
-                            (itemObj["default_reasoning_level"] as? JsonPrimitive)?.contentOrNull,
                         toolCall = parseProviderModelBoolean(
                             itemObj = itemObj,
                             directKeys = listOf("toolCall", "tool_call", "tools"),
@@ -1712,8 +1703,10 @@ object HttpController {
                             directKeys = listOf("temperature"),
                             nestedValueKeys = listOf("temperature")
                         )
-                    )
-                )
+                    ),
+                    metadata = itemObj,
+                    apiBase = apiBase,
+                ))
             }
         }.sortedBy { it.id.lowercase() }
     }
@@ -4528,7 +4521,7 @@ object HttpController {
                     "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
                 )
             }
-            parseProviderModelsResponse(responseBody)
+            parseProviderModelsResponse(responseBody, normalizedApiBase)
         }
     }
 

@@ -325,21 +325,9 @@ class _AcpConfigPanelState extends State<AcpConfigPanel> {
 
   String _valueLabel(Map<String, dynamic> option, Map value) {
     final raw = value['value']?.toString() ?? '';
-    if (!_english &&
-        (option['category'] == 'thought_level' ||
-            option['id'] == 'reasoning_effort')) {
-      return const {
-            'default': '模型默认',
-            'none': '关闭',
-            'minimal': '极低',
-            'low': '低',
-            'medium': '中',
-            'high': '高',
-            'xhigh': '极高',
-            'max': '最高',
-          }[raw] ??
-          value['name']?.toString() ??
-          raw;
+    if (option['category'] == 'thought_level' ||
+        option['id'] == 'reasoning_effort') {
+      return raw;
     }
     return value['name']?.toString() ?? raw;
   }

@@ -694,6 +694,17 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 200));
+    for (final value in ['low', 'high', 'xhigh']) {
+      expect(
+        find.descendant(
+          of: find.byKey(
+            ValueKey('chat-input-agent-run-settings-option-effort-$value'),
+          ),
+          matching: find.text(value),
+        ),
+        findsOneWidget,
+      );
+    }
     await tester.tap(
       find.byKey(
         const ValueKey('chat-input-agent-run-settings-option-effort-xhigh'),

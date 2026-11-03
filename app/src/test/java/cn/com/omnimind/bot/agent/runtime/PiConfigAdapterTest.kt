@@ -1,7 +1,12 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.DeepSeekProvider
+import cn.com.omnimind.baselib.llm.ModelProviderProfile
+import cn.com.omnimind.baselib.llm.ProviderModelCapabilities
 import com.google.gson.JsonParser
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -53,10 +58,93 @@ class PiConfigAdapterTest {
             .getAsJsonArray("models")[0].asJsonObject
         assertEquals(2048, config["maxTokens"].asInt)
         val thinking = config.getAsJsonObject("thinkingLevelMap")
-        assertFalse(thinking.has("off"))
+        assertEquals("off", thinking["off"].asString)
         assertEquals("high", thinking["high"].asString)
         assertEquals("max", thinking["max"].asString)
         assertTrue(thinking["medium"].isJsonNull)
+    }
+
+    @Test
+    fun deepSeekDeclaredEffortsReachPiWithoutDisablingTheIndependentOffSwitch() {
+        val model = ProviderModelCapabilities.applyDeclared(
+            ProviderModelOption("deepseek-flash"),
+            Json.parseToJsonElement("""{
+                "effort": {"supported_levels":["low","high","max"],"default_level":"high"}
+            }""").jsonObject,
+            DeepSeekProvider.OFFICIAL_BASE_URL,
+        )
+        val profile = DeepSeekProvider.officialProfile().copy(revision = 7)
+        val document = JsonParser.parseString(buildPiModelsJson(
+            AgentProviderCredentials(profile.baseUrl, "private-key"), model.id, listOf(model), profile,
+        )).asJsonObject
+        val piModel = document.getAsJsonObject("providers").getAsJsonObject("omnibot")
+            .getAsJsonArray("models")[0].asJsonObject
+        assertTrue(piModel["reasoning"].asBoolean)
+        val thinking = piModel.getAsJsonObject("thinkingLevelMap")
+        assertEquals("none", thinking["off"].asString)
+        for (level in listOf("low", "high", "max")) assertEquals(level, thinking[level].asString)
+        for (level in listOf("minimal", "medium", "xhigh")) assertTrue(thinking[level].isJsonNull)
+        val identity = document.getAsJsonObject("_meta").getAsJsonObject("omnibot")
+        assertEquals(profile.id, identity["providerProfileId"].asString)
+        assertEquals(7, identity["providerRevision"].asInt)
+        assertEquals("high", identity.getAsJsonObject("modelThinkingDefaults")[model.id].asString)
+        assertFalse(document.toString().contains("private-key"))
+    }
+
+    @Test
+    fun reasoningEffortDeclarationsWorkWithoutARedundantBooleanAndPreserveNoneOnTheWire() {
+        val document = JsonParser.parseString(buildPiModelsJson(
+            AgentProviderCredentials("https://fixture.invalid/v1", "key"), "model",
+            listOf(ProviderModelOption("model", supportedReasoningLevels = listOf("none", "low", "high"),
+                defaultReasoningLevel = "none")),
+        )).asJsonObject
+        val model = document.getAsJsonObject("providers").getAsJsonObject("omnibot")
+            .getAsJsonArray("models")[0].asJsonObject
+        assertTrue(model["reasoning"].asBoolean)
+        assertEquals("none", model.getAsJsonObject("thinkingLevelMap")["off"].asString)
+        assertEquals("off", document.getAsJsonObject("_meta").getAsJsonObject("omnibot")
+            .getAsJsonObject("modelThinkingDefaults")["model"].asString)
+    }
+
+    @Test
+    fun launchIdentityAndAdaptiveThinkingUseTheSameCanonicalProviderSnapshot() {
+        val profile = ModelProviderProfile("anthropic-profile", "Claude", baseUrl = "https://api.anthropic.com/v1",
+            protocolType = "anthropic", revision = 3)
+        val input = AgentProviderMappingInput(
+            "pi-acp", AgentProviderCredentials(profile.baseUrl, "key", protocolType = profile.protocolType),
+            "adaptive-model", AcpHarnessAdapters.pi, providerProfile = profile,
+        )
+        val mapping = AgentConfigAdapterRegistry.map(input)
+        assertEquals(profile.id, mapping.environment["OMNIBOT_PI_PROVIDER_ID"])
+        assertEquals("3", mapping.environment["OMNIBOT_PI_PROVIDER_REVISION"])
+        assertEquals("anthropic-messages", mapping.environment["OMNIBOT_PI_PROVIDER_API"])
+        assertEquals("https://api.anthropic.com", mapping.environment["OMNIBOT_PI_PROVIDER_BASE_URL"])
+        val file = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, listOf(
+            ProviderModelOption("adaptive-model", reasoning = true, reasoningSupportsAdaptive = true,
+                supportedReasoningLevels = listOf("low", "high", "max"), reasoningCanDisable = false),
+        ), "{}").single()
+        val model = JsonParser.parseString(file.content).asJsonObject.getAsJsonObject("providers")
+            .getAsJsonObject("omnibot").getAsJsonArray("models")[0].asJsonObject
+        assertTrue(model.getAsJsonObject("compat")["forceAdaptiveThinking"].asBoolean)
+        assertTrue(model.getAsJsonObject("thinkingLevelMap")["off"].isJsonNull)
+    }
+
+    @Test
+    fun mandatoryReasoningDoesNotOfferOffAndUnknownModelsDoNotGainInventedCapabilities() {
+        val config = JsonParser.parseString(buildPiModelsJson(
+            AgentProviderCredentials("https://fixture.invalid", "key", protocolType = "anthropic"), "required",
+            listOf(
+                ProviderModelOption("required", reasoning = true, reasoningCanDisable = false,
+                    supportedReasoningLevels = listOf("low", "high", "max")),
+                ProviderModelOption("unknown"),
+                ProviderModelOption("disabled", reasoning = false, supportedReasoningLevels = listOf("high")),
+            ),
+        )).asJsonObject.getAsJsonObject("providers").getAsJsonObject("omnibot").getAsJsonArray("models")
+        assertTrue(config[0].asJsonObject.getAsJsonObject("thinkingLevelMap")["off"].isJsonNull)
+        assertFalse(config[1].asJsonObject.has("reasoning"))
+        assertFalse(config[1].asJsonObject.has("thinkingLevelMap"))
+        assertFalse(config[2].asJsonObject["reasoning"].asBoolean)
+        assertFalse(config[2].asJsonObject.has("thinkingLevelMap"))
     }
 
     @Test

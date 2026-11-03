@@ -5,7 +5,7 @@ import {
   type AgentContext, type McpServer, type SessionInfo,
 } from "@agentclientprotocol/sdk/unstable";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { createModelRuntime, type LaunchConfig, VERSION } from "./config.js";
+import { type LaunchConfig, VERSION } from "./config.js";
 import { PiAcpSession } from "./session.js";
 
 export function createPiAgent(config: LaunchConfig) {
@@ -14,7 +14,6 @@ export function createPiAgent(config: LaunchConfig) {
   const bindings = new Map<string, string>();
   let initialized = false;
   let stopping = false;
-  let modelRuntime: ReturnType<typeof createModelRuntime> | undefined;
   mkdirSync(config.sessionDir, { recursive: true, mode: 0o700 });
 
   function ready() {
@@ -38,9 +37,8 @@ export function createPiAgent(config: LaunchConfig) {
     return absolute;
   }
 
-  async function open(manager: SessionManager, client: AgentContext, servers: McpServer[]) {
-    modelRuntime ??= createModelRuntime(config);
-    const session = await PiAcpSession.create(manager, config, await modelRuntime, client, servers);
+  async function open(manager: SessionManager, client: AgentContext, servers: McpServer[], launchConfig = config) {
+    const session = await PiAcpSession.create(manager, launchConfig, client, servers);
     if (stopping) {
       await session.close();
       throw RequestError.invalidRequest(undefined, "Agent is shutting down.");
@@ -59,6 +57,7 @@ export function createPiAgent(config: LaunchConfig) {
       const existing = sessions.get(id);
       if (existing?.busy) throw RequestError.invalidRequest(undefined, "Cannot load a session with an active prompt.");
       if (existing && existing.cwd !== cwd) throw RequestError.invalidParams(undefined, "Session belongs to a different cwd.");
+      if (existing) await existing.refreshCatalog();
       if (existing && bindings.get(id) === JSON.stringify(servers)) return existing;
       const path = existing ? undefined : SessionManager.findById(cwd, id, config.sessionDir);
       if (!existing && !path) throw RequestError.resourceNotFound(id);
@@ -69,7 +68,7 @@ export function createPiAgent(config: LaunchConfig) {
       if (existing) await existing.close();
       sessions.delete(id);
       bindings.delete(id);
-      return await open(manager, client, servers);
+      return await open(manager, client, servers, existing?.launchConfig ?? config);
     } finally {
       loading.delete(id);
     }

@@ -90,11 +90,26 @@ void main() {
   var reportedStatusAgentId = 'xiaowan-acp';
   var reportGlobalRemote = false;
   var nextSessionNumber = 0;
+  var reasoningOptions = <String>[];
+  var reasoningValue = 'off';
   late Map<String, Map<String, Object>> sessionConfig;
 
   Map<String, Object?> sessionResponse(String sessionId) => {
     'sessionId': sessionId,
     'configOptions': [
+      if (reasoningOptions.isNotEmpty)
+        {
+          'id': 'thought_level',
+          'name': 'Thinking',
+          'category': 'thought_level',
+          'type': 'select',
+          'currentValue':
+              sessionConfig[sessionId]?['thought_level'] ?? reasoningValue,
+          'options': [
+            for (final value in reasoningOptions)
+              {'value': value, 'name': value},
+          ],
+        },
       {
         'id': 'notifications',
         'name': '通知提示',
@@ -168,6 +183,8 @@ void main() {
     reportedStatusAgentId = 'xiaowan-acp';
     reportGlobalRemote = false;
     nextSessionNumber = 0;
+    reasoningOptions = [];
+    reasoningValue = 'off';
     sessionConfig = {};
     assistCalls = [];
     agentCalls = [];
@@ -245,6 +262,15 @@ void main() {
     messenger.setMockMethodCallHandler(agentChannel, (call) async {
       agentCalls.add(call);
       switch (call.method) {
+        case 'config/read':
+          if (reasoningOptions.isEmpty) return <String, Object?>{};
+          return {'model': 'fixture', 'reasoning_effort': reasoningValue};
+        case 'model/list':
+          if (reasoningOptions.isEmpty) return <String, Object?>{};
+          return {
+            ...sessionResponse('catalog'),
+            'models': ['fixture'],
+          };
         case 'agent/list':
           return {'agents': agents};
         case 'status':
@@ -347,6 +373,9 @@ void main() {
           final sessionId = arguments['sessionId'] as String;
           sessionConfig[sessionId]![arguments['configId'] as String] =
               arguments['value'] as Object;
+          if (arguments['configId'] == 'thought_level') {
+            reasoningValue = arguments['value'] as String;
+          }
           return sessionResponse(sessionId);
         case 'session/prompt':
           final arguments = call.arguments as Map;
@@ -522,6 +551,44 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
+  }
+
+  for (final value in ['off', 'none', 'on', 'High']) {
+    testWidgets('ACP reasoning value $value survives settings and prompt admission', (
+      tester,
+    ) async {
+      useRemoteRuntime = true;
+      allowConversationCreation = true;
+      reasoningOptions = ['off', 'none', 'on', 'High'];
+      reasoningValue = value;
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.newConversation(agentId: 'codex-remote'),
+      );
+      composer(tester).onTriggerSlashCommand!();
+      await tester.pumpAndSettle();
+      expect(agentCalls.where((call) => call.method == 'config/read'), isNotEmpty);
+      composer(tester).controller.text = '保留原始档位';
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chat-acp-config-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('acp-config-thought_level')));
+      await tester.pumpAndSettle();
+      for (final choice in reasoningOptions) {
+        expect(find.text(choice), findsOneWidget);
+      }
+      await tester.tap(find.byKey(ValueKey('acp-config-thought_level-value-$value')));
+      await tester.pumpAndSettle();
+      final write = agentCalls.lastWhere((call) => call.method == 'session/set_config_option');
+      expect((write.arguments as Map)['configId'], 'thought_level');
+      expect((write.arguments as Map)['value'], value);
+      await dismissConfigPanel(tester);
+      composer(tester).onSendMessage();
+      await tester.pumpAndSettle();
+      final prompt = agentCalls.singleWhere((call) => call.method == 'session/prompt');
+      expect((prompt.arguments as Map)['effort'], value);
+      await disposeChat(tester);
+    });
   }
 
   testWidgets(
