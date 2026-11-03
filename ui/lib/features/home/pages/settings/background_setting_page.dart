@@ -28,6 +28,7 @@ import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:ui/widgets/flclash/liquid_glass.dart';
 import 'package:ui/theme/liquid_glass_controller.dart';
 import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/omni_slider.dart';
 import 'package:ui/widgets/settings_ui.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
@@ -1037,6 +1038,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildSliderRow(
+            sliderKey: const ValueKey('appearance-background-blur-slider'),
             label: context.l10n.appearanceBackgroundBlur,
             subtitle: context.l10n.appearanceBackgroundBlurSubtitle,
             value: _draftConfig.blurSigma,
@@ -1047,6 +1049,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
             },
           ),
           _buildSliderRow(
+            sliderKey: const ValueKey('appearance-overlay-intensity-slider'),
             label: context.l10n.appearanceOverlayIntensity,
             subtitle: context.l10n.appearanceOverlayIntensitySubtitle,
             value: _draftConfig.frostOpacity,
@@ -1057,6 +1060,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
             },
           ),
           _buildSliderRow(
+            sliderKey: const ValueKey('appearance-overlay-brightness-slider'),
             label: context.l10n.appearanceOverlayBrightness,
             subtitle: context.l10n.appearanceOverlayBrightnessSubtitle,
             value: _draftConfig.brightness,
@@ -1067,6 +1071,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
             },
           ),
           _buildSliderRow(
+            sliderKey: const ValueKey('appearance-chat-text-size-slider'),
             label: context.l10n.appearanceChatTextSize,
             subtitle: context.l10n.appearanceChatTextSizeSubtitle,
             value: _draftConfig.chatTextSize,
@@ -2646,6 +2651,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
   }
 
   Widget _buildSliderRow({
+    required Key sliderKey,
     required String label,
     required String subtitle,
     required double value,
@@ -2655,6 +2661,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
     String Function(double value)? valueFormatter,
   }) {
     final palette = context.omniPalette;
+    String formatValue(double value) =>
+        valueFormatter?.call(value) ?? value.toStringAsFixed(2);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Column(
@@ -2674,17 +2682,21 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
               ),
               const SizedBox(width: 12),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
                 decoration: BoxDecoration(
                   color: palette.surfaceSecondary,
-                  borderRadius: BorderRadius.circular(6),
+                  borderRadius: BorderRadius.circular(1000),
                 ),
                 child: Text(
-                  valueFormatter?.call(value) ?? value.toStringAsFixed(2),
+                  formatValue(value),
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 13,
                     fontWeight: FontWeight.w500,
                     color: palette.textSecondary,
+                    fontFeatures: const [ui.FontFeature.tabularFigures()],
                   ),
                 ),
               ),
@@ -2695,20 +2707,15 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
             context.trLegacy(subtitle),
             style: TextStyle(fontSize: 12, color: palette.textSecondary),
           ),
-          SliderTheme(
-            data: SliderTheme.of(context).copyWith(
-              activeTrackColor: palette.accentPrimary,
-              inactiveTrackColor: palette.borderSubtle,
-              thumbColor: palette.accentPrimary,
-              overlayColor: palette.accentPrimary.withValues(alpha: 0.12),
-              trackHeight: 3,
-            ),
-            child: Slider(
-              value: value,
-              min: min,
-              max: max,
-              onChanged: onChanged,
-            ),
+          const SizedBox(height: 8),
+          OmniSlider(
+            key: sliderKey,
+            value: value,
+            min: min,
+            max: max,
+            onChanged: onChanged,
+            semanticLabel: context.trLegacy(label),
+            semanticFormatterCallback: formatValue,
           ),
         ],
       ),

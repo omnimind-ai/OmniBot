@@ -31,7 +31,9 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
   );
 
   @override
-  Future<ByteData> load(String key) async => ByteData.view(_bytes.buffer);
+  Future<ByteData> load(String key) async => key.endsWith('.svg')
+      ? ByteData.view(_bytes.buffer)
+      : rootBundle.load(key);
 
   @override
   Future<String> loadString(String key, {bool cache = true}) async =>

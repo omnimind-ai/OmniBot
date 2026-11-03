@@ -171,7 +171,7 @@ void main() {
       expect(preview.height, 74);
       expect(menu.width, inInclusiveRange(160, 280));
       expect(menu.left, anchor.left);
-      expect(menu.top, 180);
+      expect(menu.top, preview.bottom + 14);
       harness.dismiss();
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 100));

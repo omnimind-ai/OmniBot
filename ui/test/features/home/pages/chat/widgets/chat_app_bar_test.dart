@@ -21,7 +21,9 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
     ),
   );
   @override
-  Future<ByteData> load(String key) async => ByteData.view(_bytes.buffer);
+  Future<ByteData> load(String key) async => key.endsWith('.svg')
+      ? ByteData.view(_bytes.buffer)
+      : rootBundle.load(key);
   @override
   Future<String> loadString(String key, {bool cache = true}) async =>
       utf8.decode(_bytes);
@@ -696,7 +698,20 @@ void main() {
           tester.widget<AgentBrandIcon>(find.byType(AgentBrandIcon)).agentId,
           agent,
         );
-        if (agent == 'na-cloud') expect(find.text('N'), findsOneWidget);
+        if (agent == 'na-cloud') {
+          final avatar = tester.widget<Image>(
+            find.descendant(
+              of: find.byType(AgentBrandIcon),
+              matching: find.byType(Image),
+            ),
+          );
+          expect(
+            (avatar.image as AssetImage).assetName,
+            'assets/agents/na.png',
+          );
+          expect(avatar.color, isNull);
+          expect(find.text('N'), findsNothing);
+        }
         expect(
           find.byKey(const ValueKey('chat-app-bar-pure-chat-button')),
           findsNothing,

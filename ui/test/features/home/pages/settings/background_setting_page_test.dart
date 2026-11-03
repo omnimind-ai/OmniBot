@@ -14,6 +14,7 @@ import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/settings_ui.dart';
+import 'package:ui/widgets/omni_slider.dart';
 import 'package:ui/widgets/flclash/liquid_glass.dart';
 import 'package:ui/theme/liquid_glass_controller.dart';
 
@@ -327,5 +328,44 @@ void main() {
       AppBackgroundTextColorMode.custom,
     );
     expect(AppBackgroundService.current.chatTextHexColor, '#1D3E7B');
+  });
+
+  testWidgets('appearance value tracks retain ranges and save live updates', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildTestApp(const BackgroundSettingPage()));
+    await tester.pumpAndSettle();
+    final blur = find.byKey(
+      const ValueKey('appearance-background-blur-slider'),
+    );
+    await scrollTo(tester, blur, 350);
+    final blurWidget = tester.widget<OmniSlider>(blur);
+    expect((blurWidget.min, blurWidget.max), (0, 24));
+    expect(
+      tester
+          .widget<OmniSlider>(
+            find.byKey(const ValueKey('appearance-overlay-intensity-slider')),
+          )
+          .max,
+      0.55,
+    );
+    final brightness = tester.widget<OmniSlider>(
+      find.byKey(const ValueKey('appearance-overlay-brightness-slider')),
+    );
+    expect((brightness.min, brightness.max), (0.5, 1.5));
+    final size = tester.widget<OmniSlider>(
+      find.byKey(const ValueKey('appearance-chat-text-size-slider')),
+    );
+    expect((size.min, size.max), (12, 22));
+
+    final rect = tester.getRect(blur);
+    await tester.tapAt(
+      Offset(rect.left + 2 + (rect.width - 4) * 0.75, rect.center.dy),
+    );
+    await tester.pump(const Duration(milliseconds: 260));
+    await tester.pumpAndSettle();
+    expect(AppBackgroundService.current.blurSigma, closeTo(18, 0.0001));
+    expect(tester.widget<OmniSlider>(blur).value, closeTo(18, 0.0001));
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }

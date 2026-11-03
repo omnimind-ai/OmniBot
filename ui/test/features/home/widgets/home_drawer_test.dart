@@ -43,6 +43,7 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
 
   @override
   Future<ByteData> load(String key) async {
+    if (!key.endsWith('.svg')) return rootBundle.load(key);
     return ByteData.view(_svgBytes.buffer);
   }
 
@@ -870,7 +871,8 @@ void main() {
         expectSource(focused: true);
         final earlyPreview = tester.getRect(preview);
         await tester.pumpAndSettle();
-        expect(tester.getRect(preview).top, lessThan(earlyPreview.top));
+        expect(tester.getRect(preview).top, earlyPreview.top);
+        expect(tester.getRect(preview).top, originalRect.top);
         // A duplicate long-press callback cannot create a second menu owner.
         tester.widget<GestureDetector>(source).onLongPressStart!(
           LongPressStartDetails(globalPosition: originalRect.center),

@@ -59,6 +59,7 @@ const SECTION_ORDER = [
   "claude",
   "opencode",
   "pi",
+  "na",
   "acp",
   "omni",
   "chat",
@@ -74,6 +75,7 @@ const SECTION_LABELS: Record<ConversationSection, string> = {
   claude: "Claude Code",
   opencode: "OpenCode",
   pi: "Pi",
+  na: "Na",
   acp: "Agent",
   omni: "小万",
   chat: "纯聊天",
@@ -85,12 +87,14 @@ const SECTION_ICONS: Record<Exclude<ConversationSection, "pinned">, IconName> = 
   claude: "claude",
   opencode: "opencode",
   pi: "pi",
+  na: "na",
   acp: "agent",
   omni: "agent",
   chat: "chat",
 };
 
 function agentIcon(agentId?: string): IconName {
+  if (agentId === "na-cloud") return "na";
   if (agentId === "codex-acp") return "codex";
   if (agentId === "claude-code-acp") return "claude";
   if (agentId === "opencode-acp") return "opencode";
@@ -102,6 +106,7 @@ function agentIcon(agentId?: string): IconName {
 function conversationSection(conversation: Conversation): ConversationSection {
   if (conversation.isPinned) return "pinned";
   if (isAgentConversationMode(conversation.mode)) {
+    if (conversation.agentId === "na-cloud") return "na";
     if (!conversation.agentId || conversation.agentId === "codex-acp") return "codex";
     if (conversation.agentId === "claude-code-acp") return "claude";
     if (conversation.agentId === "opencode-acp") return "opencode";

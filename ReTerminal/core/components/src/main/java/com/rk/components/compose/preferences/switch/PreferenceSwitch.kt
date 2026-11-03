@@ -3,22 +3,17 @@ package com.rk.components.compose.preferences.switch
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
-import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import com.rk.components.compose.preferences.base.PreferenceTemplate
 
 /**
  * A Preference that provides a two-state toggleable option.
  *
- * Row layout and switch colors follow the main OmnibotApp settings style:
- * accent track when on, borderStrong track when off, white thumb.
+ * Row layout and the animated switch follow the main OmnibotApp settings style.
  *
  * @author Aquiles Trindade (trindadedev).
  */
@@ -36,6 +31,7 @@ fun PreferenceSwitch(
 
 ) {
     val interactionSource = remember { MutableInteractionSource() }
+    val switchInteractionSource = remember { MutableInteractionSource() }
 
     PreferenceTemplate(
         modifier =
@@ -59,19 +55,11 @@ fun PreferenceSwitch(
         title = { Text(text = label) },
         description = { description?.let { Text(text = it) } },
         endWidget = {
-            Switch(
+            OmniSwitch(
                 checked = checked,
                 onCheckedChange = onCheckedChange,
                 enabled = enabled,
-                interactionSource = interactionSource,
-                colors =
-                    SwitchDefaults.colors()
-                        .copy(
-                            checkedThumbColor = Color.White,
-                            uncheckedThumbColor = MaterialTheme.colorScheme.surfaceContainerLow,
-                            uncheckedTrackColor = MaterialTheme.colorScheme.outline,
-                            uncheckedBorderColor = Color.Transparent,
-                        ),
+                interactionSource = switchInteractionSource,
             )
         },
         enabled = enabled,

@@ -66,50 +66,49 @@ double _scrimAlpha(WidgetTester tester) {
 }
 
 void main() {
-  for (final (description, anchor, previewBounds, actionOrigin) in [
-    (
-      'normal row',
-      const Rect.fromLTWH(16, 100, 358, 74),
-      const Rect.fromLTWH(16, 92, 358, 74),
-      const Offset(24, 180),
-    ),
-    (
-      'bottom row',
-      const Rect.fromLTWH(16, 700, 358, 74),
-      const Rect.fromLTWH(16, 436, 358, 74),
-      const Offset(24, 524),
-    ),
-    (
-      'indented row',
-      const Rect.fromLTWH(54, 100, 320, 74),
-      const Rect.fromLTWH(46, 92, 320, 74),
-      const Offset(46, 180),
-    ),
+  for (final (description, anchor, menuAbove) in [
+    ('top row', const Rect.fromLTWH(16, 36, 358, 74), false),
+    ('normal row', const Rect.fromLTWH(16, 100, 358, 74), false),
+    ('bottom row', const Rect.fromLTWH(16, 700, 358, 74), true),
+    ('indented row', const Rect.fromLTWH(54, 100, 320, 74), false),
   ]) {
-    testWidgets('$description lifts above the unchanged action position', (
-      tester,
-    ) async {
-      await setContextMenuScreen(tester, const Size(390, 844));
-      final harness = ContextMenuTestHarness();
-      await tester.pumpWidget(harness.app());
-      harness.open(anchor: anchor, preview: _preview());
-      await tester.pumpAndSettle();
+    testWidgets(
+      '$description stays in place while actions choose a free side',
+      (tester) async {
+        await setContextMenuScreen(tester, const Size(390, 844));
+        final harness = ContextMenuTestHarness();
+        await tester.pumpWidget(harness.app());
+        harness.open(anchor: anchor, preview: _preview());
+        await tester.pumpAndSettle();
 
-      expect(_paintedPreview(tester), previewBounds);
-      expect(tester.getRect(contextMenuPanel).topLeft, actionOrigin);
-      expect(tester.getSize(contextMenuPanel).height, 280);
-      expect(find.text('Selected conversation'), findsOneWidget);
-      final transition = tester.widget<FlClashPopupTransition>(
-        find.byType(FlClashPopupTransition),
-      );
-      expect(transition.anchor, const Offset(80, 130) & Size.zero);
-      expect(transition.source, isNull);
-      expect(transition.sourceImage, isNull);
+        final previewBounds = _paintedPreview(tester);
+        final actions = tester.getRect(contextMenuPanel);
+        expect(previewBounds, anchor);
+        expect(actions.top, greaterThanOrEqualTo(12));
+        expect(actions.bottom, lessThanOrEqualTo(832));
+        if (menuAbove) {
+          expect(actions.bottom, lessThan(previewBounds.top));
+        } else {
+          expect(actions.top, greaterThan(previewBounds.bottom));
+        }
+        expect(actions.height, 280);
+        expect(find.text('Selected conversation'), findsOneWidget);
+        final transition = tester.widget<FlClashPopupTransition>(
+          find.byType(FlClashPopupTransition),
+        );
+        expect(transition.anchor, const Offset(80, 130) & Size.zero);
+        expect(transition.source, isNull);
+        expect(transition.sourceImage, isNull);
 
-      harness.dismiss();
-      await tester.pumpAndSettle();
-      expect(tester.takeException(), isNull);
-    });
+        harness.dismiss();
+        await tester.pump();
+        expect(_paintedPreview(tester), previewBounds);
+        await tester.pumpAndSettle();
+        expect(_previewContent, findsNothing);
+        expect(find.text('Original conversation'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+      },
+    );
   }
 
   for (final dark in [false, true]) {
@@ -212,24 +211,27 @@ void main() {
 
   for (final quality in LiquidGlassQuality.values) {
     testWidgets(
-      'both glass surfaces survive close until action commit: $quality',
+      'bottom-row glass surfaces survive close until action commit: $quality',
       (tester) async {
         await setContextMenuScreen(tester, const Size(390, 844));
         final harness = ContextMenuTestHarness();
         await tester.pumpWidget(harness.app(glass: true, quality: quality));
-        harness.open(preview: _preview());
+        const anchor = Rect.fromLTWH(16, 700, 358, 74);
+        harness.open(anchor: anchor, preview: _preview());
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 100));
         expect(LiquidGlassHost.debugHeldCaptures, 2);
         await tester.pumpAndSettle();
         expect(LiquidGlassHost.debugLastCapture!.panes, hasLength(2));
         final previewBounds = _paintedPreview(tester);
+        expect(previewBounds, anchor);
+        expect(tester.getRect(contextMenuPanel).bottom, lessThan(anchor.top));
         expect(
           LiquidGlassHost.debugLastCapture!.panes.where(
             (capture) => capture.pane.overlaps(previewBounds),
           ),
           hasLength(1),
-          reason: 'The lifted row owns a separate pane above the action pane',
+          reason: 'The selected row owns a separate pane from the actions',
         );
 
         await tester.tap(find.text('Rename'));
@@ -249,6 +251,83 @@ void main() {
         expect(harness.completions, 1);
         expect(harness.backgroundTaps, 0);
         expect(LiquidGlassHost.debugHeldCaptures, 0);
+        expect(_previewContent, findsNothing);
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('safe-area insets do not displace a visible bottom row', (
+    tester,
+  ) async {
+    await setContextMenuScreen(tester, const Size(390, 844));
+    final harness = ContextMenuTestHarness();
+    await tester.pumpWidget(
+      harness.app(padding: const EdgeInsets.only(top: 32, bottom: 48)),
+    );
+    const anchor = Rect.fromLTWH(16, 700, 358, 74);
+    harness.open(anchor: anchor, preview: _preview());
+    await tester.pumpAndSettle();
+
+    final actions = tester.getRect(contextMenuPanel);
+    expect(_paintedPreview(tester), anchor);
+    expect(actions.top, greaterThanOrEqualTo(44));
+    expect(actions.bottom, lessThan(anchor.top));
+    expect(actions.bottom, lessThanOrEqualTo(784));
+    harness.dismiss();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  for (final (anchorTop, menuAbove) in [(110.0, false), (160.0, true)]) {
+    testWidgets(
+      'limited space scrolls actions without moving a row at y=$anchorTop',
+      (tester) async {
+        await setContextMenuScreen(tester, const Size(320, 480));
+        final harness = ContextMenuTestHarness();
+        await tester.pumpWidget(
+          harness.app(
+            textScale: 1.8,
+            padding: const EdgeInsets.only(top: 24, bottom: 12),
+            viewInsets: const EdgeInsets.only(bottom: 180),
+          ),
+        );
+        final anchor = Rect.fromLTWH(16, anchorTop, 288, 74);
+        harness.open(
+          anchor: anchor,
+          preview: const SizedBox(
+            key: _contentKey,
+            height: 74,
+            child: Center(child: Text('Selected conversation')),
+          ),
+        );
+        await tester.pumpAndSettle();
+
+        final actions = tester.getRect(contextMenuPanel);
+        expect(_paintedPreview(tester), anchor);
+        expect(actions.top, greaterThanOrEqualTo(36));
+        expect(actions.bottom, lessThanOrEqualTo(288));
+        expect(actions.height, lessThan(16 + 6 * 60));
+        if (menuAbove) {
+          expect(actions.bottom, lessThan(anchor.top));
+        } else {
+          expect(actions.top, greaterThan(anchor.bottom));
+        }
+        await tester.drag(find.text('Pin'), const Offset(0, -480));
+        await tester.pumpAndSettle();
+        expect(
+          tester.getRect(find.text('Delete')).top,
+          greaterThanOrEqualTo(actions.top),
+        );
+        expect(
+          tester.getRect(find.text('Delete')).bottom,
+          lessThanOrEqualTo(actions.bottom),
+        );
+        await tester.tap(find.text('Delete'));
+        await tester.pumpAndSettle();
+        await harness.completion;
+        expect(harness.appliedAction, 'Delete');
+        expect(harness.actionTaps, 1);
         expect(_previewContent, findsNothing);
         expect(tester.takeException(), isNull);
       },
@@ -277,7 +356,8 @@ void main() {
       expect(preview.top, greaterThanOrEqualTo(36));
       expect(preview.left, greaterThanOrEqualTo(16));
       expect(preview.right, lessThanOrEqualTo(304));
-      expect(preview.bottom, lessThan(actions.top));
+      expect(preview.bottom, lessThanOrEqualTo(288));
+      expect(actions.bottom, lessThan(preview.top));
       expect(actions.left, greaterThanOrEqualTo(24));
       expect(actions.right, lessThanOrEqualTo(296));
       expect(actions.bottom, lessThanOrEqualTo(288));
@@ -304,7 +384,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(harness.route.transitionDuration, Duration.zero);
       expect(harness.route.reverseTransitionDuration, Duration.zero);
-      expect(_paintedPreview(tester), const Rect.fromLTWH(16, 92, 358, 74));
+      expect(_paintedPreview(tester), const Rect.fromLTWH(16, 100, 358, 74));
       expect(_scrimAlpha(tester), closeTo(0.12, 0.001));
       expect(LiquidGlassHost.debugHeldCaptures, 2);
 

@@ -6,6 +6,7 @@ import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/common_app_bar.dart';
 import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_header_body.dart';
 
 class OmnibotWorkspacePage extends StatefulWidget {
   final String workspacePath;
@@ -63,41 +64,37 @@ class _OmnibotWorkspacePageState extends State<OmnibotWorkspacePage> {
                   ),
                 ),
                 SafeArea(
-                  child: Column(
-                    children: [
-                      CommonAppBar(
-                        title: 'Workspace',
-                        primary: false,
-                        backgroundColor: backgroundSurfaceColor(
-                          translucent: backgroundActive,
-                          baseColor: palette.surfacePrimary,
-                          opacity: 0.68,
-                        ),
-                        onBackPressed: _handleBackPressed,
+                  child: OmniHeaderBody(
+                    header: CommonAppBar(
+                      title: 'Workspace',
+                      primary: false,
+                      backgroundColor: backgroundSurfaceColor(
+                        translucent: backgroundActive,
+                        baseColor: palette.surfacePrimary,
+                        opacity: 0.68,
                       ),
-                      Expanded(
-                        child: OmniContentWidth(
-                          key: const ValueKey('workspace-browser-column'),
-                          child: OmnibotWorkspaceBrowser(
-                            key: _browserKey,
-                            workspacePath: widget.workspacePath,
-                            workspaceShellPath: widget.workspaceShellPath,
-                            enableSystemBackHandler: false,
-                            translucentSurfaces: backgroundActive,
-                            showBreadcrumbHeader: true,
-                            showHeaderTitle: false,
-                            onCanGoUpChanged: (canGoUp) {
-                              if (_browserCanGoUp == canGoUp || !mounted) {
-                                return;
-                              }
-                              setState(() {
-                                _browserCanGoUp = canGoUp;
-                              });
-                            },
-                          ),
-                        ),
+                      onBackPressed: _handleBackPressed,
+                    ),
+                    body: OmniContentWidth(
+                      key: const ValueKey('workspace-browser-column'),
+                      child: OmnibotWorkspaceBrowser(
+                        key: _browserKey,
+                        workspacePath: widget.workspacePath,
+                        workspaceShellPath: widget.workspaceShellPath,
+                        enableSystemBackHandler: false,
+                        translucentSurfaces: backgroundActive,
+                        showBreadcrumbHeader: true,
+                        showHeaderTitle: false,
+                        onCanGoUpChanged: (canGoUp) {
+                          if (_browserCanGoUp == canGoUp || !mounted) {
+                            return;
+                          }
+                          setState(() {
+                            _browserCanGoUp = canGoUp;
+                          });
+                        },
                       ),
-                    ],
+                    ),
                   ),
                 ),
               ],

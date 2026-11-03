@@ -107,6 +107,8 @@ class CommonAppBar extends StatelessWidget implements PreferredSizeWidget {
 
     return OmniContentWidth(
       child: AppBar(
+        // Elastic controls may paint below the toolbar while being pulled.
+        clipBehavior: Clip.none,
         primary: primary,
         automaticallyImplyLeading: false,
         toolbarHeight: height,

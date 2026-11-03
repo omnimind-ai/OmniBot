@@ -85,10 +85,15 @@ void main() {
     expect(selectedCommand?['toolTitle'], 'xhigh');
   });
 
-  testWidgets('command strip renders plan command as clickable toggle', (
+  testWidgets('command toggle activates once and fits a narrow command panel', (
     tester,
   ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(320, 640);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     Map<String, dynamic>? selectedCommand;
+    var selectionCount = 0;
     final commands = [
       {
         'cardId': 'slash-command-agent-model',
@@ -117,7 +122,10 @@ void main() {
         home: Scaffold(
           body: ChatCommandActivityStrip(
             commands: commands,
-            onSelectCommand: (command) => selectedCommand = command,
+            onSelectCommand: (command) {
+              selectionCount++;
+              selectedCommand = command;
+            },
           ),
         ),
       ),
@@ -129,11 +137,14 @@ void main() {
     );
     expect(find.byKey(planToggleKey), findsOneWidget);
     expect(find.text('/chat'), findsNothing);
+    expect(tester.takeException(), isNull);
 
     await tester.tap(find.byKey(planToggleKey));
     await tester.pumpAndSettle();
 
     expect(selectedCommand?['toolTitle'], '/plan');
+    expect(selectionCount, 1);
+    expect(tester.takeException(), isNull);
   });
 
   test(

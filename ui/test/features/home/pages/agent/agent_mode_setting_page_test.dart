@@ -374,7 +374,7 @@ void main() {
 
   for (final configurationAvailable in [false, true]) {
     testWidgets(
-      'Na configuration visibility follows native development policy: $configurationAvailable',
+      'Na personal resources remain available under native configuration policy: $configurationAvailable',
       (tester) async {
         final calls = <MethodCall>[];
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -411,12 +411,9 @@ void main() {
         expect(find.text('Na'), findsOneWidget);
         expect(
           find.byKey(const Key('agent-navigation-na-cloud')),
-          configurationAvailable ? findsOneWidget : findsNothing,
+          findsOneWidget,
         );
-        expect(
-          tester.widget<InkWell>(row).onTap,
-          configurationAvailable ? isNotNull : isNull,
-        );
+        expect(tester.widget<InkWell>(row).onTap, isNotNull);
         expect(
           find.byKey(const Key('agent-navigation-codex-acp')),
           findsOneWidget,

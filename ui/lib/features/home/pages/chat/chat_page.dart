@@ -12,6 +12,7 @@ import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/widgets/omni_menu.dart';
 import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_header_body.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';

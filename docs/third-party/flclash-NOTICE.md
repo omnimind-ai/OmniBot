@@ -23,9 +23,11 @@ OmnibotApp's separate commercial license.
 | `ui/lib/widgets/flclash/search_header.dart` and `search_surface.dart` | Proxy page `lib/ui/scaffold.dart`, `lib/ui/search_field.dart`, `lib/ui/button.dart`, `lib/ui/motion.dart`, and the solid/liquid-glass surface and press portions of `lib/ui/goo.dart` and `lib/ui/navigation_dock.dart` |
 | `ui/lib/widgets/flclash/liquid_glass.dart`, `liquid_glass_capture.dart`, and `ui/shaders/liquid_glass.frag` | `lib/ui/liquid_glass.dart`, `lib/ui/liquid_glass_capture.dart`, and `shaders/liquid_glass.frag`; Flutter Material/HCT/reduced-motion adapters replace the upstream app helpers |
 | `ui/lib/widgets/flclash/popup.dart` and `popup_geometry.dart`, shared by `glass_popup.dart` and `omni_menu.dart` | `lib/ui/popup.dart` (flat popup, source-control morph and liquid-glass platter), `lib/ui/goo.dart`, `lib/ui/motion.dart`, and the solid `menuShadows` constants from `lib/ui/liquid_glass.dart` |
-| `ui/lib/features/home/widgets/conversation_context_menu.dart` | Profile long-press entry from `lib/ui/context_menu.dart` and the independent no-source route in `lib/ui/popup.dart`; the existing OmnibotApp action-panel position is retained |
+| `ui/lib/features/home/widgets/conversation_context_menu.dart` | Profile long-press entry from `lib/ui/context_menu.dart` and the independent no-source route in `lib/ui/popup.dart`; OmnibotApp anchors the focused row and places the action panel on the available side |
 | `ui/lib/widgets/flclash/elastic_press.dart` and `menu_interaction.dart` | `ElasticPress` and its spring/paint transform from `lib/ui/navigation_dock.dart`; row press, carried press and painted hit testing from `CommonPopupMenu` in `lib/ui/popup.dart` |
 | `ui/lib/widgets/flclash/common_switch.dart`, exposed by `OmniSettingsSwitch` | `lib/ui/switch.dart` (`CommonSwitch` track/thumb geometry, lifted glass lens, toggle/press timing, drag and focus behavior); controlled-value, cancellation and reduced-motion handling adapted to OmnibotApp |
+| `ui/lib/widgets/omni_slider.dart` | `chen08209/prism_ui` `lib/slider.dart` at `63450c0ac0e8e1b2c0f3ed4ad7926dc94e083185`, as pinned by FlClash dev `0203923be77cd298251ad37921ef70a8a06e2397`; gapped track, bar thumb, activation and value indicator adapted to Flutter Material and OmniPalette |
+| `ReTerminal/core/components/src/main/java/com/rk/components/compose/preferences/switch/OmniSwitch.kt` | Native Compose adaptation of `lib/ui/switch.dart` track/thumb geometry, toggle travel and press deformation; Android owns focus, semantics and pointer input |
 | `OmniSettingsSearchField` in `ui/lib/widgets/settings_ui.dart` | `lib/ui/search_field.dart` (44 dp capsule, 20 dp search icon, 41 dp text inset, 49 dp clear slot and keyboard-only focus ring), using the shared glass surface |
 | `ui/lib/widgets/omni_sheet_motion.dart` | `lib/ui/snap_sheet.dart` (0.55 rubber-band coefficient, 100 dp extent, mass 3/stiffness 1000 critically damped return and scroll handoff), adapted to existing Flutter modal routes |
 | Glass alert/sheet adapters in `omni_glass.dart` and `omni_glass_routes.dart` | Alert rim, hairline, shadow and veil composition in `lib/ui/dialog.dart` and `lib/ui/liquid_glass.dart`; default alert/sheet scrim values in `lib/ui/color.dart`. Flutter routes and alert layout retain focus, results, keyboard insets and back guards; the shared sheet motion adapter owns gesture handoff and requests dismissal through the route. |
@@ -161,9 +163,12 @@ to 0.8 while fading over 200 ms on close. OmnibotApp additionally retains its
 selected-conversation lift, scale and mild veil: an inert preview temporarily
 replaces the source row visually, and the original row is restored on the same
 frame that the closing preview disappears.
-The menu uses the shared popup renderer and action rows; its final x/y retain
-the previous conversation action-panel position, including bottom-edge
-avoidance, as requested. The original long-press pointer is not carried into
+The menu uses the shared popup renderer and action rows. The focused row keeps
+its captured position unless a screen edge or keyboard requires a minimal
+adjustment. Actions open below when they fit, otherwise above; a menu that fits
+neither side scrolls within the larger adjacent space. Its horizontal alignment
+and the no-preview menu path retain the previous placement. The original
+long-press pointer is not carried into
 the menu, matching upstream. A new press on the menu can drag between actions.
 Business actions still wait for the closing overlay to be removed.
 
@@ -192,6 +197,23 @@ and expanded corners against its actual size on the analytic corner shader
 path; this avoids profiling a very wide stadium outline. Shared segmented
 controls use the upstream lens style and elastic lift, with OmnibotApp retaining
 its existing track layout and controlled selection callbacks.
+
+The 2026-11-03 upstream review checked FlClash main at the original pinned
+commit and dev at `0203923be77cd298251ad37921ef70a8a06e2397`. Dev's UI extraction
+in `bb47f2cc306433b065df62d10022d1a642bfaa07` pins
+[prism_ui](https://github.com/chen08209/prism_ui/tree/63450c0ac0e8e1b2c0f3ed4ad7926dc94e083185)
+at `63450c0ac0e8e1b2c0f3ed4ad7926dc94e083185`. The adapted slider is licensed
+under GNU GPL version 3, like the existing copied components; the upstream
+license is preserved in `flclash-LICENSE.txt`. Its current switch retains the
+same geometry and clocks as the existing local implementation. The full UI
+package migration, upstream-specific list refresh and editing-menu ownership,
+and device-corner interpolation are not imported.
+
+Appearance adjustment sliders use the current 16 dp gapped track, 44 dp bar
+thumb, 6 dp thumb gap and 100 ms activation. The bar narrows from 4 to 2 dp
+while active. Existing continuous ranges, preview and persistence remain
+application-owned. The adapter retains keyboard and RTL adjustment, exact
+accessible values, reduced motion and vertical-scroll gesture handoff.
 
 Settings toggles use the upstream 52 by 32 dp track and 24 dp resting thumb.
 Pressing lifts the thumb into a glass lens; dragging follows the finger and

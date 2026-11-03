@@ -1,5 +1,7 @@
 import type { ReactNode, SVGProps } from "react";
 
+const naAvatarUrl = new URL("../assets/na-avatar.png", import.meta.url).href;
+
 export type IconName =
   | "agent"
   | "archive"
@@ -16,6 +18,7 @@ export type IconName =
   | "file"
   | "folder"
   | "menu"
+  | "na"
   | "opencode"
   | "pi"
   | "panel-left"
@@ -72,6 +75,7 @@ export function Icon({ name, size = 20, ...props }: IconProps) {
     ),
     folder: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />,
     menu: <path d="M3 5h12M3 12h18M3 19h16" />,
+    na: <image href={naAvatarUrl} width="24" height="24" />,
     opencode: <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z" fill="currentColor" stroke="none" />,
     pi: <text x="12" y="19" textAnchor="middle" fontSize="22" fontWeight="600" fill="currentColor" stroke="none">π</text>,
     "panel-left": (
@@ -125,6 +129,7 @@ export function Icon({ name, size = 20, ...props }: IconProps) {
       strokeLinecap="round"
       strokeLinejoin="round"
       strokeWidth="1.8"
+      style={name === "na" ? { borderRadius: "50%", overflow: "hidden" } : undefined}
       {...props}
     >
       {paths[name]}

@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/settings_ui.dart';
 import 'package:ui/features/home/pages/chat/tool_activity_utils.dart'
     hide buildAgentToolTranscript;
 import 'package:ui/features/home/pages/command_overlay/services/tool_card_detail_gesture_gate.dart';
@@ -46,6 +47,7 @@ const double _kToolActivityDrawerMaxHeight = 264;
 const double _kToolActivityTypeSlotWidth = 34;
 const double _kToolActivityStatusSlotWidth = 42;
 const double _kToolActivityTrailingSlotWidth = 24;
+const double _kCommandToggleWidth = 40;
 const double _kCommandEffortSliderWidth = 156;
 const double _kToolActivityAttachedBorderReveal = 1.5;
 const BorderRadius _kToolActivitySurfaceBorderRadius = BorderRadius.only(
@@ -1155,6 +1157,9 @@ bool _isCommandEffortSliderCard(Map<String, dynamic> cardData) {
 }
 
 double _resolveActivityTrailingSlotWidth(Map<String, dynamic> cardData) {
+  if (_isCommandToggleCard(cardData)) {
+    return _kCommandToggleWidth;
+  }
   if (_isCommandEffortSliderCard(cardData)) {
     return _kCommandEffortSliderWidth;
   }
@@ -1370,52 +1375,16 @@ class _CommandToggleSwitch extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.omniPalette;
-    final activeColor = context.isDarkTheme
-        ? palette.accentPrimary
-        : AppColors.primaryBlue;
-    final inactiveColor = context.isDarkTheme
-        ? palette.borderSubtle.withValues(alpha: 0.72)
-        : const Color(0xFFD4DEEC);
-    final thumbColor = context.isDarkTheme
-        ? palette.surfaceElevated
-        : Colors.white;
     return Semantics(
       label: semanticLabel,
-      toggled: value,
-      button: true,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: onTap,
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          width: 24,
-          height: 14,
-          padding: const EdgeInsets.all(2),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(999),
-            color: value ? activeColor : inactiveColor,
-          ),
-          child: Align(
-            alignment: value ? Alignment.centerRight : Alignment.centerLeft,
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              width: 10,
-              height: 10,
-              decoration: BoxDecoration(
-                color: thumbColor,
-                shape: BoxShape.circle,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: value ? 0.16 : 0.10),
-                    blurRadius: 3,
-                    offset: const Offset(0, 1),
-                  ),
-                ],
-              ),
-            ),
+      child: SizedBox(
+        width: _kCommandToggleWidth,
+        height: _kToolActivityRowHeight,
+        child: FittedBox(
+          child: OmniSettingsSwitch(
+            value: value,
+            enabled: onTap != null,
+            onToggle: (_) => onTap?.call(),
           ),
         ),
       ),

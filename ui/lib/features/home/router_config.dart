@@ -9,6 +9,7 @@ import 'package:ui/features/home/pages/agent/remote_codex_setting_page.dart';
 import 'package:ui/features/home/pages/agent/agent_sessions_page.dart';
 import 'package:ui/features/home/pages/agent/agent_mode_setting_page.dart';
 import 'package:ui/features/home/pages/agent/agent_config_page.dart';
+import 'package:ui/features/home/pages/agent/na_personal_page.dart';
 import 'package:ui/features/home/pages/chat_history/chat_history_page.dart';
 import 'package:ui/features/home/pages/permission_guide/permission_guide_detail_page.dart';
 import 'package:ui/features/home/pages/permission_guide/permission_guide_page.dart';
@@ -95,8 +96,22 @@ List<GoRoute> homeRoutes = [
     builder: (context, state) => const AgentModeSettingPage(),
   ),
   GoRoute(
+    path: '/home/na/personal',
+    name: 'home/na/personal',
+    builder: (context, state) => const NaPersonalPage(),
+  ),
+  GoRoute(
+    path: '/home/na/connection',
+    name: 'home/na/connection',
+    builder: (context, state) => const AgentConfigPage(agentId: 'na-cloud'),
+  ),
+  GoRoute(
     path: '/home/agent_config/:agentId',
     name: 'home/agent_config',
+    redirect: (context, state) =>
+        state.pathParameters['agentId']?.trim() == 'na-cloud'
+        ? '/home/na/personal'
+        : null,
     builder: (context, state) =>
         AgentConfigPage(agentId: state.pathParameters['agentId']?.trim() ?? ''),
   ),

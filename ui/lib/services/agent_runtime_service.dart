@@ -1046,6 +1046,26 @@ typedef _AgentPackageTask = ({
   Future<Map<String, dynamic>> future,
 });
 
+/// Response attributed to one captured Na account and service endpoint.
+class NaPersonalResponse {
+  const NaPersonalResponse({required this.owner, required this.data});
+  final String owner;
+  final Map<String, dynamic> data;
+
+  factory NaPersonalResponse.fromMap(Map<String, dynamic> value) {
+    final owner = value['owner'];
+    if (owner is! String || owner.isEmpty) {
+      throw StateError('Na 返回了无效的连接归属。');
+    }
+    final raw = value['data'];
+    if (raw is! Map) throw StateError('Na 返回了无效的资源。');
+    return NaPersonalResponse(
+      owner: owner,
+      data: Map<String, dynamic>.from(raw),
+    );
+  }
+}
+
 class AgentRuntimeService {
   AgentRuntimeService._();
 
@@ -1103,6 +1123,34 @@ class AgentRuntimeService {
     if (normalized.isEmpty)
       throw ArgumentError('agent_identity_required: agentId');
     return normalized;
+  }
+
+  /// Bounded Na resource bridge. Only status may discover a fresh owner;
+  /// native validates every operation against that captured connection.
+  static Future<NaPersonalResponse> requestNaPersonal({
+    required String operation,
+    String? owner,
+    String? id,
+    Map<String, dynamic> payload = const {},
+  }) async {
+    if (operation.trim().isEmpty ||
+        (operation != 'status' && (owner == null || owner.isEmpty))) {
+      throw ArgumentError(
+        'Na resource operation requires its connection owner',
+      );
+    }
+    final result = await _invokeMap('config/na/personal', {
+      'agentId': 'na-cloud',
+      'operation': operation,
+      if (owner != null) 'owner': owner,
+      if (id != null) 'id': id,
+      'payload': payload,
+    });
+    final response = NaPersonalResponse.fromMap(result);
+    if (owner != null && response.owner != owner) {
+      throw StateError('Na 连接已更改，请重新载入连接。');
+    }
+    return response;
   }
 
   static Future<AgentRuntimeStatus> status({required String agentId}) async {

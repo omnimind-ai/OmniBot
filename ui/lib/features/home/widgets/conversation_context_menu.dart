@@ -1,6 +1,5 @@
 // Adapted from FlClash lib/ui/context_menu.dart and lib/ui/popup.dart at
-// 7fd417fb9a9a277c6a9339a8ac87f907df7c25f7. The independent no-source popup
-// keeps OmnibotApp's existing menu placement. See docs/third-party/flclash-NOTICE.md.
+// 7fd417fb9a9a277c6a9339a8ac87f907df7c25f7. See docs/third-party/flclash-NOTICE.md.
 // SPDX-License-Identifier: GPL-3.0-only
 
 import 'dart:math' as math;
@@ -47,8 +46,8 @@ class ConversationContextMenuRoute<T> extends RawDialogRoute<T> {
 }
 
 /// FlClash's independent action pane, with an optional lifted conversation row.
-/// The focus layer never becomes the popup's source: menu placement and its
-/// independent opening/closing motion stay separate from the row animation.
+/// The focus layer never becomes the popup's source. The row stays anchored
+/// while the independent action pane chooses the available side.
 class ConversationContextMenu extends StatelessWidget {
   const ConversationContextMenu({
     super.key,
@@ -319,35 +318,58 @@ class _ConversationFocusLayout extends MultiChildLayoutDelegate {
       BoxConstraints.tightFor(width: width)
           .copyWith(maxHeight: available * 0.4),
     );
+    final previewPosition = Offset(
+      anchor.left.clamp(
+        16.0,
+        math.max(16.0, size.width - 16 - previewSize.width),
+      ),
+      anchor.top.clamp(
+        menuLayout._topInset,
+        math.max(
+          menuLayout._topInset,
+          size.height - menuLayout._bottomInset - previewSize.height,
+        ),
+      ),
+    );
+    final spaceAbove = math.max(
+      0.0,
+      previewPosition.dy - gap - menuLayout._topInset,
+    );
+    final spaceBelow = math.max(
+      0.0,
+      size.height -
+          menuLayout._bottomInset -
+          previewPosition.dy -
+          previewSize.height -
+          gap,
+    );
     final menuConstraints = menuLayout.getConstraintsForChild(
       BoxConstraints.loose(size),
     );
+    // Measure once in the larger adjacent space. A short menu can still use
+    // the space below; a taller one opens above or scrolls on the larger side.
     final menuSize = layoutChild(
       'menu',
       menuConstraints.copyWith(
         maxHeight: math.min(
           menuConstraints.maxHeight,
-          math.max(0.0, available - previewSize.height - gap),
+          math.max(spaceAbove, spaceBelow),
         ),
       ),
     );
-    final originalMenuPosition = menuLayout.getPositionForChild(size, menuSize);
-    final menuPosition = Offset(
-      originalMenuPosition.dx,
-      math.max(
-        originalMenuPosition.dy,
-        menuLayout._topInset + previewSize.height + gap,
+    positionChild(
+      'menu',
+      Offset(
+        menuLayout.getPositionForChild(size, menuSize).dx,
+        menuSize.height <= spaceBelow
+            ? previewPosition.dy + previewSize.height + gap
+            : previewPosition.dy - gap - menuSize.height,
       ),
     );
-    positionChild('menu', menuPosition);
-    final destination = Offset(
-      menuPosition.dx.clamp(
-        16.0,
-        math.max(16.0, size.width - 16 - previewSize.width),
-      ),
-      menuPosition.dy - gap - previewSize.height,
+    positionChild(
+      'preview',
+      Offset.lerp(anchor.topLeft, previewPosition, lift)!,
     );
-    positionChild('preview', Offset.lerp(anchor.topLeft, destination, lift)!);
   }
 
   @override

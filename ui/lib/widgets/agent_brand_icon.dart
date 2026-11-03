@@ -6,8 +6,8 @@ import 'package:ui/widgets/agent_avatar.dart';
 
 /// ACP Agent 品牌图标。
 ///
-/// 已知 Agent（包括历史会话中的已停用 Agent）渲染各自来自 Lobe Icons
-/// (https://icons.lobehub.com) 的原始品牌 SVG。小万沿用可编辑的 AgentAvatarService，
+/// 已知 Agent（包括历史会话中的已停用 Agent）使用各自的品牌图标。
+/// Na 使用固定的角色头像。小万沿用可编辑的 AgentAvatarService，
 /// 让头像选择器同时影响 ACP 顶部、运行头和旧兼容卡片；未识别的自定义 Agent
 /// 回退到默认机器人图标 [Icons.smart_toy_outlined]。
 class AgentBrandIcon extends StatelessWidget {
@@ -71,6 +71,7 @@ class AgentBrandIcon extends StatelessWidget {
       'kimi' || 'kimi-code' || 'kimi-code-acp' => 'kimi-code-acp',
       'claude' || 'claude-code' || 'claude-code-acp' => 'claude-code-acp',
       'opencode' || 'open-code' || 'opencode-acp' => 'opencode-acp',
+      'na' || 'na-cloud' => 'na-cloud',
       'pi' || 'pi-acp' || 'omnibot-pi-acp' => 'pi-acp',
       'deepseek' ||
       'deepseek-acp' ||
@@ -98,13 +99,26 @@ class AgentBrandIcon extends StatelessWidget {
     final palette = context.omniPalette;
     final normalizedAgentId = normalizeAgentId(agentId);
     final brand = _brands[normalizedAgentId];
-    if (normalizedAgentId == 'na-cloud' || normalizedAgentId == 'pi-acp') {
-      final isPi = normalizedAgentId == 'pi-acp';
+    if (normalizedAgentId == 'na-cloud') {
       return Semantics(
-        label: isPi ? 'Pi' : 'Na',
+        label: 'Na',
+        excludeSemantics: true,
+        child: ClipOval(
+          child: Image.asset(
+            'assets/agents/na.png',
+            width: size,
+            height: size,
+            fit: BoxFit.cover,
+          ),
+        ),
+      );
+    }
+    if (normalizedAgentId == 'pi-acp') {
+      return Semantics(
+        label: 'Pi',
         excludeSemantics: true,
         child: Text(
-          isPi ? 'π' : 'N',
+          'π',
           style: TextStyle(
             fontSize: size,
             height: 1,

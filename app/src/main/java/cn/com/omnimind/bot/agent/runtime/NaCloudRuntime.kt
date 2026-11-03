@@ -33,6 +33,7 @@ import java.net.URLConnection
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicLong
 
 internal const val NA_AGENT_ID = "na-cloud"
 
@@ -61,6 +62,10 @@ internal class NaCloudRuntime(
     private val activeRuns = ConcurrentHashMap<String, String>()
     private val cancelPending = ConcurrentHashMap.newKeySet<String>()
     private var cachedStatus: Map<String, Any?> = emptyMap()
+    private val configurationRevision = AtomicLong()
+    private class ConnectionRevision(val value: Long) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
+        companion object Key : kotlin.coroutines.CoroutineContext.Key<ConnectionRevision>
+    }
     private val development get() = NaCloudEnvironment.developmentAvailable && preferences.getBoolean("development", false)
     private val baseUrl get() = if (development) preferences.getString("baseUrl", "http://127.0.0.1:8787")!! else BuildConfig.CLOUD_URL
 
@@ -85,9 +90,15 @@ internal class NaCloudRuntime(
         ?: error("Na connection attribution is missing")
 
     private suspend fun <T> withConnection(operation: suspend () -> T): T {
-        val connection = if (development) NaCloudConnection(baseUrl, developmentToken = token)
+        val snapshot = synchronized(this) { Triple(development, baseUrl, token to configurationRevision.get()) }
+        val connection = if (snapshot.first) NaCloudConnection(snapshot.second, developmentToken = snapshot.third.first)
             else NaCloudConnection.managed(BuildConfig.CLOUD_URL, NaCloudEnvironment.developmentAvailable, OmniAccount.repository())
-        return withContext(connection) { connection.prepareWorkspace(client); operation() }
+        return withContext(connection + ConnectionRevision(snapshot.third.second)) {
+            requireCurrentConnection(connection, snapshot.third.second)
+            connection.prepareWorkspace(client)
+            requireCurrentConnection(connection, snapshot.third.second)
+            operation()
+        }
     }
 
     fun config(): Map<String, Any?> = mapOf(
@@ -98,13 +109,14 @@ internal class NaCloudRuntime(
         "cloudModelManaged" to true,
     )
 
-    fun configure(args: Map<String, Any?>): Map<String, Any?> {
+    @Synchronized fun configure(args: Map<String, Any?>): Map<String, Any?> {
         check(prompts.values.none { !it.isCompleted }) { "请等待当前 Na 任务结束后修改连接。" }
         val mode = args["connectionMode"]?.toString() ?: if (development) "development" else "managed"
         require(mode == "managed" || (mode == "development" && NaCloudEnvironment.developmentAvailable)) { "不支持此连接方式。" }
         if (mode == "managed") {
             preferences.edit().putBoolean("development", false).apply()
             token = ""
+            configurationRevision.incrementAndGet()
             cachedStatus = emptyMap()
             cn.com.omnimind.bot.webchat.FlutterChatSyncBridge.dispatchNaHistoryOwnerChanged(appContext)
             return config()
@@ -117,6 +129,7 @@ internal class NaCloudRuntime(
         preferences.edit().putString("baseUrl", address).apply()
         preferences.edit().putBoolean("development", true).apply()
         args["apiKey"]?.let { token = it.toString().trim() }
+        configurationRevision.incrementAndGet()
         cachedStatus = emptyMap()
         cn.com.omnimind.bot.webchat.FlutterChatSyncBridge.dispatchNaHistoryOwnerChanged(appContext)
         return config()
@@ -164,6 +177,7 @@ internal class NaCloudRuntime(
                 required = method != "config/remote/fs/list" && args["sessionId"] == null)
         }
         return when (method) {
+            "config/na/personal" -> personalRequest(args)
             "config/remote/fs/list" -> listFiles(args)
             "config/remote/fs/read" -> fileContent(args, write = false)
             "config/remote/fs/write" -> fileContent(args, write = true)
@@ -179,6 +193,30 @@ internal class NaCloudRuntime(
             "session/close" -> mapOf("ok" to true) // Closing a view never deletes server history.
             else -> error("Na 云端不支持此操作：$method")
         }
+    }
+
+    private fun requireCurrentConnection(connection: NaCloudConnection, revision: Long) {
+        check(configurationRevision.get() == revision) { "Na 连接已变化，请重新打开页面。" }
+        if (connection.managed) {
+            check(!development && connection.baseUrl == BuildConfig.CLOUD_URL.trimEnd('/')) { "Na 连接已变化，请重新打开页面。" }
+            connection.account?.requireSessionGeneration(connection.generation)
+        } else check(development && connection.baseUrl == baseUrl) { "Na 开发连接已变化，请重新打开页面。" }
+    }
+
+    private suspend fun personalRequest(args: Map<String, Any?>): Map<String, Any?> {
+        val connection = connection()
+        val revision = currentCoroutineContext()[ConnectionRevision]?.value ?: error("Na connection revision is missing")
+        requireCurrentConnection(connection, revision)
+        val operation = args["operation"] as? String ?: error("Na resource operation is required")
+        val rawPayload = args["payload"]
+        require(rawPayload == null || rawPayload is Map<*, *>) { "Na 请求参数必须是对象。" }
+        @Suppress("UNCHECKED_CAST")
+        val payload = (rawPayload as? Map<String, Any?>).orEmpty()
+        val route = naPersonalRoute(operation, args["id"], payload)
+        val owner = naPersonalOwner(connection.prefix, connection.generation, revision)
+        requireNaPersonalOwner(owner, args["owner"], operation == "status")
+        val response = naPersonalHttpRequest(connection, client, route) { requireCurrentConnection(connection, revision) }
+        return mapOf("owner" to owner, "data" to response)
     }
 
     private suspend fun bind(id: String, conversationId: Long?, title: String?): Long {

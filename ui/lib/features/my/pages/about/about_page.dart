@@ -383,7 +383,7 @@ class _AboutPageState extends State<AboutPage> {
                   value: _betaOptIn,
                   enabled: !_isUpdatingBetaOptIn,
                   duration: _hasSyncedUpdatePreferences
-                      ? const Duration(milliseconds: 200)
+                      ? const Duration(milliseconds: 300)
                       : Duration.zero,
                   onToggle: _handleToggleBetaOptIn,
                 ),
