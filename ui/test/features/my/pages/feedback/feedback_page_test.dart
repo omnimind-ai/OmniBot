@@ -86,7 +86,10 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
     await tester.pumpWidget(
       MaterialApp(
-        theme: AppTheme.lightTheme,
+        // These form tests do not need GPU-backed ink shader effects.
+        theme: AppTheme.lightTheme.copyWith(
+          splashFactory: NoSplash.splashFactory,
+        ),
         locale: Locale(language),
         supportedLocales: const [Locale('zh'), Locale('en')],
         localizationsDelegates: const [
@@ -115,10 +118,10 @@ void main() {
         'user@example.com',
       );
       await fill(tester);
-      await tester.enterText(find.byKey(contactKey), '微信:sample');
+      await tester.enterText(find.byKey(contactKey), 'reply@example.com');
       await tapVisible(tester, submitKey);
       expect(service.submitted!['accountEmail'], 'user@example.com');
-      expect(service.submitted!['contact'], '微信:sample');
+      expect(service.submitted!['contact'], 'reply@example.com');
       expect(find.text('反馈已收到'), findsOneWidget);
       expect(find.text('feedback-reference-123'), findsOneWidget);
       expect(tester.takeException(), isNull);
@@ -210,23 +213,26 @@ void main() {
     );
   });
 
-  testWidgets(
-    'signed-out users get an English native form with optional contact',
-    (tester) async {
-      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(account, (call) async => '');
-      await open(tester, language: 'en');
-      expect(find.text('Send feedback'), findsOneWidget);
-      expect(
-        tester.widget<TextFormField>(find.byKey(contactKey)).controller!.text,
-        isEmpty,
-      );
-      await fill(tester);
-      await tapVisible(tester, submitKey);
-      expect(service.submitted!['accountEmail'], '');
-      expect(service.submitted!['contact'], '');
-      expect(service.submitted!['locale'], 'en');
-      expect(find.text('Feedback received'), findsOneWidget);
-    },
-  );
+  testWidgets('signed-out users must enter a contact email before submitting', (
+    tester,
+  ) async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(account, (call) async => '');
+    await open(tester, language: 'en');
+    expect(find.text('Send feedback'), findsOneWidget);
+    expect(
+      tester.widget<TextFormField>(find.byKey(contactKey)).controller!.text,
+      isEmpty,
+    );
+    await fill(tester);
+    await tapVisible(tester, submitKey);
+    expect(service.calls, 0);
+    expect(find.text('Enter a valid contact email'), findsOneWidget);
+    await tester.enterText(find.byKey(contactKey), 'reply@example.com');
+    await tapVisible(tester, submitKey);
+    expect(service.submitted!['accountEmail'], '');
+    expect(service.submitted!['contact'], 'reply@example.com');
+    expect(service.submitted!['locale'], 'en');
+    expect(find.text('Feedback received'), findsOneWidget);
+  });
 }
