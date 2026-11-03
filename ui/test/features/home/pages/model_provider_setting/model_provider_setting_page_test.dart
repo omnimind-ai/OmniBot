@@ -573,9 +573,7 @@ void main() {
     expect(find.text('OmniBot 官方 AI'), findsNothing);
   });
 
-  testWidgets('provider page does not wait for metadata refresh', (
-    tester,
-  ) async {
+  testWidgets('metadata refresh preserves native capabilities', (tester) async {
     tester.view.physicalSize = const Size(1080, 2200);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.resetPhysicalSize);
@@ -636,10 +634,55 @@ void main() {
 
     expect(
       find.byKey(const Key('provider-model-reasoning-gpt-4o')),
-      findsOneWidget,
+      findsNothing,
     );
+    expect(find.text('128K'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  for (final reasoning in <bool?>[true, false, null]) {
+    testWidgets('reasoning badge uses native capability: $reasoning', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(800, 1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      _discoveryModels['provider-1'] = [
+        ProviderModelOption(
+          id: 'gpt-4o',
+          displayName: 'gpt-4o',
+          reasoning: reasoning,
+          reasoningCapabilitySource: reasoning == null ? null : 'provider',
+        ),
+      ];
+      ModelsDevCatalogService.setCatalogForTesting(
+        ModelsDevCatalogService.parseCatalog(
+          reasoning == true
+              ? _modelsDevCatalogJson.replaceAll(
+                  '"reasoning": true',
+                  '"reasoning": false',
+                )
+              : _modelsDevCatalogJson,
+        ),
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('provider-model-reasoning-gpt-4o')),
+        reasoning == true ? findsOneWidget : findsNothing,
+      );
+      expect(find.text('128K'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('provider labels stay bounded on narrow layout', (tester) async {
     tester.view.devicePixelRatio = 1.0;
@@ -1182,7 +1225,7 @@ void main() {
     );
     expect(
       find.byKey(const Key('provider-model-reasoning-gpt-4o')),
-      findsOneWidget,
+      findsNothing,
     );
     expect(find.text('Context 128K'), findsNothing);
     expect(find.text('Tools'), findsNothing);
