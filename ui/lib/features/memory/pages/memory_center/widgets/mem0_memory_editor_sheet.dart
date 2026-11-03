@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/app_text_styles.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -89,11 +90,7 @@ class _Mem0MemoryEditorSheetState extends State<Mem0MemoryEditorSheet> {
 
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
-      child: Container(
-        decoration: BoxDecoration(
-          color: palette.surfacePrimary,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-        ),
+      child: OmniGlassSheet(
         child: SafeArea(
           top: false,
           child: SingleChildScrollView(

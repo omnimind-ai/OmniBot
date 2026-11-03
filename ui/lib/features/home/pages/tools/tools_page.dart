@@ -1,4 +1,7 @@
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/tool_catalog_service.dart';
@@ -15,7 +18,8 @@ class ToolsPage extends StatefulWidget {
   State<ToolsPage> createState() => _ToolsPageState();
 }
 
-class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
+class _ToolsPageState extends State<ToolsPage>
+    with WidgetsBindingObserver, FlClashPageLoadMixin {
   final _search = TextEditingController();
   final _focus = FocusNode();
   List<CatalogTool> _local = [];
@@ -54,6 +58,7 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   void _searchChanged() => setState(() {});
 
   Future<void> _load() async {
+    if (!await waitForPageReady() || !mounted) return;
     setState(() {
       _localLoading = _remoteLoading = true;
       _localFailed = _remoteFailed = false;
@@ -62,34 +67,44 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
   }
 
   Future<void> _loadLocal() async {
+    if (!await waitForPageReady() || !mounted) return;
     try {
       final tools = await ToolCatalogService.localTools();
-      if (mounted) setState(() => _local = tools);
+      if (await waitForPageReady() && mounted) {
+        setState(() => _local = tools);
+      }
     } catch (_) {
-      if (mounted) {
+      if (await waitForPageReady() && mounted) {
         setState(() {
           _local = [];
           _localFailed = true;
         });
       }
     } finally {
-      if (mounted) setState(() => _localLoading = false);
+      if (await waitForPageReady() && mounted) {
+        setState(() => _localLoading = false);
+      }
     }
   }
 
   Future<void> _loadRemote() async {
+    if (!await waitForPageReady() || !mounted) return;
     try {
       final servers = await ToolCatalogService.remoteTools();
-      if (mounted) setState(() => _servers = servers);
+      if (await waitForPageReady() && mounted) {
+        setState(() => _servers = servers);
+      }
     } catch (_) {
-      if (mounted) {
+      if (await waitForPageReady() && mounted) {
         setState(() {
           _servers = [];
           _remoteFailed = true;
         });
       }
     } finally {
-      if (mounted) setState(() => _remoteLoading = false);
+      if (await waitForPageReady() && mounted) {
+        setState(() => _remoteLoading = false);
+      }
     }
   }
 
@@ -122,120 +137,138 @@ class _ToolsPageState extends State<ToolsPage> with WidgetsBindingObserver {
         title: _text('工具', 'Tools'),
         primary: true,
         actions: [
-          IconButton(
-            tooltip: _text('刷新工具', 'Refresh tools'),
-            onPressed: _loading ? null : _load,
-            icon: const Icon(LucideIcons.refreshCw, size: 20),
+          Padding(
+            padding: const EdgeInsetsDirectional.only(end: 12),
+            child: OmniCircleButton(
+              tooltip: _text('刷新工具', 'Refresh tools'),
+              onPressed: _loading ? null : _load,
+              icon: LucideIcons.refreshCw,
+              size: 40,
+              tapTargetSize: MaterialTapTargetSize.padded,
+              iconWidget: _loading
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : null,
+            ),
           ),
         ],
       ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
-              child: OmniSettingsSearchField(
-                controller: _search,
-                focusNode: _focus,
-                hintText: _text('搜索名称、用途或来源', 'Search name, purpose or source'),
-              ),
-            ),
-            Expanded(
-              child: RefreshIndicator(
-                onRefresh: () async {
-                  if (!_loading) await _load();
-                },
-                child: ListView(
-                  keyboardDismissBehavior:
-                      ScrollViewKeyboardDismissBehavior.onDrag,
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: edgeToEdgeScrollPadding(
-                    context,
-                    const EdgeInsets.fromLTRB(22, 8, 22, 32),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: Column(
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(22, 12, 22, 8),
+                child: OmniSettingsSearchField(
+                  controller: _search,
+                  focusNode: _focus,
+                  hintText: _text(
+                    '搜索名称、用途或来源',
+                    'Search name, purpose or source',
                   ),
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: Text(
-                        _text(
-                          '查看内置 Agent 与已配置扩展的工具目录。实际调用取决于 Agent、会话配置、权限及运行环境。',
-                          'Explore the built-in agent and configured extensions. Actual access depends on the agent, session, permissions and runtime.',
-                        ),
-                        style: TextStyle(
-                          fontSize: 12,
-                          height: 1.55,
-                          color: palette.textSecondary,
-                        ),
-                      ),
-                    ),
-                    if (_localLoading || _remoteLoading)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 14,
-                        ),
-                        child: Row(
-                          children: [
-                            const SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(
-                                strokeWidth: 1.5,
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Text(
-                              _localLoading
-                                  ? _text('读取工具目录…', 'Loading tools…')
-                                  : _text(
-                                      '发现远程工具…',
-                                      'Discovering remote tools…',
-                                    ),
-                              style: TextStyle(
-                                fontSize: 12,
-                                color: palette.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    if (_localFailed)
-                      _error(_text('本地工具加载失败', 'Could not load local tools')),
-                    if (_remoteFailed)
-                      _error(_text('远程工具加载失败', 'Could not load remote tools')),
-                    if (_query.isNotEmpty && visible.isEmpty && !_loading)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 32),
-                        child: Text(
-                          _text(
-                            '没有找到匹配的工具，试试其他关键词。',
-                            'No matching tools. Try another keyword.',
-                          ),
-                          style: TextStyle(
-                            color: palette.textSecondary,
-                            fontSize: 15,
-                          ),
-                        ),
-                      ),
-                    for (final group in ['builtin', 'plugin', 'mcp'])
-                      if (_query.isEmpty ||
-                          visible.any((t) => t.group == group)) ...[
-                        _heading(
-                          group,
-                          visible.where((t) => t.group == group).length,
-                        ),
-                        _buildGroupSection(
-                          group,
-                          visible.where((t) => t.group == group).toList(),
-                        ),
-                      ],
-                  ],
                 ),
               ),
-            ),
-          ],
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: () async {
+                    if (!_loading) await _load();
+                  },
+                  child: ListView(
+                    keyboardDismissBehavior:
+                        ScrollViewKeyboardDismissBehavior.onDrag,
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: edgeToEdgeScrollPadding(
+                      context,
+                      const EdgeInsets.fromLTRB(22, 8, 22, 32),
+                    ),
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: Text(
+                          _text(
+                            '查看内置 Agent 与已配置扩展的工具目录。实际调用取决于 Agent、会话配置、权限及运行环境。',
+                            'Explore the built-in agent and configured extensions. Actual access depends on the agent, session, permissions and runtime.',
+                          ),
+                          style: TextStyle(
+                            fontSize: 12,
+                            height: 1.55,
+                            color: palette.textSecondary,
+                          ),
+                        ),
+                      ),
+                      if (_localLoading || _remoteLoading)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 4,
+                            vertical: 14,
+                          ),
+                          child: Row(
+                            children: [
+                              const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 1.5,
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              Text(
+                                _localLoading
+                                    ? _text('读取工具目录…', 'Loading tools…')
+                                    : _text(
+                                        '发现远程工具…',
+                                        'Discovering remote tools…',
+                                      ),
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: palette.textSecondary,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      if (_localFailed)
+                        _error(_text('本地工具加载失败', 'Could not load local tools')),
+                      if (_remoteFailed)
+                        _error(
+                          _text('远程工具加载失败', 'Could not load remote tools'),
+                        ),
+                      if (_query.isNotEmpty && visible.isEmpty && !_loading)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 32),
+                          child: Text(
+                            _text(
+                              '没有找到匹配的工具，试试其他关键词。',
+                              'No matching tools. Try another keyword.',
+                            ),
+                            style: TextStyle(
+                              color: palette.textSecondary,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ),
+                      for (final group in ['builtin', 'plugin', 'mcp'])
+                        if (_query.isEmpty ||
+                            visible.any((t) => t.group == group)) ...[
+                          _heading(
+                            group,
+                            visible.where((t) => t.group == group).length,
+                          ),
+                          _buildGroupSection(
+                            group,
+                            visible.where((t) => t.group == group).toList(),
+                          ),
+                        ],
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

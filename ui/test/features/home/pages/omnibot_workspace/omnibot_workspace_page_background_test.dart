@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/omnibot_workspace/omnibot_workspace_page.dart';
+import 'package:ui/features/home/pages/omnibot_workspace/widgets/omnibot_workspace_browser.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 
@@ -38,6 +39,10 @@ void main() {
   testWidgets(
     'workspace page renders shared background layer and translucent bar',
     (tester) async {
+      tester.view.physicalSize = const Size(1366, 1024);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       final workspacePath = Directory.systemTemp.path;
 
       AppBackgroundService.notifier.value = const AppBackgroundConfig(
@@ -67,6 +72,17 @@ void main() {
         findsOneWidget,
       );
 
+      expect(
+        tester.getSize(find.byKey(const ValueKey('workspace-page-background'))),
+        const Size(1366, 1024),
+      );
+      final browser = find.byType(OmnibotWorkspaceBrowser);
+      expect(tester.getSize(browser).width, 840);
+      final browserState = tester.state(browser);
+      tester.view.physicalSize = const Size(768, 1024);
+      await tester.pump();
+      expect(tester.getSize(browser).width, 768);
+      expect(tester.state(browser), same(browserState));
       final appBar = tester.widget<AppBar>(find.byType(AppBar));
       expect(
         appBar.backgroundColor,

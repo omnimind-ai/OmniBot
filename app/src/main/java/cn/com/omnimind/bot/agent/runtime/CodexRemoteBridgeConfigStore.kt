@@ -2,6 +2,9 @@ package cn.com.omnimind.bot.agent.runtime
 
 import android.content.Context
 
+/** Host identity for the configured PC Bridge, distinct from local Codex. */
+internal const val REMOTE_CODEX_AGENT_ID = "codex-remote"
+
 internal data class CodexRemoteBridgeConfig(
     val enabled: Boolean = false,
     val bridgeUrl: String = "",

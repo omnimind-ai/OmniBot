@@ -183,7 +183,8 @@ class OmniAgentExecutor(
         runControl: AgentRunControl = NoOpAgentRunControl,
         permissionRequester: AgentPermissionRequester? = null,
         continueMode: Boolean = false,
-        historyMessagesOverride: List<ChatCompletionMessage>? = null
+        historyMessagesOverride: List<ChatCompletionMessage>? = null,
+        acpSessionId: String? = null,
     ): AgentResult {
         var toolRouter: AgentToolRouter? = null
         var pluginSession: OmniPluginSession? = null
@@ -351,6 +352,7 @@ class OmniAgentExecutor(
                     promptCacheKey = promptCacheKey,
                     contextCompactor = contextCompactorFactory(),
                     executionEnv = DefaultAgentExecutionEnvironment(
+                        acpSessionId = acpSessionId,
                         agentRunId = agentRunId,
                         userMessage = userMessage,
                         runtimeContextRepository = runtimeContextRepository,

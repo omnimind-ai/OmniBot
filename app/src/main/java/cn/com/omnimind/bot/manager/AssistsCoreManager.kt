@@ -1,5 +1,7 @@
 package cn.com.omnimind.bot.manager
 
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
+
 import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -398,6 +400,15 @@ class AssistsCoreManager(private val context: Context) {
             "group" to group,
             "attachment" to attachment,
             "reasoning" to reasoning,
+            "supportedReasoningLevels" to supportedReasoningLevels,
+            "defaultReasoningLevel" to defaultReasoningLevel,
+            "reasoningCanDisable" to reasoningCanDisable,
+            "reasoningDefaultEnabled" to reasoningDefaultEnabled,
+            "reasoningSupportsAdaptive" to reasoningSupportsAdaptive,
+            "reasoningWireFormat" to reasoningWireFormat,
+            "reasoningEffortSupported" to reasoningEffortSupported,
+            "reasoningContentRequired" to reasoningContentRequired,
+            "reasoningCapabilitySource" to reasoningCapabilitySource,
             "toolCall" to toolCall,
             "structuredOutput" to structuredOutput,
             "temperature" to temperature
@@ -1649,6 +1660,7 @@ class AssistsCoreManager(private val context: Context) {
                 }
                 val apiKey = if (useProvidedApiKey) apiKeyArg else profile.apiKey
                 val customHeaders = if (useProvidedCustomHeaders) customHeadersArg else profile.customHeaders
+                LocalNetworkPermission.requestForEndpoint(context, apiBase)
                 val models = HttpController.fetchProviderModels(
                     apiBase = apiBase,
                     apiKey = apiKey,
@@ -1670,8 +1682,11 @@ class AssistsCoreManager(private val context: Context) {
                     ModelProviderConfigStore.sameCanonicalEndpoint(apiBase, profile.baseUrl)) {
                     ModelProviderConfigStore.rememberModels(context, profile, models)
                 }
+                val resolvedModels = ModelProviderConfigStore.resolveModelCapabilities(
+                    context, profile.copy(baseUrl = apiBase), models,
+                )
                 withContext(Dispatchers.Main) {
-                    result.success(models.map { it.toMap() })
+                    result.success(resolvedModels.map { it.toMap() })
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -1909,8 +1924,11 @@ class AssistsCoreManager(private val context: Context) {
     fun getSceneVoiceConfig(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
+                val config = withContext(Dispatchers.IO) {
+                    SceneVoiceConfigStore.getConfig().toMap()
+                }
                 withContext(Dispatchers.Main) {
-                    result.success(SceneVoiceConfigStore.getConfig().toMap())
+                    result.success(config)
                 }
             } catch (e: Exception) {
                 OmniLog.e(TAG, "getSceneVoiceConfig error: ${e.message}")
@@ -3191,7 +3209,8 @@ class AssistsCoreManager(private val context: Context) {
                     conversationId = conversationId,
                     conversationMode = mode,
                     messages = messages,
-                    allowHistoryRemoval = call.argument<Boolean>("allowHistoryRemoval") == true
+                    allowHistoryRemoval = call.argument<Boolean>("allowHistoryRemoval") == true,
+                    removedMessageIds = call.argument<List<String>>("removedMessageIds"),
                 )
                 withContext(Dispatchers.Main) {
                     result.success("SUCCESS")
@@ -3341,7 +3360,8 @@ class AssistsCoreManager(private val context: Context) {
      */
     fun createConversation(call: MethodCall, result: MethodChannel.Result) {
         val title = call.argument<String>("title") ?: "新对话"
-        val mode = normalizeConversationMode(call.argument<String>("mode"))
+        // Preserve explicit product modes until the domain claims their Agent owner.
+        val mode = call.argument<String>("mode")?.trim()?.takeIf(String::isNotEmpty) ?: "agent"
         val summary = call.argument<String>("summary")
         val parentConversationId = call.argument<Number>("parentConversationId")
             ?.toLong()

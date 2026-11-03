@@ -19,13 +19,13 @@ import org.junit.Test
 
 class ManagedAcpAdapterPreparationTest {
     private companion object {
-        const val DEEPSEEK_HARNESS_PREPARATION_REVISION = "deepseek-official-acp-0.1.2-rc.1"
+        const val TEST_PREPARATION_REVISION = "test-adapter-current"
     }
     @Test
-    fun `a healthy installed DSH adapter is reused during agent switching`() {
+    fun `a healthy installed adapter is reused during agent switching`() {
         assertFalse(
             shouldPrepareManagedAcpAdapter(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                agentId = AcpAgentProfileStore.KIMI_CODE_AGENT_ID,
                 commandAvailable = true,
                 allPackagesReady = true,
                 adapterHealthy = true,
@@ -37,7 +37,7 @@ class ManagedAcpAdapterPreparationTest {
     fun `missing or unhealthy adapters are still prepared`() {
         assertTrue(
             shouldPrepareManagedAcpAdapter(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                agentId = AcpAgentProfileStore.KIMI_CODE_AGENT_ID,
                 commandAvailable = false,
                 allPackagesReady = false,
                 adapterHealthy = false,
@@ -49,22 +49,22 @@ class ManagedAcpAdapterPreparationTest {
     fun `stale installer revision is prepared even when the old tree is healthy`() {
         assertTrue(
             shouldPrepareManagedAcpAdapter(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                agentId = AcpAgentProfileStore.KIMI_CODE_AGENT_ID,
                 commandAvailable = true,
                 allPackagesReady = true,
                 adapterHealthy = true,
-                preparationRevision = "deepseek-dsh-pnpm-copy-v8",
-                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                preparationRevision = "test-adapter-previous",
+                requiredRevision = TEST_PREPARATION_REVISION,
             )
         )
         assertFalse(
             shouldPrepareManagedAcpAdapter(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
+                agentId = AcpAgentProfileStore.KIMI_CODE_AGENT_ID,
                 commandAvailable = true,
                 allPackagesReady = true,
                 adapterHealthy = true,
-                preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
-                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                preparationRevision = TEST_PREPARATION_REVISION,
+                requiredRevision = TEST_PREPARATION_REVISION,
             )
         )
     }
@@ -118,16 +118,16 @@ class ManagedAcpAdapterPreparationTest {
             shouldReuseManagedAcpPreparation(
                 healthStatus = "online",
                 installed = true,
-                preparationRevision = "deepseek-dsh-pnpm-copy-v2",
-                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                preparationRevision = "test-adapter-older",
+                requiredRevision = TEST_PREPARATION_REVISION,
             )
         )
         assertTrue(
             shouldReuseManagedAcpPreparation(
                 healthStatus = "online",
                 installed = true,
-                preparationRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
-                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                preparationRevision = TEST_PREPARATION_REVISION,
+                requiredRevision = TEST_PREPARATION_REVISION,
             )
         )
     }
@@ -158,7 +158,7 @@ class ManagedAcpAdapterPreparationTest {
                 healthStatus = AcpAgentHealth.STATUS_ONLINE,
                 installed = true,
                 preparationRevision = "old",
-                requiredRevision = DEEPSEEK_HARNESS_PREPARATION_REVISION,
+                requiredRevision = TEST_PREPARATION_REVISION,
             )
         )
         assertTrue(
@@ -176,7 +176,7 @@ class ManagedAcpAdapterPreparationTest {
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         val installation = async {
-            gate.run("deepseek-harness-acp") {
+            gate.run("kimi-code-acp") {
                 started.complete(Unit)
                 release.await()
             }
@@ -187,7 +187,7 @@ class ManagedAcpAdapterPreparationTest {
             gate.run("codex-acp") { Unit }
             throw AssertionError("a foreground switch must not wait for installation")
         } catch (error: ManagedAcpPreparationInProgressException) {
-            assertEquals("deepseek-harness-acp", error.preparingAgentId)
+            assertEquals("kimi-code-acp", error.preparingAgentId)
         } finally {
             release.complete(Unit)
             installation.await()

@@ -63,6 +63,15 @@ class ChatConversationRuntimeState {
   ConversationModel? conversation;
   final ObservableChatMessageList messages = ObservableChatMessageList();
 
+  /// The native history cursor belongs to this Conversation, not the selected
+  /// page mode. Null means no storage page has been read yet; live ACP items
+  /// alone cannot prove that all older history has been loaded.
+  ({bool hasMore, int nextOffset})? historyPage;
+
+  /// Invalidates outstanding display-page reads after a committed history edit.
+  /// This is independent of the ACP session/turn lifecycle.
+  int historyPageRevision = 0;
+
   /// Accumulated assistant text, used to continue a stream across events.
   ///
   /// This is a TEXT CACHE, not a record of what is running. Its key shape
@@ -484,7 +493,7 @@ class ChatConversationRuntimeState {
     }
     // A completed turn remains fenced even after its session becomes idle.
     // Without this check, a delayed event from the previous Harness can be
-    // the first event seen after a Xiaowan/DSH switch and silently rebind the
+    // the first event seen after an Agent switch and silently rebind the
     // runtime to the old session.
     if (incomingTurnId.isNotEmpty &&
         (completedAgentTurnIds.contains(incomingTurnId) ||

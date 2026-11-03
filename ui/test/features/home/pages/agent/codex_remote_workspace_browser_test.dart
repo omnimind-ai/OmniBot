@@ -146,7 +146,7 @@ void main() {
         ],
       };
     });
-    Widget browser(String? owner) => MaterialApp(
+    Widget browser(String owner) => MaterialApp(
       home: Scaffold(
         body: CodexRemoteWorkspaceBrowser(
           workspacePath: '/workspace',
@@ -154,12 +154,12 @@ void main() {
         ),
       ),
     );
-    await tester.pumpWidget(browser(null));
+    await tester.pumpWidget(browser('codex-remote'));
     await tester.pumpAndSettle();
     expect(find.text('bridge.md'), findsOneWidget);
     await tester.pumpWidget(browser('na-cloud'));
     await tester.pumpAndSettle();
-    expect(owners, [null, 'na-cloud']);
+    expect(owners, ['codex-remote', 'na-cloud']);
     expect(find.text('bridge.md'), findsNothing);
     expect(find.text('cloud.md'), findsOneWidget);
   });
@@ -207,6 +207,7 @@ void main() {
     expect(find.text('README.md'), findsOneWidget);
     expect(calls.single.method, 'config/remote/fs/list');
     expect(calls.single.arguments, <String, dynamic>{
+      'agentId': 'codex-remote',
       'remoteBridgeUrl': 'ws://192.168.1.2:17321/codex',
       'remoteBridgeToken': 'token',
       'remoteCwd': '/repo',

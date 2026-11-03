@@ -1,7 +1,12 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/widgets/omni_menu.dart';
+import 'package:ui/widgets/settings_ui.dart';
+import 'package:ui/widgets/flclash/popup.dart';
+import 'package:ui/widgets/glass_popup.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/l10n/l10n.dart';
@@ -98,23 +103,12 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
   Widget build(BuildContext context) {
     final snapshot = widget.snapshot;
     return Material(
-      elevation: 18,
+      elevation: LiquidGlassScope.of(context) ? 0 : 18,
       color: Colors.transparent,
       borderRadius: BorderRadius.circular(20),
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: const Color(0xFFD8E4F4)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x1F1930D9),
-              blurRadius: 24,
-              offset: Offset(0, 10),
-            ),
-          ],
-        ),
-        clipBehavior: Clip.antiAlias,
+      child: OmniGlassSheet(
+        backgroundColor: Colors.white,
+        borderRadius: BorderRadius.circular(20),
         child: Stack(
           children: [
             Column(
@@ -174,7 +168,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
               left: 0,
               bottom: 6,
               child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
+                behavior: HitTestBehavior.translucent,
                 onPanUpdate: (details) =>
                     widget.onResizeLeftDelta(details.delta),
                 child: const SizedBox(width: 32, height: 28),
@@ -184,7 +178,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
               right: 0,
               bottom: 6,
               child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
+                behavior: HitTestBehavior.translucent,
                 onPanUpdate: (details) =>
                     widget.onResizeRightDelta(details.delta),
                 child: const SizedBox(width: 32, height: 28),
@@ -207,13 +201,15 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
               : const Color(0xFF617390));
     return Container(
       padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Color(0xFFF8FBFF), Color(0xFFF3F7FD)],
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-        ),
-        border: Border(bottom: BorderSide(color: Color(0xFFE3EBF8))),
+      decoration: BoxDecoration(
+        gradient: LiquidGlassScope.of(context)
+            ? null
+            : const LinearGradient(
+                colors: [Color(0xFFF8FBFF), Color(0xFFF3F7FD)],
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+              ),
+        border: const Border(bottom: BorderSide(color: Color(0xFFE3EBF8))),
       ),
       child: Row(
         children: [
@@ -651,9 +647,9 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
     return Container(
       height: 44,
       padding: const EdgeInsets.fromLTRB(8, 5, 8, 7),
-      decoration: const BoxDecoration(
-        color: Color(0xFFF7F9FC),
-        border: Border(top: BorderSide(color: Color(0xFFE2E8F0))),
+      decoration: BoxDecoration(
+        color: LiquidGlassScope.of(context) ? null : const Color(0xFFF7F9FC),
+        border: const Border(top: BorderSide(color: Color(0xFFE2E8F0))),
       ),
       child: Row(
         children: [
@@ -679,47 +675,57 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
           ),
           Expanded(
             child: Center(
-              child: InkWell(
-                borderRadius: BorderRadius.circular(999),
-                onTap: _showTabsSheet,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    border: Border.all(color: const Color(0xFFD9E5F4)),
-                    color: Colors.white,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(
-                        Icons.layers_outlined,
-                        size: 16,
-                        color: Color(0xFF42526B),
-                      ),
-                      const SizedBox(width: 6),
-                      Text(
-                        '${widget.snapshot.tabs.length}',
-                        style: const TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF213147),
+              child: FlClashPopupSource(
+                glass: false,
+                color: Colors.white,
+                shape: const StadiumBorder(),
+                builder: (anchorContext) => InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => _showTabsMenu(anchorContext),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(999),
+                      border: Border.all(color: const Color(0xFFD9E5F4)),
+                      color: Colors.white,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.layers_outlined,
+                          size: 16,
+                          color: Color(0xFF42526B),
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 6),
+                        Text(
+                          '${widget.snapshot.tabs.length}',
+                          style: const TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF213147),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
             ),
           ),
           const SizedBox(width: 6),
-          _toolbarButton(
-            icon: Icons.more_horiz_rounded,
-            tooltip: _text('菜单', 'Menu'),
-            onPressed: _showMenuSheet,
+          FlClashPopupSource(
+            glass: false,
+            color: Colors.white,
+            shape: const CircleBorder(),
+            builder: (anchorContext) => _toolbarButton(
+              icon: Icons.more_horiz_rounded,
+              tooltip: _text('菜单', 'Menu'),
+              onPressed: () => _showMenu(anchorContext),
+            ),
           ),
         ],
       ),
@@ -895,26 +901,24 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
     }
   }
 
-  Future<void> _showTabsSheet() async {
+  Future<void> _showTabsMenu(BuildContext anchorContext) async {
     final snapshot = widget.snapshot;
-    await showModalBottomSheet<void>(
+    final anchor = glassPopupAnchorFromContext(anchorContext);
+    if (anchor == null) return;
+    final action = await showGlassPopup<(String, int?)>(
       context: context,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: OmniMenuStyle.panelRadius,
-      ),
-      builder: (context) {
-        return SafeArea(
+      sourceContext: anchorContext,
+      anchor: anchor,
+      preferBelow: false,
+      child: Builder(
+        builder: (popupContext) => OmniMenuSurface(
+          width: 300,
           child: ListView(
-            padding: OmniMenuStyle.panelPadding,
+            shrinkWrap: true,
+            padding: EdgeInsets.zero,
             children: [
-              Text(
-                _text('标签页', 'Tabs'),
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              ...snapshot.tabs.map((tab) {
-                return OmniMenuItem(
+              for (final tab in snapshot.tabs)
+                OmniMenuItem(
                   selected: tab.isActive,
                   leading: Icon(
                     tab.isActive
@@ -924,145 +928,109 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
                   label: tab.title.trim().isEmpty ? tab.url : tab.title,
                   subtitle: tab.url,
                   trailing: IconButton(
-                    onPressed: () async {
-                      Navigator.of(context).pop();
-                      await _runCommand(
-                        AgentBrowserSessionService.closeTab(tab.tabId),
-                      );
-                    },
+                    tooltip: _text('关闭标签页', 'Close tab'),
+                    onPressed: () =>
+                        Navigator.of(popupContext).pop(('close', tab.tabId)),
                     icon: const Icon(Icons.close_rounded),
                   ),
-                  onTap: () async {
-                    Navigator.of(context).pop();
-                    await _runCommand(
-                      AgentBrowserSessionService.selectTab(tab.tabId),
-                    );
-                  },
-                );
-              }),
-              const SizedBox(height: 12),
-              FilledButton.icon(
-                onPressed: () async {
-                  Navigator.of(context).pop();
-                  await _runCommand(AgentBrowserSessionService.newTab());
-                },
-                icon: const Icon(Icons.add_rounded),
-                label: Text(_text('新建标签页', 'New tab')),
+                  onTap: () =>
+                      Navigator.of(popupContext).pop(('select', tab.tabId)),
+                ),
+              OmniMenuItem(
+                leading: const Icon(Icons.add_rounded),
+                label: _text('新建标签页', 'New tab'),
+                onTap: () => Navigator.of(popupContext).pop(('new', null)),
               ),
             ],
           ),
-        );
-      },
-    );
-  }
-
-  Future<void> _showMenuSheet() async {
-    final snapshot = widget.snapshot;
-    await showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: OmniMenuStyle.panelRadius,
+        ),
       ),
-      builder: (context) {
-        return SafeArea(
-          child: ListView(
-            padding: OmniMenuStyle.panelPadding,
-            children: [
-              Text(
-                _text('浏览器菜单', 'Browser menu'),
-                style: Theme.of(context).textTheme.titleMedium,
-              ),
-              const SizedBox(height: 12),
-              _menuTile(
-                icon: Icons.history_rounded,
-                label: _text('历史记录', 'History'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showHistorySheet();
-                },
-              ),
-              _menuTile(
-                icon: Icons.bookmarks_rounded,
-                label: _text('收藏夹', 'Bookmarks'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showBookmarksSheet();
-                },
-              ),
-              _menuTile(
-                icon: Icons.download_rounded,
-                label: _text('下载', 'Downloads'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showDownloadsSheet();
-                },
-              ),
-              _menuTile(
-                icon: Icons.code_rounded,
-                label: _text('Userscript', 'Userscript'),
-                onTap: () {
-                  Navigator.of(context).pop();
-                  _showUserscriptSheet();
-                },
-              ),
-              _menuTile(
-                icon: snapshot.isDesktopMode
-                    ? Icons.smartphone_rounded
-                    : Icons.desktop_windows_rounded,
-                label: snapshot.isDesktopMode
-                    ? _text('切换到移动模式', 'Switch to mobile mode')
-                    : _text('切换到桌面模式', 'Switch to desktop mode'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _runCommand(
-                    AgentBrowserSessionService.toggleDesktopMode(),
-                  );
-                },
-              ),
-              _menuTile(
-                icon: Icons.close_rounded,
-                label: _text('关闭当前标签页', 'Close current tab'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  final activeTabId = snapshot.activeTabId;
-                  if (activeTabId != null) {
-                    await _runCommand(
-                      AgentBrowserSessionService.closeTab(activeTabId),
-                    );
-                  }
-                },
-              ),
-              _menuTile(
-                icon: Icons.tab_unselected_rounded,
-                label: _text('关闭全部标签页', 'Close all tabs'),
-                onTap: () async {
-                  Navigator.of(context).pop();
-                  await _runCommand(
-                    AgentBrowserSessionService.closeAllTabs(
-                      snapshot.tabs.map((tab) => tab.tabId).toList(),
-                    ),
-                  );
-                },
-              ),
-            ],
-          ),
-        );
-      },
     );
+    if (!mounted || action == null) return;
+    switch (action.$1) {
+      case 'close':
+        await _runCommand(AgentBrowserSessionService.closeTab(action.$2!));
+      case 'select':
+        await _runCommand(AgentBrowserSessionService.selectTab(action.$2!));
+      case 'new':
+        await _runCommand(AgentBrowserSessionService.newTab());
+    }
   }
 
-  Widget _menuTile({
-    required IconData icon,
-    required String label,
-    required VoidCallback onTap,
-  }) {
-    return OmniMenuItem(leading: Icon(icon), label: label, onTap: onTap);
+  Future<void> _showMenu(BuildContext anchorContext) async {
+    final snapshot = widget.snapshot;
+    final anchor = glassPopupAnchorFromContext(anchorContext);
+    if (anchor == null) return;
+    final actions = [
+      ('history', Icons.history_rounded, _text('历史记录', 'History')),
+      ('bookmarks', Icons.bookmarks_rounded, _text('收藏夹', 'Bookmarks')),
+      ('downloads', Icons.download_rounded, _text('下载', 'Downloads')),
+      ('userscript', Icons.code_rounded, _text('Userscript', 'Userscript')),
+      (
+        'desktop',
+        snapshot.isDesktopMode
+            ? Icons.smartphone_rounded
+            : Icons.desktop_windows_rounded,
+        snapshot.isDesktopMode
+            ? _text('切换到移动模式', 'Switch to mobile mode')
+            : _text('切换到桌面模式', 'Switch to desktop mode'),
+      ),
+      ('close', Icons.close_rounded, _text('关闭当前标签页', 'Close current tab')),
+      (
+        'closeAll',
+        Icons.tab_unselected_rounded,
+        _text('关闭全部标签页', 'Close all tabs'),
+      ),
+    ];
+    final action = await showOmniMenu<String>(
+      context: context,
+      sourceContext: anchorContext,
+      anchor: anchor,
+      preferBelow: false,
+      width: 300,
+      items: [
+        for (final (value, icon, label) in actions)
+          OmniPopupMenuItem(
+            value: value,
+            child: Row(
+              children: [
+                Icon(icon),
+                const SizedBox(width: OmniMenuStyle.iconGap),
+                Expanded(child: Text(label)),
+              ],
+            ),
+          ),
+      ],
+    );
+    if (!mounted || action == null) return;
+    switch (action) {
+      case 'history':
+        await _showHistorySheet();
+      case 'bookmarks':
+        await _showBookmarksSheet();
+      case 'downloads':
+        await _showDownloadsSheet();
+      case 'userscript':
+        await _showUserscriptSheet();
+      case 'desktop':
+        await _runCommand(AgentBrowserSessionService.toggleDesktopMode());
+      case 'close':
+        final activeTabId = snapshot.activeTabId;
+        if (activeTabId != null) {
+          await _runCommand(AgentBrowserSessionService.closeTab(activeTabId));
+        }
+      case 'closeAll':
+        await _runCommand(
+          AgentBrowserSessionService.closeAllTabs(
+            snapshot.tabs.map((tab) => tab.tabId).toList(),
+          ),
+        );
+    }
   }
 
   Future<void> _showHistorySheet() async {
     final entries = widget.snapshot.history;
-    await showModalBottomSheet<void>(
+    await showOmniGlassModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (context) {
@@ -1119,7 +1087,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
 
   Future<void> _showBookmarksSheet() async {
     final entries = widget.snapshot.bookmarks;
-    await showModalBottomSheet<void>(
+    await showOmniGlassModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (context) {
@@ -1173,7 +1141,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
 
   Future<void> _showDownloadsSheet() async {
     final snapshot = widget.snapshot;
-    await showModalBottomSheet<void>(
+    await showOmniGlassModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -1211,6 +1179,10 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
     final progress = item.progress;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
+      color: LiquidGlassScope.of(context)
+          ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.24)
+          : null,
+      elevation: LiquidGlassScope.of(context) ? 0 : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -1309,7 +1281,7 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
   Future<void> _showUserscriptSheet() async {
     final snapshot = widget.snapshot;
     final pendingInstall = snapshot.userscriptSummary.pendingInstall;
-    await showModalBottomSheet<void>(
+    await showOmniGlassModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
@@ -1387,7 +1359,10 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
     final blocked = pending.blockedGrants;
     return Card(
       margin: const EdgeInsets.only(bottom: 12),
-      color: const Color(0xFFF8FAFC),
+      color: LiquidGlassScope.of(context)
+          ? Theme.of(context).colorScheme.surface.withValues(alpha: 0.24)
+          : const Color(0xFFF8FAFC),
+      elevation: LiquidGlassScope.of(context) ? 0 : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -1437,9 +1412,9 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
   Widget _buildUserscriptTile(BrowserUserscriptItem script) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
-      leading: Switch(
+      leading: OmniSettingsSwitch(
         value: script.enabled,
-        onChanged: (value) => _runCommand(
+        onToggle: (value) => _runCommand(
           AgentBrowserSessionService.setUserscriptEnabled(script.id, value),
         ),
       ),
@@ -1476,10 +1451,10 @@ class _ChatBrowserOverlayState extends State<ChatBrowserOverlay> {
 
   Future<void> _handleInstallUserscriptFromUrl() async {
     final controller = TextEditingController();
-    final result = await showDialog<String>(
+    final result = await showOmniGlassCardSheet<String>(
       context: context,
       builder: (context) {
-        return AlertDialog(
+        return OmniGlassAlertDialog(
           title: Text(_text('从 URL 安装脚本', 'Install script from URL')),
           content: TextField(
             controller: controller,

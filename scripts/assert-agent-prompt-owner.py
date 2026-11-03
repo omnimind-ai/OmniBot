@@ -4,7 +4,7 @@ import argparse,json,re,subprocess,xml.etree.ElementTree as ET
 from agent_test_database import agent_database_snapshot
 p=argparse.ArgumentParser();p.add_argument('serial');p.add_argument('marker');p.add_argument('agent');a=p.parse_args()
 assert re.fullmatch(r'OOB_LIVE_SWITCH_DRAFT_\d+',a.marker)
-assert a.agent in ('xiaowan-acp','deepseek-harness-acp')
+assert a.agent in ('xiaowan-acp','kimi-code-acp')
 with agent_database_snapshot(a.serial) as db:
  rows=db.execute("SELECT id,conversationId FROM agent_conversation_entries WHERE entryType='user_message' AND instr(payloadJson,?)>0",(a.marker,)).fetchall();assert len(rows)==1,'Missing or repeated user admission'
  entry,conversation=rows[0];binding=db.execute('SELECT threadId FROM codex_thread_bindings WHERE conversationId=?',(conversation,)).fetchone();assert binding

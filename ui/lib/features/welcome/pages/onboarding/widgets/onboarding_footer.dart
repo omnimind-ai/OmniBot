@@ -57,6 +57,8 @@ class OnboardingFooter extends StatelessWidget {
     required this.onNext,
     required this.onJumpToPage,
     this.primaryAction,
+    this.navigationCenter,
+    this.navigationKey = const ValueKey('tutorial-pagination-navigation'),
   });
 
   final TutorialPage currentPage;
@@ -68,6 +70,10 @@ class OnboardingFooter extends StatelessWidget {
   final VoidCallback? onNext;
   final void Function(TutorialPage page) onJumpToPage;
   final Widget? primaryAction;
+
+  /// Replaces pagination with an action while retaining identical footer geometry.
+  final Widget? navigationCenter;
+  final Key navigationKey;
 
   @override
   Widget build(BuildContext context) {
@@ -102,7 +108,7 @@ class OnboardingFooter extends StatelessWidget {
     final currentIndex = tutorialNavigationPages.indexOf(currentPage);
 
     return SizedBox(
-      key: const ValueKey('tutorial-pagination-navigation'),
+      key: navigationKey,
       height: 58,
       child: Row(
         children: [
@@ -113,53 +119,56 @@ class OnboardingFooter extends StatelessWidget {
             onPressed: canGoBack ? onBack : null,
           ),
           Expanded(
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: List<Widget>.generate(tutorialNavigationPages.length, (
-                index,
-              ) {
-                final page = tutorialNavigationPages[index];
-                final selected = index == currentIndex;
-                final visited = isVisited(page);
-                return Expanded(
-                  child: Semantics(
-                    button: true,
-                    selected: selected,
-                    enabled: visited,
-                    label: onbTr(
-                      context,
-                      '教程第 ${index + 1} 页',
-                      'Tutorial page ${index + 1}',
-                    ),
-                    child: InkResponse(
-                      key: ValueKey<String>('tutorial-page-dot-$index'),
-                      onTap: visited ? () => onJumpToPage(page) : null,
-                      radius: 22,
-                      child: SizedBox(
-                        height: 48,
-                        child: Center(
-                          child: AnimatedContainer(
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 180),
-                            width: selected ? 9 : 6,
-                            height: selected ? 9 : 6,
-                            decoration: BoxDecoration(
-                              color: selected
-                                  ? palette.accentPrimary
-                                  : visited
-                                  ? palette.textTertiary
-                                  : palette.borderStrong,
-                              shape: BoxShape.circle,
+            child:
+                navigationCenter ??
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: List<Widget>.generate(
+                    tutorialNavigationPages.length,
+                    (index) {
+                      final page = tutorialNavigationPages[index];
+                      final selected = index == currentIndex;
+                      final visited = isVisited(page);
+                      return Expanded(
+                        child: Semantics(
+                          button: true,
+                          selected: selected,
+                          enabled: visited,
+                          label: onbTr(
+                            context,
+                            '教程第 ${index + 1} 页',
+                            'Tutorial page ${index + 1}',
+                          ),
+                          child: InkResponse(
+                            key: ValueKey<String>('tutorial-page-dot-$index'),
+                            onTap: visited ? () => onJumpToPage(page) : null,
+                            radius: 22,
+                            child: SizedBox(
+                              height: 48,
+                              child: Center(
+                                child: AnimatedContainer(
+                                  duration: reduceMotion
+                                      ? Duration.zero
+                                      : const Duration(milliseconds: 180),
+                                  width: selected ? 9 : 6,
+                                  height: selected ? 9 : 6,
+                                  decoration: BoxDecoration(
+                                    color: selected
+                                        ? palette.accentPrimary
+                                        : visited
+                                        ? palette.textTertiary
+                                        : palette.borderStrong,
+                                    shape: BoxShape.circle,
+                                  ),
+                                ),
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                    ),
+                      );
+                    },
                   ),
-                );
-              }),
-            ),
+                ),
           ),
           OnboardingArrowButton(
             buttonKey: nextKey,

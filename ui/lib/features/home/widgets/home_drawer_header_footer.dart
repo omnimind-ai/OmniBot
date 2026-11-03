@@ -88,6 +88,7 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
 
     await showGlassPopup<void>(
       context: anchorContext,
+      sourceContext: anchorContext,
       anchor: anchor,
       preferBelow: false,
       child: Builder(
@@ -109,7 +110,7 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
                     Padding(
                       padding: const EdgeInsets.fromLTRB(10, 4, 10, 6),
                       child: Text(
-                        english ? 'Local Web Interfaces' : '本地 Web 界面',
+                        'Agent WebUI',
                         style: TextStyle(
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
@@ -142,13 +143,17 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
     OmniPluginActionItem action, {
     required Color surface,
     required bool english,
+    AgentWebStatus? statusOverride,
   }) {
     final palette = dialogContext.omniPalette;
     final key = '${action.pluginId}/${action.id}';
     final busy = _busyWebQuickActionKey == key;
     final disabled = _busyWebQuickActionKey != null;
     final agentId = action.presentation['agentId']?.toString().trim() ?? '';
-    final status = _webQuickActionStatuses[key] ?? AgentWebStatus.unknown;
+    final status =
+        statusOverride ??
+        _webQuickActionStatuses[key] ??
+        AgentWebStatus.unknown;
     final stoppable =
         status.active && AgentWebStatusService.supportsLifecycle(action);
     final shortLabel = action.localizedPresentationValue(
@@ -221,34 +226,36 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
           ),
           if (stoppable) ...[
             const SizedBox(width: 8),
-            TextButton.icon(
-              key: ValueKey('home-drawer-web-stop-$agentId'),
-              style: TextButton.styleFrom(
-                foregroundColor: const Color(0xFFE05252),
-                backgroundColor: const Color(0xFFE05252)
-                    .withValues(alpha: 0.08),
-                minimumSize: const Size(0, 30),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
+            FlClashMenuInteractionIgnore(
+              child: TextButton.icon(
+                key: ValueKey('home-drawer-web-stop-$agentId'),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFE05252),
+                  backgroundColor: const Color(0xFFE05252)
+                      .withValues(alpha: 0.08),
+                  minimumSize: const Size(0, 30),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8),
+                  ),
                 ),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
-              ),
-              onPressed: disabled
-                  ? null
-                  : () {
-                      Navigator.of(dialogContext).pop();
-                      unawaited(_stopWebQuickAction(action));
-                    },
-              icon: const Icon(LucideIcons.circleStop, size: 13),
-              label: Text(
-                english ? 'Stop' : '停止',
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
+                onPressed: disabled
+                    ? null
+                    : () {
+                        Navigator.of(dialogContext).pop();
+                        unawaited(_stopWebQuickAction(action));
+                      },
+                icon: const Icon(LucideIcons.circleStop, size: 13),
+                label: Text(
+                  english ? 'Stop' : '停止',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ),
@@ -266,11 +273,12 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
   }
 
   List<_DrawerShortcutAction> get _shortcutActions => <_DrawerShortcutAction>[
-    _DrawerShortcutAction(
-      label: context.l10n.settingsTitle,
-      assetPath: 'assets/home/setting_icon.svg',
-      onTap: () => _navigateTo('/home/settings'),
-    ),
+    if (!widget.homePage)
+      _DrawerShortcutAction(
+        label: context.l10n.settingsTitle,
+        assetPath: 'assets/home/setting_icon.svg',
+        onTap: () => _navigateTo('/home/settings'),
+      ),
     _DrawerShortcutAction(
       label: context.l10n.memoryCenterTitle,
       svgString: _kDrawerMemoryIconSvg,
@@ -286,11 +294,12 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
       svgString: _kDrawerSkillStoreIconSvg,
       onTap: () => _navigateTo('/home/skill_store'),
     ),
-    _DrawerShortcutAction(
-      label: context.trLegacy('轨迹'),
-      svgString: _kDrawerUsageStatisticsIconSvg,
-      onTap: () => _navigateTo('/task/execution_history'),
-    ),
+    if (!widget.homePage)
+      _DrawerShortcutAction(
+        label: context.trLegacy('轨迹'),
+        svgString: _kDrawerUsageStatisticsIconSvg,
+        onTap: () => _navigateTo('/task/execution_history'),
+      ),
     _DrawerShortcutAction(
       label: context.l10n.homeDrawerScheduled,
       assetPath: 'assets/common/schedule_icon.svg',
@@ -353,12 +362,12 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
       AgentWebStatus.starting => const Color(0xFFE3A52B),
       _ => null,
     };
-    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
-    final tooltip = isEnglish ? 'Web Interfaces' : 'Web 界面';
-
-    return Builder(
+    return FlClashPopupSource(
+      glass: false,
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       builder: (buttonContext) => Tooltip(
-        message: tooltip,
+        message: 'Agent WebUI',
         child: InkWell(
           key: const ValueKey('home-drawer-web-menu-button'),
           onTap: () => _showWebQuickLaunchPopover(buttonContext),

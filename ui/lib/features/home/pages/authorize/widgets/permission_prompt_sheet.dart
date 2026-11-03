@@ -29,10 +29,12 @@ class PermissionPromptSheet extends StatefulWidget {
     required Key actionKey,
     String? title,
   }) async {
-    return await showModalBottomSheet<bool>(
+    return await showOmniGlassBottomSheet<bool>(
           context: context,
           isScrollControlled: true,
           backgroundColor: Colors.transparent,
+          elevation: 0,
+          useSafeArea: true,
           barrierColor: context.omniPalette.overlayScrim,
           builder: (context) => PermissionPromptSheet(
             permissions: permissions,
@@ -82,95 +84,102 @@ class _PermissionPromptSheetState extends State<PermissionPromptSheet>
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
 
-    return Padding(
-      padding: EdgeInsets.fromLTRB(
-        12,
-        0,
-        12,
-        12 + MediaQuery.viewInsetsOf(context).bottom,
-      ),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(
-          maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          12,
+          0,
+          12,
+          12 + MediaQuery.viewInsetsOf(context).bottom,
         ),
-        child: OmniGlassPanel(
-          borderRadius: BorderRadius.circular(22),
-          padding: const EdgeInsets.symmetric(horizontal: 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const SizedBox(height: 32),
-              Text(
-                widget.title ??
-                    (LegacyTextLocalizer.isEnglish
-                        ? 'Please check the permission below'
-                        : '请检查下列权限'),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                  height: 1.5,
-                ),
-              ),
-              const SizedBox(height: 26),
-              PermissionSection(
-                permissions: widget.permissions,
-                spacing: 36,
-                onPermissionChanged: () {
-                  unawaited(_checkPermissions());
-                },
-              ),
-              const SizedBox(height: 32),
-              Center(
-                child: AnimatedBuilder(
-                  animation: _permissionChanges,
-                  builder: (context, child) {
-                    final authorized = widget.permissions.every(
-                      (permission) => permission.notifier.value,
-                    );
-                    return Semantics(
-                      button: true,
-                      enabled: authorized,
-                      label: widget.actionLabel,
-                      child: GestureDetector(
-                        key: widget.actionKey,
-                        onTap: authorized
-                            ? () => Navigator.of(context).pop(true)
-                            : null,
-                        child: Opacity(
-                          opacity: authorized ? 1 : 0.5,
-                          child: Container(
-                            width: double.infinity,
-                            constraints: const BoxConstraints(maxWidth: 288),
-                            height: 48,
-                            decoration: BoxDecoration(
-                              color: palette.accentPrimary,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            child: Center(
-                              child: Text(
-                                widget.actionLabel,
-                                style: TextStyle(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onPrimary,
-                                  fontSize: 15,
-                                  fontFamily: 'PingFang SC',
-                                  fontWeight: FontWeight.w600,
-                                  height: 1.5,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.sizeOf(context).height * 0.75,
+          ),
+          child: OmniGlassPanel(
+            borderRadius: BorderRadius.circular(22),
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const SizedBox(height: 32),
+                  Text(
+                    widget.title ??
+                        (LegacyTextLocalizer.isEnglish
+                            ? 'Please check the permission below'
+                            : '请检查下列权限'),
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w600,
+                      height: 1.5,
+                    ),
+                  ),
+                  const SizedBox(height: 26),
+                  PermissionSection(
+                    permissions: widget.permissions,
+                    spacing: 36,
+                    onPermissionChanged: () {
+                      unawaited(_checkPermissions());
+                    },
+                  ),
+                  const SizedBox(height: 32),
+                  Center(
+                    child: AnimatedBuilder(
+                      animation: _permissionChanges,
+                      builder: (context, child) {
+                        final authorized = widget.permissions.every(
+                          (permission) => permission.notifier.value,
+                        );
+                        return Semantics(
+                          button: true,
+                          enabled: authorized,
+                          label: widget.actionLabel,
+                          child: GestureDetector(
+                            key: widget.actionKey,
+                            onTap: authorized
+                                ? () => Navigator.of(context).pop(true)
+                                : null,
+                            child: Opacity(
+                              opacity: authorized ? 1 : 0.5,
+                              child: Container(
+                                width: double.infinity,
+                                constraints: const BoxConstraints(
+                                  maxWidth: 288,
+                                ),
+                                height: 48,
+                                decoration: BoxDecoration(
+                                  color: palette.accentPrimary,
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Center(
+                                  child: Text(
+                                    widget.actionLabel,
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
+                                      fontSize: 15,
+                                      fontFamily: 'PingFang SC',
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.5,
+                                    ),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 28),
+                ],
               ),
-              const SizedBox(height: 28),
-            ],
+            ),
           ),
         ),
       ),

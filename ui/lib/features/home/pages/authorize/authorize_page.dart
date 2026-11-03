@@ -3,6 +3,7 @@ import 'package:ui/features/home/pages/authorize/widgets/permission_section.dart
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 import '../../../../services/device_service.dart';
 import '../../../../services/permission_service.dart';
@@ -248,122 +249,127 @@ class _AuthorizePageState extends State<AuthorizePage>
       body: SafeArea(
         top: false,
         bottom: false,
-        child: Column(
-          children: [
-            Expanded(
-              child: SingleChildScrollView(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 22),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const SizedBox(height: 12),
-                      Text(
-                        LegacyTextLocalizer.localize('请放心，这些权限你随时可以收回'),
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 15,
-                          fontWeight: FontWeight.w400,
-                          height: 1.57,
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      if (requiredPermissionHint != null)
+        child: OmniContentWidth(
+          key: const ValueKey('authorize-content-column'),
+          child: Column(
+            children: [
+              Expanded(
+                child: SingleChildScrollView(
+                  key: const ValueKey('authorize-permission-scroll'),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 22),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 12),
                         Text(
-                          requiredPermissionHint,
+                          LegacyTextLocalizer.localize('请放心，这些权限你随时可以收回'),
                           style: TextStyle(
-                            color: palette.accentPrimary,
+                            color: palette.textSecondary,
                             fontSize: 15,
-                            fontWeight: FontWeight.w500,
+                            fontWeight: FontWeight.w400,
                             height: 1.57,
                           ),
                         ),
-                      const SizedBox(height: 24),
-                      if (_isLoading)
-                        const Center(child: CircularProgressIndicator())
-                      else
-                        PermissionSection(
-                          permissions: items,
-                          onPermissionChanged: _checkPermissions,
-                        ),
-                      const SizedBox(height: 20),
-                    ],
+                        const SizedBox(height: 24),
+                        if (requiredPermissionHint != null)
+                          Text(
+                            requiredPermissionHint,
+                            style: TextStyle(
+                              color: palette.accentPrimary,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w500,
+                              height: 1.57,
+                            ),
+                          ),
+                        const SizedBox(height: 24),
+                        if (_isLoading)
+                          const Center(child: CircularProgressIndicator())
+                        else
+                          PermissionSection(
+                            permissions: items,
+                            onPermissionChanged: _checkPermissions,
+                          ),
+                        const SizedBox(height: 20),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            SafeArea(
-              top: false,
-              minimum: const EdgeInsets.fromLTRB(22, 16, 22, 16),
-              child: ValueListenableBuilder<bool>(
-                valueListenable: _canContinue,
-                builder: (context, authorized, child) {
-                  return GestureDetector(
-                    onTap: () async {
-                      if (authorized) {
-                        _finish(true);
-                        return;
-                      }
-                      await _checkPermissions();
-                    },
-                    child: Opacity(
-                      opacity: authorized ? 1.0 : 0.5,
-                      child: Container(
-                        width: double.infinity,
-                        height: 48,
-                        decoration: BoxDecoration(
-                          color: palette.accentPrimary,
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Center(
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              if (_isLoading) ...[
-                                SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimary,
-                                    strokeWidth: 2,
+              SafeArea(
+                top: false,
+                minimum: const EdgeInsets.fromLTRB(22, 16, 22, 16),
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: _canContinue,
+                  builder: (context, authorized, child) {
+                    return GestureDetector(
+                      key: const ValueKey('authorize-continue'),
+                      onTap: () async {
+                        if (authorized) {
+                          _finish(true);
+                          return;
+                        }
+                        await _checkPermissions();
+                      },
+                      child: Opacity(
+                        opacity: authorized ? 1.0 : 0.5,
+                        child: Container(
+                          width: double.infinity,
+                          height: 48,
+                          decoration: BoxDecoration(
+                            color: palette.accentPrimary,
+                            borderRadius: BorderRadius.circular(14),
+                          ),
+                          child: Center(
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                if (_isLoading) ...[
+                                  SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
+                                      strokeWidth: 2,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                Text(
-                                  LegacyTextLocalizer.localize('权限检查中...'),
-                                  style: TextStyle(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimary,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.29,
+                                  const SizedBox(width: 8),
+                                  Text(
+                                    LegacyTextLocalizer.localize('权限检查中...'),
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.29,
+                                    ),
                                   ),
-                                ),
-                              ] else
-                                Text(
-                                  LegacyTextLocalizer.localize('继续任务'),
-                                  style: TextStyle(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onPrimary,
-                                    fontSize: 15,
-                                    fontWeight: FontWeight.w600,
-                                    height: 1.29,
+                                ] else
+                                  Text(
+                                    LegacyTextLocalizer.localize('继续任务'),
+                                    style: TextStyle(
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .onPrimary,
+                                      fontSize: 15,
+                                      fontWeight: FontWeight.w600,
+                                      height: 1.29,
+                                    ),
                                   ),
-                                ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
                       ),
-                    ),
-                  );
-                },
+                    );
+                  },
+                ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

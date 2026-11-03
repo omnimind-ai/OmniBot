@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -12,7 +14,8 @@ class ChatSpotlightTour extends StatefulWidget {
     required this.onFinish,
   });
 
-  static const int stepCount = 6;
+  static const int stepCount = 5;
+  static const int modelStep = 3;
 
   final int step;
   final GlobalKey? anchorKey;
@@ -39,9 +42,9 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
   void _scheduleAnchorMeasurement() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final anchorBox = findActiveRenderObject(
-        widget.anchorKey?.currentContext,
-      ) as RenderBox?;
+      final anchorBox =
+          findActiveRenderObject(widget.anchorKey?.currentContext)
+              as RenderBox?;
       final overlayBox =
           findActiveRenderObject(_overlayKey.currentContext) as RenderBox?;
       if (anchorBox == null ||
@@ -57,8 +60,8 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
       final localTopLeft = overlayBox.globalToLocal(globalTopLeft);
       final anchorRect = localTopLeft & anchorBox.size;
       final measured = switch (widget.step) {
+        ChatSpotlightTour.modelStep => anchorRect.inflate(4),
         4 => anchorRect.inflate(4),
-        5 => anchorRect.inflate(4),
         _ => anchorRect.inflate(6),
       };
       final previous = _measuredSpotlight;
@@ -102,23 +105,20 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
         child: LayoutBuilder(
           builder: (context, constraints) {
             final size = constraints.biggest;
-            final spotlight =
-                _measuredSpotlight ??
-                _fallbackSpotlightRect(
-                  step: step,
-                  size: size,
-                  topPadding: mediaQuery.padding.top,
-                  bottomPadding: mediaQuery.padding.bottom,
-                );
-            final minCardTop = mediaQuery.padding.top + 76;
-            final requestedCardTop = step < 4
-                ? spotlight.bottom + 18
-                : spotlight.top - 168;
-            final rawMaxCardTop = size.height - mediaQuery.padding.bottom - 288;
-            final maxCardTop = rawMaxCardTop < minCardTop
-                ? minCardTop
-                : rawMaxCardTop;
-            final cardTop = requestedCardTop.clamp(minCardTop, maxCardTop);
+            // Measure the real control. A hidden or not-yet-laid-out control
+            // must not spotlight a guessed location from an older chat layout.
+            final spotlight = _measuredSpotlight;
+            final safeBounds = Rect.fromLTRB(
+              18,
+              mediaQuery.padding.top + 18,
+              size.width - 18,
+              size.height -
+                  math.max(
+                    mediaQuery.padding.bottom,
+                    mediaQuery.viewInsets.bottom,
+                  ) -
+                  18,
+            );
 
             return GestureDetector(
               key: const ValueKey('chat-spotlight-gesture-layer'),
@@ -139,22 +139,27 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
                         ),
                       ),
                     ),
-                    Positioned(
-                      left: 18,
-                      right: 18,
-                      top: cardTop.toDouble(),
-                      child: Center(
-                        child: ConstrainedBox(
-                          constraints: const BoxConstraints(maxWidth: 430),
-                          child: AnimatedSwitcher(
-                            duration: reduceMotion
-                                ? Duration.zero
-                                : const Duration(milliseconds: 220),
-                            switchInCurve: Curves.easeOutCubic,
-                            switchOutCurve: Curves.easeInCubic,
-                            child: GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: () {},
+                    Positioned.fill(
+                      child: CustomSingleChildLayout(
+                        delegate: _TourCardLayout(
+                          spotlight: spotlight,
+                          safeBounds: safeBounds,
+                          preferAbove: step >= ChatSpotlightTour.modelStep,
+                        ),
+                        child: AnimatedSwitcher(
+                          duration: reduceMotion
+                              ? Duration.zero
+                              : const Duration(milliseconds: 220),
+                          switchInCurve: Curves.easeOutCubic,
+                          switchOutCurve: Curves.easeInCubic,
+                          child: GestureDetector(
+                            key: ValueKey<int>(step),
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {},
+                            child: SingleChildScrollView(
+                              key: ValueKey<String>(
+                                'chat-spotlight-viewport-$step',
+                              ),
                               child: Container(
                                 key: ValueKey<String>(
                                   'chat-spotlight-card-$step',
@@ -231,6 +236,17 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
                                                   height: 1.55,
                                                 ),
                                           ),
+                                          const SizedBox(height: 10),
+                                          Text(
+                                            '${step + 1} / ${ChatSpotlightTour.stepCount}  ·  '
+                                            '${isEnglish ? (step == ChatSpotlightTour.stepCount - 1 ? 'Tap outside to finish' : 'Tap outside to continue') : (step == ChatSpotlightTour.stepCount - 1 ? '点击空白处完成' : '点击空白处继续')}',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .labelSmall
+                                                ?.copyWith(
+                                                  color: palette.textTertiary,
+                                                ),
+                                          ),
                                         ],
                                       ),
                                     ),
@@ -251,33 +267,70 @@ class _ChatSpotlightTourState extends State<ChatSpotlightTour> {
       ),
     );
   }
+}
 
-  Rect _fallbackSpotlightRect({
-    required int step,
-    required Size size,
-    required double topPadding,
-    required double bottomPadding,
-  }) {
-    final top = topPadding + 7;
-    final width = size.width;
-    return switch (step) {
-      0 => Rect.fromLTWH(8, top, 54, 52),
-      1 => Rect.fromLTWH(70, top, (width - 140).clamp(150, 320), 52),
-      2 => Rect.fromLTWH(width - 112, top, 104, 52),
-      3 => Rect.fromCenter(
-        center: Offset(width / 2, top + 82),
-        width: (width * 0.54).clamp(176, 300),
-        height: 48,
-      ),
-      4 => Rect.fromLTWH(
-        size.width - 118,
-        size.height - bottomPadding - 187,
-        40,
-        40,
-      ),
-      _ => Rect.fromLTWH(12, size.height - bottomPadding - 132, width - 24, 64),
-    };
+/// Positions the measured card outside its target and above the keyboard.
+/// The child can scroll when large text leaves less room on a small screen.
+class _TourCardLayout extends SingleChildLayoutDelegate {
+  const _TourCardLayout({
+    required this.spotlight,
+    required this.safeBounds,
+    required this.preferAbove,
+  });
+
+  final Rect? spotlight;
+  final Rect safeBounds;
+  final bool preferAbove;
+  static const double _gap = 18;
+
+  double get _above => spotlight == null
+      ? safeBounds.height
+      : (spotlight!.top - _gap - safeBounds.top).clamp(0, safeBounds.height);
+  double get _below => spotlight == null
+      ? safeBounds.height
+      : (safeBounds.bottom - spotlight!.bottom - _gap).clamp(
+          0,
+          safeBounds.height,
+        );
+
+  @override
+  BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    final width = math.min(430.0, math.max(0.0, safeBounds.width));
+    return BoxConstraints(
+      minWidth: width,
+      maxWidth: width,
+      maxHeight: math.max(0.0, math.max(_above, _below)),
+    );
   }
+
+  @override
+  Offset getPositionForChild(Size size, Size childSize) {
+    final target = spotlight;
+    final double top;
+    if (target == null) {
+      top = safeBounds.center.dy - childSize.height / 2;
+    } else {
+      final placeAbove = preferAbove
+          ? _above >= childSize.height || _below < childSize.height
+          : _below < childSize.height && _above >= childSize.height;
+      top = placeAbove
+          ? target.top - _gap - childSize.height
+          : target.bottom + _gap;
+    }
+    return Offset(
+      (size.width - childSize.width) / 2,
+      top.clamp(
+        safeBounds.top,
+        math.max(safeBounds.top, safeBounds.bottom - childSize.height),
+      ),
+    );
+  }
+
+  @override
+  bool shouldRelayout(covariant _TourCardLayout oldDelegate) =>
+      spotlight != oldDelegate.spotlight ||
+      safeBounds != oldDelegate.safeBounds ||
+      preferAbove != oldDelegate.preferAbove;
 }
 
 class _SpotlightItem {
@@ -298,46 +351,46 @@ class _SpotlightItem {
 
 const List<_SpotlightItem> _items = <_SpotlightItem>[
   _SpotlightItem(
-    icon: LucideIcons.panelLeft,
-    titleZh: '菜单与会话',
-    titleEn: 'Menu and conversations',
-    descriptionZh: '点击左上角返回首页，可新建对话、切换历史会话，并通过首页菜单进入设置。',
-    descriptionEn: 'Return home to start chats, switch conversation history, and reach settings from the home menu.',
+    icon: LucideIcons.chevronLeft,
+    titleZh: '返回会话列表',
+    titleEn: 'Back to conversations',
+    descriptionZh: '左上角的返回箭头带你回到首页。在那里可以查看历史会话、新建对话，并从菜单进入设置。',
+    descriptionEn:
+        'The top-left arrow returns home, where you can browse previous conversations, start a chat, and open settings from the menu.',
   ),
   _SpotlightItem(
-    icon: LucideIcons.workflow,
-    titleZh: '当前对话模式',
-    titleEn: 'Conversation mode',
-    descriptionZh: '标题前的图标标识当前模式。返回首页选择分类后，可新建对应模式的对话。',
-    descriptionEn: 'The icon beside the title identifies this mode. Select a category on the home page to start a chat in that mode.',
+    icon: LucideIcons.messageCircle,
+    titleZh: '对话标题与模式',
+    titleEn: 'Conversation title and mode',
+    descriptionZh: '顶部显示当前对话标题，标题左侧的图标表示纯聊天或当前 Agent。新建对话时可以在输入框上方选择模式。',
+    descriptionEn:
+        'The header shows the conversation title. Its icon identifies pure chat or the current Agent. Choose a mode above the composer when starting a new conversation.',
   ),
   _SpotlightItem(
-    icon: LucideIcons.pawPrint,
-    titleZh: '宠物与工作区',
-    titleEn: 'Pet and workspace',
-    descriptionZh: '从右上角菜单唤起桌面宠物或打开工作区文件；向左滑动聊天页面也能查看文件。',
-    descriptionEn: 'Use the top-right menu for the pet or workspace files. Swipe left across the chat to view files.',
+    icon: LucideIcons.ellipsis,
+    titleZh: '对话选项',
+    titleEn: 'Conversation options',
+    descriptionZh:
+        '右上角“…”集中提供工作区文件、上下文用量与阈值、宠物等入口。终端、环境变量和浏览器会按当前模式与可用状态显示；向左滑动聊天页也能查看工作区。',
+    descriptionEn:
+        'The top-right menu contains workspace files, context usage and limits, and the pet. Terminal, environment, and browser entries depend on the current mode and availability. Swipe left to view the workspace.',
   ),
   _SpotlightItem(
-    icon: LucideIcons.squareTerminal,
-    titleZh: '环境、终端与浏览器',
-    titleEn: 'Environment, terminal, and browser',
-    descriptionZh: '支持本地工具的模式可在右上角菜单打开终端、管理环境变量；已有浏览器会话也在这里。',
-    descriptionEn: 'Modes with local tools offer terminal and environment settings in the top-right menu. Available browser sessions also appear here.',
-  ),
-  _SpotlightItem(
-    icon: LucideIcons.circleGauge,
-    titleZh: '模型与上下文',
-    titleEn: 'Model and context',
-    descriptionZh: '点击输入框中的模型名称选择模型与参数；上下文用量与阈值可在右上角菜单查看和调整。',
-    descriptionEn: 'Use the model name in the composer for model and parameter choices. Context usage and limits are in the top-right menu.',
+    icon: LucideIcons.slidersHorizontal,
+    titleZh: '模型与参数',
+    titleEn: 'Model and settings',
+    descriptionZh: '点按输入框后，输入区会展开。底部右侧的模型名称可打开模型与参数菜单，查看或调整当前模式支持的选项。',
+    descriptionEn:
+        'Tap the composer to expand it. The model name near its bottom-right opens model and parameter options supported by the current mode.',
   ),
   _SpotlightItem(
     icon: LucideIcons.paperclip,
-    titleZh: '附件、命令与发送',
-    titleEn: 'Attachments, commands, and send',
-    descriptionZh: '点击输入框左侧加号添加图片或文件，并选择可用的权限模式。输入“/”打开命令面板；执行期间发送按钮会变为停止按钮。',
-    descriptionEn: 'Use the composer’s plus button for images, files, and available permission modes. Type slash for commands; the send button stops an active run.',
+    titleZh: '输入、附件与发送',
+    titleEn: 'Messages, attachments, and send',
+    descriptionZh:
+        '左下角“+”可添加图片、文件，并在支持时选择权限模式。输入“/”打开命令面板；右下角箭头发送消息，执行中会变为停止按钮。',
+    descriptionEn:
+        'The bottom-left plus adds photos and files, and offers permissions when supported. Type slash for commands. The bottom-right arrow sends your message and becomes a stop button during a run.',
   ),
 ];
 
@@ -347,13 +400,21 @@ class _SpotlightBarrierPainter extends CustomPainter {
     required this.accent,
   });
 
-  final Rect spotlight;
+  final Rect? spotlight;
   final Color accent;
 
   @override
   void paint(Canvas canvas, Size size) {
     final bounds = Offset.zero & size;
-    final hole = RRect.fromRectAndRadius(spotlight, const Radius.circular(18));
+    final target = spotlight;
+    if (target == null) {
+      canvas.drawRect(
+        bounds,
+        Paint()..color = Colors.black.withValues(alpha: 0.68),
+      );
+      return;
+    }
+    final hole = RRect.fromRectAndRadius(target, const Radius.circular(18));
 
     canvas.saveLayer(bounds, Paint());
     canvas.drawRect(

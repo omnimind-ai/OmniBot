@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/app_state_service.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -149,19 +150,21 @@ class _OpenWithOmnibotSettingPageState
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(title: context.trLegacy('使用小万打开'), primary: true),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: ListView.separated(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(22, 12, 22, 32),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: ListView.separated(
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(22, 12, 22, 32),
+            ),
+            itemCount: sections.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 22),
+            itemBuilder: (context, index) {
+              return _buildSettingsSection(sections[index]);
+            },
           ),
-          itemCount: sections.length,
-          separatorBuilder: (_, __) => const SizedBox(height: 22),
-          itemBuilder: (context, index) {
-            return _buildSettingsSection(sections[index]);
-          },
         ),
       ),
     );

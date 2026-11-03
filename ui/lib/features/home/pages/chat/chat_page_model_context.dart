@@ -446,6 +446,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
       // 已经打开或正在等待目录刷新，不重开。
       return;
     }
+    final targetGeneration = _conversationTargetRequestId;
     try {
       if (_showSlashCommandPanel ||
           _showModelMentionPanel ||
@@ -491,6 +492,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
             );
       final handle = showOverlayGlassPopup<ConversationModelSelection>(
         context: context,
+        sourceContext: anchorContext,
         anchor: anchorRect,
         builder: (handle) => ConversationModelSelectorContent(
           width: popupWidth,
@@ -516,8 +518,7 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
             handle.keepOpenOnNextKeyboardHide();
             FocusManager.instance.primaryFocus?.unfocus();
           },
-          // dismiss 内部会立刻 complete future,让下面 await 的逻辑并行起跑;
-          // 收起动画在后台跑完,UI 更响应。
+          // Restore the source before applying a selection that may rebuild it.
           onSelect: (selection) => unawaited(handle.dismiss(selection)),
         ),
       );
@@ -527,7 +528,10 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
 
       try {
         final selected = await handle.future;
-        if (selected == null) {
+        await handle.closed;
+        if (!mounted ||
+            targetGeneration != _conversationTargetRequestId ||
+            selected == null) {
           return;
         }
         await _applyDispatchSceneModelSelection(
@@ -604,9 +608,6 @@ mixin _ChatPageModelContextMixin on _ChatPageStateBase {
         return;
       if (selectionMode == ChatPageMode.agent) {
         _activeAgentModelId = modelId;
-      }
-      if (selectionMode == ChatPageMode.agent && !updateExistingSession) {
-        await AgentRuntimeService.disconnect();
       }
       await _loadNormalChatModelContext();
       if (_activeMode == ChatPageMode.agent) {

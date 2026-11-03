@@ -153,22 +153,6 @@ internal class NaCloudRuntime(
         return status + mapOf("ok" to online, "status" to if (online) "online" else "offline")
     }
 
-    suspend fun owns(method: String, args: Map<String, Any?>, remoteEnabled: Boolean): Boolean {
-        // Configuration/catalog requests have an explicit profile owner.
-        if (method.startsWith("config/remote/fs/")) return args["agentId"] == NA_AGENT_ID
-        if (method.startsWith("agent/")) return args["agentId"] == NA_AGENT_ID &&
-            method in setOf("agent/test", "agent/prepare", "agent/config/read", "agent/config/write")
-        if (args["conversationMode"] != null && args["conversationMode"] != "agent") return false
-        val conversation = (args["conversationId"] as? Number)?.toLong()
-        val bound = conversation?.let { profiles.agentIdForConversation(it) }
-        if (bound != null) return bound == NA_AGENT_ID
-        val session = (args["sessionId"] ?: args["threadId"])?.toString()
-        if (!session.isNullOrBlank()) return session.startsWith("na:")
-        val explicit = args["agentId"]?.toString()
-        return (explicit == NA_AGENT_ID || (explicit == null && !remoteEnabled && profiles.selected().id == NA_AGENT_ID)) &&
-            (method.startsWith("session/") || method in setOf("initialize", "model/list", "collaborationMode/list", "config/read"))
-    }
-
     suspend fun handle(method: String, args: Map<String, Any?>): Any? = when (method) {
         "agent/config/read" -> config()
         "agent/config/write" -> configure(args)
@@ -212,7 +196,7 @@ internal class NaCloudRuntime(
             val existingOwner = profiles.naOwnerForConversation(conversationId)
             check(existingOwner == null || existingOwner == connection.prefix) { "此会话属于另一个账号。" }
         }
-        val local = bindings.ensureBinding(id, conversationId, cwd = "na-cloud", title = title)
+        val local = bindings.ensureBinding(id, NA_AGENT_ID, conversationId, cwd = "na-cloud", title = title)
         profiles.bindSession(id, NA_AGENT_ID)
         profiles.bindConversation(local, NA_AGENT_ID)
         profiles.bindNaConversationOwner(local, connection.prefix)
@@ -241,7 +225,6 @@ internal class NaCloudRuntime(
 
     private suspend fun load(args: Map<String, Any?>, create: Boolean): Map<String, Any?> {
         val prefix = connection().prefix
-        profiles.select(NA_AGENT_ID)
         val existing = resolveSession(args)
         val response = if (existing == null) {
             require(create || args["conversationId"] != null) { "Na session is required" }

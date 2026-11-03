@@ -93,11 +93,13 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
         isAiResponding: true,
         preserveLiveStreamingState: true,
       ))
-        if (message.streamMeta?['stopReason']?.toString().trim().isNotEmpty == true)
+        if (message.streamMeta?['stopReason']?.toString().trim().isNotEmpty ==
+            true)
           message.id: message,
     };
     normalizedMessages = normalizedMessages.map((message) {
-      if (message.streamMeta?['stopReason']?.toString().trim().isNotEmpty != true) {
+      if (message.streamMeta?['stopReason']?.toString().trim().isNotEmpty !=
+          true) {
         return committedItems[message.id] ?? message;
       }
       return message;
@@ -204,28 +206,40 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
     required List<ChatMessageModel> messages,
     ConversationModel? conversation,
     bool allowHistoryRemoval = false,
+    List<String>? removedMessageIds,
   }) async {
     if (_hiddenNaHistoryViews.contains(conversationId)) return;
+    if (allowHistoryRemoval && removedMessageIds == null) {
+      throw ArgumentError('History removal requires explicit message IDs');
+    }
+    final removals = Set<String>.of(removedMessageIds ?? const []);
+    if ((!allowHistoryRemoval && removals.isNotEmpty) ||
+        messages.any((message) => removals.contains(message.id))) {
+      throw ArgumentError(
+        'History removal conflicts with the retained snapshot',
+      );
+    }
     final runtime = ensureRuntime(
       conversationId: conversationId,
       mode: mode,
       conversation: conversation,
     );
-    final incoming = List<ChatMessageModel>.from(messages);
-    if (runtime.hasInFlightTask || !allowHistoryRemoval) {
-      final incomingById = <String, ChatMessageModel>{
-        for (final message in incoming) message.id: message,
-      };
-      final merged = runtime.messages
-          .map((message) => incomingById.remove(message.id) ?? message)
-          .toList();
-      if (incomingById.isNotEmpty) {
-        merged.addAll(incomingById.values);
-      }
-      _replaceRuntimeMessagesIfChanged(runtime, merged);
-    } else {
-      _replaceRuntimeMessagesIfChanged(runtime, incoming);
+    if (allowHistoryRemoval && runtime.hasInFlightTask) {
+      throw StateError('Wait for the active prompt before editing history');
     }
+    final incoming = List<ChatMessageModel>.from(messages);
+    final incomingById = <String, ChatMessageModel>{
+      for (final message in incoming) message.id: message,
+    };
+    final merged = runtime.messages
+        .map((message) => incomingById.remove(message.id) ?? message)
+        .toList();
+    if (incomingById.isNotEmpty) {
+      merged.addAll(incomingById.values);
+    }
+    // Removal becomes visible only after its native transaction commits. The
+    // persistence owner filters these identities from the outgoing snapshot.
+    _replaceRuntimeMessagesIfChanged(runtime, merged);
     runtime.conversation = conversation ?? runtime.conversation;
     notifyListeners();
     await persistRuntimeConversation(
@@ -234,6 +248,7 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
       persistMessages: true,
       allowEphemeralPersistence: true,
       allowHistoryRemoval: allowHistoryRemoval,
+      removedMessageIds: removedMessageIds,
     );
   }
 
@@ -291,9 +306,11 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
               existingCardData?['interactionUnavailable'] == true) {
             return message;
           }
-          final hasPromptOutcome = message.streamMeta?['stopReason']
-                  ?.toString().trim().isNotEmpty == true;
-          if (!hasPromptOutcome && (isAiResponding || preserveLiveStreamingState)) {
+          final hasPromptOutcome =
+              message.streamMeta?['stopReason']?.toString().trim().isNotEmpty ==
+              true;
+          if (!hasPromptOutcome &&
+              (isAiResponding || preserveLiveStreamingState)) {
             return message;
           }
           final cardData = Map<String, dynamic>.from(existingCardData!);
@@ -303,7 +320,11 @@ extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
           cardData['interactionUnavailable'] = true;
           cardData['interactionUnavailableReason'] = 'session_ended';
           return message.copyWith(
-            content: <String, dynamic>{...?message.content, 'cardData': cardData, 'id': message.id},
+            content: <String, dynamic>{
+              ...?message.content,
+              'cardData': cardData,
+              'id': message.id,
+            },
           );
         })
         .toList(growable: false);

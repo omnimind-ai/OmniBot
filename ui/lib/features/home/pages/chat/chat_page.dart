@@ -11,6 +11,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/widgets/omni_menu.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -55,9 +56,6 @@ import 'package:ui/services/home_greeting_settings_service.dart';
 import 'package:ui/services/link_preview_service.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
-import 'package:ui/services/overlay_service.dart';
-import 'package:ui/services/permission_registry.dart';
-import 'package:ui/services/permission_service.dart';
 import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/services/shared_open_draft_service.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -84,9 +82,13 @@ import 'mixins/conversation_manager.dart';
 // 导入 Widgets
 import 'chat_page_models.dart';
 import 'widgets/chat_widgets.dart';
+import 'widgets/context_threshold_sheet.dart';
+import 'widgets/chat_keyboard_layout.dart';
+import 'widgets/chat_pane_resize_handle.dart';
+import 'widgets/chat_message_viewport.dart';
 import 'widgets/chat_browser_overlay.dart';
+import 'widgets/chat_history_loading_transition.dart';
 import 'widgets/chat_message_anchor_bar.dart';
-import 'widgets/pet_overlay_permission_sheet.dart';
 import 'widgets/chat_tool_activity_strip.dart';
 import 'widgets/chat_spotlight_tour.dart';
 import 'widgets/new_conversation_mode_selector.dart';
@@ -120,6 +122,7 @@ enum _SlashCommandPanelRoute { root, effort, agentModel }
 
 const String _kRemoteCodexModeAgentId = 'codex-remote';
 const String _kXiaowanAcpAgentId = 'xiaowan-acp';
+const double _kHdPadShellHorizontalPadding = 4;
 
 class ChatPage extends StatefulWidget {
   final ConversationThreadTarget? threadTarget;
@@ -152,6 +155,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   );
   final PageController _modePageController = PageController(initialPage: 0);
   final FocusNode _inputFocusNode = FocusNode();
+  final FocusNode _pageShortcutsFocusNode = FocusNode(
+    debugLabel: 'chat-shortcuts',
+  );
 
   // ===================== Keys =====================
   final GlobalKey<AcpConfigButtonState> _acpConfigButtonKey =
@@ -164,8 +170,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   final GlobalKey _browserOverlayKey = GlobalKey();
   final GlobalKey _slashCommandStripKey = GlobalKey();
   final GlobalKey _firstUseTourMenuAnchorKey = GlobalKey();
-  final GlobalKey _firstUseTourPetAnchorKey = GlobalKey();
-  final GlobalKey _firstUseTourIslandAnchorKey = GlobalKey();
+  final GlobalKey _firstUseTourActionsAnchorKey = GlobalKey();
   final GlobalKey _firstUseTourModeAnchorKey = GlobalKey();
   final GlobalKey _firstUseTourModelAnchorKey = GlobalKey();
 
@@ -193,6 +198,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   SharedOpenDraftPayload? _stagedSharedOpenDraft;
   int? _stagedSharedOpenDraftExpiresAt;
   int _conversationTargetRequestId = 0;
+  // Presentation only: target resolution/history hydration is distinct from
+  // an empty new conversation and from the ACP prompt lifecycle.
+  bool _isConversationHistoryLoading = false;
   // Conversation bootstrap restores the last target asynchronously. Keep the
   // future so a send started from the first rendered frame cannot race that
   // restore and get cleared by _resetLocalConversationState().
@@ -242,6 +250,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       TextEditingController();
   final GlobalKey _openClawPanelKey = GlobalKey();
   final GlobalKey _inputAreaKey = GlobalKey();
+  final ValueNotifier<int> _chatKeyboardLayoutChanges = ValueNotifier<int>(0);
   final KeyboardInsetMotionTracker _emptyGreetingKeyboardLiftTracker =
       KeyboardInsetMotionTracker();
   final ComposerLiftIntentTracker _composerLiftIntentTracker =
@@ -260,8 +269,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       'chat_hd_pad_right_pane_width';
   bool _workspaceBrowserCanGoUp = false;
   Future<OmnibotWorkspacePaths>? _workspacePathsLoadFuture;
-  bool _isPetOverlayOpening = false;
-  bool _isPetOverlayShowing = false;
   AppUpdateStatus? _appUpdateStatus;
   ModalRoute<dynamic>? _subscribedRoute;
   StreamSubscription<Map<String, dynamic>>?
@@ -274,7 +281,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   StreamSubscription<Map<String, dynamic>>? _omniLinkEventSubscription;
   final Set<String> _pendingManualAgentRetryTaskIds = <String>{};
   bool _pendingAgentInputResponseInFlight = false;
-  bool _remoteCodexSessionSyncInFlight = false;
+  Future<void>? _remoteCodexSessionSyncFuture;
   String? _remoteCodexSessionSyncThreadId;
   AgentRuntimeStatus _agentRuntimeStatus = AgentRuntimeStatus.disconnected;
   AcpAgentCatalog? _agentCatalog;
@@ -289,7 +296,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   String? _normalAcpTurnId;
   Future<Map<String, dynamic>>? _configurationSessionCreation;
   int? _configurationSessionCreationTarget;
-  final Map<ChatPageMode, String> _unboundConfigurationSessions = {};
+  final Map<ChatPageMode, ({String sessionId, String agentId})>
+  _unboundConfigurationSessions = {};
   String? _activeAgentModelId;
   String? _activeAgentReasoningEffort;
   String? _agentReasoningEffortConfigId;
@@ -321,8 +329,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   double? _hdPadRightPaneWidth;
   bool _hdPadLeftPaneCollapsed = false;
   bool _hdPadRightPaneCollapsed = false;
-  bool? _wasHdPadLandscape;
+  bool? _wasChatWorkspace;
   bool _isHdPadPaneDragging = false;
+  double? _hdPadLastLayoutWidth;
   double? _hdPadPaneDragStartWidth;
   double _hdPadPaneDragDelta = 0;
   final GlobalKey<OmnibotWorkspaceBrowserState> _hdPadWorkspaceBrowserKey =
@@ -339,9 +348,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   GlobalKey get _firstUseTourAnchorKey => switch (_firstUseTourStep) {
     0 => _firstUseTourMenuAnchorKey,
     1 => _firstUseTourModeAnchorKey,
-    2 => _firstUseTourPetAnchorKey,
-    3 => _firstUseTourIslandAnchorKey,
-    4 => _firstUseTourModelAnchorKey,
+    2 => _firstUseTourActionsAnchorKey,
+    ChatSpotlightTour.modelStep => _firstUseTourModelAnchorKey,
     _ => _inputAreaKey,
   };
 
@@ -351,7 +359,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         _firstUseTourStep >= ChatSpotlightTour.stepCount - 1) {
       return;
     }
-    if (_firstUseTourStep + 1 == 4) {
+    if (_firstUseTourStep + 1 == ChatSpotlightTour.modelStep) {
       // The model action lives in the focused composer row. Reveal that same
       // editor before the tour measures its anchor.
       _requestComposerFocus();
@@ -364,7 +372,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   void _handleFirstUseTourBack() {
     if (!mounted || !_isFirstUseTourActive) return;
     if (_firstUseTourStep > 0) {
-      if (_firstUseTourStep - 1 == 4) _requestComposerFocus();
+      if (_firstUseTourStep - 1 == ChatSpotlightTour.modelStep) {
+        _requestComposerFocus();
+      } else if (_firstUseTourStep - 1 < ChatSpotlightTour.modelStep) {
+        _dismissChatInputFocus();
+      }
       setState(() {
         _firstUseTourStep -= 1;
       });
@@ -404,45 +416,58 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     if (rememberedAgentId.isNotEmpty) {
       return rememberedAgentId;
     }
-    final runtimeMessages = resolveVisibleChatMessages(
-      runtimeMessages: _runtimeForMode(ChatPageMode.agent)?.messages,
-      fallbackMessages: _modeState(ChatPageMode.agent).messages,
-      preserveFallbackDuringHandoff: _modeState(ChatPageMode.agent)
-          .isAiResponding,
-    );
-    for (final message in runtimeMessages.reversed) {
-      final messageAgentId = message.agentId?.trim() ?? '';
-      if (messageAgentId.isNotEmpty) {
-        return messageAgentId;
-      }
-    }
     return null;
   }
 
   // Pure chat remains an ACP session with tool capabilities disabled.
   String? get _activeAcpAgentId => _committedAcpAgentId;
 
-  // The visible conversation's target and binding own its Agent identity.
+  bool get _activeAgentTargetIsRemote =>
+      _activeAcpAgentId == _kRemoteCodexModeAgentId;
+
+  String get _activeAgentModelSourceKey => _activeAgentTargetIsRemote
+      ? 'remote'
+      : 'local-${_activeAcpAgentId ?? 'agent'}';
+
+  bool get _isActiveAgentRetired =>
+      _activeMode == ChatPageMode.agent &&
+      _agentCatalog?.isRetired(_activeAcpAgentId) == true;
+
+  String get _retiredAgentMessage => formatAgentRuntimeErrorForUser(
+    'agent_retired:',
+    english: Localizations.localeOf(context).languageCode == 'en',
+  );
+
+  // Only the visible Conversation target and its persisted binding own identity.
   String? get _committedAcpAgentId {
-    if (_activeMode == ChatPageMode.normal &&
-        activeConversationModeValue == ConversationMode.normal) {
+    final target = _resolvedThreadTarget ?? widget.threadTarget;
+    final mode = target?.mode ?? _currentConversation?.mode;
+    if (mode == ConversationMode.normal || mode == ConversationMode.chatOnly) {
       return _kXiaowanAcpAgentId;
     }
-    final targetAgentId = _resolvedThreadTarget?.agentId?.trim() ?? '';
-    if (targetAgentId.isNotEmpty) {
-      return targetAgentId;
-    }
-    final boundAgentId = _conversationBoundAcpAgentId;
-    if (boundAgentId != null) {
-      return boundAgentId;
-    }
-    if (_agentRuntimeStatus.runtime == 'remote' ||
-        _agentRuntimeStatus.remoteEnabled) {
+    if (target?.isRemoteCodexSessionTarget == true ||
+        target?.agentRuntime == 'remote') {
       return _kRemoteCodexModeAgentId;
     }
-    final activeId =
-        _agentRuntimeStatus.activeAgentId ?? _agentCatalog?.selectedAgentId;
-    return activeId?.trim().isNotEmpty == true ? activeId!.trim() : null;
+    final targetAgentId = target?.agentId?.trim() ?? '';
+    if (targetAgentId.isNotEmpty) return targetAgentId;
+    return _currentConversation?.agentId?.trim().isNotEmpty == true
+        ? _currentConversation!.agentId!.trim()
+        : _conversationBoundAcpAgentId;
+  }
+
+  String? get _activeAgentUnavailableMessage {
+    if (_isActiveAgentRetired) return _retiredAgentMessage;
+    if (_activeMode != ChatPageMode.openclaw &&
+        !_isConversationHistoryLoading &&
+        _resolvedThreadTarget != null &&
+        (_activeAcpAgentId?.trim().isEmpty ?? true)) {
+      return formatAgentRuntimeErrorForUser(
+        'agent_identity_required:',
+        english: Localizations.localeOf(context).languageCode == 'en',
+      );
+    }
+    return null;
   }
 
   String get _activeAcpAgentDisplayName {
@@ -467,15 +492,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   List<ChatAcpAgentModeOption> get _chatAcpAgentModeOptions {
     final profiles = _agentCatalog?.agents ?? const <AcpAgentProfile>[];
     final hasXiaowan = profiles.any((profile) => profile.id == 'xiaowan-acp');
-    final orderedProfiles = profiles.toList(growable: false)
-      ..sort((left, right) {
-        final leftIsXiaowan = left.id == 'xiaowan-acp';
-        final rightIsXiaowan = right.id == 'xiaowan-acp';
-        if (leftIsXiaowan == rightIsXiaowan) {
-          return 0;
-        }
-        return leftIsXiaowan ? -1 : 1;
-      });
     final options = <ChatAcpAgentModeOption>[
       // Xiaowan is an in-process built-in ACP Agent. Keep its public entry
       // available even while the asynchronous native catalog is refreshing;
@@ -489,7 +505,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
           installed: true,
           status: 'online',
         ),
-      for (final profile in orderedProfiles)
+      // All Agent pickers follow the shared native catalog order.
+      for (final profile in profiles)
         ChatAcpAgentModeOption(
           id: profile.id,
           name: profile.name,
@@ -576,7 +593,20 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   ChatConversationRuntimeState? get _activeRuntime =>
       _runtimeForMode(_activeMode);
-  int _beginConversationTargetRequest() => ++_conversationTargetRequestId;
+  int _beginConversationTargetRequest({bool isHistoryLoading = false}) {
+    final requestId = ++_conversationTargetRequestId;
+    setState(() => _isConversationHistoryLoading = isHistoryLoading);
+    return requestId;
+  }
+
+  void _finishConversationHistoryLoad(int requestId) {
+    if (!_isConversationTargetRequestCurrent(requestId) ||
+        !_isConversationHistoryLoading) {
+      return;
+    }
+    setState(() => _isConversationHistoryLoading = false);
+  }
+
   bool _isConversationTargetRequestCurrent(int requestId) =>
       mounted && requestId == _conversationTargetRequestId;
   @override
@@ -647,8 +677,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   double get _normalSurfaceVisibility =>
       (1.0 - _surfacePageProgress).clamp(0.0, 1.0).toDouble();
-  bool _isHdPadLandscapeForMediaQuery(MediaQueryData mediaQuery) {
-    return isHdPadLandscapeViewport(mediaQuery.size);
+  bool _isChatWorkspaceForMediaQuery(MediaQueryData mediaQuery) {
+    return isChatWorkspaceViewport(mediaQuery.size);
   }
 
   void _loadHdPadPanePreferences() {
@@ -688,19 +718,43 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     unawaited(_applyConversationThreadTarget(target));
   }
 
+  HdPadPaneLayout _currentPadLayout({double? availableWidth}) {
+    return _hdPadPaneLayoutResolver.resolve(
+      availableWidth ??
+          _hdPadLastLayoutWidth ??
+          MediaQuery.sizeOf(context).width -
+              MediaQuery.viewPaddingOf(context).horizontal -
+              _kHdPadShellHorizontalPadding * 2,
+      preferredLeftWidth: _hdPadLeftPaneWidth,
+      preferredRightWidth: _hdPadRightPaneWidth,
+      collapseLeftPane: _hdPadLeftPaneCollapsed,
+      collapseRightPane: _hdPadRightPaneCollapsed,
+    );
+  }
+
   void _toggleHdPadLeftPaneCollapsed() {
     _dismissChatInputFocus();
+    final layout = _currentPadLayout();
     setState(() {
       _resetHdPadPaneDragState();
-      _hdPadLeftPaneCollapsed = !_hdPadLeftPaneCollapsed;
+      _hdPadLeftPaneCollapsed = layout.leftWidth > 0;
+      if ((_hdPadLastLayoutWidth ?? 0) <
+          HdPadPaneLayoutResolver.threePaneMinWidth) {
+        _hdPadRightPaneCollapsed = true;
+      }
     });
   }
 
   void _toggleHdPadRightPaneCollapsed() {
     _dismissChatInputFocus();
+    final layout = _currentPadLayout();
     setState(() {
       _resetHdPadPaneDragState();
-      _hdPadRightPaneCollapsed = !_hdPadRightPaneCollapsed;
+      _hdPadRightPaneCollapsed = layout.rightWidth > 0;
+      if ((_hdPadLastLayoutWidth ?? 0) <
+          HdPadPaneLayoutResolver.threePaneMinWidth) {
+        _hdPadLeftPaneCollapsed = true;
+      }
     });
   }
 
@@ -709,6 +763,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       _inputFocusNode.unfocus();
     }
     FocusManager.instance.primaryFocus?.unfocus();
+    if (_pageShortcutsFocusNode.context != null) {
+      _pageShortcutsFocusNode.requestFocus();
+    }
   }
 
   ConversationThreadTarget get _threadTargetForMode {
@@ -732,8 +789,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
     }
     if (conversationId == null) {
       final resolvedTarget = _resolvedThreadTarget;
+      // History hydration can temporarily have no projected conversation id.
+      // Preserve the requested existing target instead of creating a draft.
       if (resolvedTarget != null &&
-          resolvedTarget.isNewConversation &&
           _pageModeForConversationMode(resolvedTarget.mode) == _activeMode) {
         return resolvedTarget.copyWith(mode: conversationMode);
       }
@@ -1296,9 +1354,9 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       _conversationModeForPageMode(_activeMode);
   @override
   String? get agentIdForNewConversation =>
-      activeConversationModeValue == ConversationMode.agent
-      ? _activeAcpAgentId
-      : null;
+      activeConversationModeValue == ConversationMode.openclaw
+      ? null
+      : _activeAcpAgentId;
   @override
   bool get hasMoreMessages => _modeState(_activeMode).hasMoreMessages;
   @override
@@ -1340,6 +1398,49 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       mode: _modeKey(pageMode),
     );
     return runtime?.conversation;
+  }
+
+  @override
+  ({bool hasMore, int nextOffset})? getInMemoryHistoryPageForConversation(
+    int conversationId,
+    ConversationMode mode,
+  ) => _runtimeCoordinator
+      .runtimeFor(
+        conversationId: conversationId,
+        mode: _modeKey(_pageModeForConversationMode(mode)),
+      )
+      ?.historyPage;
+
+  @override
+  int getHistoryPageRevisionForConversation(
+    int conversationId,
+    ConversationMode mode,
+  ) =>
+      _runtimeCoordinator
+          .runtimeFor(
+            conversationId: conversationId,
+            mode: _modeKey(_pageModeForConversationMode(mode)),
+          )
+          ?.historyPageRevision ??
+      0;
+
+  @override
+  void onConversationHistoryPageLoaded(
+    ConversationMode mode,
+    int conversationId, {
+    required bool hasMore,
+    required int nextOffset,
+  }) {
+    final pageMode = _pageModeForConversationMode(mode);
+    final runtime = _runtimeCoordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: _modeKey(pageMode),
+    );
+    runtime?.historyPage = (hasMore: hasMore, nextOffset: nextOffset);
+    if (_modeState(pageMode).currentConversationId == conversationId) {
+      _modeState(pageMode).hasMoreMessages = hasMore;
+      _modeState(pageMode).messageOffset = nextOffset;
+    }
   }
 
   @override
@@ -1614,11 +1715,21 @@ abstract class _ChatPageStateBase extends State<ChatPage>
         .runtimeMessageMutationRevision;
     final hasChromeChange = nextChromeSignature != previousChromeSignature;
     final hasMessageMutation = nextMutationRevision != previousMutationRevision;
+    final historyPage = runtime.historyPage;
+    final hasHistoryPageChange =
+        historyPage != null &&
+        (_modeState(mode).hasMoreMessages != historyPage.hasMore ||
+            _modeState(mode).messageOffset != historyPage.nextOffset);
 
     _modeState(mode).runtimeChromeSignature = nextChromeSignature;
     _modeState(mode).runtimeMessageMutationRevision = nextMutationRevision;
+    if (historyPage != null) {
+      _modeState(mode).hasMoreMessages = historyPage.hasMore;
+      _modeState(mode).messageOffset = historyPage.nextOffset;
+    }
 
     if (hasChromeChange ||
+        hasHistoryPageChange ||
         (hasMessageMutation &&
             runtime.messages.lastMutationAffectsPageChrome)) {
       setState(() {});
@@ -1703,10 +1814,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _clearVisibleChatConversation();
 
-  Future<void> _handlePetOverlayTap();
-
-  Future<void> _syncPetOverlayState();
-
   void _armComposerLiftIntent();
 
   void _requestComposerFocus({bool showKeyboard});
@@ -1781,8 +1888,6 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   });
 
   Future<void> _interruptAgentTurn();
-
-  Future<AgentRuntimeStatus> _refreshConnectedAgentRuntimeStatus();
 
   Future<void> _loadOpenClawConfig();
 
@@ -2025,9 +2130,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   Widget _buildModeMessagePage(
     ChatPageMode mode,
     AppBackgroundConfig appearanceConfig,
-    AppBackgroundVisualProfile visualProfile, {
-    double bottomOverlayInset = 0,
-  });
+    AppBackgroundVisualProfile visualProfile,
+  );
 
   Widget _buildWorkspaceSurfacePage();
 }

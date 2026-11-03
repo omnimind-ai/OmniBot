@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
+import 'package:path_provider/path_provider.dart';
 import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/services/storage_service.dart';
 
@@ -120,6 +122,7 @@ class ModelsDevCatalogService {
   static Future<ModelsDevCatalog>? _catalogLoadInFlight;
   static Future<void>? _catalogRefreshInFlight;
   static Future<ModelsDevCatalog> Function()? _catalogLoaderForTesting;
+  static Future<void> _cacheIoTail = Future<void>.value();
 
   static const Map<String, String> _kKnownHostProviderIds = {
     'api.openai.com': 'openai',
@@ -224,7 +227,7 @@ class ModelsDevCatalogService {
 
     load.then<void>(
       (_) => clearInFlight(),
-      onError: (Object _, StackTrace __) => clearInFlight(),
+      onError: (Object _, StackTrace _) => clearInFlight(),
     );
     return load;
   }
@@ -599,11 +602,80 @@ class ModelsDevCatalogService {
   }
 
   static Future<_ModelsDevCatalogCache?> _readCachedCatalog() async {
-    final raw = StorageService.getString(_kCacheKey, defaultValue: '');
-    if (raw == null || raw.trim().isEmpty) {
-      return null;
+    await migrateLegacyCache();
+    for (final legacy in [false, true]) {
+      try {
+        final raw = await _withCacheIo(() async {
+          final file = await _cacheFile(legacy: legacy);
+          return await file.exists() ? file.readAsString() : null;
+        });
+        if (raw != null && raw.isNotEmpty) {
+          final cached = await compute(_parseCachedCatalog, raw);
+          if (cached != null) return cached;
+        }
+      } catch (_) {
+        // A missing/unavailable file must not discard an offline legacy copy.
+      }
     }
+
+    final raw = StorageService.getString(_kCacheKey);
+    if (raw == null || raw.isEmpty) return null;
     return compute(_parseCachedCatalog, raw);
+  }
+
+  /// Moves the old large preference verbatim, without parsing the catalog.
+  /// Call after the first frame; failed writes retain the offline legacy copy.
+  static Future<void> migrateLegacyCache() => _withCacheIo(() async {
+    try {
+      final raw = StorageService.getString(_kCacheKey);
+      if (raw == null || raw.isEmpty) return;
+      // Separate destination: another Flutter engine may download a new
+      // catalog concurrently. An old migration must never replace that file.
+      final file = await _cacheFile(legacy: true);
+      await _writeCacheFile(file, raw);
+      await _removeLegacyCache();
+    } catch (_) {
+      // Retry on the next launch/catalog read, without affecting startup.
+    }
+  });
+
+  static Future<File> _cacheFile({bool legacy = false}) async {
+    final support = await getApplicationSupportDirectory();
+    final name = legacy ? 'legacy_catalog_v1.json' : 'catalog_v1.json';
+    return File('${support.path}/models_dev/$name');
+  }
+
+  // Migration and refresh share one file owner. Reads also wait for the pending
+  // rename, so a caller never observes a half-written cache or its temp file.
+  static Future<T> _withCacheIo<T>(Future<T> Function() operation) {
+    final result = _cacheIoTail.then((_) => operation());
+    _cacheIoTail = result.then<void>(
+      (_) {},
+      onError: (Object _, StackTrace _) {},
+    );
+    return result;
+  }
+
+  static Future<void> _writeCacheFile(File file, String raw) async {
+    await file.parent.create(recursive: true);
+    final temporary = await file.parent.createTemp('catalog-write-');
+    try {
+      final pending = File('${temporary.path}/catalog.json');
+      await pending.writeAsString(raw, flush: true);
+      await pending.rename(file.path);
+    } finally {
+      await temporary.delete(recursive: true);
+    }
+  }
+
+  static Future<void> _removeLegacyCache() async {
+    try {
+      if (StorageService.containsKey(_kCacheKey)) {
+        await StorageService.remove(_kCacheKey);
+      }
+    } catch (_) {
+      // The complete file is durable; a future migration can retry cleanup.
+    }
   }
 
   static _ModelsDevCatalogCache? _parseCachedCatalog(String raw) {
@@ -630,15 +702,27 @@ class ModelsDevCatalogService {
     String payload,
     DateTime fetchedAt, {
     String etag = '',
-  }) {
-    return StorageService.setString(
-      _kCacheKey,
-      jsonEncode({
+  }) async {
+    try {
+      final raw = await compute(jsonEncode, {
         'fetchedAt': fetchedAt.millisecondsSinceEpoch,
         'payload': payload,
         'etag': etag,
-      }),
-    );
+      });
+      await _withCacheIo(() async {
+        await _writeCacheFile(await _cacheFile(), raw);
+        await _removeLegacyCache();
+        try {
+          final legacy = await _cacheFile(legacy: true);
+          if (await legacy.exists()) await legacy.delete();
+        } catch (_) {
+          // A late migration is harmless: reads always prefer the new catalog.
+        }
+      });
+    } catch (_) {
+      // Persistence is best-effort. A valid network catalog remains usable,
+      // and failed writes leave the previous file and legacy preference intact.
+    }
   }
 
   static ModelsDevModelMatch? _matchModelInProvider(

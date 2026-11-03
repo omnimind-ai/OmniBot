@@ -12,6 +12,7 @@ Future<String?> _prepareAcpSessionForTurn({
   required String taskId,
   required int conversationId,
   required String mode,
+  required String? agentId,
   required String? existingSessionId,
   required bool Function() isTargetCurrent,
   bool preparedForFirstPrompt = false,
@@ -36,13 +37,17 @@ Future<String?> _prepareAcpSessionForTurn({
     // unbound session. Restore it through ACP before native prompt admission.
     final loaded = await AgentRuntimeService.readSession(
       sessionId: existingSessionId,
+      agentId: agentId,
       includeHistory: false,
       conversationMode: conversationMode,
     );
     preparedSessionId = (loaded['sessionId'] ?? loaded['threadId'])?.toString();
     if (preparedSessionId != existingSessionId) {
       if (preparedSessionId != null && preparedSessionId.isNotEmpty) {
-        await AgentRuntimeService.closeSession(sessionId: preparedSessionId);
+        await AgentRuntimeService.closeSession(
+          sessionId: preparedSessionId,
+          agentId: agentId,
+        );
       }
       throw StateError('The configured ACP session could not be restored');
     }
@@ -50,6 +55,7 @@ Future<String?> _prepareAcpSessionForTurn({
   final sessionId = await AgentRuntimeService.ensureSession(
     sessionId: preparedSessionId ?? existingSessionId,
     conversationId: conversationId,
+    agentId: agentId,
     model: model,
     effort: effort,
     collaborationMode: collaborationMode,
@@ -60,6 +66,7 @@ Future<String?> _prepareAcpSessionForTurn({
       try {
         await AgentRuntimeService.closeSession(
           sessionId: sessionId,
+          agentId: agentId,
           conversationId: conversationId,
         );
       } catch (error) {
@@ -78,6 +85,7 @@ Future<String?> _prepareAcpSessionForTurn({
       try {
         await AgentRuntimeService.closeSession(
           sessionId: sessionId,
+          agentId: agentId,
           conversationId: conversationId,
         );
       } catch (error) {
@@ -95,6 +103,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     final cardData = message.cardData;
     if (conversationId == null ||
         isEphemeralConversation(conversationId, activeConversationModeValue) ||
+        message.isHistoryPayloadOffloaded ||
         message.type != 2 ||
         cardData?['type'] != 'deep_thinking') {
       return;
@@ -215,7 +224,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   }) async {
     final generation = _conversationTargetRequestId;
     final mode = _activeMode;
+    final conversationMode = activeConversationModeValue;
     final agentId = _activeAcpAgentId;
+    if (agentId == null || agentId.isEmpty) {
+      throw StateError('agent_identity_required: configuration');
+    }
     final conversationId = _currentConversationId;
     final sessionId = mode == ChatPageMode.normal
         ? (_normalAcpSessionConversationId == conversationId
@@ -242,8 +255,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         _activeAgentThreadId = id;
       }
       if (sessionId != null &&
-          _unboundConfigurationSessions[mode] == sessionId) {
-        _unboundConfigurationSessions[mode] = id;
+          _unboundConfigurationSessions[mode]?.sessionId == sessionId &&
+          _unboundConfigurationSessions[mode]?.agentId == agentId) {
+        _unboundConfigurationSessions[mode] = (sessionId: id, agentId: agentId);
       }
     }
 
@@ -256,7 +270,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       Future<Map<String, dynamic>> create() async {
         final response = await AgentRuntimeService.newSession(
           agentId: agentId,
-          conversationMode: activeConversationModeValue.storageValue,
+          conversationMode: conversationMode.storageValue,
           model: mode == ChatPageMode.normal
               ? (_activeConversationModelOverrideSelection?.modelId ??
                     _activeNormalChatModelId)
@@ -273,7 +287,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
               ?.toString();
           if (id != null && id.isNotEmpty) {
             try {
-              await AgentRuntimeService.closeSession(sessionId: id);
+              await AgentRuntimeService.closeSession(
+                sessionId: id,
+                agentId: agentId,
+              );
             } catch (error) {
               debugPrint(
                 'Abandoned configuration session close failed: $error',
@@ -283,8 +300,10 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
           throw StateError('Conversation changed');
         }
         remember(response);
-        _unboundConfigurationSessions[mode] =
-            (response['sessionId'] ?? response['threadId']).toString();
+        _unboundConfigurationSessions[mode] = (
+          sessionId: (response['sessionId'] ?? response['threadId']).toString(),
+          agentId: agentId,
+        );
         return response;
       }
 
@@ -302,12 +321,14 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     }
 
     final isPreparedSession =
-        sessionId != null && _unboundConfigurationSessions[mode] == sessionId;
+        sessionId != null &&
+        _unboundConfigurationSessions[mode]?.sessionId == sessionId &&
+        _unboundConfigurationSessions[mode]?.agentId == agentId;
     final response = await AgentRuntimeService.readSession(
       sessionId: conversationId == null || isPreparedSession ? sessionId : null,
       conversationId: isPreparedSession ? null : conversationId,
       agentId: agentId,
-      conversationMode: activeConversationModeValue.storageValue,
+      conversationMode: conversationMode.storageValue,
       includeHistory: false,
       refreshConfig: refreshConfig,
     );
@@ -318,14 +339,16 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
 
   @override
   void _releaseUnboundConfigurationSession(ChatPageMode mode) {
-    final sessionId = _unboundConfigurationSessions.remove(mode);
-    if (sessionId == null) return;
+    final session = _unboundConfigurationSessions.remove(mode);
+    if (session == null) return;
     unawaited(
-      AgentRuntimeService.closeSession(sessionId: sessionId)
-          .catchError((Object error) {
-            debugPrint('Unused configuration session close failed: $error');
-            return <String, dynamic>{};
-          }),
+      AgentRuntimeService.closeSession(
+        sessionId: session.sessionId,
+        agentId: session.agentId,
+      ).catchError((Object error) {
+        debugPrint('Unused configuration session close failed: $error');
+        return <String, dynamic>{};
+      }),
     );
   }
 
@@ -730,6 +753,11 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         }
       }
       if (!_isConversationTargetRequestCurrent(sendTargetId)) return;
+      final unavailableMessage = _activeAgentUnavailableMessage;
+      if (unavailableMessage != null) {
+        showToast(unavailableMessage, type: ToastType.error);
+        return;
+      }
       final messageText = submittedText.trim();
       final inputAttachments = submittedAttachments;
       final hasAttachments = inputAttachments.isNotEmpty;
@@ -1206,9 +1234,13 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
+        agentId: _kXiaowanAcpAgentId,
         existingSessionId: dispatchSessionId,
         preparedForFirstPrompt:
-            _unboundConfigurationSessions[dispatchMode] == dispatchSessionId &&
+            _unboundConfigurationSessions[dispatchMode]?.sessionId ==
+                dispatchSessionId &&
+            _unboundConfigurationSessions[dispatchMode]?.agentId ==
+                _kXiaowanAcpAgentId &&
             dispatchSessionId != null,
         isTargetCurrent: isDispatchTargetCurrent,
         model: dispatchSelection?.modelId,
@@ -1230,13 +1262,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         conversationId: resolvedConversationId,
         sessionId: acpSessionId,
         requestId: _buildPromptRequestId(aiMessageId),
-        // Pure chat is an ACP turn with tools disabled, not a provider-only
-        // transport. It deliberately has no Harness identity: otherwise a
-        // previous DSH/Xiaowan switch leaks into the pure-chat session and
-        // the runtime can reconnect the wrong Agent.
-        agentId: dispatchConversationMode == ConversationMode.chatOnly
-            ? null
-            : _kXiaowanAcpAgentId,
+        // Pure chat explicitly owns the in-process Xiaowan runtime with
+        // tools disabled, independently of other conversations.
+        agentId: _kXiaowanAcpAgentId,
         text: userMessage,
         attachments: userAttachments,
         approvalPolicy: dispatchPermissionMode.approvalPolicy,
@@ -1387,9 +1415,13 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
+        agentId: _kXiaowanAcpAgentId,
         existingSessionId: dispatchSessionId,
         preparedForFirstPrompt:
-            _unboundConfigurationSessions[dispatchMode] == dispatchSessionId &&
+            _unboundConfigurationSessions[dispatchMode]?.sessionId ==
+                dispatchSessionId &&
+            _unboundConfigurationSessions[dispatchMode]?.agentId ==
+                _kXiaowanAcpAgentId &&
             dispatchSessionId != null,
         isTargetCurrent: isDispatchTargetCurrent,
         model: dispatchSelection?.modelId,
@@ -1492,6 +1524,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       if (raw is! List) return const [];
       final normalized = raw
           .whereType<Map>()
+          .where((item) => item['historyPayloadOffloaded'] != true)
           .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
           .where(_attachmentShouldSendToModel)
           .toList();

@@ -1,8 +1,13 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/utils/ui.dart';
+import 'package:ui/widgets/omni_glass_floating_action_button.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/features/task/pages/execution_history/widgets/run_log_timeline_components.dart';
@@ -110,7 +115,7 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
     try {
       final state = await OmniFlowToolClient.getRunLogState(stateId);
       if (!mounted) return;
-      await showModalBottomSheet<void>(
+      await showOmniGlassModalBottomSheet<void>(
         context: context,
         isScrollControlled: true,
         builder: (context) => _StateSheet(state: state, action: action),
@@ -128,7 +133,7 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
     int fallbackIndex,
     RunLogTokenUsage? tokenUsage,
   ) {
-    return showModalBottomSheet<void>(
+    return showOmniGlassBottomSheet<void>(
       context: context,
       useRootNavigator: true,
       isScrollControlled: true,
@@ -158,36 +163,50 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
           ),
         ],
       ),
+      floatingActionButtonLocation: const _RunLogActionLocation(),
       floatingActionButton: _runLog == null
           ? null
-          : FloatingActionButton.extended(
-              key: ValueKey(
-                _functionId?.isNotEmpty == true
-                    ? 'run-log-view-function'
-                    : 'run-log-register-function',
-              ),
-              onPressed: _converting
-                  ? null
-                  : (_functionId?.isNotEmpty == true
-                        ? _openFunction
-                        : _convert),
-              icon: _converting
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Icon(
-                      _functionId?.isNotEmpty == true
-                          ? Icons.account_tree_outlined
-                          : Icons.add_task_rounded,
-                    ),
-              label: Text(
-                _functionId?.isNotEmpty == true
-                    ? _text(context, '查看复用指令', 'View Function')
-                    : _text(context, '注册为复用指令', 'Register Function'),
+          : OmniGlassFloatingActionButton(
+              builder: (context, glass) => FloatingActionButton.extended(
+                backgroundColor: glass ? Colors.transparent : null,
+                foregroundColor: glass ? context.omniPalette.textPrimary : null,
+                elevation: glass ? 0 : null,
+                focusElevation: glass ? 0 : null,
+                hoverElevation: glass ? 0 : null,
+                highlightElevation: glass ? 0 : null,
+                disabledElevation: glass ? 0 : null,
+                key: ValueKey(
+                  _functionId?.isNotEmpty == true
+                      ? 'run-log-view-function'
+                      : 'run-log-register-function',
+                ),
+                onPressed: _converting
+                    ? null
+                    : (_functionId?.isNotEmpty == true
+                          ? _openFunction
+                          : _convert),
+                icon: _converting
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : Icon(
+                        _functionId?.isNotEmpty == true
+                            ? Icons.account_tree_outlined
+                            : Icons.add_task_rounded,
+                      ),
+                label: Text(
+                  _functionId?.isNotEmpty == true
+                      ? _text(context, '查看复用指令', 'View Function')
+                      : _text(context, '注册为复用指令', 'Register Function'),
+                ),
               ),
             ),
-      body: _buildBody(),
+      body: SafeArea(
+        top: false,
+        bottom: false,
+        child: OmniContentWidth(child: _buildBody()),
+      ),
     );
   }
 
@@ -207,7 +226,10 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
     final steps = _mapList(runLog['steps']);
     final metrics = RunLogMetrics.fromPayload(runLog);
     return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      padding: edgeToEdgeScrollPadding(
+        context,
+        const EdgeInsets.fromLTRB(16, 16, 16, 100),
+      ),
       children: [
         RunLogOverviewPanel(
           payload: runLog,
@@ -248,6 +270,26 @@ class _RunLogDetailPageState extends State<RunLogDetailPage> {
               ),
             ),
       ],
+    );
+  }
+}
+
+/// Align the action to the readable column while retaining Scaffold's keyboard
+/// and system-navigation avoidance on the vertical axis.
+class _RunLogActionLocation extends FloatingActionButtonLocation {
+  const _RunLogActionLocation();
+
+  @override
+  Offset getOffset(ScaffoldPrelayoutGeometry geometry) {
+    final offset = FloatingActionButtonLocation.endFloat.getOffset(geometry);
+    final availableWidth =
+        geometry.scaffoldSize.width -
+        geometry.minInsets.left -
+        geometry.minInsets.right;
+    final columnInset = math.max(0.0, (availableWidth - 840) / 2);
+    return offset.translate(
+      geometry.textDirection == TextDirection.ltr ? -columnInset : columnInset,
+      0,
     );
   }
 }

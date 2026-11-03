@@ -43,6 +43,46 @@ void main() {
     });
 
     test(
+      'history cursor follows its conversation through snapshot updates',
+      () {
+        final first = coordinator.ensureRuntime(
+          conversationId: 1,
+          mode: kChatRuntimeModeAgent,
+        )..historyPage = (hasMore: true, nextOffset: 37);
+        final second = coordinator.ensureRuntime(
+          conversationId: 2,
+          mode: kChatRuntimeModeAgent,
+        )..historyPage = (hasMore: false, nextOffset: 4);
+
+        coordinator.replaceConversationSnapshot(
+          conversationId: 1,
+          mode: kChatRuntimeModeAgent,
+          messages: [ChatMessageModel.userMessage('new live item', id: 'new')],
+        );
+
+        expect(
+          coordinator.ensureRuntime(
+            conversationId: 1,
+            mode: kChatRuntimeModeAgent,
+          ),
+          same(first),
+        );
+        expect(first.historyPage, (hasMore: true, nextOffset: 37));
+        expect(second.historyPage, (hasMore: false, nextOffset: 4));
+        coordinator.discardConversationRuntime(
+          conversationId: 1,
+          mode: kChatRuntimeModeAgent,
+        );
+        expect(
+          coordinator
+              .ensureRuntime(conversationId: 1, mode: kChatRuntimeModeAgent)
+              .historyPage,
+          isNull,
+        );
+      },
+    );
+
+    test(
       'when preserveLiveStreamingState=true the snapshot keeps reducer '
       'push state intact (regression: codex output mid-turn auto-collapse)',
       () {

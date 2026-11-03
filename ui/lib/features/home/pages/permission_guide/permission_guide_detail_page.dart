@@ -6,6 +6,7 @@ import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 class PermissionGuideDetailPage extends StatefulWidget {
   final String type;
@@ -73,72 +74,81 @@ class _PermissionGuideDetailPageState extends State<PermissionGuideDetailPage> {
       body: SafeArea(
         top: false,
         bottom: false,
-        child: ListView(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          ),
-          children: [
-            _buildSummaryCard(topic, brandInfo),
-            const SizedBox(height: 16),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                for (final brand in brands)
-                  ChoiceChip(
-                    label: Text(brand.name),
-                    selected: brand.id == _selectedBrand,
-                    selectedColor: const Color(0xFFE8F2FF),
-                    backgroundColor: Colors.white,
-                    side: BorderSide(
-                      color: brand.id == _selectedBrand
-                          ? AppColors.buttonPrimary
-                          : Colors.transparent,
-                    ),
-                    labelStyle: TextStyle(
-                      color: brand.id == _selectedBrand
-                          ? AppColors.buttonPrimary
-                          : AppColors.text,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                    onSelected: (_) {
-                      setState(() {
-                        _selectedBrand = brand.id;
-                      });
-                    },
-                  ),
-              ],
+        child: OmniContentWidth(
+          child: ListView(
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(16, 8, 16, 24),
             ),
-            const SizedBox(height: 16),
-            for (var i = 0; i < steps.length; i++) ...[
-              _buildStepCard(i + 1, steps[i]),
-              const SizedBox(height: 12),
+            children: [
+              _buildSummaryCard(topic, brandInfo),
+              const SizedBox(height: 16),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  for (final brand in brands)
+                    ChoiceChip(
+                      label: Text(brand.name),
+                      selected: brand.id == _selectedBrand,
+                      selectedColor: const Color(0xFFE8F2FF),
+                      backgroundColor: Colors.white,
+                      side: BorderSide(
+                        color: brand.id == _selectedBrand
+                            ? AppColors.buttonPrimary
+                            : Colors.transparent,
+                      ),
+                      labelStyle: TextStyle(
+                        color: brand.id == _selectedBrand
+                            ? AppColors.buttonPrimary
+                            : AppColors.text,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      onSelected: (_) {
+                        setState(() {
+                          _selectedBrand = brand.id;
+                        });
+                      },
+                    ),
+                ],
+              ),
+              const SizedBox(height: 16),
+              for (var i = 0; i < steps.length; i++) ...[
+                _buildStepCard(i + 1, steps[i]),
+                const SizedBox(height: 12),
+              ],
             ],
-          ],
+          ),
         ),
       ),
-      bottomNavigationBar: SafeArea(
-        minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-        child: FilledButton(
-          style: FilledButton.styleFrom(
-            backgroundColor: AppColors.buttonPrimary,
-            minimumSize: const Size.fromHeight(48),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          OmniContentWidth(
+            child: SafeArea(
+              minimum: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+              child: FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.buttonPrimary,
+                  minimumSize: const Size.fromHeight(48),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(16),
+                  ),
+                ),
+                onPressed: _openSystemSettings,
+                child: const Text(
+                  '我已了解，去设置',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
             ),
           ),
-          onPressed: _openSystemSettings,
-          child: const Text(
-            '我已了解，去设置',
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 15,
-              fontWeight: FontWeight.w700,
-            ),
-          ),
-        ),
+        ],
       ),
     );
   }

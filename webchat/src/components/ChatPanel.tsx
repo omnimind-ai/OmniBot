@@ -21,6 +21,7 @@ interface ChatPanelProps {
   conversation: Conversation | null;
   messages: ChatMessage[];
   globalError: string;
+  unavailableMessage?: string;
   sending: boolean;
   activeTaskId: string | null;
   clarifyTaskId: string | null;
@@ -694,6 +695,7 @@ export function ChatPanel({
   conversation,
   messages,
   globalError,
+  unavailableMessage,
   sending,
   activeTaskId,
   clarifyTaskId,
@@ -741,7 +743,7 @@ export function ChatPanel({
     : null;
   const canManageConversation = Number(conversation?.id ?? 0) > 0;
   const isProcessing = sending || Boolean(activeTaskId && !clarifyTaskId);
-  const canSend = !isProcessing && (clarifyTaskId ? Boolean(draft.trim()) : Boolean(draft.trim() || attachments.length));
+  const canSend = !unavailableMessage && !isProcessing && (clarifyTaskId ? Boolean(draft.trim()) : Boolean(draft.trim() || attachments.length));
 
   useEffect(() => {
     const list = messageListRef.current;
@@ -850,6 +852,7 @@ export function ChatPanel({
         {clarifyTaskId && (
           <div className="clarify-banner">Agent 正在等待你的补充说明，发送下一条消息后继续。</div>
         )}
+        {unavailableMessage ? <p role="status">{unavailableMessage}</p> : (
         <form className="composer" onSubmit={(event) => void submit(event)}>
           {!!attachments.length && (
             <div className="attachment-list">
@@ -908,6 +911,7 @@ export function ChatPanel({
             )}
           </div>
         </form>
+        )}
       </div>
     </section>
   );

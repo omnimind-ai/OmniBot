@@ -26,7 +26,7 @@ class AgentWebPluginTest {
 
         assertEquals(AgentWebActions.ids, actions.mapTo(linkedSetOf()) { it.id })
         val openActions = actions.filter {
-            it.id == AgentWebActions.OPEN_KIMI || it.id == AgentWebActions.OPEN_DEEPSEEK
+            it.id in setOf(AgentWebActions.OPEN_KIMI, AgentWebActions.OPEN_OPENCODE)
         }
         val lifecycleActions = actions - openActions.toSet()
         assertEquals(2, openActions.size)

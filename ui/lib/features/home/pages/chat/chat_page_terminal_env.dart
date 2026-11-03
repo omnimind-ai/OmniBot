@@ -53,22 +53,10 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
       });
     }
     _inputFocusNode.unfocus();
-    final overlayState = Overlay.maybeOf(context);
-    final overlay = findActiveRenderObject(overlayState?.context) as RenderBox?;
-    final anchorRect = glassPopupAnchorFromContext(anchorContext);
-    if (overlay == null || anchorRect == null) {
-      return;
-    }
-    final popupWidth = (overlay.size.width - 32).clamp(220.0, 340.0).toDouble();
-    const popupMaxHeight = 360.0;
-    await showGlassPopup<String>(
+    await showOmniGlassCardSheet<void>(
       context: context,
-      anchor: anchorRect,
-      overlapAnchor: false,
-      horizontalPlacement: GlassPopupHorizontalPlacement.centerOnScreen,
-      child: _TerminalEnvironmentEditorContent(
-        width: popupWidth,
-        maxHeight: popupMaxHeight,
+      fitsContent: true,
+      builder: (context) => _TerminalEnvironmentEditorContent(
         initialVariables: _terminalEnvironmentVariables,
         onChanged: _updateTerminalEnvironmentVariables,
       ),
@@ -86,14 +74,10 @@ mixin _ChatPageTerminalEnvMixin on _ChatPageStateBase {
 
 class _TerminalEnvironmentEditorContent extends StatefulWidget {
   const _TerminalEnvironmentEditorContent({
-    required this.width,
-    required this.maxHeight,
     required this.initialVariables,
     required this.onChanged,
   });
 
-  final double width;
-  final double maxHeight;
   final List<ChatTerminalEnvironmentVariable> initialVariables;
   final Future<void> Function(List<ChatTerminalEnvironmentVariable>) onChanged;
 
@@ -532,88 +516,57 @@ class _TerminalEnvironmentEditorContentState
 
   @override
   Widget build(BuildContext context) {
-    final mediaQuery = MediaQuery.of(context);
     final palette = context.omniPalette;
-    final dynamicMaxHeight =
-        (mediaQuery.size.height - mediaQuery.viewInsets.bottom - 96)
-            .clamp(220.0, widget.maxHeight)
-            .toDouble();
-    return SizedBox(
-      width: widget.width,
-      child: OmniGlassPanel(
-        width: widget.width,
-        borderRadius: BorderRadius.circular(18),
-        child: Material(
-          color: Colors.transparent,
-          child: ConstrainedBox(
-            constraints: BoxConstraints(maxHeight: dynamicMaxHeight),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+    return OmniGlassCardBody(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-                  child: Row(
-                    children: [
-                      Icon(
-                        Icons.tune_rounded,
-                        size: 16,
-                        color: palette.textSecondary,
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          '终端环境变量',
-                          style: TextStyle(
-                            fontSize: 13,
-                            color: palette.textPrimary,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      Text(
-                        '${_variables.length}',
-                        style: TextStyle(
-                          fontSize: 11,
-                          color: palette.textTertiary,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
+                Expanded(
+                  child: Text(
+                    '终端环境变量',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: palette.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
-                if (_variables.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
-                    child: Text(
-                      '还没有环境变量',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: palette.textTertiary,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  )
-                else
-                  Flexible(
-                    child: Scrollbar(
-                      child: ListView.builder(
-                        padding: const EdgeInsets.only(bottom: 8),
-                        itemCount: _variables.length,
-                        itemBuilder: (context, index) {
-                          return _buildVariableRow(_variables[index]);
-                        },
-                      ),
-                    ),
-                  ),
-                if (!_isEditing) ...[
-                  Divider(height: 1, color: palette.borderSubtle),
-                  _buildAddForm(),
-                ],
+                Text(
+                  '${_variables.length}',
+                  style: TextStyle(color: palette.textTertiary),
+                ),
               ],
             ),
           ),
-        ),
+          Flexible(
+            child: SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (_variables.isEmpty)
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 20),
+                      child: Text(
+                        '还没有环境变量',
+                        style: TextStyle(color: palette.textTertiary),
+                      ),
+                    )
+                  else
+                    for (final item in _variables) _buildVariableRow(item),
+                  if (!_isEditing) ...[
+                    Divider(height: 16, color: palette.borderSubtle),
+                    _buildAddForm(),
+                  ],
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

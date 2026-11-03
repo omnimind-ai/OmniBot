@@ -218,6 +218,78 @@ void main() {
         .setMockMethodCallHandler(agentEventsChannel, null);
   });
 
+  for (final fail in [false, true]) {
+    test(
+      'history removal becomes visible only after native commit, fail=$fail',
+      () async {
+        const id = 88203;
+        final runtime = coordinator.ensureRuntime(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+        );
+        final removed = ChatMessageModel.userMessage('original', id: 'removed');
+        final retained = ChatMessageModel.userMessage('older', id: 'retained');
+        runtime.messages.addAll([removed, retained]);
+        final entered = Completer<void>();
+        final release = Completer<void>();
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(methodChannel, (call) async {
+              recordedMethodCalls.add(call);
+              if (call.method == 'replaceConversationMessages') {
+                entered.complete();
+                await release.future;
+                if (fail) throw PlatformException(code: 'storage-failure');
+              }
+              return 'SUCCESS';
+            });
+        final write = coordinator.persistConversationMessageSnapshot(
+          conversationId: id,
+          mode: kChatRuntimeModeAgent,
+          messages: [retained],
+          allowHistoryRemoval: true,
+          removedMessageIds: ['removed'],
+        );
+        final completion = fail ? expectLater(write, throwsStateError) : write;
+        await entered.future;
+        expect(runtime.messages.map((message) => message.id), [
+          'removed',
+          'retained',
+        ]);
+        final request = recordedMethodCalls.lastWhere(
+          (call) => call.method == 'replaceConversationMessages',
+        );
+        expect(
+          (request.arguments['messages'] as List).map((row) => row['id']),
+          ['retained'],
+        );
+        runtime.messages.insert(
+          0,
+          ChatMessageModel.userMessage('new', id: 'concurrent'),
+        );
+        if (fail) {
+          coordinator.beginAcpTurn(
+            taskId: 'new-turn',
+            conversationId: id,
+            mode: kChatRuntimeModeAgent,
+          );
+        }
+        release.complete();
+        await completion;
+        expect(
+          runtime.messages.map((message) => message.id),
+          fail
+              ? ['concurrent', 'removed', 'retained']
+              : ['concurrent', 'retained'],
+        );
+        if (fail) {
+          expect(identical(runtime.messages[1], removed), isTrue);
+          expect(runtime.activeRunId, 'new-turn');
+          expect(runtime.isAiResponding, isTrue);
+        }
+      },
+    );
+  }
+
   test('native ACP projection persists while chat observers detach', () async {
     const conversationId = 99201;
     const taskId = 'home-background-prompt';
@@ -643,8 +715,7 @@ void main() {
       expect(runtime.activeAcpSessionId, 'session-no-wire-turn');
       expect(runtime.activeAcpTurnId, isNull);
       expect(runtime.activeRunId, localRunId);
-    },
-  );
+    });
 
   test('keeps the local run identity separate from the official ACP turn', () {
     final runtime = coordinator.ensureRuntime(
@@ -782,10 +853,21 @@ void main() {
       ChatMessageModel.userMessage('same query', id: 'cloud-user-first'),
       ChatMessageModel.userMessage('same query', id: 'cloud-user-second'),
     ]);
-    coordinator.registerTask(taskId: 'cloud-cancel-turn', conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    coordinator.beginAcpTurn(taskId: 'cloud-cancel-turn', conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    coordinator.applyAcpPromptResponse(taskId: 'cloud-cancel-turn', conversationId: conversationId,
-      mode: kChatRuntimeModeAgent, sessionId: 'na:instance:session', turnId: 'cloud-cancel-turn', stopReason: 'cancelled');
+    coordinator.registerTask(taskId: 'cloud-cancel-turn', conversationId: conversationId, mode: kChatRuntimeModeAgent,
+    );
+    coordinator.beginAcpTurn(
+      taskId: 'cloud-cancel-turn',
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    coordinator.applyAcpPromptResponse(
+      taskId: 'cloud-cancel-turn',
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+      sessionId: 'na:instance:session',
+      turnId: 'cloud-cancel-turn',
+      stopReason: 'cancelled',
+    );
     // Durable adapter snapshots retain actual host user ids, including retries
     // whose retained user id differs from the new prompt reservation.
     final history = [
@@ -794,10 +876,15 @@ void main() {
     ];
     for (var read = 0; read < 3; read++) {
       coordinator.replaceConversationSnapshot(conversationId: conversationId, mode: kChatRuntimeModeAgent,
-        messages: history, preserveLiveStreamingState: runtime.isAiResponding);
+        messages: history, preserveLiveStreamingState: runtime.isAiResponding,
+      );
       expect(runtime.messages.where((message) => message.user == 1).map((message) => message.id).toSet(),
-        {'cloud-user-first', 'cloud-user-second'});
-      expect(runtime.messages.where((message) => message.user == 1), hasLength(2));
+        {'cloud-user-first', 'cloud-user-second'},
+      );
+      expect(
+        runtime.messages.where((message) => message.user == 1),
+        hasLength(2),
+      );
       expect(runtime.hasInFlightTask, isFalse);
     }
   });
@@ -855,23 +942,39 @@ void main() {
 
   test('a snapshot with running flags cannot clear the admitted ACP identity', () {
     const conversationId = 20051;
-    final runtime = coordinator.ensureRuntime(conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    coordinator.registerTask(taskId: 'host-run', conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    coordinator.beginAcpTurn(taskId: 'host-run', conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    runtime.activeAcpSessionId = 'official-session';
-    runtime.activeAcpTurnId = 'official-turn';
-    final latest = ChatMessageModel.assistantMessage('latest streamed output', id: 'item');
-    runtime.messages.add(latest);
-    coordinator.replaceConversationSnapshot(
-      conversationId: conversationId, mode: kChatRuntimeModeAgent,
-      messages: [ChatMessageModel.assistantMessage('stale output', id: 'item')],
+    final runtime = coordinator.ensureRuntime(conversationId: conversationId, mode: kChatRuntimeModeAgent,
+      );
+      coordinator.registerTask(
+        taskId: 'host-run',
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      coordinator.beginAcpTurn(
+        taskId: 'host-run',
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
+      runtime.activeAcpSessionId = 'official-session';
+      runtime.activeAcpTurnId = 'official-turn';
+      final latest = ChatMessageModel.assistantMessage(
+        'latest streamed output',
+        id: 'item',
+      );
+      runtime.messages.add(latest);
+      coordinator.replaceConversationSnapshot(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+        messages: [
+          ChatMessageModel.assistantMessage('stale output', id: 'item'),
+        ],
       isAiResponding: true, currentDispatchTurnId: 'host-run',
     );
     expect(runtime.activeAcpSessionId, 'official-session');
     expect(runtime.activeAcpTurnId, 'official-turn');
     expect(runtime.messages.single, same(latest));
     expect(runtime.hasInFlightTask, isTrue);
-  });
+  },
+  );
 
   test('an authoritative idle snapshot can finish only its matching turn', () {
     const conversationId = 2008;
@@ -959,7 +1062,8 @@ void main() {
 
   for (final preserveLive in [false, true]) {
     test('terminal historical requests stay closed during active restore $preserveLive', () {
-      final runtime = coordinator.ensureRuntime(conversationId: 2018, mode: kChatRuntimeModeAgent);
+      final runtime = coordinator.ensureRuntime(conversationId: 2018, mode: kChatRuntimeModeAgent,
+        );
       coordinator.replaceConversationSnapshot(
         conversationId: 2018, mode: kChatRuntimeModeAgent,
         isAiResponding: true, preserveLiveStreamingState: preserveLive,
@@ -969,9 +1073,12 @@ void main() {
               content: {'extra': 'preserve', 'cardData': {
                 'type': 'agent_request', 'requestId': id,
                 'status': id == 'answered' ? 'accepted' : 'pending',
-              }},
-              streamMeta: {'parentTaskId': id == 'current' ? 'new-turn' : 'old-turn',
-                if (id != 'current') 'stopReason': 'cancelled'},
+              },
+                },
+                streamMeta: {
+                  'parentTaskId': id == 'current' ? 'new-turn' : 'old-turn',
+                  if (id != 'current') 'stopReason': 'cancelled',
+                },
             ),
         ],
       );
@@ -980,12 +1087,17 @@ void main() {
         final old = runtime.messages[index];
         runtime.messages[index] = old.copyWith(content: {
           ...?old.content,
-          'cardData': {'type': 'agent_request', 'requestId': 'old', 'status': 'pending'},
-        });
+          'cardData': {'type': 'agent_request', 'requestId': 'old', 'status': 'pending',
+              },
+            },
+          );
         coordinator.replaceConversationSnapshot(
           conversationId: 2018, mode: kChatRuntimeModeAgent,
           messages: preserveLive ? [] : runtime.messages.map((m) =>
-            m.id == 'old' ? m.copyWith(streamMeta: {'parentTaskId': 'old-turn'}) : m).toList(),
+            m.id == 'old' ? m.copyWith(streamMeta: {'parentTaskId': 'old-turn'},
+                              )
+                            : m,
+                      ).toList(),
           isAiResponding: true, preserveLiveStreamingState: preserveLive,
         );
       }
@@ -996,7 +1108,8 @@ void main() {
       expect(byId['answered']!.cardData!['status'], 'accepted');
       expect(byId['current']!.cardData!['status'], 'pending');
       expect(byId['current']!.cardData!['interactionUnavailable'], isNull);
-    });
+    },
+    );
   }
 
   test('keeps a live ACP request card pending during an active snapshot', () {
@@ -1355,8 +1468,7 @@ void main() {
               'messageId': 'first-background-answer',
               'content': <String, dynamic>{
                 'type': 'text',
-                'text': '第一份资料已整理完成',
-              },
+                'text': '第一份资料已整理完成'},
             },
           },
         ),
@@ -1371,8 +1483,7 @@ void main() {
       ]);
       expect(first.activeAcpSessionId, firstSession);
       expect(second.activeAcpSessionId, secondSession);
-    },
-  );
+    });
 
   test(
     'a cancelled prompt leaves the next user prompt intact when an old terminal event arrives late',
@@ -1491,8 +1602,7 @@ void main() {
       );
       expect(runtime.isAiResponding, isFalse);
       expect(runtime.activeAcpTurnId, isNull);
-    },
-  );
+    });
 
   for (final nextSession in <String>['first-session', 'second-session']) {
     for (final lateStopReason in <String>['cancelled', 'error', 'end_turn']) {
@@ -1827,8 +1937,7 @@ void main() {
           .map((m) => ChatMessageModel.fromJson(m.toJson()))
           .toList();
       final group = buildAgentRunTimelineEntries(
-        restored,
-      ).where((e) => e.group != null).single.group!;
+        restored).where((e) => e.group != null).single.group!;
       expect(group.status, AgentRunStatus.cancelled);
       expect(
         group.visibleMessagesOldestFirst.any((m) => m.text == 'KEEP_PARTIAL'),
@@ -1853,8 +1962,7 @@ void main() {
             .streamMeta?['stopReason'],
         'cancelled',
       );
-    },
-  );
+    });
 
   for (final stopReason in <String>['end_turn', 'cancelled', 'error']) {
     test(
@@ -1972,23 +2080,23 @@ void main() {
     );
   });
 
-  test('keeps DSH ACP reasoning interleaved around tool activity', () {
+  test('keeps ACP reasoning interleaved around tool activity', () {
     const conversationId = 2103;
-    const turnId = 'dsh-turn';
+    const turnId = 'kimi-turn';
     applyAcp(
       conversationId,
       'item/reasoning/delta',
       turnId: turnId,
-      agentId: 'deepseek-harness-acp',
-      agentName: 'DeepSeek Harness',
+      agentId: 'kimi-code-acp',
+      agentName: 'Kimi Code',
       params: <String, dynamic>{'itemId': 'thought-1', 'delta': '第一阶段：分析工作区。'},
     );
     applyAcp(
       conversationId,
       'item/started',
       turnId: turnId,
-      agentId: 'deepseek-harness-acp',
-      agentName: 'DeepSeek Harness',
+      agentId: 'kimi-code-acp',
+      agentName: 'Kimi Code',
       params: <String, dynamic>{
         'item': <String, dynamic>{
           'id': 'tool-1',
@@ -2002,8 +2110,8 @@ void main() {
       conversationId,
       'item/reasoning/delta',
       turnId: turnId,
-      agentId: 'deepseek-harness-acp',
-      agentName: 'DeepSeek Harness',
+      agentId: 'kimi-code-acp',
+      agentName: 'Kimi Code',
       params: <String, dynamic>{'itemId': 'thought-2', 'delta': '第二阶段：根据结果判断。'},
     );
 
@@ -2062,22 +2170,40 @@ void main() {
   test('an old history snapshot cannot downgrade an officially completed item', () {
     const conversationId = 99202;
     const turn = 'completed-history-turn';
-    coordinator.beginAcpTurn(taskId: turn, conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    applyAcp(conversationId, 'session/update', turnId: turn, params: {
-      'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'reply',
-        'content': {'text': 'partial '}}
-    });
-    final runtime = coordinator.runtimeFor(conversationId: conversationId, mode: kChatRuntimeModeAgent)!;
+    coordinator.beginAcpTurn(taskId: turn, conversationId: conversationId, mode: kChatRuntimeModeAgent,
+      );
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turn,
+        params: {
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'reply',
+            'content': {'text': 'partial '},
+          },
+        },
+      );
+      final runtime = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
     final old = runtime.messages.firstWhere((m) => m.user == 2);
     applyAcp(conversationId, 'session/update', turnId: turn, params: {
       'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'reply',
-        'content': {'text': 'complete'}}
-    });
+        'content': {'text': 'complete'},
+          },
+        },
+      );
     completePrompt(conversationId, turnId: turn);
     final committed = runtime.messages.firstWhere((m) => m.user == 2);
-    for (final snapshot in [[old], [old.copyWith(streamMeta: const {})]]) {
-      coordinator.replaceConversationSnapshot(conversationId: conversationId,
-          mode: kChatRuntimeModeAgent, messages: snapshot);
+    for (final snapshot in [[old], [old.copyWith(streamMeta: const {})],
+      ]) {
+        coordinator.replaceConversationSnapshot(
+          conversationId: conversationId,
+          mode: kChatRuntimeModeAgent,
+          messages: snapshot,
+        );
       expect(runtime.messages.single.text, 'partial complete');
       expect(runtime.messages.single.streamMeta?['stopReason'], 'end_turn');
       expect(runtime.messages.single.streamMeta?['isFinal'], true);
@@ -2086,9 +2212,11 @@ void main() {
     // A durable completed projection may still supply additional metadata.
     final restored = committed.copyWith(turnUsage: {'inputTokens': 123});
     coordinator.replaceConversationSnapshot(conversationId: conversationId,
-        mode: kChatRuntimeModeAgent, messages: [restored]);
-    expect(runtime.messages.single.turnUsage?['inputTokens'], 123);
-  });
+        mode: kChatRuntimeModeAgent, messages: [restored],
+      );
+      expect(runtime.messages.single.turnUsage?['inputTokens'], 123);
+    },
+  );
 
   test('persistence uses the completed projection after awaiting metadata I/O', () async {
     const conversationId = 99201;
@@ -2108,31 +2236,66 @@ void main() {
       if (call.method == 'getSceneVoiceConfig') return <String, dynamic>{'autoPlay': false};
       return 'SUCCESS';
     });
-    coordinator.beginAcpTurn(taskId: turn, conversationId: conversationId, mode: kChatRuntimeModeAgent);
-    applyAcp(conversationId, 'session/update', turnId: turn, params: {
-      'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'reply',
-        'content': {'text': 'partial '}}
-    });
-    final saving = coordinator.persistRuntimeConversation(
-      conversationId: conversationId, mode: kChatRuntimeModeAgent, persistMessages: true);
-    await entered.future;
-    applyAcp(conversationId, 'session/update', turnId: turn, params: {
-      'update': {'sessionUpdate': 'agent_message_chunk', 'messageId': 'reply',
-        'content': {'text': 'complete'}}
-    });
-    completePrompt(conversationId, turnId: turn, params: {'stopReason': 'end_turn'});
-    final current = coordinator.runtimeFor(conversationId: conversationId, mode: kChatRuntimeModeAgent)!;
-    expect(current.messages.firstWhere((m) => m.user == 2).streamMeta?['stopReason'], 'end_turn');
-    release.complete();
-    await saving;
-    await coordinator.flushAllPendingPersistence();
-    final write = recordedMethodCalls.firstWhere((c) => c.method == 'replaceConversationMessages');
+    coordinator.beginAcpTurn(taskId: turn, conversationId: conversationId, mode: kChatRuntimeModeAgent,
+      );
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turn,
+        params: {
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'reply',
+            'content': {'text': 'partial '},
+          },
+        },
+      );
+      final saving = coordinator.persistRuntimeConversation(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+        persistMessages: true,
+      );
+      await entered.future;
+      applyAcp(
+        conversationId,
+        'session/update',
+        turnId: turn,
+        params: {
+          'update': {
+            'sessionUpdate': 'agent_message_chunk',
+            'messageId': 'reply',
+            'content': {'text': 'complete'},
+          },
+        },
+      );
+      completePrompt(
+        conversationId,
+        turnId: turn,
+        params: {'stopReason': 'end_turn'},
+      );
+      final current = coordinator.runtimeFor(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      expect(
+        current.messages
+            .firstWhere((m) => m.user == 2)
+            .streamMeta?['stopReason'],
+        'end_turn',
+      );
+      release.complete();
+      await saving;
+      await coordinator.flushAllPendingPersistence();
+      final write = recordedMethodCalls.firstWhere(
+        (c) => c.method == 'replaceConversationMessages',
+      );
     final rows = (write.arguments['messages'] as List).cast<Map>();
     final answer = rows.singleWhere((r) => r['user'] == 2);
     expect(answer['content']['text'], 'partial complete');
     expect(answer['streamMeta']['isFinal'], true);
     expect(answer['streamMeta']['stopReason'], 'end_turn');
-  });
+  },
+  );
 
   test('persists ACP runtime messages back to native history', () async {
     const conversationId = 2201;
@@ -2217,7 +2380,7 @@ void main() {
   );
 
   test(
-    'persists an empty snapshot when the caller owns message replacement',
+    'persists explicit removals when the remaining snapshot is empty',
     () async {
       const conversationId = 2200;
       coordinator.ensureRuntime(
@@ -2230,6 +2393,7 @@ void main() {
         mode: kChatRuntimeModeAgent,
         persistMessages: true,
         allowHistoryRemoval: true,
+        removedMessageIds: const ['removed-message'],
       );
 
       final replaceCalls = recordedMethodCalls
@@ -2238,8 +2402,65 @@ void main() {
       expect(replaceCalls, isNotEmpty);
       expect(replaceCalls.last.arguments['conversationId'], conversationId);
       expect(replaceCalls.last.arguments['messages'], isEmpty);
+      expect(replaceCalls.last.arguments['removedMessageIds'], [
+        'removed-message',
+      ]);
     },
   );
+
+  test(
+    'explicit removal preserves runtime items missing from a partial page',
+    () async {
+      const id = 88201;
+      final runtime = coordinator.ensureRuntime(
+        conversationId: id,
+        mode: kChatRuntimeModeAgent,
+      );
+      runtime.messages.addAll([
+        ChatMessageModel.userMessage('new', id: 'concurrent'),
+        ChatMessageModel.userMessage('delete', id: 'removed'),
+        ChatMessageModel.userMessage('keep', id: 'retained'),
+      ]);
+      await coordinator.persistConversationMessageSnapshot(
+        conversationId: id,
+        mode: kChatRuntimeModeAgent,
+        messages: [ChatMessageModel.userMessage('keep', id: 'retained')],
+        allowHistoryRemoval: true,
+        removedMessageIds: ['removed'],
+      );
+      expect(runtime.messages.map((message) => message.id), [
+        'concurrent',
+        'retained',
+      ]);
+      final write = recordedMethodCalls.lastWhere(
+        (call) => call.method == 'replaceConversationMessages',
+      );
+      expect(write.arguments['removedMessageIds'], ['removed']);
+      expect((write.arguments['messages'] as List).map((row) => row['id']), [
+        'concurrent',
+        'retained',
+      ]);
+    },
+  );
+
+  test('missing removal scope leaves runtime history intact', () async {
+    const id = 88202;
+    final runtime = coordinator.ensureRuntime(
+      conversationId: id,
+      mode: kChatRuntimeModeAgent,
+    );
+    runtime.messages.add(ChatMessageModel.userMessage('keep', id: 'keep'));
+    await expectLater(
+      coordinator.persistConversationMessageSnapshot(
+        conversationId: id,
+        mode: kChatRuntimeModeAgent,
+        messages: [],
+        allowHistoryRemoval: true,
+      ),
+      throwsArgumentError,
+    );
+    expect(runtime.messages.single.id, 'keep');
+  });
 
   test(
     'page snapshot preserves admitted prompt timing through history',
@@ -2540,8 +2761,7 @@ void main() {
         ),
         isEmpty,
       );
-    },
-  );
+    });
 
   test(
     'manual compaction marker does not manufacture an automatic or user turn',

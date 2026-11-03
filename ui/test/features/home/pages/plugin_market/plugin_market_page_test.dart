@@ -11,8 +11,7 @@ import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/omni_plugin_item.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
-import 'package:ui/widgets/predictive_back_gesture_wrapper.dart';
-import 'package:ui/widgets/predictive_back_route.dart';
+import 'package:ui/widgets/navigation/page_route.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -108,10 +107,8 @@ Map<String, Object?> _runtimePlugin() => <String, Object?>{
   'settingsSchema': <String, Object?>{},
   'presentation': <String, Object?>{
     'description': <String, Object?>{
-      'zh':
-          '小万原生手机操作能力随 APK 提供，无需安装插件即可在线点击、滑动和输入。安装本插件后，还可以录下操作过程、查看每一步，并把成功流程保存下来，在相似任务中自动复用。',
-      'en':
-          "XiaoWan's native phone controls ship with the APK, so online taps, swipes, and text input work without this plugin. Install the plugin to record actions, inspect every step, and save successful flows for automatic reuse in similar tasks.",
+      'zh': '小万原生手机操作能力随 APK 提供，无需安装插件即可在线点击、滑动和输入。安装本插件后，还可以录下操作过程、查看每一步，并把成功流程保存下来，在相似任务中自动复用。',
+      'en': "XiaoWan's native phone controls ship with the APK, so online taps, swipes, and text input work without this plugin. Install the plugin to record actions, inspect every step, and save successful flows for automatic reuse in similar tasks.",
     },
     'readiness': 'vlm_provider',
     'usage': <Object?>[
@@ -123,8 +120,7 @@ Map<String, Object?> _runtimePlugin() => <String, Object?>{
         },
         'description': <String, Object?>{
           'zh': '安装后会自动准备 OmniFlow 运行环境，失败时可以重试。',
-          'en':
-              'The OmniFlow runtime is prepared automatically after installation; retry is available if preparation fails.',
+          'en': 'The OmniFlow runtime is prepared automatically after installation; retry is available if preparation fails.',
         },
       },
       <String, Object?>{
@@ -135,8 +131,7 @@ Map<String, Object?> _runtimePlugin() => <String, Object?>{
         },
         'description': <String, Object?>{
           'zh': '打开无障碍权限后，即使不安装插件，也可以直接让小万在线操作手机。',
-          'en':
-              "The APK uses XiaoWan's accessibility runtime directly for Kotlin online vlm_task.",
+          'en': "The APK uses XiaoWan's accessibility runtime directly for Kotlin online vlm_task.",
         },
       },
     ],
@@ -149,8 +144,7 @@ Map<String, Object?> _runtimePlugin() => <String, Object?>{
       'steps': <Object?>[
         <String, Object?>{
           'zh': '在线执行：回到聊天，直接说“打开蓝牙”或“新建联系人”。',
-          'en':
-              'Online: return to chat and ask “Turn on Bluetooth” or “Create a contact”.',
+          'en': 'Online: return to chat and ask “Turn on Bluetooth” or “Create a contact”.',
         },
       ],
       'actions': <Object?>[
@@ -374,87 +368,86 @@ void main() {
     expect(find.text('健身兽'), findsOneWidget);
     expect(find.byIcon(Icons.dashboard_outlined), findsNothing);
   });
-  testWidgets('plugin detail allows predictive back to drive its route', (
-    tester,
-  ) async {
-    plugins = <Map<String, Object?>>[_runtimePlugin()];
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    await StorageService.init();
-    await StorageService.setPredictiveBackEnabled(true);
+  testWidgets(
+    'plugin detail uses ordinary system back without a second transition',
+    (tester) async {
+      plugins = <Map<String, Object?>>[_runtimePlugin()];
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      await StorageService.init();
 
-    tester.view.physicalSize = const Size(1080, 2200);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+      tester.view.physicalSize = const Size(1080, 2200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme.copyWith(
-          pageTransitionsTheme: const PageTransitionsTheme(
-            builders: {TargetPlatform.android: MiuixPageTransitionsBuilder()},
-          ),
-        ),
-        locale: const Locale('zh'),
-        localizationsDelegates: AppLocalizations.localizationsDelegates,
-        supportedLocales: AppLocalizations.supportedLocales,
-        builder: (context, child) =>
-            DefaultAssetBundle(bundle: _SvgTestAssetBundle(), child: child!),
-        home: Scaffold(
-          body: Builder(
-            builder: (context) => TextButton(
-              onPressed: () => Navigator.of(context).push(
-                PredictiveBackMaterialPageRoute<bool>(
-                  builder: (_) => PluginDetailPage(
-                    pluginId: plugins.single['id']! as String,
-                    initialPlugin: OmniPluginItem.fromMap(plugins.single),
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          builder: (context, child) =>
+              DefaultAssetBundle(bundle: _SvgTestAssetBundle(), child: child!),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  OmniPageRoute<bool>(
+                    builder: (_) => PluginDetailPage(
+                      pluginId: plugins.single['id']! as String,
+                      initialPlugin: OmniPluginItem.fromMap(plugins.single),
+                    ),
                   ),
                 ),
+                child: const Text('open plugin detail'),
               ),
-              child: const Text('open plugin detail'),
             ),
           ),
         ),
-      ),
-    );
-    await tester.tap(find.text('open plugin detail'));
-    await tester.pumpAndSettle();
+      );
+      await tester.tap(find.text('open plugin detail'));
+      await tester.pumpAndSettle();
 
-    final route = ModalRoute.of(tester.element(find.byType(PluginDetailPage)))!;
-    expect(route.popGestureEnabled, isTrue);
+      final route = ModalRoute.of(
+        tester.element(find.byType(PluginDetailPage)),
+      )!;
+      expect(route.popGestureEnabled, isTrue);
 
-    await _sendBackGesture(tester, 'startBackGesture', <String, dynamic>{
-      'touchOffset': <double>[0.0, 300.0],
-      'progress': 0.0,
-      'swipeEdge': 0,
-    });
-    await tester.pump();
-
-    expect(route.popGestureInProgress, isTrue);
-    await _sendBackGesture(
-      tester,
-      'updateBackGestureProgress',
-      <String, dynamic>{
-        'touchOffset': <double>[400.0, 300.0],
-        'progress': 0.4,
+      await _sendBackGesture(tester, 'startBackGesture', <String, dynamic>{
+        'touchOffset': <double>[0.0, 300.0],
+        'progress': 0.0,
         'swipeEdge': 0,
-      },
-    );
-    await tester.pump();
-    expect(route.animation!.value, closeTo(0.6, 0.001));
-    final transition = tester.widget<PredictiveBackPageTransition>(
-      find.ancestor(
-        of: find.byType(PluginDetailPage),
-        matching: find.byType(PredictiveBackPageTransition),
-      ),
-    );
-    expect(transition.animation.value, closeTo(0.6, 0.001));
+      });
+      await tester.pump();
 
-    await _sendBackGesture(tester, 'cancelBackGesture');
-    await tester.pumpAndSettle();
-    expect(find.byType(PluginDetailPage), findsOneWidget);
-    expect(route.animation!.value, 1);
-    expect(route.popGestureInProgress, isFalse);
-  }, variant: TargetPlatformVariant.only(TargetPlatform.android));
+      expect(route.popGestureInProgress, isFalse);
+      await _sendBackGesture(
+        tester,
+        'updateBackGestureProgress',
+        <String, dynamic>{
+          'touchOffset': <double>[400.0, 300.0],
+          'progress': 0.4,
+          'swipeEdge': 0,
+        },
+      );
+      await tester.pump();
+      expect(route.animation!.value, 1);
+      await _sendBackGesture(tester, 'cancelBackGesture');
+      await tester.pumpAndSettle();
+      expect(find.byType(PluginDetailPage), findsOneWidget);
+      expect(route.animation!.value, 1);
+      expect(route.popGestureInProgress, isFalse);
+      await _sendBackGesture(tester, 'startBackGesture', <String, dynamic>{
+        'touchOffset': <double>[0.0, 300.0],
+        'progress': 0.0,
+        'swipeEdge': 0,
+      });
+      await _sendBackGesture(tester, 'commitBackGesture');
+      await tester.pumpAndSettle();
+      expect(route.isActive, isFalse);
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.android),
+  );
 
   testWidgets('system back refreshes the plugin catalog', (tester) async {
     plugins = <Map<String, Object?>>[_runtimePlugin()];

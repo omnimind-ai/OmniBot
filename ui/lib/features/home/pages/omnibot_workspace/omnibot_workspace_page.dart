@@ -5,6 +5,7 @@ import 'package:ui/services/app_background_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 class OmnibotWorkspacePage extends StatefulWidget {
   final String workspacePath;
@@ -75,22 +76,25 @@ class _OmnibotWorkspacePageState extends State<OmnibotWorkspacePage> {
                         onBackPressed: _handleBackPressed,
                       ),
                       Expanded(
-                        child: OmnibotWorkspaceBrowser(
-                          key: _browserKey,
-                          workspacePath: widget.workspacePath,
-                          workspaceShellPath: widget.workspaceShellPath,
-                          enableSystemBackHandler: false,
-                          translucentSurfaces: backgroundActive,
-                          showBreadcrumbHeader: true,
-                          showHeaderTitle: false,
-                          onCanGoUpChanged: (canGoUp) {
-                            if (_browserCanGoUp == canGoUp || !mounted) {
-                              return;
-                            }
-                            setState(() {
-                              _browserCanGoUp = canGoUp;
-                            });
-                          },
+                        child: OmniContentWidth(
+                          key: const ValueKey('workspace-browser-column'),
+                          child: OmnibotWorkspaceBrowser(
+                            key: _browserKey,
+                            workspacePath: widget.workspacePath,
+                            workspaceShellPath: widget.workspaceShellPath,
+                            enableSystemBackHandler: false,
+                            translucentSurfaces: backgroundActive,
+                            showBreadcrumbHeader: true,
+                            showHeaderTitle: false,
+                            onCanGoUpChanged: (canGoUp) {
+                              if (_browserCanGoUp == canGoUp || !mounted) {
+                                return;
+                              }
+                              setState(() {
+                                _browserCanGoUp = canGoUp;
+                              });
+                            },
+                          ),
                         ),
                       ),
                     ],

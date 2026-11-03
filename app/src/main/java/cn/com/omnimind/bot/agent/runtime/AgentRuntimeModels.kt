@@ -142,7 +142,8 @@ data class ArtifactRef(
                 .replace("[", "\\[")
                 .replace("]", "\\]")
             return if (embedKind == "image") {
-                "![${safeTitle}]($uri)"
+                val markdownTitle = if (sourceTool == "sticker_search") " \"sticker\"" else ""
+                "![${safeTitle}]($uri$markdownTitle)"
             } else {
                 "[${safeTitle}]($uri)"
             }

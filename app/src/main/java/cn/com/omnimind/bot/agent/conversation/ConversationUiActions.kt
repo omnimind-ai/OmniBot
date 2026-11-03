@@ -19,17 +19,22 @@ internal class ConversationUiActions(
 
     suspend fun execute(action: String, id: Long, mode: String?, title: String = ""): Boolean {
         require(id != 0L)
-        val agent = mode == "agent"
-        val remote = if (agent) when (action) {
-            "delete", "archive" -> attempt { acp("session/archive", mapOf("conversationId" to id)) }
-            "unarchive" -> attempt { acp("session/unarchive", mapOf("conversationId" to id)) }
-            "rename" -> attempt { acp("session/name/set", mapOf("conversationId" to id, "name" to title)) }
+        val current = get(id) ?: return false
+        val storedMode = current["mode"]?.toString()?.trim()?.lowercase() ?: mode
+        val agent = storedMode in setOf("agent", "normal", "codex", "acp", "coding")
+        val owner = current["agentId"]?.toString()?.trim()?.takeIf(String::isNotEmpty)
+        // History can be managed while its runtime is unavailable or its
+        // legacy owner is unknown. Never send that operation to a global Agent.
+        val arguments = mapOf("conversationId" to id, "agentId" to owner)
+        val remote = if (agent && owner != null) when (action) {
+            "delete", "archive" -> attempt { acp("session/archive", arguments) }
+            "unarchive" -> attempt { acp("session/unarchive", arguments) }
+            "rename" -> attempt { acp("session/name/set", arguments + ("name" to title)) }
             else -> false
         } else false
         val local = when (action) {
             "delete" -> if (agent) attempt {
-                val current = get(id)
-                if (current != null && current["isArchived"] != true) archive(id, true)
+                if (current["isArchived"] != true) archive(id, true)
             } else attempt { delete(id) }
             "archive" -> attempt { archive(id, true) }
             "unarchive" -> attempt { archive(id, false) }
@@ -38,7 +43,7 @@ internal class ConversationUiActions(
         }
         if (!local && !remote) return false
         if (action == "delete" && agent) preferences.hide(id)
-        if (action == "delete" || action == "archive" && agent) preferences.clearReferences(id, mode)
+        if (action == "delete" || action == "archive" && agent) preferences.clearReferences(id, if (agent) "agent" else storedMode)
         return true
     }
 }

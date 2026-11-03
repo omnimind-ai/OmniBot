@@ -18,7 +18,7 @@ void main() {
       expect(ui, isNot(contains('resolveAgentToolActivitySnapshot(')));
       expect(ui, contains('ChatCommandActivityStrip('));
       expect(ui, contains('_slashCommandPanelOccupiedHeight'));
-      expect(ui, contains('return ChatMessageList('));
+      expect(ui, contains('ChatMessageList('));
       expect(ui, contains('onCancelTask: _onCancelTask'));
       for (final source in [ui, page, outsideTap, mode]) {
         expect(source, isNot(contains('toolActivityOccupiedHeight')));
@@ -111,12 +111,12 @@ void main() {
           .split('String get _activeAcpAgentDisplayName')
           .first;
       expect(
-        committed.indexOf('_resolvedThreadTarget?.agentId'),
-        lessThan(committed.indexOf('_agentRuntimeStatus.activeAgentId')),
+        committed.indexOf('target?.agentId'),
+        lessThan(committed.indexOf(': _conversationBoundAcpAgentId')),
       );
       expect(
-        committed.indexOf('_conversationBoundAcpAgentId'),
-        lessThan(committed.indexOf('_agentRuntimeStatus.activeAgentId')),
+        committed,
+        isNot(contains('_agentRuntimeStatus.activeAgentId')),
       );
     },
   );
@@ -139,7 +139,10 @@ void main() {
           .split('String get _activeAcpAgentDisplayName')
           .first;
       expect(committed, isNot(contains('_optimisticAcpAgentId')));
-      expect(committed, contains('_resolvedThreadTarget?.agentId'));
+      expect(
+        committed,
+        contains('final target = _resolvedThreadTarget ?? widget.threadTarget'),
+      );
       final target = page
           .split('ConversationThreadTarget get _threadTargetForMode {')
           .last
@@ -155,7 +158,9 @@ void main() {
       expect(switching, isNot(contains('_selectRemoteCodexRuntime(')));
       final service = File('lib/services/agent_runtime_service.dart')
           .readAsStringSync();
-      expect(service, contains('static Future<AcpAgentCatalog> selectAgent('));
+      expect(service, isNot(contains('static Future<AcpAgentCatalog> selectAgent(')));
+      expect(service, isNot(contains("_invokeMap('connect'")));
+      expect(service, isNot(contains('selectedAgentId')));
     },
   );
 
@@ -188,7 +193,9 @@ void main() {
           .first;
       expect(
         bootstrap,
-        contains('_resolveConversationThreadTarget(widget.threadTarget)'),
+        matches(
+          RegExp(r'_resolveConversationThreadTarget\(\s*widget.threadTarget,?\s*\)'),
+        ),
       );
       expect(bootstrap, contains('_applyConversationThreadTarget('));
       final apply = lifecycle
@@ -209,7 +216,7 @@ void main() {
       expect(send, contains('dispatchTarget?.agentId ?? _activeAcpAgentId'));
       expect(send, contains('await _prepareAcpSessionForTurn('));
       expect(send, contains('AgentRuntimeService.promptSession('));
-      expect(send, contains('agentId: remoteCodex ? null : dispatchAgentId'));
+      expect(send, contains('agentId: dispatchAgentId'));
     },
   );
 
@@ -231,12 +238,26 @@ void main() {
     );
     final flow = File('$chatRoot/chat_page_conversation_flow.dart')
         .readAsStringSync();
+    final send = flow
+        .split('Future<void> _sendMessage(')
+        .last
+        .split('Future<void> _startManualRecordingCommand')
+        .first;
+    final wait = send.indexOf('await _harnessSwitchSendBarrier.waitUntilIdle()');
+    expect(wait, greaterThanOrEqualTo(0));
     expect(
-      flow.indexOf('final submittedText ='),
-      lessThan(flow.indexOf('await _harnessSwitchSendBarrier.waitUntilIdle()')),
+      send,
+      contains('final submittedText = text ?? _messageController.text;'),
     );
-    expect(flow, contains('if (!mounted || !switched) return;'));
-    expect(flow, contains('submittedText ?? text ?? _messageController.text'));
+    for (final capture in [
+      'final submittedText =',
+      'final submittedAttachments =',
+    ]) {
+      expect(send.indexOf(capture), inInclusiveRange(0, wait - 1));
+    }
+    expect(send, contains('if (!mounted || !switched) return;'));
+    expect(send, contains('final messageText = submittedText.trim();'));
+    expect(send, contains('final inputAttachments = submittedAttachments;'));
   });
 
   test('only the prompt response completes the shared reducer', () {
@@ -308,7 +329,12 @@ void main() {
   test('chat page keeps per-mode values in ChatPageModeState', () {
     final source = File('$chatRoot/chat_page.dart').readAsStringSync();
 
-    expect(source, isNot(contains('Map<ChatPageMode,')));
+    // Unbound ACP configuration sessions are resources awaiting a first
+    // prompt, not a second store for per-mode presentation state.
+    final modeMaps = RegExp(
+      r'\bMap<ChatPageMode,\s*[^;=]+>\s+(_\w+)\s*=',
+    ).allMatches(source).map((match) => match.group(1));
+    expect(modeMaps, ['_unboundConfigurationSessions']);
     expect(source, contains('List<ChatPageModeState> _modeStates'));
   });
 
@@ -501,7 +527,7 @@ void main() {
     expect(flowBody, contains('_runtimeCoordinator.beginAcpTurn('));
     expect(
       flowBody.indexOf('_runtimeCoordinator.beginAcpTurn('),
-      lessThan(flowBody.indexOf('await AgentRuntimeService.status()')),
+      lessThan(flowBody.indexOf('await AgentRuntimeService.newSession(')),
     );
     expect(flowBody, isNot(contains('_runtimeCoordinator.registerTask(')));
   });

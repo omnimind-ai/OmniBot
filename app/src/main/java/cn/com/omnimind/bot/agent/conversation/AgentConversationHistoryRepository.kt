@@ -55,6 +55,23 @@ class AgentConversationHistoryRepository(
         const val STATUS_TIMEOUT = "timeout"
         const val STATUS_INTERRUPTED = "interrupted"
 
+        internal fun explicitHistoryRemovalIds(
+            messages: List<Map<String, Any?>>,
+            allowHistoryRemoval: Boolean,
+            removedMessageIds: List<String>?,
+        ): List<String> {
+            if (!allowHistoryRemoval) {
+                require(removedMessageIds.isNullOrEmpty()) { "History removal was not requested" }
+                return emptyList()
+            }
+            require(removedMessageIds != null) { "History removal requires explicit message IDs" }
+            val removals = removedMessageIds.map(String::trim).distinct()
+            require(removals.none(String::isEmpty)) { "History removal IDs must not be empty" }
+            val retained = messages.mapNotNull { it["id"]?.toString()?.trim() }.toSet()
+            require(removals.none { it in retained }) { "A message cannot be removed and retained in the same snapshot" }
+            return removals
+        }
+
         internal fun preserveFullToolPayload(existing: Map<String, Any?>, incoming: Map<String, Any?>): Map<String, Any?> {
             if (incoming["payloadCompacted"] == true && existing.isNotEmpty()) return existing
             return incoming.toMutableMap().apply {
@@ -249,6 +266,7 @@ class AgentConversationHistoryRepository(
         streamMeta: Map<String, Any?>? = null,
         createdAt: Long = System.currentTimeMillis()
     ) {
+        if (cardData[AgentHistoryDisplayProjection.OFFLOADED_MARKER] == true) return
         val payload = AgentConversationHistorySupport.buildCardMessagePayload(
             messageId = entryId,
             cardData = cardData,
@@ -385,58 +403,48 @@ class AgentConversationHistoryRepository(
         conversationId: Long,
         conversationMode: String,
         messages: List<Map<String, Any?>>,
-        allowHistoryRemoval: Boolean = false
+        allowHistoryRemoval: Boolean = false,
+        removedMessageIds: List<String>? = null,
     ) = withContext(Dispatchers.IO) {
+        val removals = explicitHistoryRemovalIds(messages, allowHistoryRemoval, removedMessageIds)
         val mode = resolveConversationMode(conversationId, conversationMode)
-        if (allowHistoryRemoval) {
-            legacyHistory.clear(conversationId, listOf(mode)) {
-                replaceStoredThreadMessages(conversationId, mode, messages, true)
-            }
-        } else {
-            importLegacyHistory(conversationId, mode)
-            replaceStoredThreadMessages(conversationId, mode, messages)
-        }
+        // A UI snapshot may contain only one display page. Import legacy data
+        // through its existing owner, then mutate only explicit item identities.
+        importLegacyHistory(conversationId, mode)
+        replaceStoredThreadMessages(conversationId, mode, messages, removals)
     }
 
     private suspend fun replaceStoredThreadMessages(
         conversationId: Long,
         conversationMode: String,
         messages: List<Map<String, Any?>>,
-        allowHistoryRemoval: Boolean = false
+        removedMessageIds: List<String> = emptyList(),
     ) = DatabaseHelper.withTransaction {
-        // Keep entry identities and their checkpoint in one atomic snapshot.
-        // Compaction must never observe the temporary delete/reinsert gap.
+        // Removing a retry round must not erase unloaded pages, concurrent new
+        // items or complete offloaded records. Existing rows retain their IDs.
         val existingConversation = DatabaseHelper.getConversationById(conversationId)
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
-        if (messages.isEmpty() && !allowHistoryRemoval) return@withTransaction
-        val existingEntries = if (allowHistoryRemoval) {
-            loadThreadEntriesAscSafePaged(conversationId, effectiveConversationMode)
-        } else {
-            // Reconcile one row at a time below. Retaining all raw tool bodies
-            // alongside their decoded maps defeats the bounded display projection.
-            emptyList()
+        if (messages.isEmpty() && removedMessageIds.isEmpty()) return@withTransaction
+        val dao = DatabaseHelper.getAgentConversationEntryDao()
+        val modes = conversationModeCandidates(effectiveConversationMode)
+        val cutoff = existingConversation?.contextSummaryCutoffEntryDbId
+        var invalidatesCheckpoint = false
+        for (batch in removedMessageIds.chunked(200)) {
+            val touchesPrefix = cutoff == null || dao.hasEntriesInContextPrefix(conversationId, modes, batch, cutoff)
+            val deleted = dao.deleteVisibleEntriesById(conversationId, modes, batch)
+            invalidatesCheckpoint = invalidatesCheckpoint || (deleted > 0 && touchesPrefix)
         }
-        val existingToolPayloads = existingEntries
-            .filter { it.entryType == ENTRY_TYPE_TOOL_EVENT }
-            .associate { entry ->
-                entry.entryId to AgentConversationHistorySupport.readMap(entry.payloadJson)
-            }
-        val preservedSummary = existingConversation?.contextSummary
-            ?.trim()
-            ?.takeIf { it.isNotEmpty() }
-        val cutoffEntryId = existingConversation?.contextSummaryCutoffEntryDbId?.let { cutoffDbId ->
-            existingEntries.firstOrNull { it.id == cutoffDbId }?.entryId
-        }
-        val mergedMessages = AgentConversationHistorySupport.mergePendingExternalUserMessages(
-            existingMessages = existingEntries.mapNotNull(::entryToMessagePayload),
-            incomingMessages = messages
+        val acknowledgedMessages = AgentConversationHistorySupport.mergePendingExternalUserMessages(
+            existingMessages = emptyList(), incomingMessages = messages,
         )
-        var remappedCutoffEntryDbId: Long? = null
-        if (allowHistoryRemoval) conversationModeCandidates(effectiveConversationMode).forEach { storageMode ->
-            DatabaseHelper.deleteAgentConversationThread(conversationId, storageMode)
-        }
-        ConversationSnapshotOrdering.prepareForStorage(mergedMessages).forEach { prepared ->
+        ConversationSnapshotOrdering.prepareForStorage(acknowledgedMessages).forEach { prepared ->
             val message = prepared.payload
+            if (AgentHistoryDisplayProjection.isOffloadedMessage(message)) {
+                // Display previews are not new canonical messages. In particular,
+                // do not even hydrate the original large row for an ordinary UI
+                // echo. Explicit deletion leaves all other original rows intact.
+                return@forEach
+            }
             val restoredToolPayload =
                 AgentConversationHistorySupport.restoreToolPayloadFromUiMessage(message)
             val entryId = message["id"]?.toString()?.trim().orEmpty()
@@ -450,8 +458,7 @@ class AgentConversationHistoryRepository(
                 (message["user"] as? Number)?.toInt() == 1 -> ENTRY_TYPE_USER_MESSAGE
                 else -> ENTRY_TYPE_ASSISTANT_MESSAGE
             }
-            val existingEntry = existingEntries.firstOrNull { it.entryId == entryId }
-                ?: if (!allowHistoryRemoval) loadThreadEntryByIdSafe(conversationId, effectiveConversationMode, entryId) else null
+            val existingEntry = loadThreadEntryByIdSafe(conversationId, effectiveConversationMode, entryId)
             val status = when {
                 restoredToolPayload != null -> restoredToolPayload["status"]?.toString()?.trim()
                     ?.ifEmpty { null }
@@ -468,14 +475,13 @@ class AgentConversationHistoryRepository(
                 if (restoredToolPayload["payloadCompacted"] == true && existingEntry != null) {
                     existingEntry.payloadJson
                 } else {
-                    val existingToolPayload = existingToolPayloads[entryId]
-                        ?: existingEntry?.let { AgentConversationHistorySupport.readMap(it.payloadJson) }.orEmpty()
+                    val existingToolPayload = existingEntry?.let { AgentConversationHistorySupport.readMap(it.payloadJson) }.orEmpty()
                     gson.toJson(preserveFullToolPayload(existingToolPayload, restoredToolPayload))
                 }
             } else {
                 gson.toJson(message)
             }
-            val insertedId = upsertEntry(
+            upsertEntry(
                 AgentConversationEntry(
                     id = existingEntry?.id ?: 0,
                     conversationId = conversationId,
@@ -489,19 +495,8 @@ class AgentConversationHistoryRepository(
                     updatedAt = prepared.createdAt
                 )
             )
-            if (entryId == cutoffEntryId) {
-                remappedCutoffEntryDbId = insertedId
-            }
         }
-        if (allowHistoryRemoval && preservedSummary != null && remappedCutoffEntryDbId != null) {
-            val refreshedConversation = DatabaseHelper.getConversationById(conversationId)
-            if (refreshedConversation != null) {
-                DatabaseHelper.commitConversationContextCheckpoint(
-                    conversationId, preservedSummary, remappedCutoffEntryDbId,
-                    refreshedConversation.contextSummaryUpdatedAt, System.currentTimeMillis()
-                )
-            }
-        } else if (allowHistoryRemoval && preservedSummary != null) {
+        if (invalidatesCheckpoint && !existingConversation?.contextSummary.isNullOrBlank()) {
             resetContextSummary(conversationId)
         }
         refreshConversationMetadata(conversationId)
@@ -518,13 +513,13 @@ class AgentConversationHistoryRepository(
         var offset = 0
         while (true) {
             val page = loadDisplayPage(conversationId, effectiveConversationMode, SAFE_HISTORY_PAGE_SIZE, offset)
-            if (page.isEmpty()) break
-            val displayEntries = if (finalizeInterruptedEntries) normalizeEntriesForDisplay(page) else page
+            if (page.entries.isEmpty()) break
+            val displayEntries = if (finalizeInterruptedEntries) normalizeEntriesForDisplay(page.entries) else page.entries
             messagePayloads += displayEntries.mapNotNull { entryToMessagePayload(it.entry, it.fullPayloadFile) }.mapNotNull {
                 LegacyConversationHistory.normalize(it, effectiveConversationMode in setOf("agent", "normal", "codex", "acp", "coding"))
             }
-            offset += page.size
-            if (page.size < SAFE_HISTORY_PAGE_SIZE) break
+            offset = page.nextOffset
+            if (!page.hasMore) break
         }
         ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
     }
@@ -539,22 +534,16 @@ class AgentConversationHistoryRepository(
         importLegacyHistory(conversationId, effectiveConversationMode)
         // Deduplicate compatibility identities in SQL BEFORE paging. The lookahead
         // is a header only; it must not hydrate an invisible, potentially huge item.
-        val pageSize = limit.coerceIn(1, Int.MAX_VALUE - 1)
-        val page = loadDisplayPage(
-            conversationId, effectiveConversationMode, pageSize + 1, offset.coerceAtLeast(0),
-            hydrateLimit = pageSize,
-        )
-        val entries = page.take(pageSize)
-        val hasMore = page.size > pageSize
+        val page = loadDisplayPage(conversationId, effectiveConversationMode, limit, offset)
         // Every page is historical UI. A card from an older page must not
         // stay visually running merely because it was not in the first page
         // loaded after process restore.
-        val normalized = normalizeEntriesForDisplay(entries)
+        val normalized = normalizeEntriesForDisplay(page.entries)
         val messagePayloads = normalized.mapNotNull { entryToMessagePayload(it.entry, it.fullPayloadFile) }.mapNotNull {
             LegacyConversationHistory.normalize(it, effectiveConversationMode in setOf("agent", "normal", "codex", "acp", "coding"))
         }
         val sorted = ConversationSnapshotOrdering.sortForDisplay(messagePayloads)
-        MessagePage(sorted, hasMore, offset.coerceAtLeast(0) + entries.size)
+        MessagePage(sorted, page.hasMore, page.nextOffset)
     }
 
     suspend fun clearConversationMessages(
@@ -745,6 +734,7 @@ class AgentConversationHistoryRepository(
         status: String,
         createdAt: Long
     ) = withContext(Dispatchers.IO) {
+        if (AgentHistoryDisplayProjection.isOffloadedMessage(payload)) return@withContext
         val effectiveConversationMode = resolveConversationMode(conversationId, conversationMode)
         val existing = loadThreadEntryByIdSafe(
             conversationId = conversationId,
@@ -833,37 +823,31 @@ class AgentConversationHistoryRepository(
         conversationMode: String,
         limit: Int,
         offset: Int,
-        hydrateLimit: Int = limit,
-    ): List<AgentHistoryDisplayEntry> = DatabaseHelper.withTransaction {
+    ): AgentHistoryDisplayPage = DatabaseHelper.withTransaction {
         val dao = DatabaseHelper.getAgentConversationEntryDao()
-        val result = mutableListOf<AgentHistoryDisplayEntry>()
-        while (result.size < limit) {
-            val size = minOf(SAFE_HISTORY_PAGE_SIZE, limit - result.size)
-            val slices = dao.getLogicalThreadPageSlices(
-                conversationId, conversationModeCandidates(conversationMode), size, offset + result.size,
-            )
-            for (slice in slices) {
-                result += when {
-                    result.size >= hydrateLimit -> AgentHistoryDisplayEntry(slice.entry)
-                    slice.entry.entryType == ENTRY_TYPE_TOOL_EVENT -> {
-                        val summary = if (slice.summaryBytes > 32768) dao.readSummaryPreview(slice.entry.id).orEmpty()
-                            else slice.entry.summary.take(2048)
-                        val entry = slice.entry.copy(summary = summary)
-                        if (slice.payloadBytes > AgentHistoryDisplayProjection.INLINE_TOOL_BYTES) {
-                            val directory = AgentWorkspaceManager(context).offloadsDirectory("history-$conversationId")
-                            AgentHistoryDisplayProjection.offload(entry, directory) { output ->
-                                dao.copyEntryTextTo(slice, summary = false, output = output)
-                            }
-                        } else {
-                            AgentHistoryDisplayEntry(entry)
-                        }
+        AgentHistoryDisplayPager.load(
+            limit = limit,
+            offset = offset,
+            read = { count, start ->
+                dao.getLogicalThreadPageSlices(conversationId, conversationModeCandidates(conversationMode), count, start)
+            },
+            project = { slice ->
+                val summary = if (slice.summaryBytes > 32768) dao.readSummaryPreview(slice.entry.id).orEmpty()
+                    else if (slice.entry.entryType == ENTRY_TYPE_TOOL_EVENT) slice.entry.summary.take(2048)
+                    else slice.entry.summary
+                val entry = slice.entry.copy(summary = summary)
+                val inlineLimit = if (entry.entryType == ENTRY_TYPE_TOOL_EVENT) AgentHistoryDisplayProjection.INLINE_TOOL_BYTES
+                    else AgentHistoryDisplayProjection.INLINE_MESSAGE_BYTES
+                if (slice.payloadBytes > inlineLimit) {
+                    val directory = AgentWorkspaceManager(context).offloadsDirectory("history-$conversationId")
+                    AgentHistoryDisplayProjection.offload(entry, directory) { output ->
+                        dao.copyEntryTextTo(slice, summary = false, output = output)
                     }
-                    else -> AgentHistoryDisplayEntry(dao.hydrate(slice))
+                } else {
+                    AgentHistoryDisplayEntry(entry, isProjection = slice.summaryBytes > 32768)
                 }
-            }
-            if (slices.size < size) break
-        }
-        result
+            },
+        )
     }
 
     private suspend fun normalizeEntriesForDisplay(
@@ -883,7 +867,7 @@ class AgentConversationHistoryRepository(
                     DatabaseHelper.getAgentConversationEntryDao().updateInterruptedToolHeader(
                         updated.id, original.entry.updatedAt, updated.status, updated.summary, System.currentTimeMillis(),
                     )
-                } else {
+                } else if (!original.isProjection) {
                     upsertEntry(updated.copy(updatedAt = System.currentTimeMillis()))
                 }
             }
@@ -895,29 +879,47 @@ class AgentConversationHistoryRepository(
         entry: AgentConversationEntry,
         fullPayloadFile: java.io.File? = null,
     ): Map<String, Any?>? {
-        return when (entry.entryType) {
-            ENTRY_TYPE_TOOL_EVENT -> buildToolCardMessage(entry, fullPayloadFile)
+        val payload = AgentConversationHistorySupport.readMap(entry.payloadJson)
+        if (fullPayloadFile != null && AgentHistoryDisplayProjection.isOffloadedMessage(payload)) {
+            return AgentHistoryDisplayProjection.attachCompleteRecord(payload, fullHistoryArtifact(fullPayloadFile, "完整消息记录"))
+        }
+        val message = when (entry.entryType) {
+            ENTRY_TYPE_TOOL_EVENT -> buildToolCardMessage(entry, fullPayloadFile, payload)
             ENTRY_TYPE_USER_MESSAGE,
-            ENTRY_TYPE_ASSISTANT_MESSAGE -> AgentConversationHistorySupport.readMap(entry.payloadJson)
-            ENTRY_TYPE_UI_CARD -> AgentConversationHistorySupport.buildDisplaySafeUiCardMessage(
-                entry = entry,
-                payload = AgentConversationHistorySupport.readMap(entry.payloadJson)
-            )
+            ENTRY_TYPE_ASSISTANT_MESSAGE -> payload
+            ENTRY_TYPE_UI_CARD -> AgentConversationHistorySupport.buildDisplaySafeUiCardMessage(entry, payload)
             else -> null
         }
+        return if (message != null && fullPayloadFile != null && entry.entryType != ENTRY_TYPE_TOOL_EVENT) {
+            AgentHistoryDisplayProjection.attachCompleteRecord(message, fullHistoryArtifact(fullPayloadFile, "完整消息记录"))
+        } else message
     }
 
-    private fun buildToolCardMessage(entry: AgentConversationEntry, fullPayloadFile: java.io.File?): Map<String, Any?> {
-        val payload = AgentConversationHistorySupport.readMap(entry.payloadJson)
+    private fun fullHistoryArtifact(file: java.io.File, title: String): Map<String, Any?> =
+        AgentWorkspaceManager(context).buildArtifactForFile(file, "history", title).toPayload() + mapOf(
+            // JSON/code previews read an entire file in Flutter. A complete history
+            // record must open through the existing file/share actions instead.
+            "previewKind" to "file",
+            "name" to file.name,
+            "path" to file.absolutePath,
+            "sendToModel" to false,
+            AgentHistoryDisplayProjection.OFFLOADED_MARKER to true,
+        )
+
+    private fun buildToolCardMessage(
+        entry: AgentConversationEntry,
+        fullPayloadFile: java.io.File?,
+        payload: Map<String, Any?>,
+    ): Map<String, Any?> {
         val messageId = entry.entryId
         val cardData = AgentConversationHistorySupport.buildDisplaySafeToolCardData(
             entry = entry,
             payload = payload
         ).toMutableMap()
         if (fullPayloadFile != null) {
-            val workspace = AgentWorkspaceManager(context)
-            val artifact = workspace.buildArtifactForFile(fullPayloadFile, "history", "完整工具记录").toPayload()
+            val artifact = fullHistoryArtifact(fullPayloadFile, "完整工具记录")
             cardData["artifacts"] = (cardData["artifacts"] as? List<*>).orEmpty() + artifact
+            cardData[AgentHistoryDisplayProjection.OFFLOADED_MARKER] = true
         }
         return AgentConversationHistorySupport.buildCardMessagePayload(
             messageId = messageId,

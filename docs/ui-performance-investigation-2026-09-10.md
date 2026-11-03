@@ -1,5 +1,7 @@
 # 主界面抽屉与设置返回掉帧排查
 
+> 历史记录：本文描述 2026-09-10 的实现与测量。自 2026-10-30 起，文中自定义预测性返回实现已移除；当前页面转场与维护约束见 `AGENTS.md` 的 Navigation and Page Motion。输入框重绘隔离的结论仍适用。
+
 ## 环境与范围
 
 - 起点：本地 `main`，`9cf2e0bea`；工作分支 `codex/ui-performance-investigation`。

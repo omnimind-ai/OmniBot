@@ -1,13 +1,14 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/services/special_permission.dart';
 
 Future<bool> showAccessibilityPermissionPrompt(BuildContext context) async {
   if (await _isAccessibilityReady()) return true;
   if (!context.mounted) return false;
-  return await showDialog<bool>(
+  return await showOmniGlassCardSheet<bool>(
         context: context,
         barrierDismissible: false,
         builder: (_) => const _AccessibilityPermissionDialog(),
@@ -97,10 +98,8 @@ class _AccessibilityPermissionDialogState
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(
-        _text(context, '开启无障碍权限', 'Enable accessibility permission'),
-      ),
+    return OmniGlassAlertDialog(
+      title: Text(_text(context, '开启无障碍权限', 'Enable accessibility permission')),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,

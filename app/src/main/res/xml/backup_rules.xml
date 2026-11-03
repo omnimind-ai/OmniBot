@@ -9,6 +9,8 @@
     <exclude domain="database" path="personal_context_notifications.db" />
     <exclude domain="sharedpref" path="personal_context_documents.xml" />
     <exclude domain="sharedpref" path="personal_context_permissions.xml" />
+    <!-- Root access is explicitly authorized on this installation only. -->
+    <exclude domain="sharedpref" path="omni_root_access.xml" />
     <!-- Account tokens are encrypted with a device-bound Android Keystore key. -->
     <exclude domain="sharedpref" path="omni_account_tokens.xml" />
     <!-- User-supplied provider credentials are device-bound and must not be backed up. -->

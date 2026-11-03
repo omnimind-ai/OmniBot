@@ -31,6 +31,11 @@ class AgentToolDefinitionsPrivilegedTest {
         assertTrue("packageName" in argumentProperties)
         assertTrue("activityName" in argumentProperties)
         assertTrue("command" in argumentProperties)
+        assertTrue("confirmed" !in argumentProperties)
+        assertTrue("target" in argumentProperties)
+        assertTrue("percent" in argumentProperties)
+        assertTrue("stream" in argumentProperties)
+        assertTrue("seconds" in argumentProperties)
         assertEquals(false, arguments["additionalProperties"]?.toString()?.toBoolean())
         assertTrue(
             function["description"]?.jsonPrimitive?.contentOrNull?.contains("one-shot arbitrary shell") ==

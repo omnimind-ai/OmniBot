@@ -6,7 +6,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
-import cn.com.omnimind.bot.util.PredictiveBackGate
 
 /**
  * 启动页 Activity
@@ -23,7 +22,6 @@ class LauncherActivity : ComponentActivity() {
         setTheme(StartupThemeResolver.resolveSplashTheme(this))
         applyResponsiveOrientation()
         super.onCreate(savedInstanceState)
-        PredictiveBackGate.install(this)
         OmniLog.d(TAG, "LauncherActivity onCreate")
         if (QuickLogWidgetActionRouter.consumeInto(this, intent)) {
             finish()
@@ -33,8 +31,8 @@ class LauncherActivity : ComponentActivity() {
     }
 
     private fun applyResponsiveOrientation() {
-        val isTablet = resources.configuration.smallestScreenWidthDp >= 600
-        requestedOrientation = if (isTablet) {
+        val allowRotation = resources.configuration.smallestScreenWidthDp >= 600 || isInMultiWindowMode
+        requestedOrientation = if (allowRotation) {
             ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
         } else {
             ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
@@ -52,7 +50,6 @@ class LauncherActivity : ComponentActivity() {
         startMainActivity()
     }
 
-
     private fun startMainActivity() {
         val intent = Intent(this, MainActivity::class.java).apply {
             // 传递原始 Intent 的数据（用于 Deep Link 处理）
@@ -62,16 +59,9 @@ class LauncherActivity : ComponentActivity() {
         }
         OmniLog.d(TAG, "startMainActivity")
         startActivity(intent)
-        // 不调用 finish()，让 MainActivity 的 Flutter 页面自然覆盖 Loading
-        // LauncherActivity 会在 MainActivity 渲染完成后被系统回收
-    }
-
-    override fun onStop() {
-        super.onStop()
-        // 当 MainActivity 覆盖 LauncherActivity 后，finish 自己
-        if (!isFinishing) {
-            OmniLog.d(TAG, "LauncherActivity onStop, finishing")
-            finish()
-        }
+        // This activity only routes intents and never draws content. Finish
+        // before onResume so the starting window can transfer to MainActivity
+        // without displaying an intermediate launcher window.
+        finish()
     }
 }

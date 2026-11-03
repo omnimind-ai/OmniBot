@@ -11,7 +11,7 @@ import {randomUUID} from 'node:crypto';
 import {createProviderObserver} from './agent-provider-observer.mjs';
 import {providerSmokeConfigFromEnvironment, providerModelsUrl, extractModelIds} from './agent_provider_smoke.mjs';
 
-const [cliDirectory, fixtures, filter = 'codex,claude-code,kimi-code,open-code,deepseek-harness'] = process.argv.slice(2);
+const [cliDirectory, fixtures, filter = 'codex,claude-code,kimi-code,open-code'] = process.argv.slice(2);
 assert(cliDirectory && fixtures, 'Usage: verify-live-harness-conversations.mjs CLI_DIRECTORY FIXTURES [HARNESS_IDS]');
 const {apiKey, baseUrl, model, timeoutMs} = providerSmokeConfigFromEnvironment();
 const secondModel = process.env.OMNIBOT_TEST_SECOND_MODEL;
@@ -29,7 +29,6 @@ const definitions = {
   'claude-code': ['claude-code-anthropic-chat_completions.json', 'claude-agent-acp', []],
   'kimi-code': ['kimi-code-openai_compatible-chat_completions.json', 'kimi', ['acp']],
   'open-code': ['open-code-openai_compatible-chat_completions.json', 'opencode', ['acp']],
-  'deepseek-harness': ['deepseek-harness-openai_compatible-chat_completions.json', 'dsh', ['--profile', 'acp']],
 };
 
 for (const harness of filter.split(',')) {
@@ -64,7 +63,7 @@ for (const harness of filter.split(',')) {
     // Prevent config-string injection into generated JSON/TOML/YAML fixtures.
     assert(!/[\r\n"\\]/.test(apiKey + model + secondModel), 'Unsupported characters in fixture substitutions');
     const env = Object.fromEntries(Object.entries(process.env).filter(([k]) =>
-      !/^(OPENAI|ANTHROPIC|CLAUDE|CODEX|KIMI|DEEPSEEK|DSH|OPENCODE)|TOKEN|SECRET|PASSWORD|API_KEY/.test(k)));
+      !/^(OPENAI|ANTHROPIC|CLAUDE|CODEX|KIMI|DEEPSEEK|OPENCODE)|TOKEN|SECRET|PASSWORD|API_KEY/.test(k)));
     Object.assign(env, {HOME: home, XDG_CONFIG_HOME: join(home, '.config'), CLAUDE_CONFIG_DIR: join(home, '.claude'),
       PATH: resolve(cliDirectory, 'node_modules/.bin') + ':' + env.PATH, OPENCODE_DISABLE_MODELS_FETCH: 'true'},
       Object.fromEntries(Object.entries(fixture.environment).map(([k, v]) => [k, rewrite(v)])));
@@ -73,9 +72,8 @@ for (const harness of filter.split(',')) {
       await writeFile(path, rewrite(file.content), {mode: 0o600});
     }
     if (harness === 'open-code') env.OPENCODE_CONFIG = rewrite(fixture.files[0].path);
-    const launchArgs = harness === 'deepseek-harness' ? [...args, '--patch', rewrite(fixture.files[0].path)] : args;
     function start() {
-      const child = spawn(resolve(cliDirectory, 'node_modules/.bin', command), launchArgs,
+      const child = spawn(resolve(cliDirectory, 'node_modules/.bin', command), args,
         {cwd: workspace, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true});
       const pending = new Map(); let seq = 0, active = null;
       child.stderr.resume(); // Never print SDK diagnostics containing secrets.

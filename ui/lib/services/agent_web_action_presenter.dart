@@ -90,6 +90,15 @@ class AgentWebActionPresenter {
             type: ToastType.error,
           );
           return;
+        case 'PAIRING_FAILED':
+          showToast(
+            text(
+              '$label 登录链接生成失败，请重新打开',
+              'Could not create a sign-in link for $label. Try opening it again.',
+            ),
+            type: ToastType.error,
+          );
+          return;
         default:
           showToast(
             text('$label 启动失败', 'Failed to start $label'),

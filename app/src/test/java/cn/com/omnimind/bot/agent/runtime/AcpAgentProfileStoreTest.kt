@@ -6,6 +6,7 @@ import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertThrows
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -13,6 +14,117 @@ import org.junit.rules.TemporaryFolder
 class AcpAgentProfileStoreTest {
     @get:Rule
     val directory = TemporaryFolder()
+
+    @Test
+    fun `legacy global choice is removed without selecting a replacement or changing owners`() {
+        val context = acpProfileStoreTestContext(directory.root)
+        val preferences = context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE)
+        preferences.edit()
+            .putString("selected_profile_id", "opencode-acp")
+            .putString("session_bindings", Gson().toJson(mapOf("old-session" to "opencode-acp")))
+            .putString("conversation_bindings", Gson().toJson(mapOf("42" to "xiaowan-acp")))
+            .commit()
+
+        repeat(2) {
+            val store = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+            assertFalse(preferences.contains("selected_profile_id"))
+            val catalog = store.catalogPayload()
+            assertFalse(catalog.containsKey("selectedAgentId"))
+            assertTrue((catalog["agents"] as List<*>).all { !(it as Map<*, *>).containsKey("selected") })
+            assertEquals("opencode-acp", store.agentIdForSession("old-session"))
+            assertEquals("xiaowan-acp", store.agentIdForConversation(42))
+            assertEquals("opencode-acp", store.requireProfile("opencode-acp").id)
+            assertThrows(IllegalArgumentException::class.java) { store.requireProfile("") }
+            assertThrows(IllegalArgumentException::class.java) { store.requireProfile("unknown-agent") }
+            store.save(store.requireProfile("opencode-acp").copy(enabled = false))
+            assertFalse(preferences.contains("selected_profile_id"))
+        }
+    }
+
+    @Test
+    fun `deleting a directory entry preserves historical ownership instead of choosing another Agent`() {
+        val context = acpProfileStoreTestContext(directory.root)
+        val store = AcpAgentProfileStore(context)
+        val profile = store.save(AcpAgentProfile("custom-agent", "Custom", command = "custom-acp"))
+        store.bindConversation(42, profile.id)
+        store.bindSession("old-session", profile.id)
+        store.saveSessionConfiguration("old-session", mapOf("model" to "saved-model"))
+
+        store.delete(profile.id)
+
+        assertThrows(IllegalArgumentException::class.java) { store.requireProfile(profile.id) }
+        assertEquals(profile.id, store.agentIdForConversation(42))
+        assertEquals(profile.id, store.agentIdForSession("old-session"))
+        assertEquals(mapOf("model" to "saved-model"), store.sessionConfiguration("old-session"))
+        assertFalse(context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE)
+            .contains("selected_profile_id"))
+    }
+
+    @Test
+    fun `a session keeps its owner until the official lifecycle removes its binding`() {
+        val store = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+        store.bindSession("shared-id", AcpAgentProfileStore.XIAOWAN_AGENT_ID)
+        store.bindConversation(42, AcpAgentProfileStore.XIAOWAN_AGENT_ID)
+        store.saveSessionConfiguration("shared-id", mapOf("model" to "original-model"))
+
+        store.bindSession("shared-id", AcpAgentProfileStore.XIAOWAN_AGENT_ID)
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            store.bindSession("shared-id", AcpAgentProfileStore.CODEX_AGENT_ID)
+        }
+        assertTrue(error.message.orEmpty().startsWith("agent_owner_conflict:"))
+        assertEquals(AcpAgentProfileStore.XIAOWAN_AGENT_ID, store.agentIdForSession("shared-id"))
+        assertEquals(AcpAgentProfileStore.XIAOWAN_AGENT_ID, store.agentIdForConversation(42))
+        assertEquals(mapOf("model" to "original-model"), store.sessionConfiguration("shared-id"))
+
+        store.unbindSession("shared-id")
+        store.bindSession("shared-id", AcpAgentProfileStore.CODEX_AGENT_ID)
+        assertEquals(AcpAgentProfileStore.CODEX_AGENT_ID, store.agentIdForSession("shared-id"))
+        assertTrue(store.sessionConfiguration("shared-id").isEmpty())
+    }
+
+    @Test
+    fun `retirement removes launch settings but preserves immutable history owners after reopening`() {
+        val context = acpProfileStoreTestContext(directory.root)
+        val retiredId = "deepseek-harness-acp"
+        val retired = AcpAgentProfile(id = retiredId, name = "DeepSeek Harness", command = "dsh-acp")
+        val custom = AcpAgentProfile(id = "user-agent", name = "User Agent", command = "my-acp")
+        val preferences = context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE)
+        preferences.edit()
+            .putString("profiles", Gson().toJson(listOf(retired, custom)))
+            .putString("selected_profile_id", retiredId)
+            .putString("session_bindings", Gson().toJson(mapOf("old-session" to retiredId)))
+            .putString("conversation_bindings", Gson().toJson(mapOf("42" to retiredId)))
+            .putString("health", Gson().toJson(mapOf(retiredId to AcpAgentHealth(installed = true))))
+            .putString("package_version:alpine:$retiredId", "{\"installedVersion\":\"0.1.1-rc.2\"}")
+            .putString("session_config:old-session", "{\"model\":\"original-model\"}")
+            .commit()
+
+        repeat(2) {
+            val store = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+            assertFalse(store.list().any { it.id == retiredId })
+            assertTrue(store.list().any { it.id == custom.id })
+            assertFalse(preferences.contains("selected_profile_id"))
+            assertEquals(retiredId, store.agentIdForSession("old-session"))
+            assertEquals(retiredId, store.agentIdForConversation(42))
+            store.bindConversation(42, AcpAgentProfileStore.CODEX_AGENT_ID)
+            assertEquals(retiredId, store.agentIdForConversation(42))
+            assertThrows(IllegalStateException::class.java) {
+                store.repairConversationBinding(42, AcpAgentProfileStore.CODEX_AGENT_ID)
+            }
+            assertEquals(mapOf("model" to "original-model"), store.sessionConfiguration("old-session"))
+            assertEquals(null, store.packageVersion("alpine", retiredId))
+            assertThrows(IllegalStateException::class.java) { store.requireProfile(retiredId) }
+            assertThrows(IllegalStateException::class.java) { store.save(retired) }
+            val rejection = assertThrows(IllegalStateException::class.java) {
+                store.requireSupportedAgent(null, store.agentIdForSession("old-session"), custom.id)
+            }
+            assertTrue(rejection.message.orEmpty().startsWith("agent_retired:"))
+            store.requireSupportedAgent(custom.id, AcpAgentProfileStore.CODEX_AGENT_ID)
+        }
+        val stored = preferences.getString("profiles", "").orEmpty()
+        assertFalse(stored.contains(retiredId))
+        assertFalse(preferences.getString("health", "").orEmpty().contains(retiredId))
+    }
 
     @Test
     fun `fresh and reset Na remain available before the first cloud check`() {
@@ -154,7 +266,7 @@ class AcpAgentProfileStoreTest {
         )
 
     @Test
-    fun `known legacy identity still migrates its selection and conversation bindings`() {
+    fun `known legacy identity migrates bindings and removes the old global selection`() {
         val context = acpProfileStoreTestContext(directory.root)
         val legacy = AcpAgentProfile(
             id = "legacy-xiaowan-bot", name = "小万 Bot", command = "legacy-xiaowan",
@@ -168,7 +280,8 @@ class AcpAgentProfileStoreTest {
 
         repeat(2) {
             val store = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
-            assertEquals("xiaowan-acp", store.selected().id)
+            assertFalse(context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE)
+                .contains("selected_profile_id"))
             assertFalse(store.list().any { it.id == legacy.id })
             assertEquals("xiaowan-acp", store.agentIdForSession("session-1"))
             assertEquals("xiaowan-acp", store.agentIdForConversation(1001))
@@ -196,14 +309,13 @@ class AcpAgentProfileStoreTest {
         } else {
             val store = AcpAgentProfileStore(context)
             assertEquals(profile, store.save(profile))
-            store.select(profile.id)
             store.bindSession("session-1", profile.id)
             store.bindConversation(1001, profile.id)
         }
 
         repeat(2) {
             val reopened = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
-            assertEquals(profile, reopened.selected())
+            assertEquals(profile, reopened.requireProfile(profile.id))
             assertEquals(profile, reopened.list().single { it.id == profile.id })
             assertEquals(profile.id, reopened.agentIdForSession("session-1"))
             assertEquals(profile.id, reopened.agentIdForConversation(1001))

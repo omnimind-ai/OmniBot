@@ -3,12 +3,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/features/home/pages/chat/widgets/agent_run_details_sheet.dart';
+import 'package:ui/features/home/pages/command_overlay/widgets/cards/artifact_card.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/omni_theme_palette.dart';
 import 'package:ui/widgets/streaming_text.dart';
+import 'package:ui/widgets/omni_glass.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
 
 void main() {
   setUp(() => LegacyTextLocalizer.setResolvedLocale(const Locale('zh')));
@@ -16,6 +19,7 @@ void main() {
     WidgetTester tester, {
     AgentRunTimelineGroup? group,
     bool dark = false,
+    bool glass = false,
     double width = 390,
   }) async {
     tester.view.physicalSize = Size(width, 858);
@@ -30,6 +34,8 @@ void main() {
         localizationsDelegates: AppLocalizations.localizationsDelegates,
         supportedLocales: AppLocalizations.supportedLocales,
         locale: const Locale('zh'),
+        builder: (context, child) =>
+            LiquidGlassScope(enabled: glass, child: child!),
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(
@@ -56,9 +62,9 @@ void main() {
         );
         final size = tester.getSize(sheet);
         expect(size.height, inInclusiveRange(858 * 0.48, 858 * 0.57));
-        final material = tester.widget<Material>(sheet);
+        final surface = tester.widget<OmniGlassSheet>(sheet);
         expect(
-          material.color,
+          surface.backgroundColor,
           dark
               ? OmniThemePalette.dark.pageBackground
               : OmniThemePalette.light.pageBackground,
@@ -259,6 +265,67 @@ void main() {
     expect(sheet, findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'glass detail handle stretches past its extent and springs back',
+    (tester) async {
+      await openSheet(tester, glass: true);
+      final sheet = find.byKey(
+        const ValueKey('agent-run-details-sheet-turn-1'),
+      );
+      final handle = find.byKey(
+        const ValueKey('agent-run-details-drag-handle'),
+      );
+      final drag = await tester.startGesture(tester.getCenter(handle));
+      await drag.moveBy(const Offset(0, -350));
+      await tester.pump();
+      final beforeOverdrag = tester.getTopLeft(sheet).dy;
+      await drag.moveBy(const Offset(0, -60));
+      await tester.pump();
+      final stretched = tester.getTopLeft(sheet).dy;
+      expect(stretched, lessThan(beforeOverdrag));
+      final heldHeight = tester.getSize(sheet).height;
+      await drag.moveBy(const Offset(0, 20));
+      await tester.pump();
+      expect(tester.getSize(sheet).height, closeTo(heldHeight, 0.1));
+      expect(tester.getTopLeft(sheet).dy, greaterThan(stretched));
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(tester.getTopLeft(sheet).dy, greaterThan(beforeOverdrag));
+      expect(
+        find.byKey(const ValueKey('agent-run-details-row-tool-1')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('thinking detail exposes its complete historical record', (
+    tester,
+  ) async {
+    await openSheet(tester, group: _group(offloadedThinking: true));
+    await tester.tap(
+      find.byKey(const ValueKey('agent-run-details-row-thought-1')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('完整思考记录'), findsOneWidget);
+    final artifact = tester.widget<ArtifactCard>(find.byType(ArtifactCard));
+    expect(artifact.artifact['androidPath'], '/workspace/thinking.json');
+    expect(artifact.artifact['previewKind'], 'file');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('tool detail exposes its complete historical record action', (
+    tester,
+  ) async {
+    await openSheet(tester, group: _group(offloadedTool: true));
+    await tester.tap(
+      find.byKey(const ValueKey('agent-run-details-row-tool-1')),
+    );
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(OutlinedButton, '完整工具记录'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _tapOutsideSheet(WidgetTester tester) async {
@@ -271,6 +338,8 @@ AgentRunTimelineGroup _group({
   String toolStatus = 'success',
   AgentRunStatus status = AgentRunStatus.finished,
   int extraTools = 0,
+  bool offloadedThinking = false,
+  bool offloadedTool = false,
 }) {
   ChatMessageModel tool(String id) => ChatMessageModel.cardMessage({
     'type': 'agent_tool_summary',
@@ -285,6 +354,15 @@ AgentRunTimelineGroup _group({
     'cardId': id,
     'toolCallId': id,
     'taskId': 'turn-1',
+    if (offloadedTool)
+      'artifacts': [
+        {
+          'title': '完整工具记录',
+          'androidPath': '/workspace/tool.json',
+          'mimeType': 'application/json',
+          'historyPayloadOffloaded': true,
+        },
+      ],
   }, id: id);
   return AgentRunTimelineGroup(
     taskId: 'turn-1',
@@ -294,13 +372,32 @@ AgentRunTimelineGroup _group({
     finishedAt: DateTime(2026, 10, 20, 12, 0, 10),
     segmentsOldestFirst: [
       AgentRunTimelineSegment.process([
-        ChatMessageModel.cardMessage({
-          'type': 'deep_thinking',
-          'thinkingContent': '已有的思考内容',
-          'stage': 4,
-          'taskID': 'turn-1',
-          'cardId': 'thought-1',
-        }, id: 'thought-1'),
+        ChatMessageModel(
+          id: 'thought-1',
+          type: 2,
+          user: 3,
+          content: {
+            'id': 'thought-1',
+            'cardData': {
+              'type': 'deep_thinking',
+              'thinkingContent': '已有的思考内容',
+              'stage': 4,
+              'taskID': 'turn-1',
+              'cardId': 'thought-1',
+            },
+            if (offloadedThinking) ...{
+              'historyPayloadOffloaded': true,
+              'attachments': [
+                {
+                  'title': '完整思考记录',
+                  'androidPath': '/workspace/thinking.json',
+                  'mimeType': 'application/json',
+                  'historyPayloadOffloaded': true,
+                },
+              ],
+            },
+          },
+        ),
         tool('tool-1'),
         for (var i = 0; i < extraTools; i++) tool('extra-$i'),
       ]),

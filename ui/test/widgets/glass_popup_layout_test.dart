@@ -1,8 +1,13 @@
+import 'dart:ui' as ui;
+
+import 'package:flutter/rendering.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/widgets/glass_popup.dart';
+import 'package:ui/widgets/flclash/popup.dart';
 
 const _panel = ValueKey('panel');
+final _snapshot = GlobalKey();
 
 Widget _app({
   required Rect anchor,
@@ -12,30 +17,71 @@ Widget _app({
   bool reduceMotion = false,
   TextDirection direction = TextDirection.ltr,
   GlobalKey<GlassPopupOverlayContentState>? popupKey,
-}) => MaterialApp(
-  home: MediaQuery(
-    data: MediaQueryData(
-      size: const Size(400, 800),
-      padding: const EdgeInsets.only(top: 24, bottom: 20),
-      viewInsets: EdgeInsets.only(bottom: keyboard),
-      disableAnimations: reduceMotion,
-    ),
-    child: Directionality(
-      textDirection: direction,
-      child: Stack(
-        children: [
-          GlassPopupOverlayContent(
-            key: popupKey,
-            anchor: anchor,
-            preferBelow: preferBelow,
-            overlapAnchor: overlapAnchor,
-            child: const SizedBox(key: _panel, width: 220, height: 240),
-          ),
-        ],
+}) => RepaintBoundary(
+  key: _snapshot,
+  child: MaterialApp(
+    debugShowCheckedModeBanner: false,
+    home: MediaQuery(
+      data: MediaQueryData(
+        size: const Size(400, 800),
+        padding: const EdgeInsets.only(top: 24, bottom: 20),
+        viewInsets: EdgeInsets.only(bottom: keyboard),
+        disableAnimations: reduceMotion,
+      ),
+      child: Directionality(
+        textDirection: direction,
+        child: Stack(
+          children: [
+            GlassPopupOverlayContent(
+              key: popupKey,
+              anchor: anchor,
+              preferBelow: preferBelow,
+              overlapAnchor: overlapAnchor,
+              child: const SizedBox(
+                key: _panel,
+                width: 220,
+                height: 240,
+                child: ColoredBox(color: Color(0xFFFF0000)),
+              ),
+            ),
+          ],
+        ),
       ),
     ),
   ),
 );
+
+Future<Rect?> _paintedContent(WidgetTester tester) async {
+  return tester.runAsync<Rect?>(() async {
+    final boundary =
+        _snapshot.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    final image = await boundary.toImage(pixelRatio: 1);
+    final bytes = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+    var left = image.width, top = image.height, right = -1, bottom = -1;
+    for (var y = 0; y < image.height; y++) {
+      for (var x = 0; x < image.width; x++) {
+        final i = (y * image.width + x) * 4;
+        if (bytes.getUint8(i) > bytes.getUint8(i + 1) + 30 &&
+            bytes.getUint8(i) > bytes.getUint8(i + 2) + 30 &&
+            bytes.getUint8(i + 3) > 20) {
+          left = x < left ? x : left;
+          right = x > right ? x : right;
+          top = y < top ? y : top;
+          bottom = y > bottom ? y : bottom;
+        }
+      }
+    }
+    image.dispose();
+    return right < 0
+        ? null
+        : Rect.fromLTRB(
+            left.toDouble(),
+            top.toDouble(),
+            right + 1.0,
+            bottom + 1.0,
+          );
+  });
+}
 
 void main() {
   for (final direction in TextDirection.values) {
@@ -95,36 +141,61 @@ void main() {
     expect(tester.getRect(find.byKey(_panel)).bottom, anchor.top - 6);
   });
 
+  testWidgets('FlClash paint grows from the trigger without relayout', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(400, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final key = GlobalKey<GlassPopupOverlayContentState>();
+    await tester.pumpWidget(
+      _app(anchor: const Rect.fromLTWH(20, 40, 44, 44), popupKey: key),
+    );
+    await tester.pump();
+    final panel = tester.getRect(find.byKey(_panel));
+    expect(find.byType(FlClashPopupTransition), findsOneWidget);
+    expect(await _paintedContent(tester), isNull);
+    await tester.pump(const Duration(milliseconds: 60));
+    final growing = (await _paintedContent(tester))!;
+    expect(growing.width, greaterThan(20));
+    expect(growing.width, lessThan(panel.width));
+    expect(tester.getRect(find.byKey(_panel)), panel);
+    await tester.pumpAndSettle();
+    expect(await _paintedContent(tester), panel);
+    final closed = key.currentState!.playReverse();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.getRect(find.byKey(_panel)), panel);
+    expect((await _paintedContent(tester))!.width, lessThan(panel.width));
+    await tester.pumpAndSettle();
+    await closed;
+  });
+
   testWidgets(
-    'rounded reveal grows from trigger and reverses without relayout',
+    'interrupted reveal keeps its frame and full 200ms no-source close',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(400, 800));
       addTearDown(() => tester.binding.setSurfaceSize(null));
       final key = GlobalKey<GlassPopupOverlayContentState>();
       await tester.pumpWidget(
-        _app(anchor: const Rect.fromLTWH(20, 40, 44, 44), popupKey: key),
+        _app(anchor: const Rect.fromLTWH(20, 700, 40, 40), popupKey: key),
       );
       await tester.pump();
-      final rect = tester.getRect(find.byKey(_panel));
-      RRect clip() => tester
-          .widget<ClipRRect>(find.byType(ClipRRect))
-          .clipper!
-          .getClip(rect.size);
-      expect(clip().outerRect, const Rect.fromLTWH(0, 0, 44, 44));
-      await tester.pump(const Duration(milliseconds: 60));
-      expect(clip().width, greaterThan(44));
-      expect(clip().width, lessThan(rect.width + 128));
-      expect(clip().tlRadiusX, greaterThan(0));
-      expect(tester.getRect(find.byKey(_panel)), rect);
-      await tester.pumpAndSettle();
-      expect(clip().outerRect, (Offset.zero & rect.size).inflate(64));
-      final closed = key.currentState!.playReverse();
-      await tester.pump();
       await tester.pump(const Duration(milliseconds: 80));
-      expect(clip().width, lessThan(rect.width + 128));
-      expect(tester.getRect(find.byKey(_panel)), rect);
+      final panel = tester.getRect(find.byKey(_panel));
+      final before = await _paintedContent(tester);
+      var finished = false;
+      final closed = key.currentState!.playReverse().then(
+        (_) => finished = true,
+      );
+      await tester.pump();
+      expect(await _paintedContent(tester), before);
+      await tester.pump(const Duration(milliseconds: 150));
+      expect(finished, isFalse);
+      expect(tester.getRect(find.byKey(_panel)), panel);
       await tester.pumpAndSettle();
       await closed;
+      expect(finished, isTrue);
+      expect(tester.takeException(), isNull);
     },
   );
 

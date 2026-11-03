@@ -31,6 +31,7 @@ import cn.com.omnimind.baselib.llm.OpenAiResponsesFunctionNameCodec
 import cn.com.omnimind.baselib.llm.OmniOfficialProvider
 import cn.com.omnimind.baselib.llm.PlatformAiProvisioner
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.llm.ProviderModelCapabilities
 import cn.com.omnimind.baselib.llm.ProviderCustomHeaderUtils
 import cn.com.omnimind.baselib.llm.ReasoningEffort
 import cn.com.omnimind.baselib.llm.SceneModelBindingStore
@@ -277,6 +278,7 @@ object HttpController {
         delegate: EventSourceListener,
         requestLogSeed: AiRequestLogSeed? = null,
         requireResponsesCompleted: Boolean = false,
+        recordUsage: (TokenUsageRecord) -> Unit = ::persistTokenUsage,
     ): EventSourceListener {
         val fullContent = StringBuilder()
         val rawEvents = mutableListOf<String>()
@@ -284,6 +286,16 @@ object HttpController {
         var responsesCompleted = false
         var responsesFailure: String? = null
         var diagnosticChars = 0
+        // Usage is an accounting fact reported by the provider, independent of
+        // transport shutdown and the bounded diagnostic transcript.
+        val usage = requestLogSeed?.let { seed ->
+            RequestTokenUsageAccumulator(seed.protocolType, seed.conversationId, seed.model, recordUsage)
+        }
+        fun finishUsage() {
+            runCatching { usage?.finish() }.onFailure {
+                OmniLog.w(TAG, "ignore token usage recording failure: ${it.message}")
+            }
+        }
         return object : EventSourceListener() {
             override fun onOpen(eventSource: EventSource, response: okhttp3.Response) {
                 responseCode = response.code
@@ -296,6 +308,11 @@ object HttpController {
                 type: String?,
                 data: String
             ) {
+                // A delegate can cancel synchronously after the terminal chunk.
+                // Capture its usage before that cancellation reaches onFailure.
+                runCatching { usage?.capture(data) }.onFailure {
+                    OmniLog.w(TAG, "ignore token usage parsing failure: ${it.message}")
+                }
                 if (requireResponsesCompleted) {
                     val event = runCatching { completionJson.parseToJsonElement(data) as? KxJsonObject }.getOrNull()
                     val eventType = type?.takeIf(String::isNotBlank) ?: event?.text("type")
@@ -328,6 +345,7 @@ object HttpController {
             }
 
             override fun onClosed(eventSource: EventSource) {
+                finishUsage()
                 delegate.onClosed(eventSource)
                 runCatching {
                     if (fullContent.isNotEmpty()) {
@@ -357,20 +375,35 @@ object HttpController {
                 t: Throwable?,
                 response: okhttp3.Response?
             ) {
+                // OkHttp reports a successful JSON response through onFailure
+                // when the endpoint ignored stream=true. The consumer may accept
+                // that Responses body and then close it, so peek before delegation.
+                // Never read a live SSE body or accept an OAuth non-stream fallback.
+                val fallbackBody = runCatching {
+                    val mediaType = response?.body?.contentType()
+                    val isJson = mediaType?.subtype?.let { it == "json" || it.endsWith("+json") } == true
+                    when {
+                        response == null || mediaType?.subtype == "event-stream" -> null
+                        response.isSuccessful -> if (!requireResponsesCompleted && isJson) {
+                            response.peekBody(Long.MAX_VALUE).string()
+                        } else null
+                        !requireResponsesCompleted -> response.peekBody(1024L * 1024L).string()
+                        rawEvents.isEmpty() -> response.peekBody(64L * 1024L).string()
+                        else -> null
+                    }
+                }.getOrNull()
+                if (response?.isSuccessful == true && fallbackBody != null) {
+                    runCatching { usage?.capture(fallbackBody) }.onFailure {
+                        OmniLog.w(TAG, "ignore token usage parsing failure: ${it.message}")
+                    }
+                }
+                finishUsage()
                 delegate.onFailure(eventSource, t, response)
                 runCatching {
                     if (fullContent.isNotEmpty()) {
                         logResponseBody("$label (partial)", fullContent.toString())
                     }
                     requestLogSeed?.let { seed ->
-                        val fallbackBody = runCatching {
-                            when {
-                                !requireResponsesCompleted -> response?.peekBody(1024L * 1024L)?.string()
-                                response?.isSuccessful == false && rawEvents.isEmpty() ->
-                                    response.peekBody(64L * 1024L).string()
-                                else -> null
-                            }
-                        }.getOrNull()
                         persistAiRequestLog(
                             seed = seed,
                             success = requireResponsesCompleted && responsesCompleted && responsesFailure == null,
@@ -497,8 +530,9 @@ object HttpController {
                 "ignore AI request log persistence failure for ${seed.label}: ${it.message}"
             )
         }
-        // Record token usage from every successful LLM response
-        if (success && responseJson.isNotEmpty()) {
+        // Streams record their reported usage once in the listener, including
+        // completion-triggered cancellation. Do not count the diagnostic copy.
+        if (!seed.stream && success && responseJson.isNotEmpty()) {
             runCatching { recordTokenUsageFromResponse(seed, responseJson) }
                 .onFailure {
                     OmniLog.w(TAG, "ignore token usage recording failure: ${it.message}")
@@ -506,103 +540,93 @@ object HttpController {
         }
     }
 
-    /**
-     * 从 LLM 响应中提取 usage 并写入 token_usage_records 表。
-     * 兼容流式（JSONArray of chunks）和非流式（单个 JSONObject）响应。
-     */
-    private fun recordTokenUsageFromResponse(seed: AiRequestLogSeed, responseJson: String) {
-        val normalized = responseJson.trim()
-        if (normalized.isEmpty()) return
-        OmniLog.d(TAG, "[TokenUsage] parsing response for model=${seed.model}, stream=${seed.stream}, responseLen=${normalized.length}")
+    /** Retains only counters, never a response transcript or another Agent lifecycle. */
+    private class RequestTokenUsageAccumulator(
+        private val protocolType: String,
+        private val conversationId: Long,
+        private val model: String,
+        private val record: (TokenUsageRecord) -> Unit,
+    ) {
+        private val anthropic = AnthropicUsageAccumulator()
+        private var promptTokens = 0
+        private var completionTokens = 0
+        private var reasoningTokens = 0
+        private var textTokens = 0
+        private var cachedTokens = 0
+        private var cacheCreationTokens = 0
+        private var finished = false
 
-        // Find the usage object — streaming responses are a JSONArray, non-streaming is a JSONObject
-        val usageObj: JSONObject? = if (seed.protocolType.equals("anthropic", ignoreCase = true)) {
-            extractAnthropicUsageObject(normalized)
-        } else {
-            null
-        } ?: when {
-            normalized.startsWith("[") -> {
-                // Streaming: scan chunks from end to find the one with usage
-                val arr = JSONArray(normalized)
-                var found: JSONObject? = null
-                for (i in arr.length() - 1 downTo 0) {
-                    val chunk = arr.optJSONObject(i) ?: continue
-                    val u = extractUsageObject(chunk)
-                    if (u != null && (readUsageInt(u, "completion_tokens", "output_tokens") >= 0
-                                || u.optInt("total_tokens", -1) >= 0)) {
-                        found = u
-                        break
+        @Synchronized
+        fun capture(raw: String) {
+            if (finished) return
+            val payload = runCatching { completionJson.parseToJsonElement(raw) }.getOrNull() ?: return
+            fun mergePayload(value: JsonElement) {
+                if (value is KxJsonArray) {
+                    value.forEach(::mergePayload)
+                    return
+                }
+                val root = value as? KxJsonObject ?: return
+                val usages = listOfNotNull(
+                    root["usage"] as? KxJsonObject,
+                    (root["message"] as? KxJsonObject)?.get("usage") as? KxJsonObject,
+                    (root["response"] as? KxJsonObject)?.get("usage") as? KxJsonObject,
+                )
+                usages.forEach { usage ->
+                    if (protocolType.equals("anthropic", ignoreCase = true)) {
+                        anthropic.merge(usage)
+                        anthropic.toOpenAIUsage()?.let(::mergeCounters)
+                    } else {
+                        mergeCounters(usage)
                     }
                 }
-                found
             }
-            normalized.startsWith("{") -> {
-                extractUsageObject(JSONObject(normalized))
+            mergePayload(payload)
+        }
+
+        private fun mergeCounters(usage: KxJsonObject) {
+            fun KxJsonObject.count(vararg names: String): Int? = names.firstNotNullOfOrNull { name ->
+                (get(name) as? JsonPrimitive)?.contentOrNull?.toLongOrNull()
+                    ?.coerceIn(0L, Int.MAX_VALUE.toLong())?.toInt()
             }
-            else -> null
+            usage.count("prompt_tokens", "input_tokens")?.let { promptTokens = it }
+            usage.count("completion_tokens", "output_tokens")?.let { completionTokens = it }
+            val inputDetails = (usage["prompt_tokens_details"] ?: usage["input_tokens_details"]) as? KxJsonObject
+            inputDetails?.count("cached_tokens")?.let { cachedTokens = it }
+            inputDetails?.count("cache_creation_tokens")?.let { cacheCreationTokens = it }
+            val outputDetails = (usage["completion_tokens_details"] ?: usage["output_tokens_details"]) as? KxJsonObject
+            outputDetails?.count("reasoning_tokens")?.let { reasoningTokens = it }
+            outputDetails?.count("text_tokens")?.let { textTokens = it }
         }
 
-        if (usageObj == null) {
-            OmniLog.d(TAG, "[TokenUsage] no usage object found in response for model=${seed.model}")
-            return
+        @Synchronized
+        fun finish() {
+            if (finished) return
+            finished = true
+            if (listOf(promptTokens, completionTokens, reasoningTokens, textTokens,
+                    cachedTokens, cacheCreationTokens).none { it > 0 }) return
+            record(TokenUsageRecord(
+                conversationId = conversationId,
+                model = model,
+                promptTokens = promptTokens,
+                completionTokens = completionTokens,
+                reasoningTokens = reasoningTokens,
+                textTokens = textTokens,
+                cachedTokens = cachedTokens,
+                cacheCreationTokens = cacheCreationTokens,
+            ))
         }
+    }
 
-        val promptTokens = readUsageInt(usageObj, "prompt_tokens", "input_tokens").coerceAtLeast(0)
-        val completionTokens = readUsageInt(usageObj, "completion_tokens", "output_tokens").coerceAtLeast(0)
-        val promptDetails = usageObj.optJSONObject("prompt_tokens_details")
-            ?: usageObj.optJSONObject("input_tokens_details")
-        val cachedTokens = promptDetails?.optInt("cached_tokens", 0) ?: 0
-        val cacheCreationTokens = promptDetails?.optInt("cache_creation_tokens", 0) ?: 0
-        if (promptTokens == 0 && completionTokens == 0 && cachedTokens == 0) {
-            OmniLog.d(
-                TAG,
-                "[TokenUsage] usage is empty (prompt=0, completion=0, cached=0) for model=${seed.model}"
-            )
-            return
-        }
+    private fun recordTokenUsageFromResponse(seed: AiRequestLogSeed, responseJson: String) {
+        RequestTokenUsageAccumulator(seed.protocolType, seed.conversationId, seed.model, ::persistTokenUsage)
+            .apply { capture(responseJson); finish() }
+    }
 
-        // Extract detailed breakdown if available
-        val details = usageObj.optJSONObject("completion_tokens_details")
-        val reasoningTokens = details?.optInt("reasoning_tokens", 0) ?: 0
-        val textTokens = details?.optInt("text_tokens", 0) ?: 0
-
-        OmniLog.i(
-            TAG,
-            "[TokenUsage] recording: model=${seed.model}, " +
-                "prompt=$promptTokens, completion=$completionTokens, " +
-                "reasoning=$reasoningTokens, text=$textTokens, cached=$cachedTokens, " +
-                "cacheCreation=$cacheCreationTokens, " +
-                "stream=${seed.stream}, url=${seed.url}"
-        )
-
+    private fun persistTokenUsage(record: TokenUsageRecord) {
         CoroutineScope(Dispatchers.IO).launch {
-            runCatching {
-                DatabaseHelper.insertTokenUsageRecord(
-                    TokenUsageRecord(
-                        conversationId = seed.conversationId,
-                        model = seed.model,
-                        promptTokens = promptTokens,
-                        completionTokens = completionTokens,
-                        reasoningTokens = reasoningTokens,
-                        textTokens = textTokens,
-                        cachedTokens = cachedTokens,
-                        cacheCreationTokens = cacheCreationTokens,
-                        createdAt = System.currentTimeMillis()
-                    )
-                )
-            }.onFailure {
-                OmniLog.w(TAG, "Failed to insert token usage record: ${it.message}")
-            }
+            runCatching { DatabaseHelper.insertTokenUsageRecord(record) }
+                .onFailure { OmniLog.w(TAG, "Failed to insert token usage record: ${it.message}") }
         }
-    }
-
-    private fun extractUsageObject(payload: JSONObject): JSONObject? {
-        return payload.optJSONObject("usage")
-            ?: payload.optJSONObject("response")?.optJSONObject("usage")
-    }
-
-    private fun extractAnthropicUsageObject(responseJson: String): JSONObject? {
-        return normalizeAnthropicUsageResponse(responseJson)?.let(::JSONObject)
     }
 
     private fun normalizeAnthropicUsageResponse(responseJson: String): String? {
@@ -630,14 +654,6 @@ object HttpController {
             else -> Unit
         }
         return accumulator.toOpenAIUsage()?.toString()
-    }
-
-    private fun readUsageInt(usage: JSONObject, primaryKey: String, fallbackKey: String): Int {
-        return when {
-            usage.has(primaryKey) -> usage.optInt(primaryKey, -1)
-            usage.has(fallbackKey) -> usage.optInt(fallbackKey, -1)
-            else -> -1
-        }
     }
 
     private fun conversationIdFromPromptCacheKey(promptCacheKey: String?): Long {
@@ -1609,7 +1625,10 @@ object HttpController {
         }
     }
 
-    private fun parseProviderModelsResponse(responseBody: String?): List<ProviderModelOption> {
+    private fun parseProviderModelsResponse(responseBody: String?): List<ProviderModelOption> =
+        parseProviderModelsResponse(responseBody, null)
+
+    private fun parseProviderModelsResponse(responseBody: String?, apiBase: String?): List<ProviderModelOption> {
         val payload = runCatching {
             completionJson.parseToJsonElement(responseBody ?: "{}") as? KxJsonObject
         }.getOrNull() ?: return emptyList()
@@ -1654,8 +1673,8 @@ object HttpController {
                     directKeys = listOf("outputModalities", "output_modalities"),
                     nestedValueKeys = listOf("output", "outputs")
                 )
-                add(
-                    ProviderModelOption(
+                add(ProviderModelCapabilities.applyDeclared(
+                    model = ProviderModelOption(
                         id = id,
                         displayName = displayName,
                         ownedBy = ownedBy,
@@ -1669,19 +1688,6 @@ object HttpController {
                             directKeys = listOf("attachment", "attachments", "vision"),
                             nestedValueKeys = listOf("attachment", "attachments", "vision", "image")
                         ),
-                        reasoning = parseProviderModelBoolean(
-                            itemObj = itemObj,
-                            directKeys = listOf("reasoning", "thinking"),
-                            nestedValueKeys = listOf("reasoning", "thinking")
-                        ),
-                        supportedReasoningLevels =
-                            (itemObj["supported_reasoning_levels"] as? KxJsonArray)
-                                ?.mapNotNull { level ->
-                                    ((level as? KxJsonObject)?.get("effort") as? JsonPrimitive)
-                                        ?.contentOrNull?.takeIf { it.isNotBlank() }
-                                }?.distinct().orEmpty(),
-                        defaultReasoningLevel =
-                            (itemObj["default_reasoning_level"] as? JsonPrimitive)?.contentOrNull,
                         toolCall = parseProviderModelBoolean(
                             itemObj = itemObj,
                             directKeys = listOf("toolCall", "tool_call", "tools"),
@@ -1697,8 +1703,10 @@ object HttpController {
                             directKeys = listOf("temperature"),
                             nestedValueKeys = listOf("temperature")
                         )
-                    )
-                )
+                    ),
+                    metadata = itemObj,
+                    apiBase = apiBase,
+                ))
             }
         }.sortedBy { it.id.lowercase() }
     }
@@ -2737,6 +2745,7 @@ object HttpController {
             ?: throw IllegalArgumentException("Invalid apiBase for Anthropic")
         val url = buildAnthropicMessagesUrl(base)
         val requestBody = requestJson.toRequestBody("application/json".toMediaType())
+            .asSingleAttemptInferenceBody()
         val request = buildAnthropicRequestBuilder(
             url = url,
             requestBody = requestBody,
@@ -2774,6 +2783,11 @@ object HttpController {
     // on Request, and share only the transport across Provider calls.
     private val openAIStreamingClient: OkHttpClient by lazy {
         OkHttpClient.Builder()
+            // The Agent transport owns bounded inference retries. OkHttp must
+            // not independently replay POSTs outside that budget/output gate.
+            .retryOnConnectionFailure(false)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .connectTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .readTimeout(0, java.util.concurrent.TimeUnit.SECONDS)
             .writeTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
@@ -2791,6 +2805,9 @@ object HttpController {
     // ten-second read deadline to a user-requested refresh.
     private val providerModelsClient: OkHttpClient by lazy {
         openAIStreamingClient.newBuilder()
+            .retryOnConnectionFailure(true)
+            .followRedirects(true)
+            .followSslRedirects(true)
             .readTimeout(60, java.util.concurrent.TimeUnit.SECONDS)
             .build()
     }
@@ -2830,7 +2847,7 @@ object HttpController {
             .header("Authorization", "Bearer $accessToken")
         return if (payload == null) builder.get().build() else builder
             .header("Accept", "text/event-stream")
-            .post(completionJson.toStreamingRequestBody(payload))
+            .post(completionJson.toStreamingRequestBody(payload).asSingleAttemptInferenceBody())
             .build()
     }
 
@@ -3626,6 +3643,7 @@ object HttpController {
             )
         }
         val requestBody = requestJson.toRequestBody("application/json".toMediaType())
+            .asSingleAttemptInferenceBody()
         val url = buildOpenAIInferenceUrl(base, normalizedWireApi)
         val request = buildOpenAIRequestBuilder(
             url = url,
@@ -3722,6 +3740,7 @@ object HttpController {
             )
         }
         val httpBody = completionJson.toStreamingRequestBody(preparedRequest)
+            .asSingleAttemptInferenceBody()
         val url = buildOpenAIInferenceUrl(base, normalizedWireApi)
         val request = if (resolved.oauthProfileId != null) {
             chatGptRequest(resolved.oauthProfileId, preparedRequest)
@@ -4502,7 +4521,7 @@ object HttpController {
                     "获取模型列表失败 (${response.code})：${extractAvailabilityMessage(responseBody)}"
                 )
             }
-            parseProviderModelsResponse(responseBody)
+            parseProviderModelsResponse(responseBody, normalizedApiBase)
         }
     }
 

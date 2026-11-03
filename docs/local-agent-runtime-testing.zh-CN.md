@@ -35,6 +35,14 @@ scripts/test-agent-runtime.sh --offline
 
 ## 长期验证规则
 
+### Agent 身份与草稿归属
+
+维护用例必须明确区分本机 `codex-acp` 与远端 `codex-remote`。`status`、配置/模型读取等宿主请求指定 `agentId`；发送沿当前 Conversation/Session owner 进入正式 ACP `session/new` / `session/prompt`，不先调用全局 `connect` 或 `agent/select`。只打开设置、查看目录、切换未发送草稿不能创建聊天历史。
+
+统一测试入口包含 `AgentConversationModePolicyTest`、`LocalAcpRuntimeOwnershipTest`、`AgentSessionBindingOwnershipTest`、`WebConversationCreationTest` 和草稿生命周期测试，覆盖缺身份拒绝、持久 owner 冲突、显式远端身份及账号切换前的创建校验。Provider 和长期记忆存储不属于这项迁移。
+
+`xiaowan-harness-switch-draft.en.json` 通过当前屏幕的 Agent 名称和 `FlutterSharedPreferences` 中既有 `last_visible_conversation_target` 检查未发送草稿的 owner，同时要求 `isNewConversation=true` 且没有 Conversation ID。发送后及重启后通过 `assert-agent-prompt-owner.py` 核对实际 Conversation → Session → Agent 与唯一 Turn。旧 `selected_profile_id` 只应被迁移删除，不能作为验证通过的证据。
+
 ### 会话输出是必过项（2026-09-07）
 
 真实 API 全链路入口（使用现有 LLMTHU 环境变量或 `OMNIBOT_TEST_*` 覆盖）：
@@ -46,7 +54,7 @@ scripts/test-agent-runtime.sh --live-harnesses /path/to/disposable-harness-insta
 ```
 
 `verify-live-harness-conversations.mjs` 默认逐一测试 Codex、Claude Code、Kimi、
-OpenCode、DeepSeek Harness。它复用原生生成的配置及透明本地转发器，模型回答
+OpenCode。它复用原生生成的配置及透明本地转发器，模型回答
 来自所配置的真实 API。每个 Harness 使用独立临时目录和会话，结束后清理本次
 临时凭据与测试文件；不会更改手机配置或用户工作区。
 

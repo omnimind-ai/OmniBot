@@ -3,6 +3,8 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
 
+import 'package:ui/widgets/flclash/popup.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
 import 'package:flutter/material.dart';
 import 'package:ui/widgets/omni_menu.dart';
 import 'package:flutter_svg/flutter_svg.dart';
@@ -17,6 +19,8 @@ import 'package:ui/widgets/glass_popup.dart';
 import 'package:ui/widgets/image_preview_overlay.dart';
 import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/widgets/text_input_context_menu.dart';
+
+import 'chat_composer_surface.dart';
 
 part 'chat_input_area_composer.dart';
 part 'chat_input_compact_composer.dart';
@@ -238,6 +242,9 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   final GlobalKey _agentPermissionButtonKey = GlobalKey(
     debugLabel: 'agent-permission-button',
   );
+  final GlobalKey _compactComposerSurfaceKey = GlobalKey(
+    debugLabel: 'compact-composer-surface',
+  );
   OverlayGlassPopupHandle<_AgentRunSettingsMenuAction>?
   _agentRunSettingsMenuHandle;
   OverlayGlassPopupHandle<AgentPermissionMode>? _agentPermissionMenuHandle;
@@ -297,7 +304,6 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
       vsync: this,
       duration: const Duration(milliseconds: 8000),
     );
-    if (!widget.minimalComposer) _composerFlowController.repeat();
     _modelPickerSpinController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 520),
@@ -308,6 +314,7 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _syncComposerFlowAnimation();
     _syncKeyboardPhaseFromView();
     final palette = context.omniPalette;
     _terminalSvg = SvgPicture.asset(
@@ -434,11 +441,6 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     }
   }
 
-  Duration get _compactAnimationDuration =>
-      MediaQuery.disableAnimationsOf(context)
-      ? Duration.zero
-      : const Duration(milliseconds: 220);
-
   Future<void> openAgentPermissionMenu(BuildContext anchorContext) =>
       _openAgentPermissionMenu(anchorContext);
 
@@ -501,6 +503,7 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
   @override
   void didUpdateWidget(covariant ChatInputArea oldWidget) {
     super.didUpdateWidget(oldWidget);
+    _syncComposerFlowAnimation();
     if (oldWidget.attachments != widget.attachments ||
         oldWidget.useLargeComposerStyle != widget.useLargeComposerStyle ||
         oldWidget.useFrostedGlass != widget.useFrostedGlass ||

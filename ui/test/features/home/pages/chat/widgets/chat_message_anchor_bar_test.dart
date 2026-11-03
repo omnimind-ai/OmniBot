@@ -47,6 +47,20 @@ void main() {
     );
   }
 
+  testWidgets('a held anchor can be removed before the pointer releases', (
+    tester,
+  ) async {
+    await tester.pumpWidget(buildAnchorBar(Brightness.light));
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byIcon(LucideIcons.galleryVerticalEnd)),
+    );
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox.shrink());
+    await gesture.up();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('expanded fan spotlights anchors over a dismissible scrim', (
     tester,
   ) async {

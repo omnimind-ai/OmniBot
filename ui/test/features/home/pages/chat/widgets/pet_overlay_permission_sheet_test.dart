@@ -8,6 +8,7 @@ import 'package:ui/features/home/pages/authorize/widgets/permission_section.dart
 import 'package:ui/features/home/pages/chat/widgets/pet_overlay_permission_sheet.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/widgets/omni_glass.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
 
 class _SvgTestAssetBundle extends CachingAssetBundle {
   static final Uint8List _svgBytes = Uint8List.fromList(
@@ -30,72 +31,89 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
 }
 
 void main() {
-  testWidgets('continues to pet only after overlay permission is granted', (
-    tester,
-  ) async {
-    LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
-    addTearDown(LegacyTextLocalizer.clearResolvedLocale);
+  for (final glass in [false, true]) {
+    testWidgets(
+      'glass=$glass permission remains gated in a small keyboard viewport',
+      (tester) async {
+        tester.view.physicalSize = const Size(360, 480);
+        tester.view.devicePixelRatio = 1;
+        tester.view.viewInsets = const FakeViewPadding(bottom: 160);
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetViewInsets);
+        LegacyTextLocalizer.setResolvedLocale(const Locale('zh'));
+        addTearDown(LegacyTextLocalizer.clearResolvedLocale);
 
-    var granted = false;
-    var shouldShowPet = false;
-    final permission = PermissionData(
-      id: 'overlay',
-      iconPath: 'assets/welcome/permission_overlay.svg',
-      iconWidth: 32,
-      iconHeight: 32,
-      name: '悬浮窗权限',
-      description: '桌面悬浮显示，快速唤起小万',
-      onAuthorize: () async {
-        granted = true;
-      },
-      checkAuthorization: () async => granted,
-    );
+        var granted = false;
+        var shouldShowPet = false;
+        final permission = PermissionData(
+          id: 'overlay',
+          iconPath: 'assets/welcome/permission_overlay.svg',
+          iconWidth: 32,
+          iconHeight: 32,
+          name: '悬浮窗权限',
+          description: '桌面悬浮显示，快速唤起小万',
+          onAuthorize: () async {
+            granted = true;
+          },
+          checkAuthorization: () async => granted,
+        );
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: DefaultAssetBundle(
-          bundle: _SvgTestAssetBundle(),
-          child: Builder(
-            builder: (context) {
-              return Scaffold(
-                body: TextButton(
-                  key: const ValueKey('open-permission-sheet'),
-                  onPressed: () async {
-                    shouldShowPet = await PetOverlayPermissionSheet.show(
-                      context,
-                      permission: permission,
-                    );
-                  },
-                  child: const Text('open'),
-                ),
-              );
-            },
+        await tester.pumpWidget(
+          MaterialApp(
+            builder: (context, child) => LiquidGlassScope(
+              enabled: glass,
+              child: LiquidGlassHost(enabled: glass, child: child!),
+            ),
+            home: DefaultAssetBundle(
+              bundle: _SvgTestAssetBundle(),
+              child: Builder(
+                builder: (context) {
+                  return Scaffold(
+                    body: TextButton(
+                      key: const ValueKey('open-permission-sheet'),
+                      onPressed: () async {
+                        shouldShowPet = await PetOverlayPermissionSheet.show(
+                          context,
+                          permission: permission,
+                        );
+                      },
+                      child: const Text('open'),
+                    ),
+                  );
+                },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+
+        await tester.tap(find.byKey(const ValueKey('open-permission-sheet')));
+        await tester.pumpAndSettle();
+
+        final continueButton = find.byKey(
+          const ValueKey('pet-overlay-permission-continue-button'),
+        );
+        expect(find.byType(PermissionPromptSheet), findsOneWidget);
+        expect(find.byType(OmniGlassPanel), findsOneWidget);
+        expect(find.byType(LiquidGlass), glass ? findsOneWidget : findsNothing);
+        expect(tester.takeException(), isNull);
+        expect(find.text('请检查下列权限'), findsOneWidget);
+        expect(find.text('悬浮窗权限'), findsOneWidget);
+        expect(tester.widget<GestureDetector>(continueButton).onTap, isNull);
+
+        await tester.tap(find.text('悬浮窗权限'));
+        await tester.pumpAndSettle();
+
+        expect(permission.notifier.value, isTrue);
+        expect(tester.widget<GestureDetector>(continueButton).onTap, isNotNull);
+
+        await tester.ensureVisible(continueButton);
+        await tester.pumpAndSettle();
+        await tester.tap(continueButton);
+        await tester.pumpAndSettle();
+
+        expect(shouldShowPet, isTrue);
+      },
     );
-
-    await tester.tap(find.byKey(const ValueKey('open-permission-sheet')));
-    await tester.pumpAndSettle();
-
-    final continueButton = find.byKey(
-      const ValueKey('pet-overlay-permission-continue-button'),
-    );
-    expect(find.byType(PermissionPromptSheet), findsOneWidget);
-    expect(find.byType(OmniGlassPanel), findsOneWidget);
-    expect(find.text('请检查下列权限'), findsOneWidget);
-    expect(find.text('悬浮窗权限'), findsOneWidget);
-    expect(tester.widget<GestureDetector>(continueButton).onTap, isNull);
-
-    await tester.tap(find.text('悬浮窗权限'));
-    await tester.pumpAndSettle();
-
-    expect(permission.notifier.value, isTrue);
-    expect(tester.widget<GestureDetector>(continueButton).onTap, isNotNull);
-
-    await tester.tap(continueButton);
-    await tester.pumpAndSettle();
-
-    expect(shouldShowPet, isTrue);
-  });
+  }
 }

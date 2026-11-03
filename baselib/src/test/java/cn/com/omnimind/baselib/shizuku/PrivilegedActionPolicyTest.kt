@@ -1,5 +1,7 @@
 package cn.com.omnimind.baselib.shizuku
 
+import cn.com.omnimind.baselib.privileged.PrivilegedActionPolicy
+
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -63,6 +65,27 @@ class PrivilegedActionPolicyTest {
                 PrivilegedActionPolicy.ACTION_DIAGNOSTICS_GETPROP
             )
         )
+    }
+
+    @Test
+    fun structuredMutationsRequireConfirmationAndQueriesDoNot() {
+        listOf(
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_STATE,
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_WIFI_ENABLED,
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_BRIGHTNESS,
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_VOLUME,
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_SCREEN_TIMEOUT,
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_DND,
+        ).forEach { assertTrue(PrivilegedActionPolicy.requiresConfirmation(it)) }
+        listOf(
+            PrivilegedActionPolicy.ACTION_DEVICE_GET_STATE,
+            PrivilegedActionPolicy.ACTION_DEVICE_GET_DISPLAY,
+            PrivilegedActionPolicy.ACTION_DEVICE_GET_SOUND,
+        ).forEach { assertFalse(PrivilegedActionPolicy.requiresConfirmation(it)) }
+        assertFalse(PrivilegedActionPolicy.isSupported("device_control.command", ShizukuBackend.ROOT))
+        assertFalse(PrivilegedActionPolicy.isSupported(
+            PrivilegedActionPolicy.ACTION_DEVICE_SET_STATE, ShizukuBackend.ADB,
+            arguments = mapOf("target" to "mobile_data")))
     }
 
     @Test

@@ -1,5 +1,9 @@
 package cn.com.omnimind.baselib.shizuku
 
+import cn.com.omnimind.baselib.privileged.PrivilegedActionPolicy
+import cn.com.omnimind.baselib.privileged.PrivilegedRequest
+import cn.com.omnimind.baselib.privileged.PrivilegedResult
+
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
@@ -8,6 +12,14 @@ import android.content.pm.PackageManager
 import android.os.IBinder
 import android.os.RemoteException
 import cn.com.omnimind.baselib.util.OmniLog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import java.util.concurrent.atomic.AtomicLong
+import cn.com.omnimind.baselib.privileged.PrivilegedProvider
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
@@ -23,6 +35,9 @@ class ShizukuCapabilityManager private constructor(
 ) {
 
     private val appContext = context.applicationContext
+    private val calls = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val binderGeneration = AtomicLong()
+    val generation: Long get() = binderGeneration.get()
     private val json = Json {
         ignoreUnknownKeys = true
         encodeDefaults = true
@@ -370,7 +385,11 @@ class ShizukuCapabilityManager private constructor(
         )
     }
 
-    private suspend fun execute(request: PrivilegedRequest): PrivilegedResult {
+    internal suspend fun execute(
+        request: PrivilegedRequest,
+        expectedGeneration: Long = generation,
+        expectedBackend: ShizukuBackend = getStatus().backend,
+    ): PrivilegedResult {
         val status = getStatus()
         if (!status.isGranted()) {
             return PrivilegedResult(
@@ -392,23 +411,37 @@ class ShizukuCapabilityManager private constructor(
             backend = status.backend,
             availableActions = suggestedAgentActions(status.backend)
         )
-        return runCatching {
-            executeRemoteRequest(request, service, status.backend)
-        }.recoverCatching {
+        if (generation != expectedGeneration || getStatus().backend != expectedBackend || !getStatus().isGranted()) {
+            return PrivilegedResult(request.requestId, request.action, false, "privileged_access_changed",
+                "Privileged access changed before execution.")
+        }
+        return try {
+            executeRemoteRequest(request, service, status.backend).copy(provider = PrivilegedProvider.SHIZUKU)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: Exception) {
             remoteService = null
-            val reboundService = ensureUserServiceBound()
-                ?: error("Failed to rebind Shizuku user service.")
-            executeRemoteRequest(request, reboundService, status.backend)
-        }.getOrElse { error ->
             PrivilegedResult(
-                requestId = request.requestId,
-                action = request.action,
-                success = false,
-                code = "service_call_failed",
-                message = error.message ?: "Failed to call Shizuku user service.",
-                backend = status.backend,
-                availableActions = suggestedAgentActions(status.backend)
+                requestId = request.requestId, action = request.action, success = false,
+                code = "service_call_failed", message = "Privileged service failed; the request was not replayed.",
+                backend = status.backend, provider = PrivilegedProvider.SHIZUKU,
             )
+        }
+    }
+
+    /** 清理已有资源时只使用原连接，不申请权限，也不启动或重绑定服务。 */
+    internal suspend fun stopExistingSession(request: PrivilegedRequest, expectedGeneration: Long): PrivilegedResult {
+        require(request.action == PrivilegedActionPolicy.ACTION_SESSION_STOP)
+        val service = remoteService
+        if (generation != expectedGeneration || service == null) {
+            return PrivilegedResult(request.requestId, request.action, false, "session_not_found", "The original privileged service is no longer connected.")
+        }
+        return try {
+            executeRemoteRequest(request, service, getStatus().backend).copy(provider = PrivilegedProvider.SHIZUKU)
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (_: Exception) {
+            PrivilegedResult(request.requestId, request.action, false, "service_call_failed", "Could not close the existing privileged session.")
         }
     }
 
@@ -417,16 +450,16 @@ class ShizukuCapabilityManager private constructor(
         service: IOmnibotPrivilegedUserService,
         backend: ShizukuBackend,
     ): PrivilegedResult {
-        val requestJson = json.encodeToString(PrivilegedRequest.serializer(), request)
+        val requestJson = json.encodeToString(PrivilegedRequest.serializer(), request.copy(userId = appContext.applicationInfo.uid / 100000))
         val resultJson = withTimeoutOrNull(remoteTimeoutMillisFor(request)) {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    service.execute(requestJson)
-                }.getOrElse { error ->
-                    if (error is RemoteException) {
-                        remoteService = null
+            suspendCancellableCoroutine<String> { continuation ->
+                continuation.invokeOnCancellation { runCatching { service.cancel(request.requestId) } }
+                calls.launch {
+                    try {
+                        if (continuation.isActive) continuation.resume(service.execute(requestJson))
+                    } catch (error: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
                     }
-                    throw error
                 }
             }
         } ?: return PrivilegedResult(
@@ -500,9 +533,11 @@ class ShizukuCapabilityManager private constructor(
             }
             runCatching {
                 Shizuku.addBinderReceivedListenerSticky {
+                    binderGeneration.incrementAndGet()
                     lastBinderDead = false
                 }
                 Shizuku.addBinderDeadListener {
+                    binderGeneration.incrementAndGet()
                     lastBinderDead = true
                     remoteService = null
                     pendingBind?.takeIf { !it.isCompleted }?.complete(null)
@@ -535,7 +570,8 @@ class ShizukuCapabilityManager private constructor(
         return when (PrivilegedActionPolicy.normalizeAction(request.action)) {
             PrivilegedActionPolicy.ACTION_SHELL_EXEC,
             PrivilegedActionPolicy.ACTION_SESSION_EXEC -> {
-                val requestedSeconds = request.timeoutSeconds?.coerceIn(5, 600) ?: 60
+                val defaultSeconds = if (request.action == PrivilegedActionPolicy.ACTION_SESSION_EXEC) 120 else 60
+                val requestedSeconds = request.timeoutSeconds?.coerceIn(5, 600) ?: defaultSeconds
                 (requestedSeconds + 8L) * 1000L
             }
 
@@ -550,7 +586,7 @@ class ShizukuCapabilityManager private constructor(
         private const val TAG = "ShizukuCapabilityMgr"
         private const val SHIZUKU_PACKAGE_NAME = "moe.shizuku.privileged.api"
         private const val USER_SERVICE_TAG = "omnibot-privileged-agent"
-        private const val USER_SERVICE_VERSION = 3
+        private const val USER_SERVICE_VERSION = 5
 
         @Volatile
         private var instance: ShizukuCapabilityManager? = null

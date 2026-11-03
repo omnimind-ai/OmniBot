@@ -12,6 +12,19 @@ import java.util.Base64
  * place prevents legacy fields from leaking into new UI or agent code.
  */
 internal object AcpSessionCompatibility {
+    private val hostArgumentKeys = setOf(
+        "agentId", "agentRuntime", "conversationId", "conversationMode", "threadId",
+        "userMessageId", "terminalEnvironment",
+    )
+
+    /** Remove only host routing fields; official payloads and _meta stay intact. */
+    fun wireParams(args: Map<String, Any?>): Map<String, Any?> =
+        args.filterKeys { it !in hostArgumentKeys }
+
+    /** The app envelope separates endpoint identity from arbitrary extension JSON. */
+    fun extensionParams(args: Map<String, Any?>): Any? =
+        if (args.containsKey("params")) args["params"] else wireParams(args)
+
     fun canonicalize(method: String, args: Map<String, Any?>): Map<String, Any?> {
         if (!method.startsWith("session/") && method != "config/set" && method != "review/start") {
             return args

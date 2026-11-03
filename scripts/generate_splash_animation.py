@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Export the splash SVG's paths and timeline to Android animated vectors.
+"""Export the splash SVG's paths and timeline to Android splash vectors.
 
 Run from any directory with Python 3 (standard library only). Keep geometry and
-keyframes in docs/design/splash-logo.svg so its preview matches both app themes.
+keyframes in docs/design/splash-logo.svg. Logo fills use the global Android brand
+tokens; the ear cutout keeps the startup background color in each variant.
 """
 
 from pathlib import Path
@@ -95,8 +96,11 @@ def main():
     }
     min_x, min_y, width, height = source.get("viewBox").split()
     for suffix, palette in [
-        ("", {}),
-        ("_dark", {"#2C7FEB": "#98AD90", "#F4F7FB": "#151617"}),
+        ("", {"#2C7FEB": "@color/omni_brand_primary_light"}),
+        ("_dark", {
+            "#2C7FEB": "@color/omni_brand_primary_dark",
+            "#F4F7FB": "#151617",
+        }),
     ]:
         drawable = ET.Element("animated-vector")
         inline = ET.SubElement(drawable, f"{{{AAPT}}}attr", {"name": "android:drawable"})
@@ -114,6 +118,20 @@ def main():
         for name, animation in targets.items():
             ET.SubElement(drawable, "target", attrs(name=name, animation=f"@animator/{animation}"))
         write_xml(RES / "drawable" / f"splash_logo_animated{suffix}.xml", drawable)
+
+        # The legacy PNGs use the complete 1152px canvas at xxxhdpi (288dp).
+        # Undo the animated SVG's inset without changing the static layer's
+        # footprint; source paths retain their original canvas coordinates.
+        static_width = float(width) + 2 * float(min_x)
+        static_height = float(height) + 2 * float(min_y)
+        static = ET.Element("vector", attrs(
+            width=f"{static_width / 4:g}dp",
+            height=f"{static_height / 4:g}dp",
+            viewportWidth=f"{static_width:g}",
+            viewportHeight=f"{static_height:g}",
+        ))
+        export_group(source, static, palette)
+        write_xml(RES / "drawable" / f"splash_logo_static{suffix}.xml", static)
 
 
 if __name__ == "__main__":

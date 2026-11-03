@@ -2,6 +2,49 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/models/chat_message_model.dart';
 
 void main() {
+  test(
+    'history preview identity and full-record attachment survive roundtrip',
+    () {
+      final message = ChatMessageModel.fromJson({
+        'id': 'history-preview',
+        'type': 2,
+        'user': 3,
+        'content': {
+          'id': 'history-preview',
+          'historyPayloadOffloaded': true,
+          'cardData': {
+            'type': 'deep_thinking',
+            'historyPayloadOffloaded': true,
+            'thinkingContent': 'preview',
+          },
+          'attachments': [
+            {'name': 'original.txt', 'path': '/workspace/original.txt'},
+            {
+              'name': '完整消息记录',
+              'path': '/workspace/full-history.json',
+              'historyPayloadOffloaded': true,
+            },
+          ],
+        },
+        'streamMeta': {'sessionId': 'session-1', 'turnId': 'turn-1'},
+      });
+
+      final restored = ChatMessageModel.fromJson(message.toJson());
+      expect(restored.isHistoryPayloadOffloaded, isTrue);
+      expect(restored.id, message.id);
+      expect(restored.sessionId, 'session-1');
+      expect(restored.turnId, 'turn-1');
+      expect(
+        restored.historyPayloadAttachments.single['path'],
+        '/workspace/full-history.json',
+      );
+      expect(
+        ChatMessageModel.userMessage('complete').isHistoryPayloadOffloaded,
+        isFalse,
+      );
+    },
+  );
+
   test('ChatMessageModel normalizes integer-like doubles recursively', () {
     final message = ChatMessageModel.fromJson({
       'id': 'history-message',

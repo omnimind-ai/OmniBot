@@ -61,10 +61,12 @@ internal interface ChatGptOAuthRemote {
 
 /** Dedicated, redirect-free client: credentials never pass through app HTTP logging interceptors. */
 internal class OpenAiChatGptOAuthRemote : ChatGptOAuthRemote {
-    private val client = OkHttpClient.Builder()
-        .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
-        .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(30, TimeUnit.SECONDS).build()
+    private val client: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
+            .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(30, TimeUnit.SECONDS).build()
+    }
 
     override suspend fun exchange(
         clientId: String, code: String, verifier: String, redirectUri: String,

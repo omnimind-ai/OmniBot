@@ -2950,7 +2950,7 @@ class AgentEventReducer {
       return delta;
     }
     if (hasLiveCache) {
-      // Official DSH ACP emits committed assistant message blocks rather than
+      // Some ACP Agents emit committed assistant message blocks rather than
       // token deltas. A reconnect/retry can deliver the same committed block
       // again, or a provider can send a cumulative block for the same
       // messageId. Keep the live stream idempotent without changing the ACP
@@ -5053,7 +5053,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
   if (sessionUpdate == null || sessionUpdate.isEmpty) return null;
 
   // ACP messageId identifies a message within an ACP session, not an entry
-  // in the host conversation. DeepSeek Harness currently reuses values such
+  // in the host conversation. Agents may reuse values such
   // as `1:1` on later prompts, so using it directly makes the reducer append a
   // new answer to the first answer in the timeline. Scope projected entries
   // by the host-owned turn while keeping all chunks from the same turn
@@ -5113,7 +5113,7 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
       return <String, dynamic>{
         'method': 'item/agentMessage/delta',
         'params': projectedParams(<String, dynamic>{
-          // DSH may omit messageId, and when present it is only session
+          // ACP updates may omit messageId, and when present it is only session
           // scoped. Both forms need a turn-scoped host entry id.
           'itemId': scopedMessageId,
           if (scopedEntryId != null) 'entryId': scopedEntryId,

@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/my/pages/account/account_lifecycle_sheets.dart';
@@ -26,17 +28,23 @@ class AccountPage extends StatefulWidget {
   const AccountPage({super.key})
     : authOnly = false,
       onAuthenticated = null,
-      showAuthHeading = true;
+      showAuthHeading = true,
+      fitAuthContent = false;
 
   const AccountPage.authOnly({
     super.key,
     this.onAuthenticated,
     this.showAuthHeading = true,
+    this.fitAuthContent = false,
   }) : authOnly = true;
 
   final bool authOnly;
   final VoidCallback? onAuthenticated;
   final bool showAuthHeading;
+
+  /// Lets an enclosing sheet size to the active form. The sheet owns safe-area
+  /// and keyboard insets; full-page destinations keep their paged layout.
+  final bool fitAuthContent;
 
   @override
   State<AccountPage> createState() => _AccountPageState();
@@ -967,7 +975,10 @@ class _AccountPageState extends State<AccountPage> {
     final palette = context.omniPalette;
     final content = Stack(
       children: [
-        Positioned.fill(child: _buildBody()),
+        if (widget.fitAuthContent)
+          _buildBody()
+        else
+          Positioned.fill(child: _buildBody()),
         if (_busy)
           Positioned.fill(
             child: ColoredBox(
@@ -990,12 +1001,17 @@ class _AccountPageState extends State<AccountPage> {
         title: _text('账号与 AI 服务', 'Account & AI service'),
         primary: true,
       ),
-      body: content,
+      body: OmniContentWidth(child: content),
     );
   }
 
   Widget _buildBody() {
-    if (_loading) return const Center(child: CircularProgressIndicator());
+    if (_loading) {
+      return SizedBox(
+        height: widget.fitAuthContent ? 280 : null,
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
     final session = _session;
     if (session == null) return _buildErrorState();
     if (!session.configured) return _buildNotConfigured();
@@ -1014,6 +1030,7 @@ class _AccountPageState extends State<AccountPage> {
   Widget _buildAuthenticatedAuthState(AccountOverview overview) {
     final palette = context.omniPalette;
     return Center(
+      heightFactor: widget.fitAuthContent ? 1 : null,
       child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -1052,7 +1069,8 @@ class _AccountPageState extends State<AccountPage> {
 
   Widget _buildErrorState() {
     return Center(
-      child: Padding(
+      heightFactor: widget.fitAuthContent ? 1 : null,
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -1083,6 +1101,7 @@ class _AccountPageState extends State<AccountPage> {
       top: false,
       bottom: false,
       child: ListView(
+        shrinkWrap: widget.fitAuthContent,
         padding: edgeToEdgeScrollPadding(
           context,
           const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -1129,6 +1148,7 @@ class _AccountPageState extends State<AccountPage> {
       top: false,
       bottom: false,
       child: ListView(
+        shrinkWrap: widget.fitAuthContent,
         padding: edgeToEdgeScrollPadding(
           context,
           const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -1202,6 +1222,7 @@ class _AccountPageState extends State<AccountPage> {
       bottom: false,
       child: ListView(
         key: const ValueKey('account-cloud-service-version-gate'),
+        shrinkWrap: widget.fitAuthContent,
         padding: edgeToEdgeScrollPadding(
           context,
           const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -1304,9 +1325,14 @@ class _AccountPageState extends State<AccountPage> {
       top: false,
       bottom: false,
       child: Column(
+        mainAxisSize: widget.fitAuthContent
+            ? MainAxisSize.min
+            : MainAxisSize.max,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 10, 18, 0),
+            padding: widget.fitAuthContent
+                ? const EdgeInsets.fromLTRB(20, 12, 20, 0)
+                : const EdgeInsets.fromLTRB(18, 10, 18, 0),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -1329,22 +1355,28 @@ class _AccountPageState extends State<AccountPage> {
               ],
             ),
           ),
-          const SizedBox(key: Key('account-auth-content-gap'), height: 12),
-          Expanded(
+          SizedBox(
+            key: const Key('account-auth-content-gap'),
+            height: widget.fitAuthContent ? 16 : 12,
+          ),
+          Flexible(
+            fit: widget.fitAuthContent ? FlexFit.loose : FlexFit.tight,
             child: Listener(
               onPointerDown: _onAuthPointerDown,
               onPointerMove: _onAuthPointerMove,
               onPointerUp: _onAuthPointerUp,
               onPointerCancel: _onAuthPointerCancel,
-              child: PageView(
-                key: const Key('account-auth-page-view'),
-                controller: _authPageController,
-                onPageChanged: _onAuthPageChanged,
-                children: [
-                  _buildAuthPage(register: false),
-                  _buildAuthPage(register: true),
-                ],
-              ),
+              child: widget.fitAuthContent
+                  ? _buildAuthPage(register: _registerMode)
+                  : PageView(
+                      key: const Key('account-auth-page-view'),
+                      controller: _authPageController,
+                      onPageChanged: _onAuthPageChanged,
+                      children: [
+                        _buildAuthPage(register: false),
+                        _buildAuthPage(register: true),
+                      ],
+                    ),
             ),
           ),
         ],
@@ -1366,10 +1398,13 @@ class _AccountPageState extends State<AccountPage> {
         key: PageStorageKey(
           register ? 'account-register-page' : 'account-login-page',
         ),
-        padding: edgeToEdgeScrollPadding(
-          context,
-          const EdgeInsets.fromLTRB(18, 8, 18, 28),
-        ),
+        shrinkWrap: widget.fitAuthContent,
+        padding: widget.fitAuthContent
+            ? const EdgeInsets.fromLTRB(20, 0, 20, 16)
+            : edgeToEdgeScrollPadding(
+                context,
+                const EdgeInsets.fromLTRB(18, 8, 18, 28),
+              ),
         children: [
           TextFormField(
             key: ValueKey(
@@ -1474,7 +1509,7 @@ class _AccountPageState extends State<AccountPage> {
             const SizedBox(height: 14),
             _errorBanner(_error!),
           ],
-          const SizedBox(height: 22),
+          SizedBox(height: widget.fitAuthContent ? 16 : 22),
           FilledButton(
             key: ValueKey(
               register
@@ -1574,107 +1609,24 @@ class _AccountPageState extends State<AccountPage> {
     _authSwipeDelta = Offset.zero;
   }
 
-  Widget _authModeSelector() {
-    final palette = context.omniPalette;
-    final isDark = context.isDarkTheme;
-    return Container(
-      key: const Key('account-auth-mode-selector'),
-      height: 38,
-      padding: const EdgeInsets.all(3),
-      decoration: BoxDecoration(
-        color: palette.segmentTrack,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: palette.borderSubtle.withValues(alpha: isDark ? 0.55 : 0.7),
-          width: 0.65,
-        ),
+  Widget _authModeSelector() => OmniSegmentedSlider<bool>(
+    key: const Key('account-auth-mode-selector'),
+    keyPrefix: 'account-auth-mode',
+    value: _registerMode,
+    options: [
+      OmniSegmentedOption(
+        value: false,
+        label: _text('登录', 'Sign in'),
+        id: 'login',
       ),
-      child: Stack(
-        children: [
-          AnimatedAlign(
-            key: const Key('account-auth-mode-thumb-align'),
-            duration: const Duration(milliseconds: 200),
-            curve: Curves.easeOutCubic,
-            alignment: _registerMode
-                ? Alignment.centerRight
-                : Alignment.centerLeft,
-            child: FractionallySizedBox(
-              widthFactor: 0.5,
-              child: Container(
-                key: const Key('account-auth-mode-thumb'),
-                margin: const EdgeInsets.symmetric(horizontal: 1),
-                decoration: BoxDecoration(
-                  color: palette.segmentThumb,
-                  borderRadius: BorderRadius.circular(9.5),
-                  border: Border.all(
-                    color: palette.borderSubtle.withValues(
-                      alpha: isDark ? 0.45 : 0.55,
-                    ),
-                    width: 0.5,
-                  ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: palette.shadowColor.withValues(
-                        alpha: isDark ? 0.16 : 0.04,
-                      ),
-                      blurRadius: 3,
-                      offset: const Offset(0, 1),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-          Row(
-            children: [
-              _authModeButton(_text('登录', 'Sign in'), false),
-              _authModeButton(_text('注册', 'Register'), true),
-            ],
-          ),
-        ],
+      OmniSegmentedOption(
+        value: true,
+        label: _text('注册', 'Register'),
+        id: 'register',
       ),
-    );
-  }
-
-  Widget _authModeButton(String label, bool register) {
-    final palette = context.omniPalette;
-    final selected = _registerMode == register;
-    return Expanded(
-      child: Semantics(
-        button: true,
-        selected: selected,
-        child: GestureDetector(
-          key: ValueKey(
-            register ? 'account-auth-mode-register' : 'account-auth-mode-login',
-          ),
-          behavior: HitTestBehavior.opaque,
-          onTap: () {
-            if (_registerMode != register) {
-              performOmniSelectionHaptic();
-            }
-            _selectAuthMode(register);
-          },
-          child: Center(
-            child: AnimatedScale(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOutCubic,
-              scale: selected ? 1 : 0.97,
-              child: AnimatedDefaultTextStyle(
-                duration: const Duration(milliseconds: 180),
-                curve: Curves.easeOutCubic,
-                style: TextStyle(
-                  color: selected ? palette.textPrimary : palette.textSecondary,
-                  fontSize: 13.5,
-                  fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-                ),
-                child: Text(label),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+    ],
+    onChanged: _selectAuthMode,
+  );
 
   Widget _buildSignedIn(AccountOverview overview) {
     final settings = overview.settings;

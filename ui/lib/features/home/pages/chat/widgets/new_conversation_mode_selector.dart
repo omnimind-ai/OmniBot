@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:ui/widgets/flclash/popup.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -113,6 +114,7 @@ class _NewConversationModeSelectorState
     ];
     final handle = showOverlayGlassPopup<String>(
       context: context,
+      sourceContext: anchorContext,
       anchor: anchor,
       preferBelow: false,
       builder: (handle) => TextFieldTapRegion(
@@ -151,6 +153,7 @@ class _NewConversationModeSelectorState
     onVisibilityChanged?.call(true);
     try {
       final selected = await handle.future;
+      await handle.closed;
       if (!mounted ||
           revision != _presentationRevision ||
           !widget.enabled ||
@@ -190,7 +193,12 @@ class _NewConversationModeSelectorState
         : widget.selectedId;
     final color = widget.enabled ? palette.textSecondary : palette.textTertiary;
     return TextFieldTapRegion(
-      child: Builder(
+      child: FlClashPopupSource(
+        glass: false,
+        color: Colors.transparent,
+        shape: const RoundedRectangleBorder(
+          borderRadius: OmniMenuStyle.rowRadius,
+        ),
         builder: (anchorContext) => Tooltip(
           message: english ? 'Switch Agent mode' : '切换 Agent 模式',
           child: Material(

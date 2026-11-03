@@ -1,6 +1,7 @@
 package cn.com.omnimind.baselib.llm
 
 import cn.com.omnimind.baselib.account.AiAccessMode
+import cn.com.omnimind.baselib.account.AiRequestAccess
 import cn.com.omnimind.baselib.account.OmniAccount
 import cn.com.omnimind.baselib.account.PlatformModel
 import cn.com.omnimind.baselib.account.PlatformModelCatalog
@@ -36,9 +37,14 @@ object OmniOfficialProvider {
     fun shouldExpose(): Boolean =
         OmniAccount.currentAiRequestAccess().mode == AiAccessMode.PLATFORM
 
-    fun profileOrNull(status: PlatformAiProvisioningStatus): ModelProviderProfile? {
-        val access = OmniAccount.currentAiRequestAccess()
-        if (!shouldExpose()) {
+    fun profileOrNull(status: PlatformAiProvisioningStatus): ModelProviderProfile? =
+        profileOrNull(status, OmniAccount.currentAiRequestAccess())
+
+    internal fun profileOrNull(
+        status: PlatformAiProvisioningStatus,
+        access: AiRequestAccess,
+    ): ModelProviderProfile? {
+        if (access.mode != AiAccessMode.PLATFORM) {
             return null
         }
         val ready = access.usesPlatform && status.ready

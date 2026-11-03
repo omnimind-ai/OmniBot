@@ -1,10 +1,9 @@
 package com.rk.terminal.ui.routes
 
 import kotlinx.serialization.Serializable
-import top.yukonga.miuix.kmp.nav.core.NavKey
 
 @Serializable
-sealed interface MainActivityRoutes : NavKey {
+sealed interface MainActivityRoutes {
     @Serializable
     data object Settings : MainActivityRoutes
     @Serializable

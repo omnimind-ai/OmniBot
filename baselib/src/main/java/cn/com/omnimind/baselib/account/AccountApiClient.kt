@@ -22,11 +22,15 @@ private fun secureOfficialHttpClient(): OkHttpClient {
 
 class AccountApiClient(
     baseUrl: String,
-    private val callFactory: Call.Factory = secureOfficialHttpClient(),
+    callFactory: Call.Factory? = null,
     private val gson: Gson = Gson(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     allowInsecureLoopback: Boolean = false,
 ) : AccountRemoteDataSource {
+    private val httpCalls: Call.Factory by lazy {
+        callFactory ?: secureOfficialHttpClient()
+    }
+
     private val normalizedBaseUrl = OfficialEndpointSecurity.normalizeBaseUrl(
         raw = baseUrl,
         label = "baseUrl",
@@ -282,7 +286,7 @@ class AccountApiClient(
     }
 
     private suspend fun execute(request: Request): String = withContext(ioDispatcher) {
-        callFactory.newCall(request).execute().use { response ->
+        httpCalls.newCall(request).execute().use { response ->
             val responseBody = response.body
             if (responseBody != null && responseBody.contentLength() > MAX_RESPONSE_BODY_BYTES) {
                 throw AccountProtocolException("Account server response is too large")

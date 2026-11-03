@@ -133,33 +133,35 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _refreshAgentRuntimeStatus() async {
-    if (!mounted || _isAgentRuntimeStatusLoading) return;
-    setState(() {
-      _isAgentRuntimeStatusLoading = true;
-    });
+    final agentId = _activeAcpAgentId;
+    if (!mounted ||
+        agentId == null ||
+        agentId.isEmpty ||
+        _isAgentRuntimeStatusLoading)
+      return;
+    final generation = _conversationTargetRequestId;
+    setState(() => _isAgentRuntimeStatusLoading = true);
     try {
-      final status = await AgentRuntimeService.status();
-      if (!mounted) return;
-      setState(() {
-        _agentRuntimeStatus = status;
-        _isAgentRuntimeStatusLoading = false;
-      });
+      final status = await AgentRuntimeService.status(agentId: agentId);
+      if (!mounted ||
+          generation != _conversationTargetRequestId ||
+          _activeAcpAgentId != agentId)
+        return;
+      setState(() => _agentRuntimeStatus = status);
       unawaited(_loadAgentCatalog(force: true));
-      if (_activeMode == ChatPageMode.agent) {
+      if (_activeMode == ChatPageMode.agent)
         unawaited(_loadAgentModelOptionsWhenReady());
-      }
     } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _agentRuntimeStatus = AgentRuntimeStatus.disconnected;
-        _isAgentRuntimeStatusLoading = false;
-      });
+      if (!mounted || generation != _conversationTargetRequestId) return;
+      setState(() => _agentRuntimeStatus = AgentRuntimeStatus.disconnected);
+    } finally {
+      if (mounted) setState(() => _isAgentRuntimeStatusLoading = false);
     }
   }
 
   @override
   String? _remoteCodexWorkspaceNameForGreeting() {
-    if (!_agentRuntimeStatus.remoteEnabled) {
+    if (!_activeAgentTargetIsRemote) {
       return null;
     }
     return _remoteCodexLastPathSegment(
@@ -169,7 +171,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _openRemoteCodexWorkspacePicker() async {
-    if (!_agentRuntimeStatus.remoteEnabled) {
+    if (!_activeAgentTargetIsRemote) {
       return;
     }
     CodexRemoteBridgeConfig config;
@@ -215,7 +217,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         remoteBridgeToken: config.remoteBridgeToken,
         remoteCwd: nextCwd,
       );
-      final status = await AgentRuntimeService.status();
+      final status = await AgentRuntimeService.status(
+        agentId: _kRemoteCodexModeAgentId,
+      );
       if (!mounted) return;
       setState(() {
         _agentRuntimeStatus = status;
@@ -258,12 +262,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     _modeState(ChatPageMode.agent).currentConversationId = runtimeId;
 
     try {
-      AgentRuntimeStatus status = _agentRuntimeStatus;
-      if (!status.connected) {
-        status = await AgentRuntimeService.connect();
-      }
       final response = await AgentRuntimeService.loadSession(
         sessionId: threadId,
+        agentId: _kRemoteCodexModeAgentId,
         conversationMode: ConversationMode.agent.storageValue,
       );
       if (!_isConversationTargetRequestCurrent(targetRequestId)) return;
@@ -280,9 +281,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         fallbackThreadId: resolvedThreadId,
         fallbackRuntimeId: runtimeId,
         fallbackConversation: conversation,
-        status: status,
       );
-      this._startRemoteCodexSessionSync(resolvedThreadId);
+      final historySync = _startRemoteCodexSessionSync(resolvedThreadId);
+      if (_messages.isEmpty) {
+        await historySync;
+        if (!_isConversationTargetRequestCurrent(targetRequestId)) return;
+      } else {
+        unawaited(historySync);
+      }
       _rememberRuntimeUiSnapshot(ChatPageMode.agent);
     } catch (error) {
       if (!_isConversationTargetRequestCurrent(targetRequestId)) return;
@@ -328,10 +334,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _loadAgentModelOptionsWhenReady({bool force = false}) async {
-    final currentSourceKey = agentModelSourceKey(_agentRuntimeStatus);
-    final sharedProviderAgent =
-        _usesSharedProviderModel(_activeAcpAgentId) ||
-        _usesSharedProviderModel(_agentRuntimeStatus.activeAgentId);
+    if (_activeAcpAgentId == null) return;
+    final currentSourceKey = _activeAgentModelSourceKey;
+    final sharedProviderAgent = _usesSharedProviderModel(_activeAcpAgentId);
     final hasResolvedEffort =
         _agentReasoningEffortOptions.isEmpty ||
         (_activeAgentReasoningEffort ?? '').trim().isNotEmpty;
@@ -351,28 +356,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       await _loadAgentModelOptions(force: true);
       return;
     }
-    late AgentRuntimeStatus status;
-    try {
-      status = await AgentRuntimeService.status();
-      if (!status.ready) {
-        return;
-      }
-      if (!status.connected) {
-        status = await AgentRuntimeService.connect();
-        unawaited(AgentRuntimeService.listSessions());
-      }
-      _applyRefreshedAgentRuntimeStatus(status);
-    } catch (error) {
-      debugPrint('Prepare Agent model options failed: $error');
-      return;
-    }
-    if (!mounted || !status.connected) {
-      return;
-    }
-    if (status.runtime != 'remote' && !status.remoteEnabled) {
-      await _loadAgentCatalog();
-    }
-    final sourceKey = agentModelSourceKey(status);
+    final sourceKey = _activeAgentModelSourceKey;
     if ((!force &&
             _loadedAgentModelSourceKey == sourceKey &&
             _agentModelOptions.isNotEmpty &&
@@ -415,7 +399,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   Future<void> _loadAgentModelOptions({bool force = false}) async {
-    final statusForRequest = _agentRuntimeStatus;
+    final agentId = _activeAcpAgentId;
+    if (agentId == null) return;
+    final remoteTarget = _activeAgentTargetIsRemote;
     if (_activeAcpAgentId == 'na-cloud') {
       if (!mounted) return;
       setState(() {
@@ -426,11 +412,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         _activeAgentModelId = null;
         _activeAgentReasoningEffort = null;
         _activeAgentCollaborationMode = null;
-        _loadedAgentModelSourceKey = agentModelSourceKey(statusForRequest);
+        _loadedAgentModelSourceKey = _activeAgentModelSourceKey;
       });
       return;
     }
-    final sourceKey = agentModelSourceKey(statusForRequest);
+    final sourceKey = _activeAgentModelSourceKey;
     if (_isAgentModelListLoading && _loadingAgentModelSourceKey == sourceKey) {
       return;
     }
@@ -457,12 +443,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       // terminal IPC round-trip and cannot change that result; doing it
       // before the shared-provider branch made the model card wait for the
       // same slow startup path that it was meant to describe.
-      final configSettings = sharedAgent
+      final configSettings = sharedAgent || !remoteTarget
           ? const _AgentRunSettingsSnapshot()
-          : await _readAgentRunSettingsFromServerConfig();
+          : await _readAgentRunSettingsFromServerConfig(agentId);
       final response = sharedAgent
           ? const <String, dynamic>{}
-          : await AgentRuntimeService.listModelsForStatus(statusForRequest);
+          : remoteTarget
+          ? await AgentRuntimeService.listModels(agentId: agentId)
+          : await _readActiveAcpSessionConfig();
       final models = sharedAgent
           ? await _loadSharedProviderModelIds()
           : extractAcpModelIds(response);
@@ -538,7 +526,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             requestId: requestId,
             activeRequestId: _agentModelListRequestId,
             requestSource: sourceKey,
-            currentSource: agentModelSourceKey(_agentRuntimeStatus),
+            currentSource: _activeAgentModelSourceKey,
           )) {
         return;
       }
@@ -577,7 +565,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             requestId: requestId,
             activeRequestId: _agentModelListRequestId,
             requestSource: sourceKey,
-            currentSource: agentModelSourceKey(_agentRuntimeStatus),
+            currentSource: _activeAgentModelSourceKey,
           )) {
         return;
       }
@@ -597,10 +585,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
   }
 
-  Future<_AgentRunSettingsSnapshot>
-  _readAgentRunSettingsFromServerConfig() async {
+  Future<_AgentRunSettingsSnapshot> _readAgentRunSettingsFromServerConfig(
+    String agentId,
+  ) async {
     try {
-      final response = await AgentRuntimeService.readConfig();
+      final response = await AgentRuntimeService.readConfig(agentId: agentId);
       return _AgentRunSettingsSnapshot(
         modelId: _extractAgentConfigModelId(response),
         reasoningEffort: _extractAgentConfigReasoningEffort(response),
@@ -675,15 +664,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (normalized.isEmpty || normalized.startsWith('/')) {
       return;
     }
-    if (!_agentModelConfigSupported &&
-        _agentRuntimeStatus.runtime != 'remote' &&
-        !_agentRuntimeStatus.remoteEnabled) {
+    if (!_agentModelConfigSupported && !_activeAgentTargetIsRemote) {
       return;
     }
     final sharedSelection = _activeDispatchSceneSelection;
-    final sharedAgent = _usesSharedProviderModel(
-      (_agentRuntimeStatus.activeAgentId ?? _activeAcpAgentId)?.trim(),
-    );
+    final sharedAgent = _usesSharedProviderModel(_activeAcpAgentId?.trim());
     var selectedModelId = normalized;
     try {
       if (sharedAgent) {
@@ -701,7 +686,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           providerProfileId: sharedSelection.providerProfileId,
           modelId: selectedModelId,
         );
-        await AgentRuntimeService.disconnect();
         unawaited(_loadNormalChatModelContext());
       } else {
         await _setAgentConfigOption(configId: 'model', value: normalized);
@@ -819,7 +803,11 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
     await AgentRuntimeService.setSessionConfigOption(
       sessionId: threadId,
-      conversationId: _unboundConfigurationSessions.values.contains(threadId)
+      conversationId:
+          _unboundConfigurationSessions.values.any(
+            (session) =>
+                session.sessionId == threadId && session.agentId == agentId,
+          )
           ? null
           : conversationId,
       agentId: agentId,
@@ -1060,18 +1048,18 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     if (_isAiResponding) {
       return;
     }
+    final generation = _conversationTargetRequestId;
     _inputFocusNode.unfocus();
     _messageController.clear();
     _hideSlashCommandPanel();
-    late AgentRuntimeStatus status;
-    try {
-      status = await _refreshConnectedAgentRuntimeStatus();
-    } catch (error) {
-      if (mounted) {
-        handleAgentError('Agent review 启动失败: $error');
-      }
+    final agentId = _activeAcpAgentId;
+    if (agentId == null) {
+      handleAgentError(
+        formatAgentRuntimeErrorForUser('agent_identity_required: review'),
+      );
       return;
     }
+    final remoteCodex = agentId == _kRemoteCodexModeAgentId;
     final messageIds = addUserMessage('/review');
     final preflightConversationId = _currentConversationId;
     if (preflightConversationId != null) {
@@ -1090,7 +1078,6 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       );
     }
 
-    final remoteCodex = agentModelSourceKey(status) == 'remote';
     int? conversationId = preflightConversationId;
     if (remoteCodex) {
       conversationId = this._ensureRemoteCodexRuntimeForCurrentMessages();
@@ -1138,8 +1125,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
           persistMessages: true,
         );
       }
-      final reviewModel = await _resolveAgentRequestModel(status);
+      final reviewModel = await _resolveAgentRequestModel();
       final response = await AgentRuntimeService.reviewSession(
+        agentId: agentId,
         conversationId: remoteCodex ? null : resolvedConversationId,
         sessionId: _activeAgentThreadId,
         approvalPolicy: _agentPermissionMode.approvalPolicy,
@@ -1311,7 +1299,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   String _agentPreferenceKey(String kind, {int? conversationId}) {
     final source = kind == _kAgentModelPreferenceKey
-        ? '.${agentModelSourceKey(_agentRuntimeStatus)}'
+        ? '.$_activeAgentModelSourceKey'
         : '';
     if (conversationId == null) {
       return '$_kAgentPreferenceStoragePrefix.$kind$source.global';
@@ -1321,7 +1309,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   String _legacyAgentPreferenceKey(String kind, {int? conversationId}) {
     final source = kind == _kAgentModelPreferenceKey
-        ? '.${agentModelSourceKey(_agentRuntimeStatus)}'
+        ? '.$_activeAgentModelSourceKey'
         : '';
     if (conversationId == null) {
       return '$_kLegacyAgentPreferenceStoragePrefix.$kind$source.global';
@@ -1437,9 +1425,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final dispatchModeKey = _modeKey(dispatchMode);
     final dispatchConversationId =
         _currentConversationId ?? dispatchTarget?.conversationId;
-    final dispatchAgentId =
-        (dispatchTarget?.agentId ?? _activeAcpAgentId ?? _kXiaowanAcpAgentId)
-            .trim();
+    final dispatchAgentId = (dispatchTarget?.agentId ?? _activeAcpAgentId ?? '')
+        .trim();
     final dispatchSessionId = _activeAgentThreadId?.trim();
     final dispatchPermissionMode = _agentPermissionMode;
     final dispatchReasoningEffort = _activeAgentReasoningEffort;
@@ -1448,6 +1435,13 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     final dispatchTerminalEnvironment = _buildAgentTerminalEnvironmentPayload();
     final dispatchActiveModel = _activeAgentModelId;
     final dispatchLoadedModelSource = _loadedAgentModelSourceKey;
+    if (dispatchAgentId.isEmpty) {
+      handleAgentError(
+        formatAgentRuntimeErrorForUser('agent_identity_required: prompt'),
+      );
+      return;
+    }
+    final remoteCodex = dispatchAgentId == _kRemoteCodexModeAgentId;
     var dispatchMessages = List<ChatMessageModel>.from(_messages);
     bool isDispatchTargetCurrent() =>
         mounted && dispatchTargetGeneration == _conversationTargetRequestId;
@@ -1456,9 +1450,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     // preparation, or conversation persistence. The chat list can therefore
     // show the selected Agent and an elapsed processing state immediately,
     // without waiting for the first ACP API event.
-    // Admit against the already visible local conversation before asking the
-    // native runtime for status. Provider probes may take several seconds,
-    // but no second local lifecycle is created while they are in flight.
+    // Admit against the already visible conversation before its canonical
+    // session request. Slow runtime startup does not create another run.
     final preflightConversationId = dispatchConversationId;
     if (preflightConversationId != null) {
       _runtimeCoordinator.beginAcpTurn(
@@ -1468,43 +1461,8 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       );
     }
 
-    late AgentRuntimeStatus status;
-    try {
-      status = await _refreshConnectedAgentRuntimeStatus();
-    } catch (error) {
-      if (isDispatchTargetCurrent()) {
-        handleAgentError('Agent 连接失败: $error');
-      }
-      if (preflightConversationId != null) {
-        _runtimeCoordinator.unregisterTask(
-          aiMessageId,
-          conversationId: preflightConversationId,
-          mode: dispatchModeKey,
-        );
-      }
-      return;
-    }
-    // Status probing is asynchronous. If the user switched conversation or
-    // Harness while it was in flight, this logical turn was never admitted to
-    // the target ACP and must not send a prompt there. Release the preflight
-    // reservation so it cannot leave an invisible spinner in the old runtime.
-    if (!isDispatchTargetCurrent()) {
-      if (preflightConversationId != null) {
-        _runtimeCoordinator.unregisterTask(
-          aiMessageId,
-          conversationId: preflightConversationId,
-          mode: dispatchModeKey,
-        );
-      }
-      return;
-    }
-    // Target metadata is authoritative. Runtime status is a shared/global
-    // snapshot and may still describe the previous ACP during a switch.
-    final remoteCodex =
-        dispatchTarget?.isRemoteCodexSessionTarget == true ||
-        dispatchTarget?.agentRuntime?.trim().toLowerCase() == 'remote' ||
-        dispatchAgentId == _kRemoteCodexModeAgentId ||
-        (dispatchTarget == null && agentModelSourceKey(status) == 'remote');
+    // The canonical session request resolves its explicit Conversation owner.
+    // No selected/global runtime preflight exists on this path.
     int? conversationId = dispatchConversationId;
     if (remoteCodex) {
       conversationId = dispatchSessionId == null || dispatchSessionId.isEmpty
@@ -1629,20 +1587,24 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
     try {
       final turnModel = selectAgentRequestModel(
-        status: status,
         overrideModel: modelOverride,
         activeModel: dispatchActiveModel,
         activeModelSourceMatches:
-            dispatchLoadedModelSource == agentModelSourceKey(status),
+            dispatchLoadedModelSource ==
+            (remoteCodex ? 'remote' : 'local-$dispatchAgentId'),
       );
       final acpSessionId = await _prepareAcpSessionForTurn(
         runtimeCoordinator: _runtimeCoordinator,
         taskId: aiMessageId,
         conversationId: resolvedConversationId,
         mode: dispatchModeKey,
+        agentId: dispatchAgentId,
         existingSessionId: dispatchSessionId,
         preparedForFirstPrompt:
-            _unboundConfigurationSessions[dispatchMode] == dispatchSessionId &&
+            _unboundConfigurationSessions[dispatchMode]?.sessionId ==
+                dispatchSessionId &&
+            _unboundConfigurationSessions[dispatchMode]?.agentId ==
+                dispatchAgentId &&
             dispatchSessionId != null,
         isTargetCurrent: isDispatchTargetCurrent,
         model: turnModel,
@@ -1670,7 +1632,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         // The cloud adapter preserves the host's actual user item on reload.
         // Retries may retain a user item while reserving a new prompt id.
         userMessageId: dispatchAgentId == 'na-cloud' ? userMessageId : null,
-        agentId: remoteCodex ? null : dispatchAgentId,
+        agentId: dispatchAgentId,
         text: messageText,
         attachments: attachments,
         approvalPolicy: dispatchPermissionMode.approvalPolicy,
@@ -1768,6 +1730,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
     try {
       await AgentRuntimeService.cancelPrompt(
+        agentId: _activeAcpAgentId,
         conversationId: _isRemoteCodexConfigured() ? null : conversationId,
         sessionId: sessionId,
         promptId: turnId,
@@ -1780,46 +1743,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
     }
   }
 
-  Future<String?> _resolveAgentRequestModel(
-    AgentRuntimeStatus status, {
-    String? overrideModel,
-  }) async {
-    final sourceKey = agentModelSourceKey(status);
+  Future<String?> _resolveAgentRequestModel({String? overrideModel}) async {
+    final sourceKey = _activeAgentModelSourceKey;
     return selectAgentRequestModel(
-      status: status,
       overrideModel: overrideModel,
       activeModel: _activeAgentModelId,
       activeModelSourceMatches: _loadedAgentModelSourceKey == sourceKey,
     );
-  }
-
-  Future<AgentRuntimeStatus> _refreshConnectedAgentRuntimeStatus() async {
-    var status = await AgentRuntimeService.status();
-    if (!status.connected) {
-      status = await AgentRuntimeService.connect();
-    }
-    _applyRefreshedAgentRuntimeStatus(status);
-    return status;
-  }
-
-  void _applyRefreshedAgentRuntimeStatus(AgentRuntimeStatus status) {
-    final sourceChanged =
-        agentModelSourceKey(_agentRuntimeStatus) != agentModelSourceKey(status);
-    if (!mounted) return;
-    setState(() {
-      _agentRuntimeStatus = status;
-      if (status.runtime != 'remote' &&
-          !status.remoteEnabled &&
-          _agentPermissionMode == AgentPermissionMode.autoReview) {
-        _agentPermissionMode = AgentPermissionMode.defaultMode;
-      }
-      if (sourceChanged) {
-        _activeAgentThreadId = null;
-        _activeAgentTurnId = null;
-        _agentModelConfigSupported = false;
-        _agentModelOptions = const <String>[];
-        _agentModelListError = null;
-      }
-    });
   }
 }

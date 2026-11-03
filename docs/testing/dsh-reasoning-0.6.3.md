@@ -1,5 +1,7 @@
 # 0.6.3 — DSH reasoning configuration
 
+> 历史归档：本文记录旧版本 DeepSeek Harness 的验证结果。2026-10-29 起已移除该 Harness 的内置支持及专用验证脚本，以下安装与测试步骤不再适用于当前版本。
+
 Release base: 11a380d72bd1385422c3d8ec9e521a895d22bb8d, the target recorded by the published v0.6.2.3 release. The in-progress remote Codex/WSS changes are outside this release worktree.
 
 ## Reproductions

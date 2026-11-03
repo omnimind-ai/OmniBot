@@ -1,5 +1,7 @@
 # ACP Runtime 最小重构结论
 
+> 历史审阅记录：下文保留各次修改与验收事实。2026-10-29 已删除全局 Agent 选择及宿主 `connect` 入口；当前请求身份规则见 [ACP Harness 适配边界](oob-acp-harness-adapter.zh-CN.md#请求必须携带自身归属)，文中旧连接调用不作为当前操作指南。
+
 > 审阅日期：2026-09-04
 >
 > 当前分支：`codex/release-0.6.1`

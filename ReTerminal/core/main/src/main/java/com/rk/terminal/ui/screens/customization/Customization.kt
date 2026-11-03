@@ -12,8 +12,12 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Icon
@@ -21,6 +25,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -36,7 +41,6 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
 import androidx.palette.graphics.Palette
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import androidx.compose.ui.res.stringResource
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.components.compose.preferences.base.PreferenceLayout
@@ -48,6 +52,7 @@ import com.rk.libcommons.child
 import com.rk.libcommons.createFileIfNot
 import com.rk.libcommons.dpToPx
 import com.rk.settings.Settings
+import com.rk.terminal.ui.components.OmniModalSheet
 import com.rk.terminal.ui.components.SettingsToggle
 import com.rk.terminal.ui.navHosts.horizontal_statusBar
 import com.rk.terminal.ui.navHosts.showStatusBar
@@ -348,18 +353,35 @@ fun Customization(modifier: Modifier = Modifier) {
             val attentionTitle = stringResource(strings.attention)
             val toolbarWarning = stringResource(strings.toolbar_warning)
             val cancelStr = stringResource(strings.cancel)
+            var showToolbarWarning by remember { mutableStateOf(false) }
+            if (showToolbarWarning) {
+                OmniModalSheet(onDismissRequest = { showToolbarWarning = false }) {
+                    Column(modifier = Modifier.padding(24.dp)) {
+                        Text(attentionTitle, style = MaterialTheme.typography.titleLarge)
+                        Spacer(Modifier.height(16.dp))
+                        Text(toolbarWarning, style = MaterialTheme.typography.bodyMedium)
+                        Spacer(Modifier.height(24.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                        ) {
+                            TextButton(onClick = { showToolbarWarning = false }) {
+                                Text(cancelStr)
+                            }
+                            TextButton(onClick = {
+                                Settings.toolbar = false
+                                showToolbar.value = false
+                                showToolbarWarning = false
+                            }) {
+                                Text("OK")
+                            }
+                        }
+                    }
+                }
+            }
             val sideEffect:(Boolean)-> Unit = {
                 if (!it && showToolbar.value){
-                    MaterialAlertDialogBuilder(context).apply {
-                        setTitle(attentionTitle)
-                        setMessage(toolbarWarning)
-                        setPositiveButton("OK"){_,_ ->
-                            Settings.toolbar = it
-                            showToolbar.value = it
-                        }
-                        setNegativeButton(cancelStr,null)
-                        show()
-                    }
+                    showToolbarWarning = true
                 }else{
                     Settings.toolbar = it
                     showToolbar.value = it

@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
@@ -51,6 +52,61 @@ void main() {
         theme.switchTheme.thumbColor!.resolve({WidgetState.selected}),
         theme.colorScheme.onPrimary,
       );
+    }
+  });
+
+  test('direct color overrides preserve every light and dark scheme role', () {
+    for (final (theme, palette, onAccent) in [
+      (AppTheme.lightTheme, OmniThemePalette.light, Colors.white),
+      (AppTheme.darkTheme, OmniThemePalette.dark, const Color(0xFF161616)),
+    ]) {
+      final isDark = theme.brightness == Brightness.dark;
+      // The previous construction generated all roles before overriding them.
+      // ColorScheme equality also checks the generated fixed/error containers,
+      // shadow/scrim and deprecated roles that are intentionally left intact.
+      final previous =
+          ColorScheme.fromSeed(
+            seedColor: palette.accentPrimary,
+            brightness: theme.brightness,
+          ).copyWith(
+            primary: palette.accentPrimary,
+            onPrimary: onAccent,
+            primaryContainer: palette.surfaceElevated,
+            onPrimaryContainer: palette.textPrimary,
+            secondary: palette.textSecondary,
+            onSecondary: palette.surfacePrimary,
+            secondaryContainer: palette.surfaceSecondary,
+            onSecondaryContainer: palette.textPrimary,
+            tertiary: palette.textSecondary,
+            onTertiary: palette.surfacePrimary,
+            tertiaryContainer: palette.surfaceElevated,
+            onTertiaryContainer: palette.textPrimary,
+            error: AppColors.alertRed,
+            onError: Colors.white,
+            surface: palette.surfacePrimary,
+            onSurface: palette.textPrimary,
+            onSurfaceVariant: palette.textSecondary,
+            surfaceBright: palette.surfacePrimary,
+            surfaceDim: palette.surfaceElevated,
+            surfaceContainerLowest: palette.surfacePrimary,
+            surfaceContainerLow: palette.pageBackground,
+            surfaceContainer: palette.surfaceSecondary,
+            surfaceContainerHigh: palette.surfaceElevated,
+            surfaceContainerHighest: palette.surfaceElevated,
+            inverseSurface: isDark
+                ? OmniThemePalette.light.surfacePrimary
+                : OmniThemePalette.dark.surfacePrimary,
+            onInverseSurface: isDark
+                ? OmniThemePalette.light.textPrimary
+                : OmniThemePalette.dark.textPrimary,
+            inversePrimary: isDark
+                ? OmniThemePalette.light.accentPrimary
+                : OmniThemePalette.dark.accentPrimary,
+            outline: palette.borderStrong,
+            outlineVariant: palette.borderSubtle,
+            surfaceTint: Colors.transparent,
+          );
+      expect(theme.colorScheme, previous, reason: '${theme.brightness}');
     }
   });
 

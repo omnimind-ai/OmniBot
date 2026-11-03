@@ -23,7 +23,7 @@ class HostManagedProviderAdaptersTest {
     @Test
     fun `host Responses support follows registered adapter capability rather than agent name`() {
         val supported = listOf(AcpHarnessAdapters.codex, AcpHarnessAdapters.openCode,
-            AcpHarnessAdapters.kimiCode, AcpHarnessAdapters.deepSeekHarness)
+            AcpHarnessAdapters.kimiCode, AcpHarnessAdapters.pi)
         supported.forEach { adapter ->
             assertTrue(AgentConfigAdapterRegistry.supportsHostManagedResponses(adapter))
             AgentConfigAdapterRegistry.map(input(adapter).copy(agentId = "renamed-user-profile"))
@@ -143,32 +143,20 @@ class HostManagedProviderAdaptersTest {
         val config = JsonParser.parseString(AgentConfigAdapterRegistry.launchConfigWrites(
             input, mapping, models, existing,
         ).single().content).asJsonObject
-        val managed = config["provider"].asJsonObject["omnibot"].asJsonObject
+        val managed = config["providers"].asJsonObject["omnibot"].asJsonObject
         val model = managed["models"].asJsonObject[models.single().id].asJsonObject
-        val variant = model["variants"].asJsonObject["high"].asJsonObject
-        listOf(managed["options"].asJsonObject, model["options"].asJsonObject, variant).forEach {
+        val variant = model["variants"].asJsonArray.single().asJsonObject
+        listOf(managed["body"].asJsonObject, model["body"].asJsonObject, variant["body"].asJsonObject).forEach {
             assertFalse(it["store"].asBoolean)
             assertFalse(it.has("previousResponseId"))
             assertFalse(it.has("previous_response_id"))
         }
-        assertEquals("@ai-sdk/openai", managed["npm"].asString)
-        assertEquals("{env:OPENAI_API_KEY}", managed["options"].asJsonObject["apiKey"].asString)
+        assertEquals("@opencode/ai/providers/openai-compatible/responses", managed["package"].asString)
+        assertEquals("{env:OPENAI_API_KEY}", managed["settings"].asJsonObject["apiKey"].asString)
         assertEquals(provider.apiKey, mapping.environment["OPENAI_API_KEY"])
         assertFalse(config.toString().contains(provider.apiKey))
         assertEquals("keep-other", config["provider"].asJsonObject["other"].asJsonObject["options"].asJsonObject["previousResponseId"].asString)
         assertTrue(config["mcp"].asJsonObject.has("files"))
-    }
-
-    @Test
-    fun `DSH sends Responses through official provider patch with environment only grant`() {
-        val input = input(AcpHarnessAdapters.deepSeekHarness)
-        val mapping = AgentConfigAdapterRegistry.map(input)
-        val config = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, models, "").single().content
-        assertEquals(provider.apiKey, mapping.environment["OMNIBOT_DSH_API_KEY"])
-        assertTrue(config.contains("\"api\":\"openai-responses\""))
-        assertTrue(config.contains("\"apiKeyEnv\":\"OMNIBOT_DSH_API_KEY\""))
-        assertTrue(config.contains(provider.baseUrl))
-        assertFalse(config.contains(provider.apiKey))
     }
 
     @Test
@@ -197,22 +185,6 @@ class HostManagedProviderAdaptersTest {
         val onlineWrites = AgentConfigAdapterRegistry.directConfigWrites(online, emptyMap(), models)
         assertTrue(onlineWrites.single { it.path == CODEX_CONFIG_TOML_PATH }.content.contains(provider.baseUrl))
         assertTrue(onlineWrites.none { it.content.contains(provider.apiKey) })
-    }
-
-    @Test
-    fun `DSH preference editing neither requires credentials nor persists an active grant`() {
-        val current = DeepSeekHarnessConfig(reasoningEffort = "high", permissionMode = "read-only")
-        listOf<AgentProviderCredentials?>(null, provider).forEach { credentials ->
-            val updated = deepSeekHarnessConfigFromArgs(
-                args = mapOf("permissionMode" to "workspace-write"), current = current,
-                sharedProvider = credentials, sharedModel = models.single().id,
-            )
-            assertEquals("workspace-write", updated.permissionMode)
-            assertEquals("high", updated.reasoningEffort)
-            assertEquals("", updated.apiKey)
-            assertEquals("", updated.baseUrl)
-            assertFalse(buildDeepSeekHarnessConfigJson(updated).contains(provider.apiKey))
-        }
     }
 
     private fun input(adapter: AcpHarnessAdapter) = AgentProviderMappingInput(

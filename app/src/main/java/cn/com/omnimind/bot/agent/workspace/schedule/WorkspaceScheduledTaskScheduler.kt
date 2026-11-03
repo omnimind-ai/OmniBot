@@ -6,10 +6,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.util.Base64
-import cn.com.omnimind.baselib.database.Conversation
-import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
+import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
+import cn.com.omnimind.bot.webchat.ConversationDomainService
 import cn.com.omnimind.bot.webchat.WebAgentRunBridge
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
@@ -274,36 +274,29 @@ class WorkspaceScheduledTaskScheduler(
                 conversationMode = SUBAGENT_MODE,
                 userMessage = prompt,
                 attachments = emptyList(),
-                cwd = null
+                cwd = null,
+                agentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
             )
         }
         return task
     }
 
     private fun createSubagentRunConversation(task: StoredTask): Long {
-        val now = System.currentTimeMillis()
         val parentConversationId = task.parentConversationId?.trim()?.toLongOrNull()
             ?: task.subagentConversationId?.trim()?.toLongOrNull()
         val parentConversationMode = task.parentConversationMode
             ?.trim()
             ?.ifEmpty { null }
         return runBlocking {
-            DatabaseHelper.insertConversation(
-                Conversation(
-                    id = 0,
-                    title = task.title.ifBlank { "SubAgent 定时任务" },
-                    mode = SUBAGENT_MODE,
-                    parentConversationId = parentConversationId?.takeIf { it > 0L },
-                    parentConversationMode = parentConversationMode,
-                    scheduledTaskId = task.taskId,
-                    summary = null,
-                    status = 0,
-                    lastMessage = null,
-                    messageCount = 0,
-                    createdAt = now,
-                    updatedAt = now
-                )
+            val conversation = ConversationDomainService(appContext).createConversation(
+                title = task.title.ifBlank { "SubAgent 定时任务" },
+                mode = SUBAGENT_MODE,
+                parentConversationId = parentConversationId?.takeIf { it > 0L },
+                parentConversationMode = parentConversationMode,
+                scheduledTaskId = task.taskId,
+                agentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
             )
+            requireNotNull(conversation["id"] as? Number).toLong()
         }
     }
 

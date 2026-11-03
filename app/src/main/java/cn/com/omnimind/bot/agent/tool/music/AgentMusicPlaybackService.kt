@@ -258,18 +258,6 @@ class AgentMusicPlaybackService : Service() {
             return
         }
 
-        if (!requestAudioFocus()) {
-            updateSnapshot(
-                state = AgentMusicPlaybackStateStore.STATE_ERROR,
-                errorMessage = "无法获取音频焦点"
-            )
-            stopInternal(
-                targetState = AgentMusicPlaybackStateStore.STATE_ERROR,
-                errorMessage = "无法获取音频焦点"
-            )
-            return
-        }
-
         currentSource = source
         currentPlaybackTarget = playbackTarget
         currentTitle = title.ifBlank { "音频播放" }
@@ -281,7 +269,9 @@ class AgentMusicPlaybackService : Service() {
         updateMediaSessionMetadata(durationMs = null)
         updateMediaSessionPlaybackState(PlaybackState.STATE_BUFFERING)
         mediaSession?.isActive = true
-        startForeground(NOTIFICATION_ID, buildNotification())
+        if (!prepareForegroundPlayback()) {
+            return
+        }
 
         val player = MediaPlayer().apply {
             setAudioAttributes(
@@ -389,8 +379,7 @@ class AgentMusicPlaybackService : Service() {
 
     private fun resumeInternal() {
         val player = mediaPlayer ?: return
-        if (!requestAudioFocus()) {
-            handlePlaybackError("无法获取音频焦点")
+        if (!prepareForegroundPlayback()) {
             return
         }
 
@@ -410,7 +399,7 @@ class AgentMusicPlaybackService : Service() {
             )
             updateMediaSessionPlaybackState(PlaybackState.STATE_PLAYING)
             startProgressUpdates()
-            startForeground(NOTIFICATION_ID, buildNotification())
+            notificationManager.notify(NOTIFICATION_ID, buildNotification())
         }.onFailure { error ->
             handlePlaybackError("恢复播放失败：${error.message ?: "未知错误"}")
         }
@@ -496,6 +485,23 @@ class AgentMusicPlaybackService : Service() {
         val result = audioManager.requestAudioFocus(request)
         hasAudioFocus = result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
         return hasAudioFocus
+    }
+
+    private fun prepareForegroundPlayback(): Boolean {
+        // Background audio needs an active foreground service before requesting
+        // focus or starting the player, including a user-initiated resume.
+        return runCatching {
+            startForeground(NOTIFICATION_ID, buildNotification())
+            if (!requestAudioFocus()) {
+                handlePlaybackError("无法获取音频焦点，请打开应用后重试")
+                false
+            } else {
+                true
+            }
+        }.getOrElse { error ->
+            handlePlaybackError("无法开始音频播放：${error.message ?: "未知错误"}")
+            false
+        }
     }
 
     private fun abandonAudioFocus() {

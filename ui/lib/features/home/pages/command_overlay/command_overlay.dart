@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:ui/utils/picked_attachment_metadata.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
+import 'package:ui/widgets/settings_ui.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/image_prewarm_cache_service.dart';
@@ -130,7 +132,7 @@ class _CommandOverlayState extends State<CommandOverlay> {
   }
 
   Future<void> _showOpenClawConfigDialog() async {
-    final result = await showDialog<_OpenClawConfigDraft>(
+    final result = await showOmniGlassCardSheet<_OpenClawConfigDraft>(
       context: context,
       useRootNavigator: false,
       builder: (_) => _OpenClawConfigDialog(
@@ -174,10 +176,14 @@ class _CommandOverlayState extends State<CommandOverlay> {
       children: [
         Text('OpenClaw', style: TextStyle(fontSize: 12, color: labelColor)),
         const SizedBox(width: 8),
-        Switch.adaptive(
-          value: _openClawEnabled,
-          onChanged: (value) => _setOpenClawEnabled(value),
-          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        Theme(
+          data: Theme.of(
+            context,
+          ).copyWith(materialTapTargetSize: MaterialTapTargetSize.shrinkWrap),
+          child: OmniSettingsSwitch(
+            value: _openClawEnabled,
+            onToggle: (value) => _setOpenClawEnabled(value),
+          ),
         ),
         const Spacer(),
         TextButton.icon(
@@ -418,7 +424,7 @@ class _CommandOverlayState extends State<CommandOverlay> {
     String? initialMessage,
     List<Map<String, dynamic>> initialAttachments = const [],
   }) {
-    showModalBottomSheet(
+    showOmniGlassBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -881,12 +887,12 @@ class _OpenClawConfigDialogState extends State<_OpenClawConfigDialog> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _close();
+        if (didPop) _baseUrlFocusNode.unfocus();
       },
-      child: AlertDialog(
+      child: OmniGlassAlertDialog(
+        scrollable: true,
         title: const Text('OpenClaw 配置'),
         content: Column(
           mainAxisSize: MainAxisSize.min,

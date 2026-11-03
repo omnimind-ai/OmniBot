@@ -11,11 +11,13 @@ import cn.com.omnimind.baselib.database.DatabaseHelper
 import cn.com.omnimind.bot.agent.AgentConversationContextCompactor
 import cn.com.omnimind.bot.agent.AgentConversationHistoryRepository
 import cn.com.omnimind.bot.agent.AgentConversationHistorySupport
+import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentTextSanitizer
 import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
 import cn.com.omnimind.bot.agent.runtime.NaConversationAccess
 import cn.com.omnimind.bot.agent.runtime.NA_AGENT_ID
+import cn.com.omnimind.bot.agent.runtime.REMOTE_CODEX_AGENT_ID
 
 private const val WEB_CONVERSATION_TITLE_LIMIT = 20
 
@@ -28,10 +30,9 @@ internal data class VisibleConversationActivity(
  * Resolves the immutable Harness owner of one durable conversation.
  *
  * The conversation binding is authoritative. A session binding can recover
- * older ACP conversations that predate it, while the original storage mode is
- * the final migration signal. A canonical Agent row without either binding
- * must resolve deterministically to the default Harness; otherwise whichever
- * Harness happens to be selected in the UI can steal the conversation.
+ * older ACP conversations that predate it. Explicit Xiaowan product modes
+ * retain their identity; other unbound history stays unbound for display.
+ * Request admission requires an owner rather than relabeling that history.
  */
 internal fun resolveConversationHarnessOwner(
     storedMode: String?,
@@ -43,9 +44,7 @@ internal fun resolveConversationHarnessOwner(
     val sessionOwner = sessionAgentId?.trim()?.takeIf { it.isNotEmpty() }
     if (sessionOwner != null) return sessionOwner
     return when (storedMode?.trim()?.lowercase()) {
-        "", "agent", "normal", "acp", "coding" ->
-            AcpAgentProfileStore.DEFAULT_AGENT_ID
-        "codex" -> AcpAgentProfileStore.CODEX_AGENT_ID
+        "normal", "chat_only" -> AcpAgentProfileStore.XIAOWAN_AGENT_ID
         else -> null
     }
 }
@@ -91,6 +90,8 @@ class ConversationDomainService(
         )
     }
 
+    fun retiredAgentIds(): List<String> = acpAgentProfileStore.retiredAgentIds.toList()
+
     fun listWebAgentProfiles(): List<Map<String, Any?>> {
         return acpAgentProfileStore.list().map { profile ->
             linkedMapOf(
@@ -122,14 +123,14 @@ class ConversationDomainService(
                 val rows = DatabaseHelper.getConversationDisplayPage(
                     start, count, includeArchived, archivedOnly, mode?.let(::normalizeConversationMode),
                 )
-                DatabaseHelper.getAgentSessionBindingsByConversationIds(rows.filter { isAgentMode(it.mode) }.map { it.id })
+                DatabaseHelper.getAgentSessionBindingsByConversationIds(rows.filter { hasAcpOwner(it.mode) }.map { it.id })
                     .forEach { agentBindingByConversationId[it.conversationId] = it }
                 rows
             },
         )
         val payloads = conversations.map { conversation ->
             val agentBinding = agentBindingByConversationId[conversation.id]
-            val agentId = if (isAgentMode(conversation.mode)) {
+            val agentId = if (hasAcpOwner(conversation.mode)) {
                 resolveConversationHarnessOwner(
                     storedMode = conversation.mode,
                     sessionAgentId = agentBinding?.let { binding ->
@@ -201,12 +202,12 @@ class ConversationDomainService(
         val owner = naAccess.captureOwner()
         if (!naAccess.canRead(conversationId, owner)) return null
         val conversation = DatabaseHelper.getConversationById(conversationId) ?: return null
-        val agentBinding = if (isAgentMode(conversation.mode)) {
+        val agentBinding = if (hasAcpOwner(conversation.mode)) {
             DatabaseHelper.getAgentSessionBindingByConversationId(conversation.id)
         } else {
             null
         }
-        val agentId = if (isAgentMode(conversation.mode)) {
+        val agentId = if (hasAcpOwner(conversation.mode)) {
             resolveConversationHarnessOwner(
                 storedMode = conversation.mode,
                 sessionAgentId = agentBinding?.let { binding ->
@@ -233,21 +234,31 @@ class ConversationDomainService(
         parentConversationId: Long? = null,
         parentConversationMode: String? = null,
         scheduledTaskId: String? = null,
-        agentId: String? = null
+        agentId: String? = null,
+        archived: Boolean = false,
+        expectedNaOwner: String? = null,
     ): Map<String, Any?> {
         val now = System.currentTimeMillis()
         val normalizedMode = normalizeConversationMode(mode)
         val resolvedAgentId = validateRequestedAgentId(
-            conversationMode = normalizedMode,
+            conversationMode = mode,
             requestedAgentId = agentId
         )
         val naOwner = if (resolvedAgentId == NA_AGENT_ID) {
-            requireNotNull(naAccess.captureOwner()) { "请先登录账号再创建云端会话。" }
-        } else null
+            val owner = requireNotNull(naAccess.captureOwner()) { "请先登录账号再创建云端会话。" }
+            require(expectedNaOwner == null || expectedNaOwner == owner) {
+                "agent_owner_conflict: Cloud account changed before creating the conversation."
+            }
+            owner
+        } else {
+            require(expectedNaOwner == null) { "A cloud account owner is only valid for Na conversations." }
+            null
+        }
         val conversation = Conversation(
             id = 0,
             title = title.ifBlank { "新对话" },
             mode = normalizedMode,
+            isArchived = archived,
             parentConversationId = parentConversationId?.takeIf { it > 0L },
             parentConversationMode = parentConversationMode
                 ?.let(::normalizeConversationMode)
@@ -496,7 +507,8 @@ class ConversationDomainService(
         conversationId: Long,
         conversationMode: String,
         messages: List<Map<String, Any?>>,
-        allowHistoryRemoval: Boolean = false
+        allowHistoryRemoval: Boolean = false,
+        removedMessageIds: List<String>? = null,
     ) {
         check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val normalizedMode = normalizeConversationMode(conversationMode)
@@ -504,7 +516,8 @@ class ConversationDomainService(
             conversationId = conversationId,
             conversationMode = normalizedMode,
             messages = messages,
-            allowHistoryRemoval = allowHistoryRemoval
+            allowHistoryRemoval = allowHistoryRemoval,
+            removedMessageIds = removedMessageIds,
         )
         publishMessagesReplaced(conversationId, normalizedMode)
     }
@@ -611,7 +624,7 @@ class ConversationDomainService(
     ): Map<String, Any?> {
         val normalizedMode = normalizeConversationMode(conversation.mode)
         val resolvedAgentId = agentId
-            ?: if (normalizedMode == AGENT_MODE_STORAGE_VALUE) {
+            ?: if (hasAcpOwner(normalizedMode)) {
                 resolveConversationHarnessOwner(
                     storedMode = conversation.mode,
                     sessionAgentId = null,
@@ -664,20 +677,30 @@ class ConversationDomainService(
         return mode?.trim()?.lowercase() in AGENT_MODE_STORAGE_ALIASES
     }
 
-    private fun validateRequestedAgentId(
+    private fun hasAcpOwner(mode: String?): Boolean = isAgentMode(mode) ||
+        AgentConversationModePolicy.isChatOnlyMode(mode) || AgentConversationModePolicy.isSubagentMode(mode)
+
+    internal fun validateRequestedAgentId(
         conversationMode: String,
         requestedAgentId: String?
     ): String? {
-        val normalizedAgentId = requestedAgentId?.trim()?.takeIf { it.isNotEmpty() }
-            ?: return null
-        require(isAgentMode(conversationMode)) {
-            "agentId is only supported for Agent conversations."
+        val normalizedMode = normalizeConversationMode(conversationMode)
+        if (!hasAcpOwner(normalizedMode)) {
+            require(requestedAgentId.isNullOrBlank()) { "agentId is only supported for ACP conversations." }
+            return null
         }
-        if (normalizeConversationMode(conversationMode) == "normal") {
-            require(normalizedAgentId == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
-                "Xiaowan conversations cannot switch Harness; create a new conversation."
-            }
-        }
+        val resolution = AgentConversationModePolicy.resolveHarness(
+            conversationMode = if (AgentConversationModePolicy.isNormalMode(conversationMode)) conversationMode else normalizedMode,
+            requestedAgentId = requestedAgentId,
+            conversationAgentId = null,
+            sessionAgentId = null,
+            xiaowanAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+        )
+        require(!resolution.hasConflict) { "agent_owner_conflict: This product mode belongs to Xiaowan." }
+        val normalizedAgentId = resolution.agentId
+        // A remote ACP endpoint is an explicit owner, not the current bridge switch.
+        if (normalizedAgentId == REMOTE_CODEX_AGENT_ID) return normalizedAgentId
+        acpAgentProfileStore.requireSupportedAgent(normalizedAgentId)
         val profile = acpAgentProfileStore.list().firstOrNull { it.id == normalizedAgentId }
             ?: throw IllegalArgumentException("Unknown ACP agent: $normalizedAgentId")
         require(profile.enabled) { "ACP agent ${profile.name} is disabled." }

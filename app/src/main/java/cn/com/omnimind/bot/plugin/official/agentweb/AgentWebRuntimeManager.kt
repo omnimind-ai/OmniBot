@@ -6,6 +6,9 @@ import android.net.Uri
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.agent.runtime.AgentDispatchConfiguration
 import cn.com.omnimind.bot.agent.runtime.AgentProviderCredentials
+import cn.com.omnimind.bot.agent.runtime.parseAgentVersion
+import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
+import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.terminal.ReTerminalSessionBridge
 import com.ai.assistance.operit.terminal.TerminalManager
@@ -71,6 +74,7 @@ internal class AgentWebRuntimeManager(
                 provider = provider,
                 model = model,
                 reasoningEffort = reasoningEffort,
+                providerModels = configurationProvider.providerModels(),
             )
         } catch (error: IllegalArgumentException) {
             return@withLock failure(
@@ -103,7 +107,7 @@ internal class AgentWebRuntimeManager(
         }
 
         val commandAvailable = try {
-            gateway.isCommandAvailable(service.commandName)
+            gateway.isRuntimeAvailable(service)
         } catch (error: CancellationException) {
             throw error
         } catch (_: Throwable) {
@@ -113,7 +117,7 @@ internal class AgentWebRuntimeManager(
             return@withLock failure(
                 service,
                 AgentWebResultCode.RUNTIME_MISSING,
-                "The ${service.displayName} runtime is not installed.",
+                "Install or update the ${service.displayName} runtime first.",
             )
         }
 
@@ -240,8 +244,21 @@ internal class AgentWebRuntimeManager(
             }
             val url = AgentWebTranscriptParser.findUrl(service.urlKind, snapshot.transcript)
             if (url != null) {
+                val browserUrl = try {
+                    gateway.prepareBrowserUrl(service, snapshot)
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (_: Throwable) {
+                    null
+                } ?: return failure(
+                    service,
+                    AgentWebResultCode.PAIRING_FAILED,
+                    "Unable to create a browser sign-in link. Try opening the Web UI again.",
+                    running = true,
+                    reused = reused,
+                )
                 val opened = try {
-                    gateway.openBrowser(url)
+                    gateway.openBrowser(browserUrl)
                 } catch (error: CancellationException) {
                     throw error
                 } catch (_: Throwable) {
@@ -393,24 +410,45 @@ internal class AgentWebRuntimeManager(
     }
 }
 
-internal class AndroidAgentWebConfigurationProvider : AgentWebConfigurationProvider {
+internal class AndroidAgentWebConfigurationProvider(context: Context) : AgentWebConfigurationProvider {
+    private val appContext = context.applicationContext
     override fun providerCredentials(): AgentProviderCredentials? =
         AgentDispatchConfiguration.providerCredentials()
 
     override fun modelId(): String? = AgentDispatchConfiguration.modelId()
+
+    override fun providerModels(): List<ProviderModelOption> =
+        AgentDispatchConfiguration.providerProfile()?.let {
+            ModelProviderConfigStore.cachedModels(appContext, it)
+        }.orEmpty()
 }
 
 internal class AndroidAgentWebRuntimeGateway(context: Context) : AgentWebRuntimeGateway {
     private val appContext = context.applicationContext
+    private val openCodePairing = OpenCodeWebPairingClient()
 
-    override suspend fun isCommandAvailable(commandName: String): Boolean {
+    override suspend fun isRuntimeAvailable(service: AgentWebService): Boolean {
+        val commandName = service.commandName
+        val versionProbe = if (service.minimumMajorVersion != null) {
+            " && ${shellQuote(commandName)} --version"
+        } else ""
         val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
-            command = "$MANAGED_NPM_PATH_PREFIX command -v ${shellQuote(commandName)}",
+            command = "$MANAGED_NPM_PATH_PREFIX command -v ${shellQuote(commandName)} >/dev/null$versionProbe",
             executorKey = "agent-web-command-probe-$commandName",
             timeoutMs = 15_000L,
         )
-        return result.isOk && result.exitCode == 0
+        if (!result.isOk || result.exitCode != 0) return false
+        val required = service.minimumMajorVersion ?: return true
+        val major = parseAgentVersion(result.output)?.substringBefore('.')?.toIntOrNull() ?: return false
+        return major >= required
     }
+
+    override suspend fun prepareBrowserUrl(service: AgentWebService, snapshot: AgentWebRuntimeSnapshot): String? =
+        if (service.urlKind == AgentWebUrlKind.OPENCODE) {
+            AgentWebTranscriptParser.findOpenCodeEndpoint(snapshot.transcript)?.let { openCodePairing.createLink(it) }
+        } else {
+            AgentWebTranscriptParser.findUrl(service.urlKind, snapshot.transcript)
+        }
 
     override suspend fun snapshot(sessionId: String): AgentWebRuntimeSnapshot? {
         val session = ReTerminalSessionBridge.getSession(appContext, sessionId) ?: return null
@@ -477,6 +515,7 @@ internal object AgentWebTranscriptParser {
     }
 
     fun findUrl(kind: AgentWebUrlKind, transcript: String): String? {
+        if (kind == AgentWebUrlKind.OPENCODE) return findOpenCodeEndpoint(transcript)?.url
         val clean = ansiEscapeRegex.replace(transcript, "")
         return clean.lineSequence()
             .filter { line -> isReadyLine(kind, line.trimStart()) }
@@ -486,9 +525,23 @@ internal object AgentWebTranscriptParser {
             .lastOrNull()
     }
 
+    fun findOpenCodeEndpoint(transcript: String): OpenCodeWebEndpoint? {
+        val clean = ansiEscapeRegex.replace(transcript, "")
+        val markerEnd = configurationRegex.findAll(clean).lastOrNull()?.range?.last?.plus(1) ?: 0
+        val lines = clean.substring(markerEnd).lineSequence().map(String::trim).toList()
+        val serverLine = lines.indexOfLast { it.startsWith("server listening on ") }
+        if (serverLine < 0) return null
+        val url = lines[serverLine].removePrefix("server listening on ")
+        if (!isOpenCodeLoopbackServerUrl(url)) return null
+        val password = lines.drop(serverLine + 1).firstOrNull { it.startsWith("server password ") }
+            ?.removePrefix("server password ") ?: return null
+        if (!password.matches(Regex("[A-Za-z0-9_-]{16,256}"))) return null
+        return OpenCodeWebEndpoint(url, password)
+    }
+
     private fun isReadyLine(kind: AgentWebUrlKind, line: String): Boolean = when (kind) {
         AgentWebUrlKind.KIMI -> line.startsWith("Local:") || line.startsWith("Kimi server:")
-        AgentWebUrlKind.DEEPSEEK_HARNESS -> line.startsWith("dsh web:")
+        AgentWebUrlKind.OPENCODE -> line.startsWith("server listening on ")
     }
 
     private fun isValid(kind: AgentWebUrlKind, candidate: String): Boolean {
@@ -503,11 +556,7 @@ internal object AgentWebTranscriptParser {
                 val fragment = uri.rawFragment
                 uri.rawQuery == null && fragment?.matches(tokenFragmentRegex) == true
             }
-            AgentWebUrlKind.DEEPSEEK_HARNESS -> {
-                val query = uri.rawQuery
-                uri.rawFragment == null &&
-                    (query == null || query.matches(tokenFragmentRegex))
-            }
+            AgentWebUrlKind.OPENCODE -> isOpenCodeLoopbackServerUrl(candidate)
         }
     }
 

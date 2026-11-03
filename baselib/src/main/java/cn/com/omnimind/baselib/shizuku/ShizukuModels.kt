@@ -2,12 +2,7 @@ package cn.com.omnimind.baselib.shizuku
 
 import kotlinx.serialization.Serializable
 
-@Serializable
-enum class ShizukuBackend {
-    NONE,
-    ADB,
-    ROOT
-}
+typealias ShizukuBackend = cn.com.omnimind.baselib.privileged.PrivilegedBackend
 
 @Serializable
 enum class ShizukuStatusCode {
@@ -50,68 +45,6 @@ data class ShizukuStatus(
             "version" to version,
             "availableActions" to availableActions,
             "message" to message
-        )
-    }
-}
-
-@Serializable
-data class PrivilegedRequest(
-    val requestId: String,
-    val action: String,
-    val arguments: Map<String, String> = emptyMap(),
-    val requiresConfirmation: Boolean = false,
-    val command: String? = null,
-    val timeoutSeconds: Int? = null,
-    val workingDirectory: String? = null,
-    val environment: Map<String, String> = emptyMap(),
-    val sessionId: String? = null,
-)
-
-@Serializable
-data class PrivilegedResult(
-    val requestId: String,
-    val action: String,
-    val success: Boolean,
-    val code: String,
-    val message: String,
-    val backend: ShizukuBackend = ShizukuBackend.NONE,
-    val output: String = "",
-    val stdout: String = "",
-    val stderr: String = "",
-    val transcript: String = "",
-    val exitCode: Int? = null,
-    val requiresConfirmation: Boolean = false,
-    val availableActions: List<String> = emptyList(),
-    val data: Map<String, String> = emptyMap(),
-    val command: String? = null,
-    val timeoutSeconds: Int? = null,
-    val workingDirectory: String? = null,
-    val environment: Map<String, String> = emptyMap(),
-    val sessionId: String? = null,
-    val blockedByPolicy: Boolean = false,
-) {
-    fun toMap(): Map<String, Any?> {
-        return linkedMapOf(
-            "requestId" to requestId,
-            "action" to action,
-            "success" to success,
-            "code" to code,
-            "message" to message,
-            "backend" to backend.name,
-            "output" to output,
-            "stdout" to stdout,
-            "stderr" to stderr,
-            "transcript" to transcript,
-            "exitCode" to exitCode,
-            "requiresConfirmation" to requiresConfirmation,
-            "availableActions" to availableActions,
-            "data" to data,
-            "command" to command,
-            "timeoutSeconds" to timeoutSeconds,
-            "workingDirectory" to workingDirectory,
-            "environment" to environment,
-            "sessionId" to sessionId,
-            "blockedByPolicy" to blockedByPolicy
         )
     }
 }

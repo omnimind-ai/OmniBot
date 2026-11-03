@@ -6,6 +6,7 @@ mixin _ChatPageNewConversationMixin on _ChatPageStateBase {
   @override
   bool get _showNewConversationModeSelector =>
       !_isWorkspaceSurface &&
+      !_isConversationHistoryLoading &&
       !_isFirstUseTourActive &&
       _resolvedThreadTarget?.isNewConversation == true &&
       (_resolvedThreadTarget?.initialMessage?.trim().isEmpty ?? true) &&

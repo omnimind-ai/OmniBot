@@ -1,0 +1,4309 @@
+{
+  "date": "2026-10-29",
+  "baselineCommit": "9844da4c9fb27774911fb9b7f776895c8142b897",
+  "afterSource": "Frozen after snapshot verified against worktree before subsequent concurrent edits; benchmark and deliverable APK predate those edits.",
+  "probeSha256": "6e6a5ef4f3dfd9c57ff444bd5d1445f61e8c8b534bb16e887050482b03e0bade",
+  "device": {
+    "model": "PJD110",
+    "android": "16",
+    "resolution": "1080x2376 override",
+    "densityDpi": 480,
+    "ime": "com.baidu.input_oppo/.ImeService",
+    "displayReportedHz": 120,
+    "batteryTemperatureC": [
+      30.4,
+      30.8
+    ],
+    "thermalStatus": 0
+  },
+  "method": {
+    "native": "debug; no R8",
+    "flutter": [
+      "Profile AOT",
+      "Debug JIT"
+    ],
+    "scenarios": {
+      "empty": "New Xiaowan Agent conversation, zero messages",
+      "history": "Pure chat, all 200 synthetic messages loaded via real history paging"
+    },
+    "measurement": "Warm keyboard. Two warmups discarded per group. Real ADB tap on production TextField. No messages sent.",
+    "timeOrigin": "Flutter PointerDown callback receipt",
+    "frameWindowMs": 800,
+    "frameP95": "Nearest rank per capture; report median of capture P95 values",
+    "frameSum": "Sum of FrameTiming.buildDuration within 800ms; not CPU time, FPS or tap wall time"
+  },
+  "apkArtifacts": {
+    "baseline_profile": {
+      "apkSha256": "272282bccd555e819f28cd6abd5e4043b1294885da64182232e5b6dd341f19ff"
+    },
+    "baseline_debug": {
+      "apkSha256": "98ba3b85d47944a3219cfe8a28a8c2b8ea9d606e5e8e05360c0a77ec0b91fe7a"
+    },
+    "after_profile": {
+      "apkSha256": "bdbcb7222d0c47e7484b2db05e6d9deaddd4b9244ec3d92212527e6d26840bbe"
+    },
+    "after_debug": {
+      "apkSha256": "57c453b3921b32a6fec0dd8817ad09130cb7ff521e06d4f3c0843c3e31cb3ddd"
+    }
+  },
+  "changedDartFiles": [
+    "lib/features/home/pages/chat/chat_page.dart",
+    "lib/features/home/pages/chat/chat_page_lifecycle.dart",
+    "lib/features/home/pages/chat/chat_page_ui.dart",
+    "lib/features/home/pages/chat/widgets/chat_empty_greeting.dart",
+    "lib/features/home/pages/chat/widgets/chat_history_loading_transition.dart",
+    "lib/features/home/pages/chat/widgets/chat_keyboard_layout.dart",
+    "lib/features/home/pages/chat/widgets/chat_message_list.dart",
+    "lib/features/home/pages/chat/widgets/chat_message_viewport.dart",
+    "lib/features/home/pages/chat/widgets/chat_widgets.dart",
+    "lib/features/home/pages/command_overlay/widgets/message_bubble.dart",
+    "lib/features/home/widgets/home_search_header.dart"
+  ],
+  "rawEvidence": {
+    "directory": "build/performance/chat-keyboard/run-20261029",
+    "sha256": {
+      "baseline-results.json": "1418795abb21e7c334b80a91d9dbe980c5d7c5811bb13580fb6879897bd419d7",
+      "after-results.json": "320a4d2cc736def2c4bc755cf10d60068a3e054270960aaeefc7b8db9c484a48",
+      "baseline_repeat-results.json": "7025fee0f265ca415f8925691a51f8c9e87caae2ad9c100f072064ef52bc4e63",
+      "baseline_debug-results.json": "fde564ef2261ef5f9667974967053d4793051abc92c602e365291ab119fe6437",
+      "after_debug-results.json": "707739035086bf02a2b65e54c8dbed495715882ebfbd4edccc893c80c84249c2",
+      "baseline_debug_repeat-results.json": "a4689c56abb92adf7831d0f7a3e170a52b99aed96b9b9b13d7b880e293736b41",
+      "baseline-installed-apk.json": "d10645de8ca9d8b7578edede6ce58ee1dcd9aeb350292de1c93d030a39e3a57f"
+    }
+  },
+  "summary": [
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "samples": 10,
+      "mode": "profile",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "272282bccd555e819f28cd6abd5e4043b1294885da64182232e5b6dd341f19ff",
+        "flutterAotLibrary": true,
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        0
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 3.4515,
+          "p95": 4.667,
+          "min": 0.83,
+          "max": 4.667
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 4.582,
+          "p95": 5.774,
+          "min": 1.289,
+          "max": 5.774
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 78.5815,
+          "p95": 90.42,
+          "min": 74.158,
+          "max": 90.42
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 362.089,
+          "p95": 372.825,
+          "min": 357.001,
+          "max": 372.825
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 362.40250000000003,
+          "p95": 373.188,
+          "min": 357.297,
+          "max": 373.188
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 484.22,
+          "p95": 494.066,
+          "min": 478.541,
+          "max": 494.066
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 644,
+          "median": 2.886,
+          "p95": 3.615,
+          "min": 0.48,
+          "max": 9.363
+        },
+        "rasterUs": {
+          "n": 644,
+          "median": 1.2275,
+          "p95": 3.472,
+          "min": 0.558,
+          "max": 7.323
+        },
+        "totalUs": {
+          "n": 644,
+          "median": 6.45,
+          "p95": 9.076,
+          "min": 2.299,
+          "max": 17.418
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 3.657,
+          "p95": 4.264,
+          "min": 3.168,
+          "max": 4.264
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 3.1605,
+          "p95": 4.1,
+          "min": 1.896,
+          "max": 4.1
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 9.221499999999999,
+          "p95": 10.843,
+          "min": 6.777,
+          "max": 10.843
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 55.0,
+        "p95": 93,
+        "min": 52,
+        "max": 93
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 148.35000000000002,
+          "p95": 214.975,
+          "min": 137.904,
+          "max": 214.975
+        },
+        "raster": {
+          "n": 10,
+          "median": 80.04650000000001,
+          "p95": 166.741,
+          "min": 71.367,
+          "max": 166.741
+        },
+        "total": {
+          "n": 10,
+          "median": 355.6805,
+          "p95": 569.671,
+          "min": 331.218,
+          "max": 569.671
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 71,
+          "sumMs": {
+            "build": 171.53,
+            "raster": 143.536,
+            "total": 479.586
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 54,
+          "sumMs": {
+            "build": 147.483,
+            "raster": 75.46,
+            "total": 344.634
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 55,
+          "sumMs": {
+            "build": 144.744,
+            "raster": 75.827,
+            "total": 343.937
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 93,
+          "sumMs": {
+            "build": 175.468,
+            "raster": 114.807,
+            "total": 439.13
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 54,
+          "sumMs": {
+            "build": 139.312,
+            "raster": 75.868,
+            "total": 336.805
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 64,
+          "sumMs": {
+            "build": 166.034,
+            "raster": 102.846,
+            "total": 415.096
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 54,
+          "sumMs": {
+            "build": 149.217,
+            "raster": 84.159,
+            "total": 366.727
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 52,
+          "sumMs": {
+            "build": 137.904,
+            "raster": 75.934,
+            "total": 331.218
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 92,
+          "sumMs": {
+            "build": 214.975,
+            "raster": 166.741,
+            "total": 569.671
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 55,
+          "sumMs": {
+            "build": 144.859,
+            "raster": 71.367,
+            "total": 339.709
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.0015527950310559005,
+          "16.667": 0.0
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 8.032499999999999,
+        "p95": 12.014,
+        "min": 0.114,
+        "max": 12.014
+      }
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "samples": 10,
+      "mode": "profile",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "272282bccd555e819f28cd6abd5e4043b1294885da64182232e5b6dd341f19ff",
+        "flutterAotLibrary": true,
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        200
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 3.4005,
+          "p95": 4.638,
+          "min": 2.147,
+          "max": 4.638
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 4.461,
+          "p95": 5.613,
+          "min": 2.944,
+          "max": 5.613
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 79.844,
+          "p95": 100.549,
+          "min": 74.708,
+          "max": 100.549
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 362.394,
+          "p95": 379.263,
+          "min": 357.847,
+          "max": 379.263
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 362.731,
+          "p95": 379.645,
+          "min": 358.114,
+          "max": 379.645
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 484.245,
+          "p95": 502.094,
+          "min": 479.602,
+          "max": 502.094
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 485,
+          "median": 3.67,
+          "p95": 5.467,
+          "min": 0.401,
+          "max": 7.777
+        },
+        "rasterUs": {
+          "n": 485,
+          "median": 1.261,
+          "p95": 2.847,
+          "min": 0.628,
+          "max": 4.601
+        },
+        "totalUs": {
+          "n": 485,
+          "median": 7.47,
+          "p95": 10.759,
+          "min": 3.17,
+          "max": 17.689
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 5.135999999999999,
+          "p95": 5.747,
+          "min": 4.352,
+          "max": 5.747
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 2.8535,
+          "p95": 3.279,
+          "min": 2.175,
+          "max": 3.279
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 10.416,
+          "p95": 11.747,
+          "min": 9.13,
+          "max": 11.747
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 49.0,
+        "p95": 54,
+        "min": 41,
+        "max": 54
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 157.09550000000002,
+          "p95": 180.48,
+          "min": 154.392,
+          "max": 180.48
+        },
+        "raster": {
+          "n": 10,
+          "median": 71.864,
+          "p95": 78.292,
+          "min": 65.422,
+          "max": 78.292
+        },
+        "total": {
+          "n": 10,
+          "median": 352.29449999999997,
+          "p95": 410.111,
+          "min": 335.311,
+          "max": 410.111
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 52,
+          "sumMs": {
+            "build": 157.461,
+            "raster": 67.192,
+            "total": 351.315
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 44,
+          "sumMs": {
+            "build": 154.612,
+            "raster": 65.422,
+            "total": 335.311
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 45,
+          "sumMs": {
+            "build": 156.73,
+            "raster": 71.833,
+            "total": 347.565
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 52,
+          "sumMs": {
+            "build": 169.458,
+            "raster": 73.158,
+            "total": 375.439
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 54,
+          "sumMs": {
+            "build": 177.528,
+            "raster": 73.612,
+            "total": 382.913
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 46,
+          "sumMs": {
+            "build": 155.146,
+            "raster": 71.895,
+            "total": 346.791
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 53,
+          "sumMs": {
+            "build": 180.48,
+            "raster": 78.292,
+            "total": 410.111
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 46,
+          "sumMs": {
+            "build": 155.436,
+            "raster": 67.228,
+            "total": 353.274
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 41,
+          "sumMs": {
+            "build": 154.392,
+            "raster": 71.233,
+            "total": 339.782
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 52,
+          "sumMs": {
+            "build": 167.025,
+            "raster": 73.674,
+            "total": 371.21
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 9.411999999999999,
+        "p95": 12.361,
+        "min": 4.386,
+        "max": 12.361
+      }
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "samples": 10,
+      "mode": "profile",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "bdbcb7222d0c47e7484b2db05e6d9deaddd4b9244ec3d92212527e6d26840bbe",
+        "flutterAotLibrary": true,
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        0
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 2.6799999999999997,
+          "p95": 4.207,
+          "min": 1.065,
+          "max": 4.207
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 3.6245000000000003,
+          "p95": 5.165,
+          "min": 1.537,
+          "max": 5.165
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 81.4725,
+          "p95": 90.508,
+          "min": 64.952,
+          "max": 90.508
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 364.544,
+          "p95": 373.449,
+          "min": 348.332,
+          "max": 373.449
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 364.915,
+          "p95": 373.813,
+          "min": 348.688,
+          "max": 373.813
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 486.365,
+          "p95": 494.245,
+          "min": 469.43,
+          "max": 494.245
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 717,
+          "median": 1.599,
+          "p95": 3.007,
+          "min": 0.613,
+          "max": 9.379
+        },
+        "rasterUs": {
+          "n": 717,
+          "median": 1.411,
+          "p95": 3.454,
+          "min": 0.505,
+          "max": 8.248
+        },
+        "totalUs": {
+          "n": 717,
+          "median": 5.697,
+          "p95": 8.688,
+          "min": 2.465,
+          "max": 17.227
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 2.87,
+          "p95": 3.245,
+          "min": 2.65,
+          "max": 3.245
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 2.973,
+          "p95": 3.7,
+          "min": 2.161,
+          "max": 3.7
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 8.517,
+          "p95": 9.335,
+          "min": 7.821,
+          "max": 9.335
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 64.0,
+        "p95": 95,
+        "min": 62,
+        "max": 95
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 110.711,
+          "p95": 165.335,
+          "min": 96.457,
+          "max": 165.335
+        },
+        "raster": {
+          "n": 10,
+          "median": 105.458,
+          "p95": 195.441,
+          "min": 87.288,
+          "max": 195.441
+        },
+        "total": {
+          "n": 10,
+          "median": 369.664,
+          "p95": 580.44,
+          "min": 331.739,
+          "max": 580.44
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 79,
+          "sumMs": {
+            "build": 135.587,
+            "raster": 153.209,
+            "total": 476.549
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 62,
+          "sumMs": {
+            "build": 111.375,
+            "raster": 101.646,
+            "total": 362.892
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 64,
+          "sumMs": {
+            "build": 104.27,
+            "raster": 99.968,
+            "total": 355.442
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 94,
+          "sumMs": {
+            "build": 165.335,
+            "raster": 195.441,
+            "total": 580.44
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 64,
+          "sumMs": {
+            "build": 110.047,
+            "raster": 105.065,
+            "total": 373.16
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 64,
+          "sumMs": {
+            "build": 96.457,
+            "raster": 87.288,
+            "total": 331.739
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 68,
+          "sumMs": {
+            "build": 126.644,
+            "raster": 127.233,
+            "total": 406.991
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 63,
+          "sumMs": {
+            "build": 103.776,
+            "raster": 96.971,
+            "total": 351.061
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 95,
+          "sumMs": {
+            "build": 164.909,
+            "raster": 194.635,
+            "total": 578.468
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 64,
+          "sumMs": {
+            "build": 106.619,
+            "raster": 105.851,
+            "total": 366.168
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.001394700139470014,
+          "16.667": 0.0
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 8.627500000000001,
+        "p95": 12.762,
+        "min": 0.087,
+        "max": 12.762
+      }
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "samples": 10,
+      "mode": "profile",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "bdbcb7222d0c47e7484b2db05e6d9deaddd4b9244ec3d92212527e6d26840bbe",
+        "flutterAotLibrary": true,
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        200
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 3.9210000000000003,
+          "p95": 5.382,
+          "min": 1.726,
+          "max": 5.382
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 4.8105,
+          "p95": 6.498,
+          "min": 2.696,
+          "max": 6.498
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 81.1285,
+          "p95": 98.015,
+          "min": 76.515,
+          "max": 98.015
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 364.1885,
+          "p95": 381.238,
+          "min": 359.383,
+          "max": 381.238
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 364.53200000000004,
+          "p95": 381.597,
+          "min": 359.694,
+          "max": 381.597
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 487.3575,
+          "p95": 505.564,
+          "min": 480.883,
+          "max": 505.564
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 584,
+          "median": 1.766,
+          "p95": 3.243,
+          "min": 0.653,
+          "max": 6.168
+        },
+        "rasterUs": {
+          "n": 584,
+          "median": 1.4565000000000001,
+          "p95": 2.811,
+          "min": 0.711,
+          "max": 4.714
+        },
+        "totalUs": {
+          "n": 584,
+          "median": 6.282,
+          "p95": 9.276,
+          "min": 3.153,
+          "max": 16.756
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 3.505,
+          "p95": 4.495,
+          "min": 3.031,
+          "max": 4.495
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 2.9035,
+          "p95": 3.361,
+          "min": 2.742,
+          "max": 3.361
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 9.396,
+          "p95": 10.069,
+          "min": 8.095,
+          "max": 10.069
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 58.5,
+        "p95": 59,
+        "min": 57,
+        "max": 59
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 110.1155,
+          "p95": 114.597,
+          "min": 97.265,
+          "max": 114.597
+        },
+        "raster": {
+          "n": 10,
+          "median": 95.464,
+          "p95": 102.99,
+          "min": 86.043,
+          "max": 102.99
+        },
+        "total": {
+          "n": 10,
+          "median": 370.3725,
+          "p95": 388.999,
+          "min": 325.876,
+          "max": 388.999
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 59,
+          "sumMs": {
+            "build": 97.265,
+            "raster": 86.043,
+            "total": 325.876
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 58,
+          "sumMs": {
+            "build": 107.965,
+            "raster": 93.956,
+            "total": 355.512
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 58,
+          "sumMs": {
+            "build": 111.767,
+            "raster": 96.231,
+            "total": 371.664
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 58,
+          "sumMs": {
+            "build": 110.197,
+            "raster": 94.697,
+            "total": 370.665
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 57,
+          "sumMs": {
+            "build": 105.304,
+            "raster": 93.466,
+            "total": 361.396
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 59,
+          "sumMs": {
+            "build": 104.59,
+            "raster": 90.731,
+            "total": 350.743
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 58,
+          "sumMs": {
+            "build": 110.034,
+            "raster": 100.327,
+            "total": 370.08
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 59,
+          "sumMs": {
+            "build": 110.407,
+            "raster": 101.336,
+            "total": 374.574
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 59,
+          "sumMs": {
+            "build": 114.597,
+            "raster": 102.99,
+            "total": 388.999
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 59,
+          "sumMs": {
+            "build": 111.631,
+            "raster": 101.476,
+            "total": 375.897
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 8.187999999999999,
+        "p95": 14.555,
+        "min": 5.935,
+        "max": 14.555
+      }
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "empty",
+      "samples": 5,
+      "mode": "profile",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "272282bccd555e819f28cd6abd5e4043b1294885da64182232e5b6dd341f19ff",
+        "flutterAotLibrary": true,
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        0
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 5,
+          "median": 3.932,
+          "p95": 4.701,
+          "min": 3.102,
+          "max": 4.701
+        },
+        "focusMs": {
+          "n": 5,
+          "median": 4.901,
+          "p95": 5.303,
+          "min": 3.927,
+          "max": 5.303
+        },
+        "firstInsetMs": {
+          "n": 5,
+          "median": 86.333,
+          "p95": 93.856,
+          "min": 74.82,
+          "max": 93.856
+        },
+        "firstFinalInsetMs": {
+          "n": 5,
+          "median": 368.852,
+          "p95": 376.087,
+          "min": 357.43,
+          "max": 376.087
+        },
+        "lastInsetMs": {
+          "n": 5,
+          "median": 369.154,
+          "p95": 376.336,
+          "min": 357.726,
+          "max": 376.336
+        },
+        "stableConfirmedMs": {
+          "n": 5,
+          "median": 490.839,
+          "p95": 497.969,
+          "min": 479.044,
+          "max": 497.969
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 312,
+          "median": 2.8655,
+          "p95": 4.033,
+          "min": 0.606,
+          "max": 7.844
+        },
+        "rasterUs": {
+          "n": 312,
+          "median": 1.2995,
+          "p95": 3.412,
+          "min": 0.759,
+          "max": 5.913
+        },
+        "totalUs": {
+          "n": 312,
+          "median": 6.62,
+          "p95": 10.173,
+          "min": 2.703,
+          "max": 17.754
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 5,
+          "median": 3.713,
+          "p95": 4.419,
+          "min": 3.52,
+          "max": 4.419
+        },
+        "rasterUs": {
+          "n": 5,
+          "median": 3.161,
+          "p95": 4.076,
+          "min": 2.881,
+          "max": 4.076
+        },
+        "totalUs": {
+          "n": 5,
+          "median": 10.588,
+          "p95": 10.936,
+          "min": 9.21,
+          "max": 10.936
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 5,
+        "median": 54,
+        "p95": 90,
+        "min": 53,
+        "max": 90
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 5,
+          "median": 147.771,
+          "p95": 210.592,
+          "min": 143.016,
+          "max": 210.592
+        },
+        "raster": {
+          "n": 5,
+          "median": 82.314,
+          "p95": 172.553,
+          "min": 71.37,
+          "max": 172.553
+        },
+        "total": {
+          "n": 5,
+          "median": 367.654,
+          "p95": 595.586,
+          "min": 350.504,
+          "max": 595.586
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 62,
+          "sumMs": {
+            "build": 164.974,
+            "raster": 119.893,
+            "total": 434.992
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 53,
+          "sumMs": {
+            "build": 147.771,
+            "raster": 82.314,
+            "total": 367.654
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 53,
+          "sumMs": {
+            "build": 143.016,
+            "raster": 75.684,
+            "total": 350.504
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 90,
+          "sumMs": {
+            "build": 210.592,
+            "raster": 172.553,
+            "total": 595.586
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 54,
+          "sumMs": {
+            "build": 143.448,
+            "raster": 71.37,
+            "total": 352.193
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 5,
+        "median": 6.881,
+        "p95": 11.141,
+        "min": 4.641,
+        "max": 11.141
+      }
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "history",
+      "samples": 5,
+      "mode": "profile",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "272282bccd555e819f28cd6abd5e4043b1294885da64182232e5b6dd341f19ff",
+        "flutterAotLibrary": true,
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        200
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 5,
+          "median": 3.331,
+          "p95": 4.639,
+          "min": 2.991,
+          "max": 4.639
+        },
+        "focusMs": {
+          "n": 5,
+          "median": 4.307,
+          "p95": 5.515,
+          "min": 3.846,
+          "max": 5.515
+        },
+        "firstInsetMs": {
+          "n": 5,
+          "median": 83.882,
+          "p95": 87.192,
+          "min": 78.834,
+          "max": 87.192
+        },
+        "firstFinalInsetMs": {
+          "n": 5,
+          "median": 366.856,
+          "p95": 370.581,
+          "min": 361.938,
+          "max": 370.581
+        },
+        "lastInsetMs": {
+          "n": 5,
+          "median": 367.098,
+          "p95": 371.008,
+          "min": 362.237,
+          "max": 371.008
+        },
+        "stableConfirmedMs": {
+          "n": 5,
+          "median": 488.453,
+          "p95": 493.368,
+          "min": 483.735,
+          "max": 493.368
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 239,
+          "median": 3.621,
+          "p95": 5.309,
+          "min": 0.645,
+          "max": 7.492
+        },
+        "rasterUs": {
+          "n": 239,
+          "median": 1.235,
+          "p95": 2.855,
+          "min": 0.61,
+          "max": 5.437
+        },
+        "totalUs": {
+          "n": 239,
+          "median": 7.336,
+          "p95": 10.611,
+          "min": 2.982,
+          "max": 15.81
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 5,
+          "median": 5.323,
+          "p95": 5.804,
+          "min": 5.128,
+          "max": 5.804
+        },
+        "rasterUs": {
+          "n": 5,
+          "median": 2.832,
+          "p95": 3.725,
+          "min": 2.527,
+          "max": 3.725
+        },
+        "totalUs": {
+          "n": 5,
+          "median": 10.378,
+          "p95": 11.869,
+          "min": 10.105,
+          "max": 11.869
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 5,
+        "median": 48,
+        "p95": 53,
+        "min": 44,
+        "max": 53
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 5,
+          "median": 154.099,
+          "p95": 170.783,
+          "min": 146.818,
+          "max": 170.783
+        },
+        "raster": {
+          "n": 5,
+          "median": 70.281,
+          "p95": 75.946,
+          "min": 65.128,
+          "max": 75.946
+        },
+        "total": {
+          "n": 5,
+          "median": 347.423,
+          "p95": 378.12,
+          "min": 326.697,
+          "max": 378.12
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 53,
+          "sumMs": {
+            "build": 170.783,
+            "raster": 75.946,
+            "total": 378.12
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 48,
+          "sumMs": {
+            "build": 154.099,
+            "raster": 70.281,
+            "total": 347.423
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 49,
+          "sumMs": {
+            "build": 164.077,
+            "raster": 71.707,
+            "total": 360.949
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 45,
+          "sumMs": {
+            "build": 152.774,
+            "raster": 67.354,
+            "total": 335.896
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 44,
+          "sumMs": {
+            "build": 146.818,
+            "raster": 65.128,
+            "total": 326.697
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 5,
+        "median": 11.781,
+        "p95": 12.992,
+        "min": 5.725,
+        "max": 12.992
+      }
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "samples": 10,
+      "mode": "debug",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "98ba3b85d47944a3219cfe8a28a8c2b8ea9d606e5e8e05360c0a77ec0b91fe7a",
+        "flutterAotLibrary": false,
+        "flutterKernelBlob": true,
+        "flutterBuildMode": "debug",
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        0
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 2.9635,
+          "p95": 4.26,
+          "min": 2.187,
+          "max": 4.26
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 5.529999999999999,
+          "p95": 8.335,
+          "min": 4.527,
+          "max": 8.335
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 127.8015,
+          "p95": 155.63,
+          "min": 91.054,
+          "max": 155.63
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 406.721,
+          "p95": 436.818,
+          "min": 381.891,
+          "max": 436.818
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 407.1625,
+          "p95": 437.091,
+          "min": 382.231,
+          "max": 437.091
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 528.514,
+          "p95": 558.992,
+          "min": 503.745,
+          "max": 558.992
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 366,
+          "median": 9.754999999999999,
+          "p95": 18.325,
+          "min": 1.232,
+          "max": 26.045
+        },
+        "rasterUs": {
+          "n": 366,
+          "median": 1.169,
+          "p95": 3.329,
+          "min": 0.533,
+          "max": 4.323
+        },
+        "totalUs": {
+          "n": 366,
+          "median": 12.915,
+          "p95": 21.717,
+          "min": 3.18,
+          "max": 33.38
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 17.450499999999998,
+          "p95": 19.52,
+          "min": 13.881,
+          "max": 19.52
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 3.3979999999999997,
+          "p95": 3.874,
+          "min": 1.909,
+          "max": 3.874
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 21.282,
+          "p95": 22.943,
+          "min": 16.912,
+          "max": 22.943
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 29.5,
+        "p95": 65,
+        "min": 25,
+        "max": 65
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 315.26599999999996,
+          "p95": 410.39,
+          "min": 286.135,
+          "max": 410.39
+        },
+        "raster": {
+          "n": 10,
+          "median": 41.383,
+          "p95": 125.291,
+          "min": 27.693,
+          "max": 125.291
+        },
+        "total": {
+          "n": 10,
+          "median": 425.3065,
+          "p95": 647.175,
+          "min": 377.817,
+          "max": 647.175
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 30,
+          "sumMs": {
+            "build": 346.266,
+            "raster": 40.801,
+            "total": 440.495
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 33,
+          "sumMs": {
+            "build": 319.007,
+            "raster": 48.653,
+            "total": 433.316
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 25,
+          "sumMs": {
+            "build": 294.808,
+            "raster": 27.693,
+            "total": 377.817
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 63,
+          "sumMs": {
+            "build": 408.941,
+            "raster": 91.844,
+            "total": 590.715
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 27,
+          "sumMs": {
+            "build": 287.471,
+            "raster": 41.965,
+            "total": 395.655
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 29,
+          "sumMs": {
+            "build": 286.135,
+            "raster": 37.538,
+            "total": 395.135
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 38,
+          "sumMs": {
+            "build": 332.606,
+            "raster": 60.485,
+            "total": 474.397
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 27,
+          "sumMs": {
+            "build": 287.556,
+            "raster": 35.208,
+            "total": 391.057
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 65,
+          "sumMs": {
+            "build": 410.39,
+            "raster": 125.291,
+            "total": 647.175
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 29,
+          "sumMs": {
+            "build": 311.525,
+            "raster": 38.373,
+            "total": 417.297
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.5273224043715847,
+          "16.667": 0.10109289617486339
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 7.3629999999999995,
+        "p95": 11.401,
+        "min": 0.258,
+        "max": 11.401
+      }
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "samples": 10,
+      "mode": "debug",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "98ba3b85d47944a3219cfe8a28a8c2b8ea9d606e5e8e05360c0a77ec0b91fe7a",
+        "flutterAotLibrary": false,
+        "flutterKernelBlob": true,
+        "flutterBuildMode": "debug",
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        200
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 2.823,
+          "p95": 3.972,
+          "min": 1.908,
+          "max": 3.972
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 5.2135,
+          "p95": 6.706,
+          "min": 3.579,
+          "max": 6.706
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 112.325,
+          "p95": 140.841,
+          "min": 95.736,
+          "max": 140.841
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 396.773,
+          "p95": 414.312,
+          "min": 382.713,
+          "max": 414.312
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 397.12350000000004,
+          "p95": 414.568,
+          "min": 382.986,
+          "max": 414.568
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 518.7860000000001,
+          "p95": 536.804,
+          "min": 504.946,
+          "max": 536.804
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 285,
+          "median": 12.014,
+          "p95": 18.135,
+          "min": 0.963,
+          "max": 28.254
+        },
+        "rasterUs": {
+          "n": 285,
+          "median": 1.224,
+          "p95": 2.998,
+          "min": 0.566,
+          "max": 4.223
+        },
+        "totalUs": {
+          "n": 285,
+          "median": 16.0,
+          "p95": 23.063,
+          "min": 3.214,
+          "max": 37.494
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 17.793,
+          "p95": 22.378,
+          "min": 16.062,
+          "max": 22.378
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 2.879,
+          "p95": 4.078,
+          "min": 1.63,
+          "max": 4.078
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 22.271,
+          "p95": 27.442,
+          "min": 20.994,
+          "max": 27.442
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 29.0,
+        "p95": 32,
+        "min": 25,
+        "max": 32
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 290.0605,
+          "p95": 315.955,
+          "min": 274.2,
+          "max": 315.955
+        },
+        "raster": {
+          "n": 10,
+          "median": 40.957499999999996,
+          "p95": 54.919,
+          "min": 33.62,
+          "max": 54.919
+        },
+        "total": {
+          "n": 10,
+          "median": 401.185,
+          "p95": 435.107,
+          "min": 372.665,
+          "max": 435.107
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 26,
+          "sumMs": {
+            "build": 315.955,
+            "raster": 42.547,
+            "total": 427.27
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 25,
+          "sumMs": {
+            "build": 294.286,
+            "raster": 34.869,
+            "total": 395.147
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 26,
+          "sumMs": {
+            "build": 288.075,
+            "raster": 35.832,
+            "total": 390.119
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 30,
+          "sumMs": {
+            "build": 283.154,
+            "raster": 39.368,
+            "total": 390.131
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 29,
+          "sumMs": {
+            "build": 292.046,
+            "raster": 43.693,
+            "total": 409.954
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 30,
+          "sumMs": {
+            "build": 302.086,
+            "raster": 46.395,
+            "total": 430.493
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 27,
+          "sumMs": {
+            "build": 274.2,
+            "raster": 33.62,
+            "total": 372.665
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 31,
+          "sumMs": {
+            "build": 285.92,
+            "raster": 46.232,
+            "total": 407.223
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 29,
+          "sumMs": {
+            "build": 276.093,
+            "raster": 34.591,
+            "total": 390.189
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 32,
+          "sumMs": {
+            "build": 295.589,
+            "raster": 54.919,
+            "total": 435.107
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.631578947368421,
+          "16.667": 0.12280701754385964
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 8.636,
+        "p95": 12.784,
+        "min": 4.544,
+        "max": 12.784
+      }
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "samples": 10,
+      "mode": "debug",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "57c453b3921b32a6fec0dd8817ad09130cb7ff521e06d4f3c0843c3e31cb3ddd",
+        "flutterAotLibrary": false,
+        "flutterKernelBlob": true,
+        "flutterBuildMode": "debug",
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        0
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 2.742,
+          "p95": 4.748,
+          "min": 1.668,
+          "max": 4.748
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 5.5135000000000005,
+          "p95": 8.773,
+          "min": 3.467,
+          "max": 8.773
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 99.51050000000001,
+          "p95": 114.112,
+          "min": 71.912,
+          "max": 114.112
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 382.4225,
+          "p95": 397.085,
+          "min": 354.887,
+          "max": 397.085
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 383.068,
+          "p95": 397.537,
+          "min": 355.303,
+          "max": 397.537
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 504.269,
+          "p95": 525.826,
+          "min": 476.677,
+          "max": 525.826
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 547,
+          "median": 4.336,
+          "p95": 11.857,
+          "min": 1.201,
+          "max": 19.999
+        },
+        "rasterUs": {
+          "n": 547,
+          "median": 1.238,
+          "p95": 3.085,
+          "min": 0.515,
+          "max": 5.348
+        },
+        "totalUs": {
+          "n": 547,
+          "median": 7.851,
+          "p95": 15.567,
+          "min": 3.102,
+          "max": 34.988
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 11.3945,
+          "p95": 14.621,
+          "min": 9.494,
+          "max": 14.621
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 2.956,
+          "p95": 3.501,
+          "min": 2.399,
+          "max": 3.501
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 15.4535,
+          "p95": 21.587,
+          "min": 12.279,
+          "max": 21.587
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 48.5,
+        "p95": 79,
+        "min": 44,
+        "max": 79
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 250.2585,
+          "p95": 349.456,
+          "min": 216.76,
+          "max": 349.456
+        },
+        "raster": {
+          "n": 10,
+          "median": 71.06,
+          "p95": 156.167,
+          "min": 61.114,
+          "max": 156.167
+        },
+        "total": {
+          "n": 10,
+          "median": 418.8245,
+          "p95": 649.834,
+          "min": 371.23,
+          "max": 649.834
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 62,
+          "sumMs": {
+            "build": 328.744,
+            "raster": 100.145,
+            "total": 553.025
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 44,
+          "sumMs": {
+            "build": 249.317,
+            "raster": 61.114,
+            "total": 404.791
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 45,
+          "sumMs": {
+            "build": 248.684,
+            "raster": 65.561,
+            "total": 417.617
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 79,
+          "sumMs": {
+            "build": 349.456,
+            "raster": 133.639,
+            "total": 622.63
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 49,
+          "sumMs": {
+            "build": 237.396,
+            "raster": 70.386,
+            "total": 403.845
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 45,
+          "sumMs": {
+            "build": 251.2,
+            "raster": 61.313,
+            "total": 406.579
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 48,
+          "sumMs": {
+            "build": 259.96,
+            "raster": 75.699,
+            "total": 448.075
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 45,
+          "sumMs": {
+            "build": 216.76,
+            "raster": 65.309,
+            "total": 371.23
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 77,
+          "sumMs": {
+            "build": 349.003,
+            "raster": 156.167,
+            "total": 649.834
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 53,
+          "sumMs": {
+            "build": 242.608,
+            "raster": 71.734,
+            "total": 420.032
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.09689213893967093,
+          "16.667": 0.012797074954296161
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 6.8055,
+        "p95": 11.277,
+        "min": 0.328,
+        "max": 11.277
+      }
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "samples": 10,
+      "mode": "debug",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "57c453b3921b32a6fec0dd8817ad09130cb7ff521e06d4f3c0843c3e31cb3ddd",
+        "flutterAotLibrary": false,
+        "flutterKernelBlob": true,
+        "flutterBuildMode": "debug",
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        200
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 10,
+          "median": 2.3564999999999996,
+          "p95": 3.963,
+          "min": 1.621,
+          "max": 3.963
+        },
+        "focusMs": {
+          "n": 10,
+          "median": 4.8515,
+          "p95": 6.849,
+          "min": 3.377,
+          "max": 6.849
+        },
+        "firstInsetMs": {
+          "n": 10,
+          "median": 89.582,
+          "p95": 110.527,
+          "min": 73.27,
+          "max": 110.527
+        },
+        "firstFinalInsetMs": {
+          "n": 10,
+          "median": 375.8675,
+          "p95": 392.164,
+          "min": 355.825,
+          "max": 392.164
+        },
+        "lastInsetMs": {
+          "n": 10,
+          "median": 376.2215,
+          "p95": 392.72,
+          "min": 356.263,
+          "max": 392.72
+        },
+        "stableConfirmedMs": {
+          "n": 10,
+          "median": 498.7175,
+          "p95": 518.211,
+          "min": 477.482,
+          "max": 518.211
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 453,
+          "median": 4.471,
+          "p95": 12.482,
+          "min": 1.169,
+          "max": 19.748
+        },
+        "rasterUs": {
+          "n": 453,
+          "median": 1.233,
+          "p95": 2.681,
+          "min": 0.588,
+          "max": 3.678
+        },
+        "totalUs": {
+          "n": 453,
+          "median": 8.053,
+          "p95": 17.331,
+          "min": 2.852,
+          "max": 24.392
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 10,
+          "median": 12.253,
+          "p95": 13.773,
+          "min": 9.958,
+          "max": 13.773
+        },
+        "rasterUs": {
+          "n": 10,
+          "median": 2.633,
+          "p95": 2.884,
+          "min": 2.246,
+          "max": 2.884
+        },
+        "totalUs": {
+          "n": 10,
+          "median": 16.1225,
+          "p95": 18.017,
+          "min": 14.441,
+          "max": 18.017
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 10,
+        "median": 45.5,
+        "p95": 50,
+        "min": 42,
+        "max": 50
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 10,
+          "median": 228.842,
+          "p95": 272.787,
+          "min": 207.363,
+          "max": 272.787
+        },
+        "raster": {
+          "n": 10,
+          "median": 65.767,
+          "p95": 71.661,
+          "min": 58.618,
+          "max": 71.661
+        },
+        "total": {
+          "n": 10,
+          "median": 400.933,
+          "p95": 436.993,
+          "min": 374.828,
+          "max": 436.993
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 47,
+          "sumMs": {
+            "build": 272.787,
+            "raster": 66.719,
+            "total": 436.993
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 42,
+          "sumMs": {
+            "build": 236.753,
+            "raster": 58.618,
+            "total": 386.088
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 44,
+          "sumMs": {
+            "build": 229.997,
+            "raster": 65.417,
+            "total": 404.143
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 43,
+          "sumMs": {
+            "build": 227.687,
+            "raster": 61.505,
+            "total": 386.057
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 42,
+          "sumMs": {
+            "build": 224.277,
+            "raster": 59.558,
+            "total": 374.828
+          }
+        },
+        {
+          "sample": 5,
+          "frameCount": 45,
+          "sumMs": {
+            "build": 207.363,
+            "raster": 65.2,
+            "total": 376.437
+          }
+        },
+        {
+          "sample": 6,
+          "frameCount": 46,
+          "sumMs": {
+            "build": 231.347,
+            "raster": 66.117,
+            "total": 409.107
+          }
+        },
+        {
+          "sample": 7,
+          "frameCount": 47,
+          "sumMs": {
+            "build": 216.738,
+            "raster": 70.341,
+            "total": 399.735
+          }
+        },
+        {
+          "sample": 8,
+          "frameCount": 47,
+          "sumMs": {
+            "build": 225.416,
+            "raster": 71.661,
+            "total": 402.131
+          }
+        },
+        {
+          "sample": 9,
+          "frameCount": 50,
+          "sumMs": {
+            "build": 234.957,
+            "raster": 69.652,
+            "total": 413.057
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.11479028697571744,
+          "16.667": 0.02207505518763797
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 10,
+        "median": 9.2005,
+        "p95": 13.188,
+        "min": 4.879,
+        "max": 13.188
+      }
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "empty",
+      "samples": 5,
+      "mode": "debug",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "98ba3b85d47944a3219cfe8a28a8c2b8ea9d606e5e8e05360c0a77ec0b91fe7a",
+        "flutterAotLibrary": false,
+        "flutterKernelBlob": true,
+        "flutterBuildMode": "debug",
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        0
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 5,
+          "median": 2.292,
+          "p95": 3.974,
+          "min": 1.473,
+          "max": 3.974
+        },
+        "focusMs": {
+          "n": 5,
+          "median": 4.622,
+          "p95": 6.651,
+          "min": 3.061,
+          "max": 6.651
+        },
+        "firstInsetMs": {
+          "n": 5,
+          "median": 129.499,
+          "p95": 146.878,
+          "min": 98.641,
+          "max": 146.878
+        },
+        "firstFinalInsetMs": {
+          "n": 5,
+          "median": 419.19,
+          "p95": 432.603,
+          "min": 385.853,
+          "max": 432.603
+        },
+        "lastInsetMs": {
+          "n": 5,
+          "median": 419.362,
+          "p95": 432.883,
+          "min": 386.182,
+          "max": 432.883
+        },
+        "stableConfirmedMs": {
+          "n": 5,
+          "median": 540.705,
+          "p95": 554.081,
+          "min": 507.468,
+          "max": 554.081
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 176,
+          "median": 9.468,
+          "p95": 19.863,
+          "min": 0.929,
+          "max": 29.104
+        },
+        "rasterUs": {
+          "n": 176,
+          "median": 1.162,
+          "p95": 3.222,
+          "min": 0.564,
+          "max": 5.424
+        },
+        "totalUs": {
+          "n": 176,
+          "median": 12.157,
+          "p95": 24.359,
+          "min": 2.712,
+          "max": 34.502
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 5,
+          "median": 20.197,
+          "p95": 21.087,
+          "min": 16.854,
+          "max": 21.087
+        },
+        "rasterUs": {
+          "n": 5,
+          "median": 3.078,
+          "p95": 4.063,
+          "min": 1.307,
+          "max": 4.063
+        },
+        "totalUs": {
+          "n": 5,
+          "median": 23.709,
+          "p95": 25.035,
+          "min": 20.888,
+          "max": 25.035
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 5,
+        "median": 31,
+        "p95": 57,
+        "min": 25,
+        "max": 57
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 5,
+          "median": 329.091,
+          "p95": 413.673,
+          "min": 269.961,
+          "max": 413.673
+        },
+        "raster": {
+          "n": 5,
+          "median": 41.259,
+          "p95": 107.295,
+          "min": 27.117,
+          "max": 107.295
+        },
+        "total": {
+          "n": 5,
+          "median": 410.449,
+          "p95": 626.513,
+          "min": 358.926,
+          "max": 626.513
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 37,
+          "sumMs": {
+            "build": 347.845,
+            "raster": 59.814,
+            "total": 478.732
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 26,
+          "sumMs": {
+            "build": 309.122,
+            "raster": 41.259,
+            "total": 410.449
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 25,
+          "sumMs": {
+            "build": 329.091,
+            "raster": 27.117,
+            "total": 401.309
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 57,
+          "sumMs": {
+            "build": 413.673,
+            "raster": 107.295,
+            "total": 626.513
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 31,
+          "sumMs": {
+            "build": 269.961,
+            "raster": 28.562,
+            "total": 358.926
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.5170454545454546,
+          "16.667": 0.14772727272727273
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 5,
+        "median": 6.324,
+        "p95": 9.626,
+        "min": 5.703,
+        "max": 9.626
+      }
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "history",
+      "samples": 5,
+      "mode": "debug",
+      "installedApk": {
+        "package": "cn.com.omnimind.bot.keyboardperf",
+        "sha256": "98ba3b85d47944a3219cfe8a28a8c2b8ea9d606e5e8e05360c0a77ec0b91fe7a",
+        "flutterAotLibrary": false,
+        "flutterKernelBlob": true,
+        "flutterBuildMode": "debug",
+        "nativeDebuggable": true
+      },
+      "loadedMessages": [
+        200
+      ],
+      "refreshRateHz": [
+        120.00000762939453
+      ],
+      "latencyMs": {
+        "pointerUpMs": {
+          "n": 5,
+          "median": 2.353,
+          "p95": 4.244,
+          "min": 1.496,
+          "max": 4.244
+        },
+        "focusMs": {
+          "n": 5,
+          "median": 5.822,
+          "p95": 7.49,
+          "min": 3.26,
+          "max": 7.49
+        },
+        "firstInsetMs": {
+          "n": 5,
+          "median": 132.303,
+          "p95": 154.267,
+          "min": 120.887,
+          "max": 154.267
+        },
+        "firstFinalInsetMs": {
+          "n": 5,
+          "median": 415.607,
+          "p95": 438.167,
+          "min": 403.619,
+          "max": 438.167
+        },
+        "lastInsetMs": {
+          "n": 5,
+          "median": 416.11,
+          "p95": 438.674,
+          "min": 403.863,
+          "max": 438.674
+        },
+        "stableConfirmedMs": {
+          "n": 5,
+          "median": 537.663,
+          "p95": 560.982,
+          "min": 524.972,
+          "max": 560.982
+        }
+      },
+      "framesWindowMs": 800,
+      "framesWindowPotentiallyTruncated": false,
+      "pooledFrameMs": {
+        "buildUs": {
+          "n": 125,
+          "median": 14.297,
+          "p95": 20.208,
+          "min": 0.906,
+          "max": 32.454
+        },
+        "rasterUs": {
+          "n": 125,
+          "median": 1.162,
+          "p95": 2.938,
+          "min": 0.632,
+          "max": 6.592
+        },
+        "totalUs": {
+          "n": 125,
+          "median": 17.964,
+          "p95": 25.342,
+          "min": 3.459,
+          "max": 45.135
+        }
+      },
+      "perSampleFrameP95Ms": {
+        "buildUs": {
+          "n": 5,
+          "median": 19.969,
+          "p95": 21.226,
+          "min": 18.953,
+          "max": 21.226
+        },
+        "rasterUs": {
+          "n": 5,
+          "median": 2.92,
+          "p95": 3.112,
+          "min": 1.433,
+          "max": 3.112
+        },
+        "totalUs": {
+          "n": 5,
+          "median": 24.85,
+          "p95": 29.233,
+          "min": 22.675,
+          "max": 29.233
+        }
+      },
+      "perSampleFrameCount": {
+        "n": 5,
+        "median": 26,
+        "p95": 27,
+        "min": 22,
+        "max": 27
+      },
+      "perSampleFrameSumMs": {
+        "build": {
+          "n": 5,
+          "median": 302.708,
+          "p95": 314.076,
+          "min": 294.409,
+          "max": 314.076
+        },
+        "raster": {
+          "n": 5,
+          "median": 34.971,
+          "p95": 43.118,
+          "min": 29.133,
+          "max": 43.118
+        },
+        "total": {
+          "n": 5,
+          "median": 409.51,
+          "p95": 424.341,
+          "min": 391.842,
+          "max": 424.341
+        }
+      },
+      "frameSamples": [
+        {
+          "sample": 0,
+          "frameCount": 22,
+          "sumMs": {
+            "build": 313.653,
+            "raster": 33.625,
+            "total": 424.341
+          }
+        },
+        {
+          "sample": 1,
+          "frameCount": 24,
+          "sumMs": {
+            "build": 314.076,
+            "raster": 34.971,
+            "total": 409.51
+          }
+        },
+        {
+          "sample": 2,
+          "frameCount": 27,
+          "sumMs": {
+            "build": 294.409,
+            "raster": 35.647,
+            "total": 396.934
+          }
+        },
+        {
+          "sample": 3,
+          "frameCount": 26,
+          "sumMs": {
+            "build": 295.565,
+            "raster": 29.133,
+            "total": 391.842
+          }
+        },
+        {
+          "sample": 4,
+          "frameCount": 26,
+          "sumMs": {
+            "build": 302.708,
+            "raster": 43.118,
+            "total": 423.228
+          }
+        }
+      ],
+      "frameOverThresholdFraction": {
+        "buildUs": {
+          "8.333": 0.696,
+          "16.667": 0.264
+        },
+        "rasterUs": {
+          "8.333": 0.0,
+          "16.667": 0.0
+        }
+      },
+      "firstFrameBuildStartMs": {
+        "n": 5,
+        "median": 7.836,
+        "p95": 8.975,
+        "min": 4.849,
+        "max": 8.975
+      }
+    }
+  ],
+  "captures": [
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 0,
+      "loadedMessages": 0,
+      "focusMs": 4.463,
+      "firstInsetMs": 76.867,
+      "firstFinalInsetMs": 359.758,
+      "frameCount": 71,
+      "uiFrameP95Ms": 4.061,
+      "rasterFrameP95Ms": 4.1,
+      "uiFrameSumMs": 171.53,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 1,
+      "loadedMessages": 0,
+      "focusMs": 5.284,
+      "firstInsetMs": 74.508,
+      "firstFinalInsetMs": 357.549,
+      "frameCount": 54,
+      "uiFrameP95Ms": 3.49,
+      "rasterFrameP95Ms": 2.413,
+      "uiFrameSumMs": 147.483,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 2,
+      "loadedMessages": 0,
+      "focusMs": 5.157,
+      "firstInsetMs": 84.374,
+      "firstFinalInsetMs": 366.401,
+      "frameCount": 55,
+      "uiFrameP95Ms": 3.381,
+      "rasterFrameP95Ms": 3.399,
+      "uiFrameSumMs": 144.744,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 3,
+      "loadedMessages": 0,
+      "focusMs": 1.289,
+      "firstInsetMs": 74.158,
+      "firstFinalInsetMs": 357.001,
+      "frameCount": 93,
+      "uiFrameP95Ms": 3.168,
+      "rasterFrameP95Ms": 1.896,
+      "uiFrameSumMs": 175.468,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 4,
+      "loadedMessages": 0,
+      "focusMs": 4.078,
+      "firstInsetMs": 74.318,
+      "firstFinalInsetMs": 357.528,
+      "frameCount": 54,
+      "uiFrameP95Ms": 3.737,
+      "rasterFrameP95Ms": 3.017,
+      "uiFrameSumMs": 139.312,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 5,
+      "loadedMessages": 0,
+      "focusMs": 4.701,
+      "firstInsetMs": 86.629,
+      "firstFinalInsetMs": 368.758,
+      "frameCount": 64,
+      "uiFrameP95Ms": 3.721,
+      "rasterFrameP95Ms": 3.867,
+      "uiFrameSumMs": 166.034,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 6,
+      "loadedMessages": 0,
+      "focusMs": 3.666,
+      "firstInsetMs": 80.296,
+      "firstFinalInsetMs": 364.42,
+      "frameCount": 54,
+      "uiFrameP95Ms": 4.179,
+      "rasterFrameP95Ms": 2.636,
+      "uiFrameSumMs": 149.217,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 7,
+      "loadedMessages": 0,
+      "focusMs": 5.774,
+      "firstInsetMs": 75.856,
+      "firstFinalInsetMs": 358.425,
+      "frameCount": 52,
+      "uiFrameP95Ms": 4.264,
+      "rasterFrameP95Ms": 3.304,
+      "uiFrameSumMs": 137.904,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 8,
+      "loadedMessages": 0,
+      "focusMs": 3.816,
+      "firstInsetMs": 90.42,
+      "firstFinalInsetMs": 372.825,
+      "frameCount": 92,
+      "uiFrameP95Ms": 3.593,
+      "rasterFrameP95Ms": 3.62,
+      "uiFrameSumMs": 214.975,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "empty",
+      "sample": 9,
+      "loadedMessages": 0,
+      "focusMs": 5.325,
+      "firstInsetMs": 87.092,
+      "firstFinalInsetMs": 370.339,
+      "frameCount": 55,
+      "uiFrameP95Ms": 3.181,
+      "rasterFrameP95Ms": 2.723,
+      "uiFrameSumMs": 144.859,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 0,
+      "loadedMessages": 200,
+      "focusMs": 3.24,
+      "firstInsetMs": 74.708,
+      "firstFinalInsetMs": 357.847,
+      "frameCount": 52,
+      "uiFrameP95Ms": 4.789,
+      "rasterFrameP95Ms": 2.175,
+      "uiFrameSumMs": 157.461,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 1,
+      "loadedMessages": 200,
+      "focusMs": 4.831,
+      "firstInsetMs": 77.575,
+      "firstFinalInsetMs": 360.124,
+      "frameCount": 44,
+      "uiFrameP95Ms": 5.471,
+      "rasterFrameP95Ms": 2.799,
+      "uiFrameSumMs": 154.612,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 2,
+      "loadedMessages": 200,
+      "focusMs": 3.3,
+      "firstInsetMs": 80.95,
+      "firstFinalInsetMs": 363.31,
+      "frameCount": 45,
+      "uiFrameP95Ms": 5.491,
+      "rasterFrameP95Ms": 3.279,
+      "uiFrameSumMs": 156.73,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 3,
+      "loadedMessages": 200,
+      "focusMs": 5.613,
+      "firstInsetMs": 76.128,
+      "firstFinalInsetMs": 358.588,
+      "frameCount": 52,
+      "uiFrameP95Ms": 4.524,
+      "rasterFrameP95Ms": 2.776,
+      "uiFrameSumMs": 169.458,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 4,
+      "loadedMessages": 200,
+      "focusMs": 4.958,
+      "firstInsetMs": 89.327,
+      "firstFinalInsetMs": 367.587,
+      "frameCount": 54,
+      "uiFrameP95Ms": 4.352,
+      "rasterFrameP95Ms": 2.439,
+      "uiFrameSumMs": 177.528,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 5,
+      "loadedMessages": 200,
+      "focusMs": 4.214,
+      "firstInsetMs": 76.645,
+      "firstFinalInsetMs": 359.929,
+      "frameCount": 46,
+      "uiFrameP95Ms": 5.446,
+      "rasterFrameP95Ms": 2.908,
+      "uiFrameSumMs": 155.146,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 6,
+      "loadedMessages": 200,
+      "focusMs": 2.944,
+      "firstInsetMs": 100.549,
+      "firstFinalInsetMs": 378.081,
+      "frameCount": 53,
+      "uiFrameP95Ms": 4.64,
+      "rasterFrameP95Ms": 3.099,
+      "uiFrameSumMs": 180.48,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 7,
+      "loadedMessages": 200,
+      "focusMs": 4.845,
+      "firstInsetMs": 80.084,
+      "firstFinalInsetMs": 362.126,
+      "frameCount": 46,
+      "uiFrameP95Ms": 5.747,
+      "rasterFrameP95Ms": 2.684,
+      "uiFrameSumMs": 155.436,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 8,
+      "loadedMessages": 200,
+      "focusMs": 3.879,
+      "firstInsetMs": 96.551,
+      "firstFinalInsetMs": 379.263,
+      "frameCount": 41,
+      "uiFrameP95Ms": 5.675,
+      "rasterFrameP95Ms": 2.985,
+      "uiFrameSumMs": 154.392,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline",
+      "scenario": "history",
+      "sample": 9,
+      "loadedMessages": 200,
+      "focusMs": 4.708,
+      "firstInsetMs": 79.604,
+      "firstFinalInsetMs": 362.662,
+      "frameCount": 52,
+      "uiFrameP95Ms": 4.826,
+      "rasterFrameP95Ms": 3.213,
+      "uiFrameSumMs": 167.025,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 0,
+      "loadedMessages": 0,
+      "focusMs": 2.644,
+      "firstInsetMs": 82.681,
+      "firstFinalInsetMs": 365.327,
+      "frameCount": 79,
+      "uiFrameP95Ms": 2.899,
+      "rasterFrameP95Ms": 3.667,
+      "uiFrameSumMs": 135.587,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 1,
+      "loadedMessages": 0,
+      "focusMs": 3.601,
+      "firstInsetMs": 79.756,
+      "firstFinalInsetMs": 362.32,
+      "frameCount": 62,
+      "uiFrameP95Ms": 2.716,
+      "rasterFrameP95Ms": 2.66,
+      "uiFrameSumMs": 111.375,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 2,
+      "loadedMessages": 0,
+      "focusMs": 1.537,
+      "firstInsetMs": 75.041,
+      "firstFinalInsetMs": 359.166,
+      "frameCount": 64,
+      "uiFrameP95Ms": 2.728,
+      "rasterFrameP95Ms": 2.633,
+      "uiFrameSumMs": 104.27,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 3,
+      "loadedMessages": 0,
+      "focusMs": 4.41,
+      "firstInsetMs": 86.021,
+      "firstFinalInsetMs": 369.358,
+      "frameCount": 94,
+      "uiFrameP95Ms": 2.87,
+      "rasterFrameP95Ms": 3.7,
+      "uiFrameSumMs": 165.335,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 4,
+      "loadedMessages": 0,
+      "focusMs": 4.186,
+      "firstInsetMs": 76.544,
+      "firstFinalInsetMs": 359.856,
+      "frameCount": 64,
+      "uiFrameP95Ms": 3.245,
+      "rasterFrameP95Ms": 3.041,
+      "uiFrameSumMs": 110.047,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 5,
+      "loadedMessages": 0,
+      "focusMs": 5.165,
+      "firstInsetMs": 90.508,
+      "firstFinalInsetMs": 373.449,
+      "frameCount": 64,
+      "uiFrameP95Ms": 2.65,
+      "rasterFrameP95Ms": 2.161,
+      "uiFrameSumMs": 96.457,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 6,
+      "loadedMessages": 0,
+      "focusMs": 3.367,
+      "firstInsetMs": 84.735,
+      "firstFinalInsetMs": 366.977,
+      "frameCount": 68,
+      "uiFrameP95Ms": 3.176,
+      "rasterFrameP95Ms": 3.233,
+      "uiFrameSumMs": 126.644,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 7,
+      "loadedMessages": 0,
+      "focusMs": 3.051,
+      "firstInsetMs": 81.655,
+      "firstFinalInsetMs": 364.447,
+      "frameCount": 63,
+      "uiFrameP95Ms": 2.669,
+      "rasterFrameP95Ms": 2.904,
+      "uiFrameSumMs": 103.776,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 8,
+      "loadedMessages": 0,
+      "focusMs": 3.648,
+      "firstInsetMs": 64.952,
+      "firstFinalInsetMs": 348.332,
+      "frameCount": 95,
+      "uiFrameP95Ms": 3.074,
+      "rasterFrameP95Ms": 3.674,
+      "uiFrameSumMs": 164.909,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "empty",
+      "sample": 9,
+      "loadedMessages": 0,
+      "focusMs": 4.306,
+      "firstInsetMs": 81.29,
+      "firstFinalInsetMs": 364.641,
+      "frameCount": 64,
+      "uiFrameP95Ms": 2.87,
+      "rasterFrameP95Ms": 2.905,
+      "uiFrameSumMs": 106.619,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 0,
+      "loadedMessages": 200,
+      "focusMs": 3.896,
+      "firstInsetMs": 76.672,
+      "firstFinalInsetMs": 359.533,
+      "frameCount": 59,
+      "uiFrameP95Ms": 3.643,
+      "rasterFrameP95Ms": 2.854,
+      "uiFrameSumMs": 97.265,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 1,
+      "loadedMessages": 200,
+      "focusMs": 6.498,
+      "firstInsetMs": 80.631,
+      "firstFinalInsetMs": 363.779,
+      "frameCount": 58,
+      "uiFrameP95Ms": 3.031,
+      "rasterFrameP95Ms": 3.361,
+      "uiFrameSumMs": 107.965,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 2,
+      "loadedMessages": 200,
+      "focusMs": 5.086,
+      "firstInsetMs": 81.405,
+      "firstFinalInsetMs": 364.597,
+      "frameCount": 58,
+      "uiFrameP95Ms": 3.828,
+      "rasterFrameP95Ms": 2.965,
+      "uiFrameSumMs": 111.767,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 3,
+      "loadedMessages": 200,
+      "focusMs": 2.696,
+      "firstInsetMs": 80.852,
+      "firstFinalInsetMs": 363.844,
+      "frameCount": 58,
+      "uiFrameP95Ms": 3.866,
+      "rasterFrameP95Ms": 2.742,
+      "uiFrameSumMs": 110.197,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 4,
+      "loadedMessages": 200,
+      "focusMs": 4.291,
+      "firstInsetMs": 81.517,
+      "firstFinalInsetMs": 364.533,
+      "frameCount": 57,
+      "uiFrameP95Ms": 4.495,
+      "rasterFrameP95Ms": 2.9,
+      "uiFrameSumMs": 105.304,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 5,
+      "loadedMessages": 200,
+      "focusMs": 5.812,
+      "firstInsetMs": 77.146,
+      "firstFinalInsetMs": 360.248,
+      "frameCount": 59,
+      "uiFrameP95Ms": 3.553,
+      "rasterFrameP95Ms": 2.784,
+      "uiFrameSumMs": 104.59,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 6,
+      "loadedMessages": 200,
+      "focusMs": 4.801,
+      "firstInsetMs": 89.524,
+      "firstFinalInsetMs": 372.4,
+      "frameCount": 58,
+      "uiFrameP95Ms": 3.046,
+      "rasterFrameP95Ms": 2.931,
+      "uiFrameSumMs": 110.034,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 7,
+      "loadedMessages": 200,
+      "focusMs": 4.431,
+      "firstInsetMs": 76.515,
+      "firstFinalInsetMs": 359.383,
+      "frameCount": 59,
+      "uiFrameP95Ms": 3.457,
+      "rasterFrameP95Ms": 3.012,
+      "uiFrameSumMs": 110.407,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 8,
+      "loadedMessages": 200,
+      "focusMs": 6.095,
+      "firstInsetMs": 98.015,
+      "firstFinalInsetMs": 381.238,
+      "frameCount": 59,
+      "uiFrameP95Ms": 3.376,
+      "rasterFrameP95Ms": 2.874,
+      "uiFrameSumMs": 114.597,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after",
+      "scenario": "history",
+      "sample": 9,
+      "loadedMessages": 200,
+      "focusMs": 4.82,
+      "firstInsetMs": 97.181,
+      "firstFinalInsetMs": 380.444,
+      "frameCount": 59,
+      "uiFrameP95Ms": 3.074,
+      "rasterFrameP95Ms": 2.907,
+      "uiFrameSumMs": 111.631,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "empty",
+      "sample": 0,
+      "loadedMessages": 0,
+      "focusMs": 4.242,
+      "firstInsetMs": 74.82,
+      "firstFinalInsetMs": 357.43,
+      "frameCount": 62,
+      "uiFrameP95Ms": 4.419,
+      "rasterFrameP95Ms": 4.076,
+      "uiFrameSumMs": 164.974,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "empty",
+      "sample": 1,
+      "loadedMessages": 0,
+      "focusMs": 3.927,
+      "firstInsetMs": 93.856,
+      "firstFinalInsetMs": 376.087,
+      "frameCount": 53,
+      "uiFrameP95Ms": 3.578,
+      "rasterFrameP95Ms": 2.907,
+      "uiFrameSumMs": 147.771,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "empty",
+      "sample": 2,
+      "loadedMessages": 0,
+      "focusMs": 5.303,
+      "firstInsetMs": 83.749,
+      "firstFinalInsetMs": 365.365,
+      "frameCount": 53,
+      "uiFrameP95Ms": 4.033,
+      "rasterFrameP95Ms": 3.161,
+      "uiFrameSumMs": 143.016,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "empty",
+      "sample": 3,
+      "loadedMessages": 0,
+      "focusMs": 5.056,
+      "firstInsetMs": 90.11,
+      "firstFinalInsetMs": 373.051,
+      "frameCount": 90,
+      "uiFrameP95Ms": 3.713,
+      "rasterFrameP95Ms": 3.435,
+      "uiFrameSumMs": 210.592,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "empty",
+      "sample": 4,
+      "loadedMessages": 0,
+      "focusMs": 4.901,
+      "firstInsetMs": 86.333,
+      "firstFinalInsetMs": 368.852,
+      "frameCount": 54,
+      "uiFrameP95Ms": 3.52,
+      "rasterFrameP95Ms": 2.881,
+      "uiFrameSumMs": 143.448,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "history",
+      "sample": 0,
+      "loadedMessages": 200,
+      "focusMs": 4.266,
+      "firstInsetMs": 87.192,
+      "firstFinalInsetMs": 370.581,
+      "frameCount": 53,
+      "uiFrameP95Ms": 5.128,
+      "rasterFrameP95Ms": 3.2,
+      "uiFrameSumMs": 170.783,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "history",
+      "sample": 1,
+      "loadedMessages": 200,
+      "focusMs": 3.846,
+      "firstInsetMs": 86.276,
+      "firstFinalInsetMs": 368.429,
+      "frameCount": 48,
+      "uiFrameP95Ms": 5.323,
+      "rasterFrameP95Ms": 2.527,
+      "uiFrameSumMs": 154.099,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "history",
+      "sample": 2,
+      "loadedMessages": 200,
+      "focusMs": 4.307,
+      "firstInsetMs": 83.882,
+      "firstFinalInsetMs": 366.856,
+      "frameCount": 49,
+      "uiFrameP95Ms": 5.377,
+      "rasterFrameP95Ms": 2.832,
+      "uiFrameSumMs": 164.077,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "history",
+      "sample": 3,
+      "loadedMessages": 200,
+      "focusMs": 5.482,
+      "firstInsetMs": 82.373,
+      "firstFinalInsetMs": 364.403,
+      "frameCount": 45,
+      "uiFrameP95Ms": 5.804,
+      "rasterFrameP95Ms": 3.725,
+      "uiFrameSumMs": 152.774,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_repeat",
+      "scenario": "history",
+      "sample": 4,
+      "loadedMessages": 200,
+      "focusMs": 5.515,
+      "firstInsetMs": 78.834,
+      "firstFinalInsetMs": 361.938,
+      "frameCount": 44,
+      "uiFrameP95Ms": 5.303,
+      "rasterFrameP95Ms": 2.737,
+      "uiFrameSumMs": 146.818,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 0,
+      "loadedMessages": 0,
+      "focusMs": 4.527,
+      "firstInsetMs": 102.083,
+      "firstFinalInsetMs": 402.108,
+      "frameCount": 30,
+      "uiFrameP95Ms": 18.682,
+      "rasterFrameP95Ms": 3.456,
+      "uiFrameSumMs": 346.266,
+      "uiFramesOver16_667ms": 10
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 1,
+      "loadedMessages": 0,
+      "focusMs": 4.923,
+      "firstInsetMs": 91.054,
+      "firstFinalInsetMs": 381.891,
+      "frameCount": 33,
+      "uiFrameP95Ms": 18.883,
+      "rasterFrameP95Ms": 2.377,
+      "uiFrameSumMs": 319.007,
+      "uiFramesOver16_667ms": 6
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 2,
+      "loadedMessages": 0,
+      "focusMs": 8.335,
+      "firstInsetMs": 127.789,
+      "firstFinalInsetMs": 414.613,
+      "frameCount": 25,
+      "uiFrameP95Ms": 19.52,
+      "rasterFrameP95Ms": 1.909,
+      "uiFrameSumMs": 294.808,
+      "uiFramesOver16_667ms": 5
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 3,
+      "loadedMessages": 0,
+      "focusMs": 6.964,
+      "firstInsetMs": 147.814,
+      "firstFinalInsetMs": 431.74,
+      "frameCount": 63,
+      "uiFrameP95Ms": 17.716,
+      "rasterFrameP95Ms": 2.498,
+      "uiFrameSumMs": 408.941,
+      "uiFramesOver16_667ms": 4
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 4,
+      "loadedMessages": 0,
+      "focusMs": 4.535,
+      "firstInsetMs": 109.142,
+      "firstFinalInsetMs": 402.383,
+      "frameCount": 27,
+      "uiFrameP95Ms": 17.185,
+      "rasterFrameP95Ms": 3.34,
+      "uiFrameSumMs": 287.471,
+      "uiFramesOver16_667ms": 4
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 5,
+      "loadedMessages": 0,
+      "focusMs": 6.197,
+      "firstInsetMs": 143.572,
+      "firstFinalInsetMs": 404.252,
+      "frameCount": 29,
+      "uiFrameP95Ms": 17.897,
+      "rasterFrameP95Ms": 3.578,
+      "uiFrameSumMs": 286.135,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 6,
+      "loadedMessages": 0,
+      "focusMs": 5.377,
+      "firstInsetMs": 114.374,
+      "firstFinalInsetMs": 405.466,
+      "frameCount": 38,
+      "uiFrameP95Ms": 16.0,
+      "rasterFrameP95Ms": 3.471,
+      "uiFrameSumMs": 332.606,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 7,
+      "loadedMessages": 0,
+      "focusMs": 5.683,
+      "firstInsetMs": 155.63,
+      "firstFinalInsetMs": 436.818,
+      "frameCount": 27,
+      "uiFrameP95Ms": 16.936,
+      "rasterFrameP95Ms": 3.602,
+      "uiFrameSumMs": 287.556,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 8,
+      "loadedMessages": 0,
+      "focusMs": 4.669,
+      "firstInsetMs": 127.814,
+      "firstFinalInsetMs": 407.976,
+      "frameCount": 65,
+      "uiFrameP95Ms": 13.881,
+      "rasterFrameP95Ms": 3.874,
+      "uiFrameSumMs": 410.39,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "empty",
+      "sample": 9,
+      "loadedMessages": 0,
+      "focusMs": 6.224,
+      "firstInsetMs": 138.856,
+      "firstFinalInsetMs": 428.775,
+      "frameCount": 29,
+      "uiFrameP95Ms": 15.061,
+      "rasterFrameP95Ms": 3.038,
+      "uiFrameSumMs": 311.525,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 0,
+      "loadedMessages": 200,
+      "focusMs": 5.17,
+      "firstInsetMs": 140.841,
+      "firstFinalInsetMs": 412.263,
+      "frameCount": 26,
+      "uiFrameP95Ms": 20.028,
+      "rasterFrameP95Ms": 3.279,
+      "uiFrameSumMs": 315.955,
+      "uiFramesOver16_667ms": 7
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 1,
+      "loadedMessages": 200,
+      "focusMs": 5.257,
+      "firstInsetMs": 131.898,
+      "firstFinalInsetMs": 414.312,
+      "frameCount": 25,
+      "uiFrameP95Ms": 22.378,
+      "rasterFrameP95Ms": 2.61,
+      "uiFrameSumMs": 294.286,
+      "uiFramesOver16_667ms": 5
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 2,
+      "loadedMessages": 200,
+      "focusMs": 6.706,
+      "firstInsetMs": 126.349,
+      "firstFinalInsetMs": 400.294,
+      "frameCount": 26,
+      "uiFrameP95Ms": 18.545,
+      "rasterFrameP95Ms": 3.16,
+      "uiFrameSumMs": 288.075,
+      "uiFramesOver16_667ms": 3
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 3,
+      "loadedMessages": 200,
+      "focusMs": 4.808,
+      "firstInsetMs": 113.241,
+      "firstFinalInsetMs": 386.529,
+      "frameCount": 30,
+      "uiFrameP95Ms": 18.046,
+      "rasterFrameP95Ms": 2.934,
+      "uiFrameSumMs": 283.154,
+      "uiFramesOver16_667ms": 3
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 4,
+      "loadedMessages": 200,
+      "focusMs": 5.553,
+      "firstInsetMs": 99.572,
+      "firstFinalInsetMs": 393.249,
+      "frameCount": 29,
+      "uiFrameP95Ms": 17.552,
+      "rasterFrameP95Ms": 2.687,
+      "uiFrameSumMs": 292.046,
+      "uiFramesOver16_667ms": 5
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 5,
+      "loadedMessages": 200,
+      "focusMs": 3.579,
+      "firstInsetMs": 120.205,
+      "firstFinalInsetMs": 407.25,
+      "frameCount": 30,
+      "uiFrameP95Ms": 16.888,
+      "rasterFrameP95Ms": 3.263,
+      "uiFrameSumMs": 302.086,
+      "uiFramesOver16_667ms": 3
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 6,
+      "loadedMessages": 200,
+      "focusMs": 6.093,
+      "firstInsetMs": 102.099,
+      "firstFinalInsetMs": 394.773,
+      "frameCount": 27,
+      "uiFrameP95Ms": 17.546,
+      "rasterFrameP95Ms": 1.679,
+      "uiFrameSumMs": 274.2,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 7,
+      "loadedMessages": 200,
+      "focusMs": 6.285,
+      "firstInsetMs": 95.736,
+      "firstFinalInsetMs": 382.713,
+      "frameCount": 31,
+      "uiFrameP95Ms": 18.034,
+      "rasterFrameP95Ms": 2.824,
+      "uiFrameSumMs": 285.92,
+      "uiFramesOver16_667ms": 4
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 8,
+      "loadedMessages": 200,
+      "focusMs": 4.191,
+      "firstInsetMs": 111.007,
+      "firstFinalInsetMs": 393.346,
+      "frameCount": 29,
+      "uiFrameP95Ms": 16.062,
+      "rasterFrameP95Ms": 1.63,
+      "uiFrameSumMs": 276.093,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "baseline_debug",
+      "scenario": "history",
+      "sample": 9,
+      "loadedMessages": 200,
+      "focusMs": 4.378,
+      "firstInsetMs": 111.409,
+      "firstFinalInsetMs": 398.773,
+      "frameCount": 32,
+      "uiFrameP95Ms": 17.154,
+      "rasterFrameP95Ms": 4.078,
+      "uiFrameSumMs": 295.589,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 0,
+      "loadedMessages": 0,
+      "focusMs": 4.501,
+      "firstInsetMs": 102.401,
+      "firstFinalInsetMs": 387.421,
+      "frameCount": 62,
+      "uiFrameP95Ms": 11.424,
+      "rasterFrameP95Ms": 3.03,
+      "uiFrameSumMs": 328.744,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 1,
+      "loadedMessages": 0,
+      "focusMs": 3.871,
+      "firstInsetMs": 101.385,
+      "firstFinalInsetMs": 384.274,
+      "frameCount": 44,
+      "uiFrameP95Ms": 12.012,
+      "rasterFrameP95Ms": 3.213,
+      "uiFrameSumMs": 249.317,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 2,
+      "loadedMessages": 0,
+      "focusMs": 8.773,
+      "firstInsetMs": 102.873,
+      "firstFinalInsetMs": 384.763,
+      "frameCount": 45,
+      "uiFrameP95Ms": 14.621,
+      "rasterFrameP95Ms": 3.018,
+      "uiFrameSumMs": 248.684,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 3,
+      "loadedMessages": 0,
+      "focusMs": 3.884,
+      "firstInsetMs": 95.265,
+      "firstFinalInsetMs": 378.383,
+      "frameCount": 79,
+      "uiFrameP95Ms": 10.174,
+      "rasterFrameP95Ms": 3.211,
+      "uiFrameSumMs": 349.456,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 4,
+      "loadedMessages": 0,
+      "focusMs": 7.036,
+      "firstInsetMs": 89.975,
+      "firstFinalInsetMs": 372.928,
+      "frameCount": 49,
+      "uiFrameP95Ms": 10.541,
+      "rasterFrameP95Ms": 2.894,
+      "uiFrameSumMs": 237.396,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 5,
+      "loadedMessages": 0,
+      "focusMs": 5.93,
+      "firstInsetMs": 93.041,
+      "firstFinalInsetMs": 380.416,
+      "frameCount": 45,
+      "uiFrameP95Ms": 13.837,
+      "rasterFrameP95Ms": 2.522,
+      "uiFrameSumMs": 251.2,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 6,
+      "loadedMessages": 0,
+      "focusMs": 7.013,
+      "firstInsetMs": 114.112,
+      "firstFinalInsetMs": 397.085,
+      "frameCount": 48,
+      "uiFrameP95Ms": 11.548,
+      "rasterFrameP95Ms": 2.864,
+      "uiFrameSumMs": 259.96,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 7,
+      "loadedMessages": 0,
+      "focusMs": 3.467,
+      "firstInsetMs": 71.912,
+      "firstFinalInsetMs": 354.887,
+      "frameCount": 45,
+      "uiFrameP95Ms": 9.494,
+      "rasterFrameP95Ms": 2.718,
+      "uiFrameSumMs": 216.76,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 8,
+      "loadedMessages": 0,
+      "focusMs": 5.846,
+      "firstInsetMs": 108.25,
+      "firstFinalInsetMs": 391.285,
+      "frameCount": 77,
+      "uiFrameP95Ms": 11.365,
+      "rasterFrameP95Ms": 3.501,
+      "uiFrameSumMs": 349.003,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "empty",
+      "sample": 9,
+      "loadedMessages": 0,
+      "focusMs": 5.181,
+      "firstInsetMs": 97.636,
+      "firstFinalInsetMs": 380.571,
+      "frameCount": 53,
+      "uiFrameP95Ms": 10.353,
+      "rasterFrameP95Ms": 2.399,
+      "uiFrameSumMs": 242.608,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 0,
+      "loadedMessages": 200,
+      "focusMs": 3.377,
+      "firstInsetMs": 110.527,
+      "firstFinalInsetMs": 387.647,
+      "frameCount": 47,
+      "uiFrameP95Ms": 13.093,
+      "rasterFrameP95Ms": 2.765,
+      "uiFrameSumMs": 272.787,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 1,
+      "loadedMessages": 200,
+      "focusMs": 4.621,
+      "firstInsetMs": 83.224,
+      "firstFinalInsetMs": 365.564,
+      "frameCount": 42,
+      "uiFrameP95Ms": 13.773,
+      "rasterFrameP95Ms": 2.246,
+      "uiFrameSumMs": 236.753,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 2,
+      "loadedMessages": 200,
+      "focusMs": 6.849,
+      "firstInsetMs": 104.475,
+      "firstFinalInsetMs": 386.807,
+      "frameCount": 44,
+      "uiFrameP95Ms": 12.024,
+      "rasterFrameP95Ms": 2.884,
+      "uiFrameSumMs": 229.997,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 3,
+      "loadedMessages": 200,
+      "focusMs": 5.665,
+      "firstInsetMs": 83.084,
+      "firstFinalInsetMs": 366.633,
+      "frameCount": 43,
+      "uiFrameP95Ms": 11.827,
+      "rasterFrameP95Ms": 2.318,
+      "uiFrameSumMs": 227.687,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 4,
+      "loadedMessages": 200,
+      "focusMs": 5.041,
+      "firstInsetMs": 82.773,
+      "firstFinalInsetMs": 370.5,
+      "frameCount": 42,
+      "uiFrameP95Ms": 13.139,
+      "rasterFrameP95Ms": 2.777,
+      "uiFrameSumMs": 224.277,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 5,
+      "loadedMessages": 200,
+      "focusMs": 3.682,
+      "firstInsetMs": 73.314,
+      "firstFinalInsetMs": 356.095,
+      "frameCount": 45,
+      "uiFrameP95Ms": 9.958,
+      "rasterFrameP95Ms": 2.666,
+      "uiFrameSumMs": 207.363,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 6,
+      "loadedMessages": 200,
+      "focusMs": 4.662,
+      "firstInsetMs": 95.94,
+      "firstFinalInsetMs": 381.235,
+      "frameCount": 46,
+      "uiFrameP95Ms": 11.023,
+      "rasterFrameP95Ms": 2.499,
+      "uiFrameSumMs": 231.347,
+      "uiFramesOver16_667ms": 0
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 7,
+      "loadedMessages": 200,
+      "focusMs": 4.135,
+      "firstInsetMs": 73.27,
+      "firstFinalInsetMs": 355.825,
+      "frameCount": 47,
+      "uiFrameP95Ms": 11.281,
+      "rasterFrameP95Ms": 2.6,
+      "uiFrameSumMs": 216.738,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 8,
+      "loadedMessages": 200,
+      "focusMs": 5.476,
+      "firstInsetMs": 98.902,
+      "firstFinalInsetMs": 383.175,
+      "frameCount": 47,
+      "uiFrameP95Ms": 12.521,
+      "rasterFrameP95Ms": 2.697,
+      "uiFrameSumMs": 225.416,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "after_debug",
+      "scenario": "history",
+      "sample": 9,
+      "loadedMessages": 200,
+      "focusMs": 6.49,
+      "firstInsetMs": 109.704,
+      "firstFinalInsetMs": 392.164,
+      "frameCount": 50,
+      "uiFrameP95Ms": 12.482,
+      "rasterFrameP95Ms": 2.333,
+      "uiFrameSumMs": 234.957,
+      "uiFramesOver16_667ms": 1
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "empty",
+      "sample": 0,
+      "loadedMessages": 0,
+      "focusMs": 4.128,
+      "firstInsetMs": 98.641,
+      "firstFinalInsetMs": 385.853,
+      "frameCount": 37,
+      "uiFrameP95Ms": 20.197,
+      "rasterFrameP95Ms": 4.063,
+      "uiFrameSumMs": 347.845,
+      "uiFramesOver16_667ms": 6
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "empty",
+      "sample": 1,
+      "loadedMessages": 0,
+      "focusMs": 6.651,
+      "firstInsetMs": 136.986,
+      "firstFinalInsetMs": 419.19,
+      "frameCount": 26,
+      "uiFrameP95Ms": 20.248,
+      "rasterFrameP95Ms": 3.407,
+      "uiFrameSumMs": 309.122,
+      "uiFramesOver16_667ms": 7
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "empty",
+      "sample": 2,
+      "loadedMessages": 0,
+      "focusMs": 4.622,
+      "firstInsetMs": 146.878,
+      "firstFinalInsetMs": 432.603,
+      "frameCount": 25,
+      "uiFrameP95Ms": 21.087,
+      "rasterFrameP95Ms": 2.858,
+      "uiFrameSumMs": 329.091,
+      "uiFramesOver16_667ms": 6
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "empty",
+      "sample": 3,
+      "loadedMessages": 0,
+      "focusMs": 4.762,
+      "firstInsetMs": 129.499,
+      "firstFinalInsetMs": 421.289,
+      "frameCount": 57,
+      "uiFrameP95Ms": 18.226,
+      "rasterFrameP95Ms": 3.078,
+      "uiFrameSumMs": 413.673,
+      "uiFramesOver16_667ms": 5
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "empty",
+      "sample": 4,
+      "loadedMessages": 0,
+      "focusMs": 3.061,
+      "firstInsetMs": 116.026,
+      "firstFinalInsetMs": 386.861,
+      "frameCount": 31,
+      "uiFrameP95Ms": 16.854,
+      "rasterFrameP95Ms": 1.307,
+      "uiFrameSumMs": 269.961,
+      "uiFramesOver16_667ms": 2
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "history",
+      "sample": 0,
+      "loadedMessages": 200,
+      "focusMs": 6.791,
+      "firstInsetMs": 154.267,
+      "firstFinalInsetMs": 438.167,
+      "frameCount": 22,
+      "uiFrameP95Ms": 20.928,
+      "rasterFrameP95Ms": 2.92,
+      "uiFrameSumMs": 313.653,
+      "uiFramesOver16_667ms": 9
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "history",
+      "sample": 1,
+      "loadedMessages": 200,
+      "focusMs": 7.49,
+      "firstInsetMs": 138.889,
+      "firstFinalInsetMs": 431.065,
+      "frameCount": 24,
+      "uiFrameP95Ms": 21.226,
+      "rasterFrameP95Ms": 2.938,
+      "uiFrameSumMs": 314.076,
+      "uiFramesOver16_667ms": 6
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "history",
+      "sample": 2,
+      "loadedMessages": 200,
+      "focusMs": 3.26,
+      "firstInsetMs": 120.887,
+      "firstFinalInsetMs": 403.619,
+      "frameCount": 27,
+      "uiFrameP95Ms": 19.969,
+      "rasterFrameP95Ms": 2.309,
+      "uiFrameSumMs": 294.409,
+      "uiFramesOver16_667ms": 6
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "history",
+      "sample": 3,
+      "loadedMessages": 200,
+      "focusMs": 5.822,
+      "firstInsetMs": 132.303,
+      "firstFinalInsetMs": 415.607,
+      "frameCount": 26,
+      "uiFrameP95Ms": 19.519,
+      "rasterFrameP95Ms": 1.433,
+      "uiFrameSumMs": 295.565,
+      "uiFramesOver16_667ms": 6
+    },
+    {
+      "label": "baseline_debug_repeat",
+      "scenario": "history",
+      "sample": 4,
+      "loadedMessages": 200,
+      "focusMs": 4.439,
+      "firstInsetMs": 127.552,
+      "firstFinalInsetMs": 410.739,
+      "frameCount": 26,
+      "uiFrameP95Ms": 18.953,
+      "rasterFrameP95Ms": 3.112,
+      "uiFrameSumMs": 302.708,
+      "uiFramesOver16_667ms": 6
+    }
+  ],
+  "deliverableApk": {
+    "path": "app/build/outputs/apk/developStandard/debug/app-develop-standard-debug.apk",
+    "package": "cn.com.omnimind.bot",
+    "sha256": "295435666703f68a426957d879c72a588f29769d71118dfd8a9c0cd1ebb1cf48",
+    "installedOnMainApp": false
+  },
+  "subsequentUnmeasuredWorktreeChanges": [
+    "ui/lib/features/my/pages/account/account_page.dart",
+    "ui/lib/widgets/omni_glass.dart",
+    "ui/lib/widgets/startup_account_prompt.dart"
+  ]
+}

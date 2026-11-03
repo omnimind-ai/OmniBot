@@ -61,6 +61,10 @@ void main() {
   testWidgets('archive page groups conversations by date and toggles all', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1366, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
     final todayConversation = _conversation(
       id: 1,
       title: 'Archived today',
@@ -101,6 +105,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    expect(tester.getSize(find.byType(ListView)).width, 840);
     final todayLabel = todayConversation.timeDisplay;
     final yesterdayLabel = yesterdayConversation.timeDisplay;
 
@@ -130,6 +135,11 @@ void main() {
 
     expect(tester.getSize(todaySectionBody).height, closeTo(0, 0.1));
     expect(tester.getSize(yesterdaySectionBody).height, closeTo(0, 0.1));
+
+    tester.view.physicalSize = const Size(768, 1024);
+    await tester.pumpAndSettle();
+    expect(tester.getSize(find.byType(ListView)).width, 768);
+    expect(tester.getSize(todaySectionBody).height, closeTo(0, 0.1));
 
     await tester.tap(toggleButton);
     await tester.pumpAndSettle();

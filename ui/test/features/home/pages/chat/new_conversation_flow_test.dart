@@ -8,14 +8,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
+import 'package:ui/features/home/widgets/home_drawer.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/features/home/pages/chat/widgets/acp_config_button.dart';
+import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
+import 'package:ui/features/home/pages/chat/widgets/chat_spotlight_tour.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
+import 'package:ui/features/home/pages/chat/widgets/chat_pane_resize_handle.dart';
 import 'package:ui/features/home/pages/chat/widgets/new_conversation_mode_selector.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/models/conversation_model.dart';
+import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
@@ -67,15 +72,44 @@ void main() {
   Completer<void>? initializeGate;
   Completer<void>? sessionNewGate;
   Completer<void>? sessionLoadGate;
+  Completer<void>? historyMetadataGate;
+  Completer<void>? historySessionGate;
+  Map<String, Object?>? historySessionResponse;
+  Completer<void>? remoteSessionLoadGate;
+  Completer<void>? remoteHistoryReadGate;
+  var useRemoteRuntime = false;
+  Completer<void>? restoredTargetGate;
+  ConversationThreadTarget? restoredTarget;
+  late Map<int, Completer<void>> historyPageGates;
+  late Map<int, List<Map<String, Object?>>> historyPages;
+  late Set<int> failedHistoryPages;
   var allowConversationCreation = false;
   var failAgentStatus = false;
+  var failDefaultConnect = false;
+  var failSessionLoad = false;
+  var reportedStatusAgentId = 'xiaowan-acp';
+  var reportGlobalRemote = false;
   var nextSessionNumber = 0;
+  var reasoningOptions = <String>[];
+  var reasoningValue = 'off';
   late Map<String, Map<String, Object>> sessionConfig;
-  List<Map<String, dynamic>>? messagesBeforeStatusFailure;
 
   Map<String, Object?> sessionResponse(String sessionId) => {
     'sessionId': sessionId,
     'configOptions': [
+      if (reasoningOptions.isNotEmpty)
+        {
+          'id': 'thought_level',
+          'name': 'Thinking',
+          'category': 'thought_level',
+          'type': 'select',
+          'currentValue':
+              sessionConfig[sessionId]?['thought_level'] ?? reasoningValue,
+          'options': [
+            for (final value in reasoningOptions)
+              {'value': value, 'name': value},
+          ],
+        },
       {
         'id': 'notifications',
         'name': '通知提示',
@@ -131,10 +165,26 @@ void main() {
     initializeGate = null;
     sessionNewGate = null;
     sessionLoadGate = null;
+    historyMetadataGate = null;
+    historySessionGate = null;
+    historySessionResponse = null;
+    remoteSessionLoadGate = null;
+    remoteHistoryReadGate = null;
+    useRemoteRuntime = false;
+    restoredTargetGate = null;
+    restoredTarget = null;
+    historyPageGates = {};
+    historyPages = {};
+    failedHistoryPages = {};
     allowConversationCreation = false;
     failAgentStatus = false;
-    messagesBeforeStatusFailure = null;
+    failDefaultConnect = false;
+    failSessionLoad = false;
+    reportedStatusAgentId = 'xiaowan-acp';
+    reportGlobalRemote = false;
     nextSessionNumber = 0;
+    reasoningOptions = [];
+    reasoningValue = 'off';
     sessionConfig = {};
     assistCalls = [];
     agentCalls = [];
@@ -151,9 +201,25 @@ void main() {
       assistCalls.add(call);
       switch (call.method) {
         case 'getConversations':
+          await historyMetadataGate?.future;
           return conversations;
         case 'getConversationMessagesPaged':
-          return {'messages': <Object?>[], 'hasMore': false};
+          final conversationId =
+              (call.arguments as Map)['conversationId'] as int;
+          await historyPageGates[conversationId]?.future;
+          if (failedHistoryPages.contains(conversationId)) {
+            throw PlatformException(code: 'HISTORY_UNAVAILABLE');
+          }
+          return {
+            'messages': historyPages[conversationId] ?? <Object?>[],
+            'hasMore': false,
+          };
+        case 'conversationSelection':
+          if ((call.arguments as Map)['operation'] == 'getLast') {
+            await restoredTargetGate?.future;
+            return restoredTarget?.toJson();
+          }
+          return null;
         case 'listModelProviderProfiles':
           return {'profiles': <Object?>[], 'editingProfileId': ''};
         case 'getSceneCatalog':
@@ -196,15 +262,19 @@ void main() {
     messenger.setMockMethodCallHandler(agentChannel, (call) async {
       agentCalls.add(call);
       switch (call.method) {
+        case 'config/read':
+          if (reasoningOptions.isEmpty) return <String, Object?>{};
+          return {'model': 'fixture', 'reasoning_effort': reasoningValue};
+        case 'model/list':
+          if (reasoningOptions.isEmpty) return <String, Object?>{};
+          return {
+            ...sessionResponse('catalog'),
+            'models': ['fixture'],
+          };
         case 'agent/list':
-          return {'selectedAgentId': 'xiaowan-acp', 'agents': agents};
+          return {'agents': agents};
         case 'status':
           if (failAgentStatus) {
-            messagesBeforeStatusFailure = assistCalls
-                .where((call) => call.method == 'replaceConversationMessages')
-                .expand((call) => (call.arguments as Map)['messages'] as List)
-                .map((message) => Map<String, dynamic>.from(message as Map))
-                .toList();
             throw PlatformException(
               code: 'STATUS_UNAVAILABLE',
               message: 'Agent status unavailable',
@@ -212,10 +282,32 @@ void main() {
           }
           return {
             'ready': false,
-            'connected': false,
-            'activeAgentId': 'xiaowan-acp',
+            'connected': useRemoteRuntime,
+            if (useRemoteRuntime || reportGlobalRemote) 'runtime': 'remote',
+            'remoteEnabled': useRemoteRuntime || reportGlobalRemote,
+            'activeAgentId': useRemoteRuntime || reportGlobalRemote
+                ? 'codex-acp'
+                : reportedStatusAgentId,
             'activeAgentName': '小万',
           };
+        case 'connect':
+          if (failDefaultConnect) {
+            throw PlatformException(
+              code: 'runtime_error',
+              message: 'OpenCode runtime needs an upgrade',
+              details: {'failureKind': 'harness_upgrade_required'},
+            );
+          }
+          if (useRemoteRuntime) {
+            return {
+              'ready': false,
+              'connected': true,
+              'runtime': 'remote',
+              'remoteEnabled': true,
+              'activeAgentId': 'codex-acp',
+            };
+          }
+          return <String, Object?>{};
         case 'session/new':
           final number = ++nextSessionNumber;
           final sessionId = number == 1
@@ -229,7 +321,48 @@ void main() {
           return sessionResponse(sessionId);
         case 'session/load':
           final arguments = call.arguments as Map;
+          if (failSessionLoad) {
+            throw PlatformException(
+              code: 'SESSION_UNAVAILABLE',
+              message: 'Session load failed',
+            );
+          }
+          if (useRemoteRuntime &&
+              arguments['sessionId'] == 'remote-history-session') {
+            if (arguments['includeHistory'] == true) {
+              await remoteHistoryReadGate?.future;
+              return {
+                'threadId': 'remote-history-session',
+                'thread': {
+                  'id': 'remote-history-session',
+                  'turns': [
+                    {
+                      'id': 'remote-history-turn',
+                      'stopReason': 'end_turn',
+                      'items': [
+                        {
+                          'id': 'remote-history-message',
+                          'type': 'userMessage',
+                          'content': '远程会话恢复的历史消息',
+                        },
+                      ],
+                    },
+                  ],
+                },
+              };
+            }
+            await remoteSessionLoadGate?.future;
+            return {
+              'threadId': 'remote-history-session',
+              'thread': {'id': 'remote-history-session'},
+            };
+          }
           if (arguments['refreshConfig'] == true) await sessionLoadGate?.future;
+          if (arguments['conversationId'] != null &&
+              arguments['includeHistory'] == false) {
+            await historySessionGate?.future;
+            if (historySessionResponse != null) return historySessionResponse;
+          }
           return sessionResponse(
             (arguments['sessionId'] ??
                     'existing-session-${arguments['conversationId']}')
@@ -240,6 +373,9 @@ void main() {
           final sessionId = arguments['sessionId'] as String;
           sessionConfig[sessionId]![arguments['configId'] as String] =
               arguments['value'] as Object;
+          if (arguments['configId'] == 'thought_level') {
+            reasoningValue = arguments['value'] as String;
+          }
           return sessionResponse(sessionId);
         case 'session/prompt':
           final arguments = call.arguments as Map;
@@ -250,6 +386,10 @@ void main() {
       }
       return <String, Object?>{};
     });
+    // Keep the process-wide event subscription outside a widget test's fake
+    // async zone so later tests can deliver native ACP updates to it as well.
+    coordinator.ensureInitialized();
+    await Future<void>.delayed(Duration.zero);
   });
 
   tearDown(() {
@@ -265,11 +405,13 @@ void main() {
 
   Future<void> pumpChat(
     WidgetTester tester,
-    ConversationThreadTarget target, {
+    ConversationThreadTarget? target, {
     bool tour = false,
+    bool settle = true,
+    Size size = const Size(390, 844),
     GlobalKey<NavigatorState>? navigatorKey,
   }) async {
-    tester.view.physicalSize = const Size(390, 844);
+    tester.view.physicalSize = size;
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -285,7 +427,46 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
+    if (settle) await tester.pumpAndSettle();
+  }
+
+  Future<void> pumpHistoryFrames(WidgetTester tester) async {
+    // The loading label animates continuously, so a pending read must never
+    // use pumpAndSettle. Allow I/O microtasks and several actual frames instead.
+    for (var frame = 0; frame < 6; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+  }
+
+  Map<String, Object?> historyConversation(
+    int id,
+    ConversationMode mode, {
+    int messageCount = 1,
+  }) => {
+    'id': id,
+    'title': '历史对话 $id',
+    'mode': mode.storageValue,
+    'agentId': mode == ConversationMode.agent ? 'xiaowan-acp' : null,
+    'status': 1,
+    'messageCount': messageCount,
+    'createdAt': 1000,
+    'updatedAt': 2000,
+  };
+
+  List<Map<String, Object?>> historyMessage(int conversationId) => [
+    {
+      'id': 'history-message-$conversationId',
+      'type': 1,
+      'user': 1,
+      'content': {'text': '已加载历史消息 $conversationId'},
+      'createAt': 1000,
+    },
+  ];
+
+  void expectHistoryLoading() {
+    expect(find.text('OmniBot'), findsOneWidget);
+    expect(find.byType(ChatEmptyGreeting), findsNothing);
+    expect(find.byType(ChatMessageList), findsNothing);
   }
 
   ChatInputArea composer(WidgetTester tester) =>
@@ -371,6 +552,893 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   }
+
+  for (final value in ['off', 'none', 'on', 'High']) {
+    testWidgets('ACP reasoning value $value survives settings and prompt admission', (
+      tester,
+    ) async {
+      useRemoteRuntime = true;
+      allowConversationCreation = true;
+      reasoningOptions = ['off', 'none', 'on', 'High'];
+      reasoningValue = value;
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.newConversation(agentId: 'codex-remote'),
+      );
+      composer(tester).onTriggerSlashCommand!();
+      await tester.pumpAndSettle();
+      expect(agentCalls.where((call) => call.method == 'config/read'), isNotEmpty);
+      composer(tester).controller.text = '保留原始档位';
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chat-acp-config-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('acp-config-thought_level')));
+      await tester.pumpAndSettle();
+      for (final choice in reasoningOptions) {
+        expect(find.text(choice), findsOneWidget);
+      }
+      await tester.tap(find.byKey(ValueKey('acp-config-thought_level-value-$value')));
+      await tester.pumpAndSettle();
+      final write = agentCalls.lastWhere((call) => call.method == 'session/set_config_option');
+      expect((write.arguments as Map)['configId'], 'thought_level');
+      expect((write.arguments as Map)['value'], value);
+      await dismissConfigPanel(tester);
+      composer(tester).onSendMessage();
+      await tester.pumpAndSettle();
+      final prompt = agentCalls.singleWhere((call) => call.method == 'session/prompt');
+      expect((prompt.arguments as Map)['effort'], value);
+      await disposeChat(tester);
+    });
+  }
+
+  testWidgets(
+    'Pad resizing and pane controls preserve the draft without admitting a turn',
+    (tester) async {
+      addTearDown(tester.view.resetViewInsets);
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.newConversation(
+          mode: ConversationMode.agent,
+          requestKey: 'pad-resize-draft',
+          agentId: 'xiaowan-acp',
+        ),
+        size: const Size(768, 1024),
+      );
+      final controller = composer(tester).controller;
+      controller.text = '旋转平板后仍保留的草稿';
+      final focusNode = composer(tester).focusNode;
+      Future<void> togglePane({required bool conversation}) async {
+        final direct = find.byKey(
+          ValueKey(
+            conversation
+                ? 'chat-app-bar-sidebar-button'
+                : 'chat-app-bar-workspace-button',
+          ),
+        );
+        if (direct.evaluate().isNotEmpty) {
+          await tester.tap(direct);
+        } else {
+          await tester.tap(
+            find.byKey(const ValueKey('chat-app-bar-layout-button')),
+          );
+          await tester.pumpAndSettle();
+          await tester.tap(
+            find.byKey(
+              ValueKey(
+                conversation
+                    ? 'chat-app-bar-layout-conversations'
+                    : 'chat-app-bar-layout-workspace',
+              ),
+            ),
+          );
+        }
+        await tester.pumpAndSettle();
+      }
+
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isTrue,
+      );
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)).workspacePaneVisible,
+        isFalse,
+      );
+      await togglePane(conversation: true);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isFalse,
+      );
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)).workspacePaneVisible,
+        isFalse,
+      );
+      focusNode.requestFocus();
+      await tester.pump();
+      await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await tester.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isTrue,
+      );
+      await togglePane(conversation: false);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)).workspacePaneVisible,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isFalse,
+      );
+      await togglePane(conversation: true);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isTrue,
+      );
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)).workspacePaneVisible,
+        isFalse,
+      );
+      for (final size in [
+        const Size(1366, 1024),
+        const Size(960, 480),
+        const Size(844, 390),
+        const Size(600, 960),
+        const Size(768, 1024),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpAndSettle();
+        expect(composer(tester).controller, same(controller));
+        expect(composer(tester).focusNode, same(focusNode));
+        expect(controller.text, '旋转平板后仍保留的草稿');
+        if (size.height < 500) {
+          focusNode.requestFocus();
+          await tester.pump();
+          tester.view.viewInsets = const FakeViewPadding(bottom: 160);
+          await tester.pumpAndSettle();
+          expect(
+            tester.getRect(find.byType(ChatInputArea)).bottom,
+            lessThanOrEqualTo(size.height - 160),
+          );
+          expect(
+            find
+                    .byKey(const ValueKey('chat-app-bar-sidebar-button'))
+                    .evaluate()
+                    .isNotEmpty ||
+                find
+                    .byKey(const ValueKey('chat-app-bar-layout-button'))
+                    .evaluate()
+                    .isNotEmpty,
+            isTrue,
+          );
+          tester.view.viewInsets = FakeViewPadding.zero;
+          await tester.pumpAndSettle();
+        }
+        expect(tester.takeException(), isNull);
+      }
+      // A split-window resize can unmount the divider while the pointer is
+      // still down. Returning to Pad layout must accept a fresh transaction.
+      final resizeHandle = find.byKey(
+        const ValueKey('chat-conversation-resize-handle'),
+      );
+      final drag = await tester.startGesture(tester.getCenter(resizeHandle));
+      await drag.moveBy(const Offset(30, 0));
+      await tester.pump();
+      await drag.moveBy(const Offset(20, 0));
+      await tester.pump();
+      tester.view.physicalSize = const Size(600, 960);
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatPaneResizeHandle), findsNothing);
+      await drag.up();
+      tester.view.physicalSize = const Size(768, 1024);
+      await tester.pumpAndSettle();
+      await togglePane(conversation: true);
+      await togglePane(conversation: true);
+      final dividerAnimation = tester.widget<AnimatedContainer>(
+        find
+            .ancestor(
+              of: resizeHandle,
+              matching: find.byType(AnimatedContainer),
+            )
+            .first,
+      );
+      expect(dividerAnimation.duration, const Duration(milliseconds: 280));
+      expect(controller.text, '旋转平板后仍保留的草稿');
+      focusNode.requestFocus();
+      await tester.pump();
+      tester.view.viewInsets = const FakeViewPadding(bottom: 340);
+      await tester.pumpAndSettle();
+      expect(
+        tester.getRect(find.byType(ChatInputArea)).bottom,
+        lessThanOrEqualTo(684),
+      );
+      expect(
+        find
+                .byKey(const ValueKey('chat-app-bar-sidebar-button'))
+                .evaluate()
+                .isNotEmpty ||
+            find
+                .byKey(const ValueKey('chat-app-bar-layout-button'))
+                .evaluate()
+                .isNotEmpty,
+        isTrue,
+      );
+      expectNoSessionAdmission();
+      expectNoPersistedDraft();
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
+    'Pad history keeps transcript and tool details readable across columns',
+    (tester) async {
+      const conversationId = 806;
+      conversations = [
+        historyConversation(
+          conversationId,
+          ConversationMode.agent,
+          messageCount: 3,
+        ),
+        historyConversation(807, ConversationMode.agent),
+      ];
+      historyPages[807] = historyMessage(807);
+      historyPages[conversationId] = [
+        ChatMessageModel(
+          id: 'pad-answer',
+          type: 1,
+          user: 2,
+          content: const {'text': '检查完成，当前工作区没有待提交改动。'},
+          streamMeta: const {
+            'parentTaskId': 'pad-turn',
+            'kind': 'text_snapshot',
+            'seq': 3,
+            'isFinal': true,
+          },
+        ).toJson(),
+        ChatMessageModel.cardMessage(
+          const {
+            'type': 'agent_tool_summary',
+            'uiStyle': 'agent_tool',
+            'toolType': 'terminal',
+            'status': 'success',
+            'toolTitle': '运行 git status',
+            'summary': '命令执行完成',
+            'terminalOutput':
+                'On branch main\nnothing to commit, working tree clean',
+          },
+          id: 'pad-tool',
+          streamMeta: const {
+            'parentTaskId': 'pad-turn',
+            'kind': 'tool_completed',
+            'seq': 2,
+            'isFinal': false,
+          },
+        ).toJson(),
+        ...historyMessage(conversationId),
+      ];
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.existing(
+          conversationId: conversationId,
+          mode: ConversationMode.agent,
+        ),
+        size: const Size(1366, 1024),
+      );
+      expect(composer(tester).focusNode.hasFocus, isFalse);
+      expect(tester.testTextInput.isVisible, isFalse);
+      Future<void> shortcut(LogicalKeyboardKey key) async {
+        await tester.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+        await tester.sendKeyEvent(key);
+        await tester.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+        await tester.pumpAndSettle();
+      }
+
+      await shortcut(LogicalKeyboardKey.keyB);
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isFalse,
+      );
+      await shortcut(LogicalKeyboardKey.keyB);
+      expect(
+        tester
+            .widget<ChatAppBar>(find.byType(ChatAppBar))
+            .conversationPaneVisible,
+        isTrue,
+      );
+      await shortcut(LogicalKeyboardKey.keyE);
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)).workspacePaneVisible,
+        isFalse,
+      );
+      await shortcut(LogicalKeyboardKey.keyE);
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)).workspacePaneVisible,
+        isTrue,
+      );
+      await shortcut(LogicalKeyboardKey.keyL);
+      expect(composer(tester).focusNode.hasFocus, isTrue);
+      composer(tester).focusNode.unfocus();
+      await tester.pumpAndSettle();
+      for (final size in [
+        const Size(1366, 1024),
+        const Size(768, 1024),
+        const Size(960, 480),
+      ]) {
+        tester.view.physicalSize = size;
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining('检查完成，当前工作区没有待提交改动。', findRichText: true),
+          findsOneWidget,
+        );
+        expect(
+          tester.getSize(find.byType(ChatMessageList)).width,
+          lessThanOrEqualTo(840),
+        );
+        final header = find.byKey(const ValueKey('agent-run-summary-pad-turn'));
+        await tester.ensureVisible(header);
+        await tester.tap(header);
+        await tester.pumpAndSettle();
+        expect(find.text('执行命令'), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.binding.handlePopRoute();
+        await tester.pumpAndSettle();
+      }
+      await tester.tap(
+        find.descendant(
+          of: find.byType(HomeDrawer),
+          matching: find.text('历史对话 807'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(ChatPage), findsOneWidget);
+      expect(find.text('已加载历史消息 807'), findsOneWidget);
+      expect(
+        tester
+            .widget<Semantics>(
+              find.byKey(const ValueKey('home-current-thread-agent:807')),
+            )
+            .properties
+            .selected,
+        isTrue,
+      );
+      expect(
+        tester
+            .widget<Semantics>(
+              find.byKey(const ValueKey('home-current-thread-agent:806')),
+            )
+            .properties
+            .selected,
+        isFalse,
+      );
+      await tester.tap(find.byKey(const ValueKey('home-search-button')));
+      await tester.pumpAndSettle();
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('home-close-search')), findsNothing);
+      expect(find.byType(ChatPage), findsOneWidget);
+      expect(
+        agentCalls.where((call) => call.method == 'session/prompt'),
+        isEmpty,
+      );
+      await disposeChat(tester);
+    },
+  );
+
+  for (final keyboardAlreadyOpen in [false, true]) {
+    testWidgets('Pad history search keeps the greeting at rest '
+        '(keyboardAlreadyOpen=$keyboardAlreadyOpen)', (tester) async {
+      addTearDown(tester.view.resetViewInsets);
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.newConversation(
+          mode: ConversationMode.agent,
+          requestKey: 'pad-search-keyboard',
+          agentId: 'xiaowan-acp',
+        ),
+        size: const Size(1069, 668),
+      );
+      final input = composer(tester);
+      input.focusNode.unfocus();
+      await tester.pumpAndSettle();
+      final greeting = find.byType(ChatEmptyGreeting);
+      AlignmentGeometry greetingAlignment() => tester
+          .widget<AnimatedAlign>(
+            find.ancestor(of: greeting, matching: find.byType(AnimatedAlign)),
+          )
+          .alignment;
+      const restingAlignment = Alignment(0, -.18);
+      final restingPosition = tester.getTopLeft(greeting);
+      final restingComposerBottom = tester
+          .getRect(find.byType(ChatInputArea))
+          .bottom;
+      expect(greetingAlignment(), restingAlignment);
+
+      if (keyboardAlreadyOpen) {
+        input.focusNode.requestFocus();
+        await tester.pump();
+        tester.view.viewInsets = const FakeViewPadding(bottom: 280);
+        await tester.pumpAndSettle();
+        expect(greetingAlignment(), Alignment.topLeft);
+      }
+
+      await tester.tap(find.byKey(const ValueKey('home-search-button')));
+      await tester.pumpAndSettle();
+      final searchFocus = tester
+          .widget<TextField>(
+            find.descendant(
+              of: find.byType(HomeDrawer),
+              matching: find.byType(TextField),
+            ),
+          )
+          .focusNode!;
+      expect(searchFocus.hasFocus, isTrue);
+      expect(input.focusNode.hasFocus, isFalse);
+      expect(greetingAlignment(), restingAlignment);
+
+      for (final inset
+          in keyboardAlreadyOpen ? [280.0] : [40.0, 140.0, 280.0]) {
+        tester.view.viewInsets = FakeViewPadding(bottom: inset);
+        await tester.pumpAndSettle();
+        expect(greetingAlignment(), restingAlignment);
+        expect(tester.getTopLeft(greeting).dx, closeTo(restingPosition.dx, .5));
+        expect(tester.getTopLeft(greeting).dy, closeTo(restingPosition.dy, .5));
+        expect(
+          tester.getRect(find.byType(ChatInputArea)).bottom,
+          closeTo(restingComposerBottom, .5),
+        );
+      }
+
+      // Focus ownership can change without any new keyboard-metrics event.
+      input.focusNode.requestFocus();
+      await tester.pumpAndSettle();
+      expect(greetingAlignment(), Alignment.topLeft);
+      searchFocus.requestFocus();
+      await tester.pumpAndSettle();
+      expect(greetingAlignment(), restingAlignment);
+      await tester.tap(find.byKey(const ValueKey('home-close-search')));
+      await tester.pumpAndSettle();
+      expect(greetingAlignment(), restingAlignment);
+
+      // Unmounting the focused sidebar must not notify during tree disposal.
+      await tester.tap(find.byKey(const ValueKey('home-search-button')));
+      await tester.pumpAndSettle();
+      tester.view.physicalSize = const Size(668, 1069);
+      await tester.pumpAndSettle();
+      expect(find.byType(HomeDrawer), findsNothing);
+      expect(greetingAlignment(), restingAlignment);
+      expect(tester.takeException(), isNull);
+      expectNoSessionAdmission();
+      expectNoPersistedDraft();
+      await disposeChat(tester);
+    });
+  }
+
+  for (final existing in [false, true]) {
+    testWidgets('chat keeps its editor and messages above the keyboard without rebuilding page content '
+        '(existing=$existing)', (tester) async {
+      addTearDown(tester.view.resetViewInsets);
+      const conversationId = 805;
+      if (existing) {
+        conversations = [
+          historyConversation(conversationId, ConversationMode.agent),
+        ];
+        historyPages[conversationId] = historyMessage(conversationId);
+      }
+      await pumpChat(
+        tester,
+        existing
+            ? const ConversationThreadTarget.existing(
+                conversationId: conversationId,
+                mode: ConversationMode.agent,
+              )
+            : const ConversationThreadTarget.newConversation(
+                mode: ConversationMode.agent,
+                requestKey: 'keyboard-layout-regression',
+                agentId: 'xiaowan-acp',
+              ),
+      );
+      // New drafts autofocus after bootstrap. Close that initial focus so the
+      // test exercises a real tap from the resting capsule in both cases.
+      composer(tester).focusNode.unfocus();
+      await tester.pumpAndSettle();
+      final originalComposer = composer(tester);
+      expect(originalComposer.focusNode.hasFocus, isFalse);
+      final originalAppBar = tester.widget<ChatAppBar>(find.byType(ChatAppBar));
+      final originalMessages = tester.widget<ChatMessageList>(
+        find.byType(ChatMessageList),
+      );
+      final editor = tester.state<EditableTextState>(find.byType(EditableText));
+      final field = find.byType(TextField);
+      agentCalls.clear();
+      assistCalls.clear();
+      await tester.tapAt(tester.getCenter(field));
+      await tester.pump();
+      expect(originalComposer.focusNode.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+
+      for (final inset in [40.0, 120.0, 220.0, 300.0]) {
+        tester.view.viewInsets = FakeViewPadding(bottom: inset);
+        await tester.pump(const Duration(milliseconds: 60));
+        expect(tester.getRect(field).bottom, lessThanOrEqualTo(844 - inset));
+        expect(composer(tester), same(originalComposer));
+        expect(
+          tester.widget<ChatAppBar>(find.byType(ChatAppBar)),
+          same(originalAppBar),
+        );
+        expect(
+          tester.state<EditableTextState>(find.byType(EditableText)),
+          same(editor),
+        );
+        expect(
+          tester.widget<ChatMessageList>(find.byType(ChatMessageList)),
+          same(originalMessages),
+        );
+        if (existing) {
+          expect(find.text('已加载历史消息 $conversationId'), findsOneWidget);
+        }
+      }
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expectNoSessionAdmission();
+      if (!existing) expectNoPersistedDraft();
+      await disposeChat(tester);
+    });
+  }
+
+  for (final mode in [ConversationMode.chatOnly, ConversationMode.agent]) {
+    testWidgets(
+      '${mode.storageValue} history shows OmniBot from its first frame through metadata and message reads',
+      (tester) async {
+        const conversationId = 801;
+        historyMetadataGate = Completer<void>();
+        historyPageGates[conversationId] = Completer<void>();
+        conversations = [historyConversation(conversationId, mode)];
+        historyPages[conversationId] = historyMessage(conversationId);
+
+        await pumpChat(
+          tester,
+          ConversationThreadTarget.existing(
+            conversationId: conversationId,
+            mode: mode,
+          ),
+          settle: false,
+        );
+        expectHistoryLoading();
+        await pumpHistoryFrames(tester);
+        expectHistoryLoading();
+        expect(
+          assistCalls.where((call) => call.method == 'getConversations'),
+          isNotEmpty,
+        );
+        expect(
+          assistCalls.where(
+            (call) => call.method == 'getConversationMessagesPaged',
+          ),
+          isEmpty,
+        );
+
+        historyMetadataGate!.complete();
+        await pumpHistoryFrames(tester);
+        expectHistoryLoading();
+        expect(
+          assistCalls.where(
+            (call) => call.method == 'getConversationMessagesPaged',
+          ),
+          isNotEmpty,
+        );
+
+        historyPageGates[conversationId]!.complete();
+        await tester.pumpAndSettle();
+        expect(find.text('已加载历史消息 $conversationId'), findsOneWidget);
+        expect(find.text('OmniBot'), findsNothing);
+        expect(find.byType(ChatEmptyGreeting), findsNothing);
+        expect(tester.takeException(), isNull);
+        await disposeChat(tester);
+      },
+    );
+  }
+
+  for (final eventBeforeLoad in [false, true]) {
+    testWidgets(
+      'remote history awaits its single hydration read with early ACP update: $eventBeforeLoad',
+      (tester) async {
+        useRemoteRuntime = true;
+        remoteSessionLoadGate = Completer<void>();
+        remoteHistoryReadGate = Completer<void>();
+        await pumpChat(
+          tester,
+          const ConversationThreadTarget.agentSession(
+            sessionId: 'remote-history-session',
+            agentId: 'codex-acp',
+          ),
+          settle: false,
+        );
+        await pumpHistoryFrames(tester);
+        expectHistoryLoading();
+        expect(
+          agentCalls.where((call) => call.method == 'session/load'),
+          hasLength(1),
+        );
+
+        if (eventBeforeLoad) {
+          // Session-scoped command metadata can arrive during session/load.
+          // It selects the already reserved remote runtime without admitting
+          // a turn or installing any message, and starts history hydration.
+          await tester.runAsync(() async {
+            await messenger.handlePlatformMessage(
+              'cn.com.omnimind.bot/AgentRuntimeEvents',
+              const StandardMethodCodec().encodeSuccessEnvelope({
+                'method': 'session/update',
+                'threadId': 'remote-history-session',
+                'params': {
+                  'sessionId': 'remote-history-session',
+                  'update': {
+                    'sessionUpdate': 'available_commands_update',
+                    'availableCommands': <Object?>[],
+                  },
+                },
+              }),
+              (_) {},
+            );
+            await Future<void>.delayed(Duration.zero);
+          });
+          await pumpHistoryFrames(tester);
+          expect(
+            agentCalls.where(
+              (call) =>
+                  call.method == 'session/load' &&
+                  (call.arguments as Map)['includeHistory'] == true,
+            ),
+            hasLength(1),
+          );
+          expectHistoryLoading();
+        }
+
+        // A metadata-only load response must await the same pending read
+        // whether hydration started above or starts after this response.
+        remoteSessionLoadGate!.complete();
+        await pumpHistoryFrames(tester);
+        expectHistoryLoading();
+        expect(
+          agentCalls.where(
+            (call) =>
+                call.method == 'session/load' &&
+                (call.arguments as Map)['includeHistory'] == true,
+          ),
+          hasLength(1),
+        );
+
+        remoteHistoryReadGate!.complete();
+        await tester.pumpAndSettle();
+        expect(find.text('远程会话恢复的历史消息'), findsOneWidget);
+        expect(find.text('OmniBot'), findsNothing);
+        expect(find.byType(ChatEmptyGreeting), findsNothing);
+        expect(
+          agentCalls.where((call) => call.method == 'session/load'),
+          hasLength(2),
+        );
+        await disposeChat(tester);
+      },
+    );
+  }
+
+  testWidgets('empty local history waits for its existing cloud session', (
+    tester,
+  ) async {
+    const conversationId = 806;
+    historySessionGate = Completer<void>();
+    conversations = [
+      {
+        ...historyConversation(conversationId, ConversationMode.agent),
+        'agentId': 'na-cloud',
+      },
+    ];
+    historySessionResponse = {
+      'threadId': 'na-existing-session',
+      'agentId': 'na-cloud',
+      'thread': {
+        'id': 'na-existing-session',
+        'agentId': 'na-cloud',
+        'turns': [
+          {
+            'id': 'cloud-history-turn',
+            'stopReason': 'end_turn',
+            'items': [
+              {
+                'id': 'cloud-history-message',
+                'type': 'userMessage',
+                'content': '云端恢复的历史消息',
+              },
+            ],
+          },
+        ],
+      },
+    };
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: conversationId,
+        mode: ConversationMode.agent,
+        agentId: 'na-cloud',
+      ),
+      settle: false,
+    );
+    await pumpHistoryFrames(tester);
+    expect(
+      assistCalls.where(
+        (call) => call.method == 'getConversationMessagesPaged',
+      ),
+      isNotEmpty,
+    );
+    expect(
+      agentCalls.where(
+        (call) =>
+            call.method == 'session/load' &&
+            (call.arguments as Map)['conversationId'] == conversationId,
+      ),
+      hasLength(1),
+    );
+    expectHistoryLoading();
+
+    historySessionGate!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('云端恢复的历史消息'), findsOneWidget);
+    expect(find.text('OmniBot'), findsNothing);
+    expect(find.byType(ChatEmptyGreeting), findsNothing);
+    await disposeChat(tester);
+  });
+
+  testWidgets(
+    'restoring an unresolved target keeps the welcome screen hidden',
+    (tester) async {
+      const conversationId = 802;
+      restoredTargetGate = Completer<void>();
+      restoredTarget = const ConversationThreadTarget.existing(
+        conversationId: conversationId,
+        mode: ConversationMode.chatOnly,
+      );
+      conversations = [
+        historyConversation(conversationId, ConversationMode.chatOnly),
+      ];
+      historyPages[conversationId] = historyMessage(conversationId);
+
+      await pumpChat(tester, null, settle: false);
+      expectHistoryLoading();
+      await pumpHistoryFrames(tester);
+      expectHistoryLoading();
+      expect(
+        assistCalls.where(
+          (call) =>
+              call.method == 'conversationSelection' &&
+              (call.arguments as Map)['operation'] == 'getLast',
+        ),
+        isNotEmpty,
+      );
+
+      restoredTargetGate!.complete();
+      await tester.pumpAndSettle();
+      expect(find.text('已加载历史消息 $conversationId'), findsOneWidget);
+      expect(find.byType(ChatEmptyGreeting), findsNothing);
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets('late history completion cannot dismiss the next target loader', (
+    tester,
+  ) async {
+    const firstId = 803;
+    const secondId = 804;
+    for (final id in [firstId, secondId]) {
+      conversations.add(historyConversation(id, ConversationMode.chatOnly));
+      historyPages[id] = historyMessage(id);
+      historyPageGates[id] = Completer<void>();
+    }
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: firstId,
+        mode: ConversationMode.chatOnly,
+      ),
+      settle: false,
+    );
+    await pumpHistoryFrames(tester);
+    expectHistoryLoading();
+    final originalPageState = tester.state(find.byType(ChatPage));
+
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: secondId,
+        mode: ConversationMode.chatOnly,
+      ),
+      settle: false,
+    );
+    expect(tester.state(find.byType(ChatPage)), same(originalPageState));
+    await pumpHistoryFrames(tester);
+    expectHistoryLoading();
+    expect(
+      assistCalls
+          .where((call) => call.method == 'getConversationMessagesPaged')
+          .map((call) => (call.arguments as Map)['conversationId']),
+      containsAll([firstId, secondId]),
+    );
+
+    historyPageGates[firstId]!.complete();
+    await pumpHistoryFrames(tester);
+    expectHistoryLoading();
+    expect(find.text('已加载历史消息 $firstId'), findsNothing);
+
+    historyPageGates[secondId]!.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('已加载历史消息 $secondId'), findsOneWidget);
+    expect(find.text('已加载历史消息 $firstId'), findsNothing);
+    expect(find.byType(ChatEmptyGreeting), findsNothing);
+    await disposeChat(tester);
+  });
+
+  for (final failHistory in [false, true]) {
+    testWidgets(
+      '${failHistory ? 'failed' : 'empty'} existing history finishes loading without a new-chat greeting',
+      (tester) async {
+        const conversationId = 805;
+        conversations = [
+          historyConversation(
+            conversationId,
+            ConversationMode.chatOnly,
+            messageCount: failHistory ? 1 : 0,
+          ),
+        ];
+        historyPageGates[conversationId] = Completer<void>();
+        if (failHistory) failedHistoryPages.add(conversationId);
+        await pumpChat(
+          tester,
+          const ConversationThreadTarget.existing(
+            conversationId: conversationId,
+            mode: ConversationMode.chatOnly,
+          ),
+          settle: false,
+        );
+        await pumpHistoryFrames(tester);
+        expectHistoryLoading();
+        historyPageGates[conversationId]!.complete();
+        await tester.pumpAndSettle();
+        expect(find.text('OmniBot'), findsNothing);
+        expect(find.byType(ChatEmptyGreeting), findsNothing);
+        expect(find.byType(ChatMessageList), findsOneWidget);
+        await disposeChat(tester);
+      },
+    );
+  }
+
+  testWidgets('a new conversation keeps its greeting and composer', (
+    tester,
+  ) async {
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.newConversation(agentId: 'xiaowan-acp'),
+    );
+    expect(find.byType(ChatEmptyGreeting), findsOneWidget);
+    expect(find.text('OmniBot'), findsNothing);
+    expect(find.byType(ChatInputArea), findsOneWidget);
+    expectNoSessionAdmission();
+    await disposeChat(tester);
+  });
 
   testWidgets(
     'existing history has no new-conversation selector or autofocus',
@@ -482,6 +1550,7 @@ void main() {
         const ConversationThreadTarget.existing(
           conversationId: 77,
           mode: ConversationMode.chatOnly,
+          agentId: 'opencode-acp',
         ),
       );
       final config = tester.widget<AcpConfigButton>(
@@ -494,6 +1563,7 @@ void main() {
         (call) => call.method == 'session/load',
       );
       expect((load.arguments as Map)['conversationId'], 77);
+      expect((load.arguments as Map)['agentId'], 'xiaowan-acp');
       expect(agentCalls.where((call) => call.method == 'session/new'), isEmpty);
       await disposeChat(tester);
       expect(
@@ -623,6 +1693,56 @@ void main() {
     },
   );
 
+  for (final owner in ['xiaowan-acp', 'codex-remote']) {
+    for (final leave in ['dispose', 'switch-agent', 'switch-mode']) {
+      testWidgets(
+        'unused config session closes with its creation owner: $owner/$leave',
+        (tester) async {
+          useRemoteRuntime = owner == 'codex-remote';
+          await pumpChat(
+            tester,
+            ConversationThreadTarget.newConversation(
+              agentId: owner,
+              agentRuntime: owner == 'codex-remote' ? 'remote' : 'local',
+            ),
+          );
+          await tester.tap(
+            find.byKey(const ValueKey('chat-acp-config-button')),
+          );
+          await tester.pumpAndSettle();
+          final created = agentCalls.singleWhere(
+            (call) => call.method == 'session/new',
+          );
+          expect((created.arguments as Map)['agentId'], owner);
+          await dismissConfigPanel(tester);
+          if (leave == 'switch-agent') {
+            await chooseMode(
+              tester,
+              owner == 'xiaowan-acp' ? 'codex-acp' : 'xiaowan-acp',
+            );
+          } else if (leave == 'switch-mode') {
+            await chooseMode(tester, kNewConversationPureChatModeId);
+          }
+          await disposeChat(tester);
+
+          final closes = agentCalls.where(
+            (call) => call.method == 'session/close',
+          );
+          expect(closes, hasLength(1));
+          expect(closes.single.arguments, {
+            'sessionId': 'new-draft-session',
+            'agentId': owner,
+          });
+          expect(
+            agentCalls.where((call) => call.method == 'session/prompt'),
+            isEmpty,
+          );
+          expect(conversations, isEmpty);
+        },
+      );
+    }
+  }
+
   testWidgets(
     'late config session from a previous draft cannot replace the new target session',
     (tester) async {
@@ -747,7 +1867,125 @@ void main() {
   );
 
   testWidgets(
-    'first send persists its submitted user message before an Agent status failure',
+    'unowned Agent history stays readable without selecting a default runtime',
+    (tester) async {
+      conversations = [
+        historyConversation(811, ConversationMode.agent)..remove('agentId'),
+      ];
+      historyPages[811] = historyMessage(811);
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.existing(conversationId: 811),
+      );
+      expect(find.text('已加载历史消息 811'), findsOneWidget);
+      expect(find.byKey(const Key('chat-agent-unavailable')), findsOneWidget);
+      expect(find.byType(ChatInputArea), findsNothing);
+      expect(conversations.single['agentId'], isNull);
+      expect(
+        agentCalls.where(
+          (call) =>
+              call.method == 'session/new' || call.method == 'session/prompt',
+        ),
+        isEmpty,
+      );
+      expect(agentCalls.where((call) => call.method == 'status'), isEmpty);
+      await disposeChat(tester);
+    },
+  );
+
+  for (final globalRemote in [false, true]) {
+    for (final configureFirst in [false, true]) {
+      testWidgets(
+        'Xiaowan owns first send with unavailable default Agent: remote=$globalRemote configured=$configureFirst',
+        (tester) async {
+          allowConversationCreation = true;
+          reportedStatusAgentId = 'opencode-acp';
+          reportGlobalRemote = globalRemote;
+          failDefaultConnect = true;
+          await pumpChat(
+            tester,
+            const ConversationThreadTarget.newConversation(
+              agentId: 'xiaowan-acp',
+            ),
+          );
+          if (configureFirst) {
+            await tester.tap(
+              find.byKey(const ValueKey('chat-acp-config-button')),
+            );
+            await tester.pumpAndSettle();
+            await dismissConfigPanel(tester);
+          }
+          composer(tester).controller.text = '你好';
+          composer(tester).onSendMessage();
+          composer(tester).onSendMessage();
+          await tester.pumpAndSettle();
+
+          expect(agentCalls.where((call) => call.method == 'connect'), isEmpty);
+          final sessions = agentCalls.where(
+            (call) => call.method == 'session/new',
+          );
+          expect(sessions, hasLength(1));
+          expect((sessions.single.arguments as Map)['agentId'], 'xiaowan-acp');
+          final prompts = agentCalls.where(
+            (call) => call.method == 'session/prompt',
+          );
+          expect(prompts, hasLength(1));
+          expect((prompts.single.arguments as Map)['agentId'], 'xiaowan-acp');
+          expect((prompts.single.arguments as Map)['conversationId'], 901);
+          expect(
+            (prompts.single.arguments as Map)['sessionId'],
+            'new-draft-session',
+          );
+          expect((prompts.single.arguments as Map)['text'], '你好');
+          for (final load in agentCalls.where(
+            (call) => call.method == 'session/load',
+          )) {
+            expect((load.arguments as Map)['agentId'], 'xiaowan-acp');
+          }
+          expect(conversations.single['agentId'], 'xiaowan-acp');
+          await disposeChat(tester);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'failed configured session load never opens a replacement or replays the prompt',
+    (tester) async {
+      allowConversationCreation = true;
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.newConversation(agentId: 'xiaowan-acp'),
+      );
+      await tester.tap(find.byKey(const ValueKey('chat-acp-config-button')));
+      await tester.pumpAndSettle();
+      await dismissConfigPanel(tester);
+      failSessionLoad = true;
+      composer(tester).controller.text = '保持原会话';
+      composer(tester).onSendMessage();
+      await tester.pumpAndSettle();
+
+      expect(
+        agentCalls.where((call) => call.method == 'session/new'),
+        hasLength(1),
+      );
+      expect(
+        agentCalls.where((call) => call.method == 'session/prompt'),
+        isEmpty,
+      );
+      expect(agentCalls.where((call) => call.method == 'connect'), isEmpty);
+      final loads = agentCalls.where((call) => call.method == 'session/load');
+      expect(loads, hasLength(1));
+      expect((loads.single.arguments as Map)['sessionId'], 'new-draft-session');
+      expect((loads.single.arguments as Map)['agentId'], 'xiaowan-acp');
+      expect(conversations, hasLength(1));
+      expect(conversations.single['agentId'], 'xiaowan-acp');
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
+    'local send uses its prepared session even when global status is unavailable',
     (tester) async {
       allowConversationCreation = true;
       await pumpChat(
@@ -759,6 +1997,7 @@ void main() {
       expectNoPersistedDraft();
       await dismissConfigPanel(tester);
       failAgentStatus = true;
+      final callsBeforeSend = agentCalls.length;
       composer(tester).controller.text = '连接失败也要保留已经提交的消息';
       composer(tester).onSendMessage();
       await tester.pumpAndSettle();
@@ -768,9 +2007,12 @@ void main() {
         hasLength(1),
       );
       expect(conversations, hasLength(1));
-      expect(messagesBeforeStatusFailure, isNotNull);
+      final persistedMessages = assistCalls
+          .where((call) => call.method == 'replaceConversationMessages')
+          .expand((call) => (call.arguments as Map)['messages'] as List)
+          .map((message) => Map<String, dynamic>.from(message as Map));
       final persistedUsers = {
-        for (final message in messagesBeforeStatusFailure!)
+        for (final message in persistedMessages)
           if (message['user'] == 1) message['id']: message,
       }.values.toList();
       expect(persistedUsers, hasLength(1));
@@ -780,11 +2022,19 @@ void main() {
       );
       expect(
         agentCalls.where((call) => call.method == 'session/prompt'),
-        isEmpty,
+        hasLength(1),
       );
       expect(
         agentCalls.where((call) => call.method == 'session/new'),
         hasLength(1),
+      );
+      expect(
+        agentCalls
+            .skip(callsBeforeSend)
+            .where(
+              (call) => call.method == 'status' || call.method == 'connect',
+            ),
+        isEmpty,
       );
       await disposeChat(tester);
       expect(conversations, hasLength(1));
@@ -925,7 +2175,7 @@ void main() {
     await disposeChat(tester);
   });
 
-  testWidgets('first-use tour does not show selector or focus the composer', (
+  testWidgets('first-use tour follows the current header and composer layout', (
     tester,
   ) async {
     await pumpChat(
@@ -934,6 +2184,67 @@ void main() {
       tour: true,
     );
     expect(find.byType(NewConversationModeSelector), findsNothing);
+    expect(composer(tester).focusNode.hasFocus, isFalse);
+
+    Rect spotlight(int step) {
+      final painter =
+          tester
+                  .widget<CustomPaint>(
+                    find.byKey(ValueKey('chat-spotlight-hole-$step')),
+                  )
+                  .painter
+              as dynamic;
+      return painter.spotlight as Rect;
+    }
+
+    expect(
+      spotlight(0),
+      tester
+          .getRect(find.byKey(const ValueKey('chat-app-bar-menu-button')))
+          .inflate(6),
+    );
+    await tester.tapAt(const Offset(8, 400));
+    await tester.pumpAndSettle();
+    expect(find.text('对话标题与模式'), findsOneWidget);
+    expect(
+      spotlight(1).contains(
+        tester.getCenter(find.byKey(const ValueKey('chat-app-bar-title'))),
+      ),
+      isTrue,
+    );
+    await tester.tapAt(const Offset(8, 400));
+    await tester.pumpAndSettle();
+    expect(find.text('对话选项'), findsOneWidget);
+    expect(
+      spotlight(2),
+      tester
+          .getRect(find.byKey(const ValueKey('chat-app-bar-more-button')))
+          .inflate(6),
+    );
+    await tester.tapAt(const Offset(8, 400));
+    await tester.pumpAndSettle();
+    expect(composer(tester).focusNode.hasFocus, isTrue);
+    expect(
+      spotlight(ChatSpotlightTour.modelStep),
+      tester
+          .getRect(find.byKey(const ValueKey('chat-acp-config-button')))
+          .inflate(4),
+    );
+    await tester.tapAt(const Offset(8, 400));
+    await tester.pumpAndSettle();
+    expect(find.text('输入、附件与发送'), findsOneWidget);
+    expect(
+      spotlight(4).contains(
+        tester.getCenter(find.byKey(const ValueKey('chat-minimal-composer'))),
+      ),
+      isTrue,
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('模型与参数'), findsOneWidget);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('对话选项'), findsOneWidget);
     expect(composer(tester).focusNode.hasFocus, isFalse);
     expectNoSessionAdmission();
     await disposeChat(tester);
@@ -1001,6 +2312,7 @@ void main() {
     await tester.pumpAndSettle();
     expectNoSessionAdmission();
 
+    composer(tester).controller.text = '发送后继续编辑的下一条草稿';
     initializeGate!.complete();
     await tester.pumpAndSettle();
     final creations = assistCalls
@@ -1014,6 +2326,7 @@ void main() {
     expect(prompts, hasLength(1));
     expect((prompts.single.arguments as Map)['agentId'], 'codex-acp');
     expect((prompts.single.arguments as Map)['text'], '切换后发送给 Codex');
+    expect(composer(tester).controller.text, '发送后继续编辑的下一条草稿');
     expect(agentCalls.where((call) => call.method == 'agent/select'), isEmpty);
     expect(find.byType(NewConversationModeSelector), findsNothing);
     await disposeChat(tester);

@@ -24,6 +24,12 @@ interface ConversationDao {
                 parentConversationMode = current.parentConversationMode,
                 scheduledTaskId = current.scheduledTaskId,
                 createdAt = current.createdAt,
+                // UI snapshots may contain only a byte-bounded display page.
+                // Canonical entry mutations refresh these values from Room;
+                // viewing or persisting a partial page must not replace them.
+                messageCount = current.messageCount,
+                lastMessage = current.lastMessage,
+                updatedAt = current.updatedAt,
             )
         } else conversation
         val updated = if (current != null) {
@@ -92,10 +98,24 @@ interface ConversationDao {
     @Query("SELECT COUNT(*) FROM conversations")
     suspend fun getConversationCount(): Int
 
+    // One saved user message is one interaction, including messages in old
+    // conversations. Merge canonical/legacy copies by identity. The scheduler's
+    // generated prompt is not a user send; manual replies in that same
+    // subagent conversation still count.
     @Query("""
-        SELECT c.id, c.mode, c.createdAt, b.threadId
-        FROM conversations c LEFT JOIN codex_thread_bindings b ON b.conversationId = c.id
-        WHERE c.createdAt >= :since AND c.createdAt < :until
+        SELECT * FROM (
+        SELECT c.id, c.mode,
+            COALESCE(MAX(CASE WHEN e.conversationMode = 'agent' THEN e.createdAt END),
+                MAX(CASE WHEN e.conversationMode = 'codex' THEN e.createdAt END),
+                MIN(e.createdAt)) AS createdAt,
+            b.threadId
+        FROM conversations c
+        JOIN agent_conversation_entries e ON e.conversationId = c.id
+        LEFT JOIN codex_thread_bindings b ON b.conversationId = c.id
+        WHERE e.entryType = 'user_message'
+            AND NOT (c.mode = 'subagent' AND e.entryId GLOB 'subagent_schedule_*-user')
+        GROUP BY c.id, e.entryId
+        ) WHERE createdAt >= :since AND createdAt < :until
     """)
     suspend fun getActivityRows(since: Long, until: Long): List<ConversationActivityRow>
 

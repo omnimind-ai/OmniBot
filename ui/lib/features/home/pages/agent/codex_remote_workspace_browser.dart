@@ -1,10 +1,13 @@
+import 'package:ui/widgets/navigation/page_route.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/features/home/pages/agent/codex_remote_file_preview_page.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/widgets/omni_menu.dart';
 import 'package:ui/utils/ui.dart';
 
@@ -26,7 +29,7 @@ class CodexRemoteWorkspaceBrowser extends StatefulWidget {
   const CodexRemoteWorkspaceBrowser({
     super.key,
     required this.workspacePath,
-    this.agentId,
+    this.agentId = 'codex-remote',
     this.allowFileMutations = true,
     this.remoteBridgeUrl = '',
     this.remoteBridgeToken = '',
@@ -38,7 +41,7 @@ class CodexRemoteWorkspaceBrowser extends StatefulWidget {
   });
 
   final String workspacePath;
-  final String? agentId;
+  final String agentId;
   final bool allowFileMutations;
   final String remoteBridgeUrl;
   final String remoteBridgeToken;
@@ -208,7 +211,7 @@ class CodexRemoteWorkspaceBrowserState
   }) async {
     final workspaceOwner = _listing?.workspaceOwner;
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      OmniPageRoute<void>(
         builder: (_) => CodexRemoteFilePreviewPage(
           agentId: widget.agentId,
           workspaceOwner: workspaceOwner,
@@ -230,90 +233,89 @@ class CodexRemoteWorkspaceBrowserState
     final listingRevision = _requestSerial;
     final palette = context.omniPalette;
     final isDirectory = entry.isDirectory;
-    final action = await showModalBottomSheet<_RemoteWorkspaceEntryAction>(
-      context: context,
-      backgroundColor: _surfaceColor(),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (sheetContext) {
-        return SafeArea(
-          child: SingleChildScrollView(
-            child: Padding(
-              padding: OmniMenuStyle.panelPadding,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Container(
-                    width: 36,
-                    height: 4,
-                    decoration: BoxDecoration(
-                      color: palette.borderStrong,
-                      borderRadius: BorderRadius.circular(999),
-                    ),
+    final action =
+        await showOmniGlassModalBottomSheet<_RemoteWorkspaceEntryAction>(
+          context: context,
+          backgroundColor: _surfaceColor(),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+          builder: (sheetContext) {
+            return SafeArea(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: OmniMenuStyle.panelPadding,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: palette.borderStrong,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        entry.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                          color: palette.textPrimary,
+                          fontFamily: 'PingFang SC',
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      if (!isDirectory) ...[
+                        _buildActionTile(
+                          context: sheetContext,
+                          icon: Icons.visibility_outlined,
+                          label: _isEnglish ? 'Open' : '打开',
+                          action: _RemoteWorkspaceEntryAction.open,
+                        ),
+                        _buildActionTile(
+                          context: sheetContext,
+                          icon: Icons.edit_outlined,
+                          label: _isEnglish ? 'Edit' : '编辑',
+                          action: _RemoteWorkspaceEntryAction.edit,
+                        ),
+                      ],
+                      if (widget.allowFileMutations &&
+                          !(widget.agentId == 'na-cloud' && isDirectory))
+                        _buildActionTile(
+                          context: sheetContext,
+                          icon: Icons.drive_file_rename_outline_rounded,
+                          label: _isEnglish ? 'Rename' : '重命名',
+                          action: _RemoteWorkspaceEntryAction.rename,
+                        ),
+                      _buildActionTile(
+                        context: sheetContext,
+                        icon: Icons.copy_rounded,
+                        label: _isEnglish ? 'Copy path' : '复制路径',
+                        action: _RemoteWorkspaceEntryAction.copyPath,
+                      ),
+                      if (widget.allowFileMutations &&
+                          !(widget.agentId == 'na-cloud' && isDirectory))
+                        _buildActionTile(
+                          context: sheetContext,
+                          icon: Icons.delete_outline_rounded,
+                          label: _isEnglish ? 'Delete' : '删除',
+                          action: _RemoteWorkspaceEntryAction.delete,
+                          destructive: true,
+                        ),
+                      OmniMenuItem(
+                        onTap: () => Navigator.of(sheetContext).pop(),
+                        label: _isEnglish ? 'Cancel' : '取消',
+                        leading: const Icon(Icons.close_rounded),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 12),
-                  Text(
-                    entry.name,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: palette.textPrimary,
-                      fontFamily: 'PingFang SC',
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (!isDirectory) ...[
-                    _buildActionTile(
-                      context: sheetContext,
-                      icon: Icons.visibility_outlined,
-                      label: _isEnglish ? 'Open' : '打开',
-                      action: _RemoteWorkspaceEntryAction.open,
-                    ),
-                    _buildActionTile(
-                      context: sheetContext,
-                      icon: Icons.edit_outlined,
-                      label: _isEnglish ? 'Edit' : '编辑',
-                      action: _RemoteWorkspaceEntryAction.edit,
-                    ),
-                  ],
-                  if (widget.allowFileMutations &&
-                      !(widget.agentId == 'na-cloud' && isDirectory))
-                    _buildActionTile(
-                      context: sheetContext,
-                      icon: Icons.drive_file_rename_outline_rounded,
-                      label: _isEnglish ? 'Rename' : '重命名',
-                      action: _RemoteWorkspaceEntryAction.rename,
-                    ),
-                  _buildActionTile(
-                    context: sheetContext,
-                    icon: Icons.copy_rounded,
-                    label: _isEnglish ? 'Copy path' : '复制路径',
-                    action: _RemoteWorkspaceEntryAction.copyPath,
-                  ),
-                  if (widget.allowFileMutations &&
-                      !(widget.agentId == 'na-cloud' && isDirectory))
-                    _buildActionTile(
-                      context: sheetContext,
-                      icon: Icons.delete_outline_rounded,
-                      label: _isEnglish ? 'Delete' : '删除',
-                      action: _RemoteWorkspaceEntryAction.delete,
-                      destructive: true,
-                    ),
-                  OmniMenuItem(
-                    onTap: () => Navigator.of(sheetContext).pop(),
-                    label: _isEnglish ? 'Cancel' : '取消',
-                    leading: const Icon(Icons.close_rounded),
-                  ),
-                ],
+                ),
               ),
-            ),
-          ),
+            );
+          },
         );
-      },
-    );
     if (!mounted || action == null || listingRevision != _requestSerial) return;
     switch (action) {
       case _RemoteWorkspaceEntryAction.open:
@@ -572,22 +574,20 @@ class CodexRemoteWorkspaceBrowserState
                       ),
               ),
               const SizedBox(width: 8),
-              IconButton(
+              OmniCircleButton(
                 tooltip: _isEnglish ? 'Reload' : '刷新',
                 onPressed: _isLoading || _isReloading
                     ? null
                     : () => unawaited(_reload()),
-                icon: _isReloading
+                icon: Icons.refresh_rounded,
+                foregroundColor: palette.textSecondary,
+                iconWidget: _isReloading
                     ? const SizedBox(
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : Icon(
-                        Icons.refresh_rounded,
-                        size: 20,
-                        color: palette.textSecondary,
-                      ),
+                    : null,
               ),
             ],
           ),

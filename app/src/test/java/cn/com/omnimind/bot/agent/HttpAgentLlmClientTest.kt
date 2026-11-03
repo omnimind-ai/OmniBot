@@ -1089,7 +1089,8 @@ class HttpAgentLlmClientTest {
 
             val error = runCatching { client.streamTurn(request = simpleRequest()) }.exceptionOrNull()
 
-            assertTrue(error is IllegalStateException)
+            assertTrue(error is AgentStreamRequestException)
+            assertTrue((error as AgentStreamRequestException).responseStarted)
             assertTrue(error?.message.orEmpty().contains("closed before completion"))
         } finally {
             scope.cancel()

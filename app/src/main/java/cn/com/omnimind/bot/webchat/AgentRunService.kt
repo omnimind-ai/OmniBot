@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.webchat
 import android.content.Context
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.bot.agent.runtime.AcpAgentProfileStore
+import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -57,19 +58,18 @@ internal fun resolveWebAgentId(
     storedAgentId: String?,
     requestedAgentId: String?,
     conversationMode: String? = null,
-): String? {
-    val stored = storedAgentId?.trim()?.takeIf { it.isNotEmpty() }
-    val requested = requestedAgentId?.trim()?.takeIf { it.isNotEmpty() }
-    if (conversationMode?.trim()?.equals("normal", ignoreCase = true) == true) {
-        require(requested == null || requested == AcpAgentProfileStore.XIAOWAN_AGENT_ID) {
-            "Xiaowan conversations cannot switch Harness; create a new conversation."
-        }
-        return AcpAgentProfileStore.XIAOWAN_AGENT_ID
+): String {
+    val resolution = AgentConversationModePolicy.resolveHarness(
+        conversationMode = conversationMode,
+        requestedAgentId = requestedAgentId,
+        conversationAgentId = storedAgentId,
+        sessionAgentId = null,
+        xiaowanAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+    )
+    require(!resolution.hasConflict) {
+        "agent_owner_conflict: The requested Agent does not match this conversation."
     }
-    require(stored == null || requested == null || stored == requested) {
-        "The requested Agent does not match this conversation."
-    }
-    return stored ?: requested
+    return resolution.agentId
 }
 
 internal object AgentRunRequestNormalizer {
@@ -396,7 +396,7 @@ class AgentRunService(
             requestedMode = request["conversationMode"]?.toString()
         )
         val runKind = resolveWebConversationRunKind(conversationMode)
-        val agentId = if (runKind == WebConversationRunKind.AGENT) {
+        val agentId = if (runKind == WebConversationRunKind.AGENT || runKind == WebConversationRunKind.CHAT_ONLY) {
             resolveWebAgentId(
                 storedAgentId = storedConversation["agentId"]?.toString(),
                 requestedAgentId = request["agentId"]?.toString(),
@@ -454,6 +454,7 @@ class AgentRunService(
                             ?: storedConversation["codexCwd"]
                     )?.toString(),
                     model = modelOverride?.get("modelId")?.toString(),
+                    agentId = agentId,
                     effort = request["reasoningEffort"]?.toString(),
                     userMessageCreatedAt = (request["userMessageCreatedAt"] as? Number)?.toLong()
                 )

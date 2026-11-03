@@ -88,6 +88,12 @@ File queries return metadata first; requested contents are imported into the exi
 
 Device MCP and the built-in Agent share tool definitions and execution. `context_capabilities` reports actual access; missing permissions do not open dialogs or terminate ordinary chat. Contact mutations use `rawContactId` and `version` from queries and affect only the selected account record. Calendar queries accept an `offset`; all-day dates use UTC and an exclusive end date.
 
+### Optional Root and device controls
+
+Direct Root access is off by default. Enable **Root access** under **Settings → App permissions → Advanced Access** to request authorization from your device's Root manager. When available, direct Root takes priority over Shizuku; disabling it stops its commands and persistent shells. Shizuku remains independently available.
+
+The agent can query and change supported system toggles, display and sound settings, manage app permissions, run diagnostics, and execute privileged shell commands. Mutations and shell commands require ACP client confirmation. State changes are checked against the device before being reported as successful; unsupported ROM interfaces return an explicit error. See [Android privileged actions](docs/android-privileged-actions.md) for the tool contract and compatibility details.
+
 ### Skills
 
 You can ask OmniBot to install a skill by simply sending it the repository link. Recommended collection: https://github.com/OpenMinis/MinisSkills

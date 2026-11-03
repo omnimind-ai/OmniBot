@@ -148,8 +148,8 @@ class AgentRuntimeManagerConfigTest {
         assertEquals("omnibot/gpt-5", root.get("model").asString)
         assertEquals(
             "https://provider.example/v1",
-            root.getAsJsonObject("provider").getAsJsonObject("omnibot")
-                .getAsJsonObject("options").get("baseURL").asString,
+            root.getAsJsonObject("providers").getAsJsonObject("omnibot")
+                .getAsJsonObject("settings").get("baseURL").asString,
         )
     }
 

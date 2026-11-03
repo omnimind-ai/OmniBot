@@ -185,13 +185,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'When enabled, Enter creates a new line; when disabled, Enter sends the message directly';
 
   @override
-  String get settingsPredictiveBackTitle => 'Predictive Back Gesture';
-
-  @override
-  String get settingsPredictiveBackSubtitle =>
-      'When enabled, the back gesture follows your finger to preview the previous page or home screen; when disabled, the legacy back behavior is kept';
-
-  @override
   String get settingsHabitualHandTitle => 'Dominant Hand';
 
   @override
@@ -1561,11 +1554,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get alpineOpenCode => 'OpenCode CLI with built-in ACP support';
 
   @override
-  String get alpineDeepSeekHarness =>
-      'DeepSeek Harness (dsh) official ACP runtime';
+  String get alpineKimiCode => 'Kimi Code official CLI and local Web UI';
 
   @override
-  String get alpineKimiCode => 'Kimi Code official CLI and local Web UI';
+  String get alpinePi => 'Pi Agent with MCP tool support';
 
   @override
   String get alpineSshClient => 'SSH Client';

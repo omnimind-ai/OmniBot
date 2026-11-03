@@ -241,16 +241,19 @@ refactors must not modify long-term memory APIs or stored memory data.
 - Do not use the in-app Browser, Chrome automation, Playwright, or any other browser-based visual/interaction acceptance for WebUI changes unless the user explicitly requests browser verification.
 - Validate WebUI changes with focused source inspection plus `cd webchat && pnpm run typecheck && pnpm run build`.
 
-### Predictive Back Gesture
-- `android:enableOnBackInvokedCallback="true"` is set on `<application>` in `app/src/main/AndroidManifest.xml`; the flag is static, so the runtime toggle works by consuming back when OFF.
-- Toggle key: `flutter.predictive_back_enabled` (boolean, default true) in `FlutterSharedPreferences`, exposed on the Flutter misc/experience settings page.
-- Native gates `cn.com.omnimind.bot.util.PredictiveBackGate` and `com.rk.terminal.util.PredictiveBackGate` (ReTerminal) register a consuming back callback when the toggle is OFF to preserve legacy no-animation behavior; MainActivity needs no gate because Dart always handles back.
-- Flutter side (`ui/lib`): GoRouter `CustomTransitionPage` routes are wrapped by `ui/lib/widgets/predictive_back_gesture_wrapper.dart` — when ON it forwards back-gesture events to the route (public `PredictiveBackRoute` API) so the stock `CupertinoPageTransition` follows the finger, adding a 32dp corner clip on the top page (full-width slide, no card shrink); when OFF or non-Android it falls back to the app's original transitions. Theme gating in `app_bootstrap.dart` covers the few `MaterialPageRoute` pages (ON: `PredictiveBackPageTransitionsBuilder`; OFF: `FadeForwardsPageTransitionsBuilder`).
+### Navigation and Page Motion
+- Flutter navigation stays owned by GoRouter/Navigator. `GoRouterManager.buildPage` creates `OmniPage`; imperative pushes use `OmniPageRoute`. Both live in `ui/lib/widgets/navigation/page_route.dart` and share the same transition. Route declarations normally supply a `builder`, not a page-specific animation.
+- Ordinary pages, including home -> chat and back, use a 450ms quarter-width horizontal transition with paint-only fades in `page_transition.dart`. A settings row with a measured origin uses `OmniOpenContainer` (300ms expand/contract) instead. These are alternative route presentations, never nested transitions.
+- Only pointer drags drive interactive page position through `DragBackRouteMixin` (linear travel, 350ms settle). Android system back commits the route's ordinary pop; cancellation leaves it in place. Do not add system-progress observers, a second animation controller, per-page back animations, or theme overrides to these routes.
+- Preserve PopScope vetoes, returned results, keyboard focus/insets, reduced-motion preferences and departing-route guards. Updating the selected conversation must read the current `Page` while retaining its route and ChatPage state; motion must not create another conversation/session owner.
+- The old predictive-back setting and custom Flutter motion have been removed. Previously stored values are ignored. Native activities use platform transitions and back dispatch; the terminal uses its navigation component defaults. The manifest's `enableOnBackInvokedCallback` remains enabled for platform back support.
+- Use neutral or Omni names. Keep code comments and maintenance prose about application behavior and ownership; upstream product names belong only in the provenance and license files in `docs/third-party/`. Prefer one shared implementation and delete retired paths rather than keeping compatibility aliases for internal UI code.
+- Regression coverage: `ui/test/widgets/omni_page_route_test.dart`, `ui/test/widgets/omni_open_container_test.dart`, `ui/test/core/router/go_router_config_test.dart`, and the real home/settings/chat tests. Check push, button/system return, pointer cancel/commit, vetoes, results and retained conversation state when changing motion.
 
 ### ReTerminal Theming
 - The embedded terminal (ReTerminal/, built as the `:core:*` modules) is themed to match the main app: `core/main/src/main/java/com/rk/terminal/ui/theme/Color.kt` mirrors the Flutter tokens in `ui/lib/theme/omni_theme_palette.dart` (light accent `#2C7FEB`, dark accent `#98AD90`, error `#FF6464`), Monet/dynamic color is off by default (`Settings.monet`), typography uses the system font, and icons are Lucide-style stroke vectors in `core/resources/src/main/res/drawable/ic_lucide_*.xml`. Keep these in sync when the main app palette changes.
 - ReTerminal settings pages replicate the main app's list style in Compose (no cards, hairline row dividers, 18dp page padding, 24dp group spacing, centered 17sp title bar): see `core/components/src/main/java/com/rk/components/compose/preferences/` and the extra tokens in `OmniPaletteExtras.kt` (provided by `KarbonTheme`).
-- Page transitions mirror the main app's predictive-back style (full-width slide + 25% parallax + 90% dim, strictly linear 250ms so gesture progress maps 1:1 to finger travel; 250ms linear fade when the toggle is OFF): `ui/animations/NavigationAnimationTransitions.kt`, gated by `rememberPredictiveBackEnabled()`. During transitions the NavHost clips to the device's physical screen corner radius (`ui/components/ScreenCornerRadius.kt`). Cross-activity open/close uses `overrideActivityTransition` (API 34+) or `overridePendingTransition` with the same slide style, registered in terminal `MainActivity` and applied at launch in `EmbeddedTerminalLaunchHelper`/`TerminalActivity`.
+- Native terminal navigation uses the existing Android Navigation Compose dependency: `rememberNavController`, typed `MainActivityRoutes`, and `NavHost` in `MainActivityNavHost.kt`. Keep the official default transitions and system back handling; do not add custom animation parameters, gesture drivers, or navigation wrappers. Use `launchSingleTop` for settings destinations. Activity open/close uses Android defaults, and the terminal module targets Java/Kotlin JVM 17. Preserve drawer-first back handling, destination-based focus/IME cleanup and the independent terminal session service.
 
 ### GitHub Codex Bot Rules
 - The self-hosted GitHub Actions Codex bot is configured in `.github/workflows/codex-bot.yml`.
@@ -276,10 +279,10 @@ flutter analyze --no-fatal-warnings --no-fatal-infos
 
 ### Platform Requirements
 - **Min SDK**: 29 (Android 10)
-- **Target SDK**: 34 (Android 14)
-- **Compile SDK**: 36
+- **Target SDK**: 37 (Android 17)
+- **Compile SDK**: 37
 - **NDK**: ARMv7 and ARM64 architectures
-- **JDK**: 11+
+- **JDK**: 17
 - **Flutter**: 3.9.2+
 - **Kotlin**: Latest (via Gradle plugin)
 

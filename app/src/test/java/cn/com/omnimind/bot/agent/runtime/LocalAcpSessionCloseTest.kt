@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import com.rk.terminal.runtime.TerminalDistribution
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import com.agentclientprotocol.agent.AgentInfo
 import com.agentclientprotocol.client.ClientSession
@@ -24,7 +25,9 @@ class LocalAcpSessionCloseTest {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val ownership = AcpTurnOwnershipRegistry()
         val runtime = LocalAcpRuntime(context, scope, mock(AgentSessionBindingRepository::class.java),
-            AcpAgentProfileStore(context), prepareLaunchEnvironment = { _, _ -> PreparedAcpLaunch(emptyMap()) },
+            AcpAgentProfileStore(context), ownerAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+            currentDistribution = { TerminalDistribution.alpine },
+            prepareLaunchEnvironment = { _, _ -> PreparedAcpLaunch(emptyMap()) },
             buildHandoffContext = { _, _ -> null },
             scheduleToolBridge = mock(AgentScheduleToolBridge::class.java),
             onMessage = { error("Listing must not emit lifecycle events") }, turnOwnership = ownership)

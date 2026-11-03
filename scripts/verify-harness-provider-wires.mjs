@@ -1,4 +1,5 @@
-// Exercise the official SDK drivers used by the OpenCode config adapter.
+// Legacy OpenCode V1 AI SDK wire smoke test. The V2 adapter uses native providers;
+// verify it with verify-installed-harness-adapters.mjs and a real @opencode/cli.
 // Install ai, @ai-sdk/openai, @ai-sdk/openai-compatible and @ai-sdk/anthropic
 // in a temporary directory, then pass that directory. No external requests or keys.
 import assert from 'node:assert/strict';

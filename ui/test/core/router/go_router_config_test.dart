@@ -184,7 +184,7 @@ void main() {
             path: GoRouterManager.homeRoute,
             name: 'home/home',
             pageBuilder: (context, state) =>
-                GoRouterManager.buildActivitySlidePage(
+                GoRouterManager.buildPage(
                   key: state.pageKey,
                   name: state.name,
                   child: const Scaffold(body: Text('Conversation list')),
@@ -194,7 +194,7 @@ void main() {
             path: GoRouterManager.chatRoute,
             name: 'home/chat',
             pageBuilder: (context, state) =>
-                GoRouterManager.buildActivitySlidePage(
+                GoRouterManager.buildPage(
                   key: state.pageKey,
                   name: state.name,
                   child: _ChatOwnerProbe(

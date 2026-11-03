@@ -16,8 +16,9 @@ import okhttp3.Request
  */
 internal class RemoteRuntimeBundleCatalogStore(
     private val endpoint: String = DEFAULT_ENDPOINT,
-    private val client: OkHttpClient = defaultClient,
+    client: OkHttpClient? = null,
 ) {
+    private val httpClient: OkHttpClient by lazy { client ?: defaultClient }
     private val mutex = Mutex()
 
     @Volatile
@@ -73,7 +74,7 @@ internal class RemoteRuntimeBundleCatalogStore(
 
     private suspend fun downloadCatalog(): String = withContext(Dispatchers.IO) {
         val request = Request.Builder().url(endpoint).get().build()
-        client.newCall(request).execute().use { response ->
+        httpClient.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
                 throw RemoteCatalogHttpException(response.code)
             }
@@ -135,10 +136,12 @@ internal class RemoteRuntimeBundleCatalogStore(
         const val REFRESH_COOLDOWN_MS = 5 * 60 * 1000L
         const val DEFAULT_ENDPOINT =
             "https://raw.githubusercontent.com/omnimind-ai/OmniBot/main/plugins/catalog.v1.json"
-        val defaultClient = OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(12, TimeUnit.SECONDS)
-            .callTimeout(20, TimeUnit.SECONDS)
-            .build()
+        val defaultClient: OkHttpClient by lazy {
+            OkHttpClient.Builder()
+                .connectTimeout(8, TimeUnit.SECONDS)
+                .readTimeout(12, TimeUnit.SECONDS)
+                .callTimeout(20, TimeUnit.SECONDS)
+                .build()
+        }
     }
 }

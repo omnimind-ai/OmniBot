@@ -2,6 +2,19 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/utils/deep_thinking_persistence.dart';
 
 void main() {
+  test('history preview cannot be relabeled as a complete thinking trace', () {
+    final card = <String, dynamic>{
+      'type': 'deep_thinking',
+      'thinkingContent': 'preview',
+      'historyPayloadOffloaded': true,
+      'thinkingContentTruncated': true,
+      'thinkingOriginalLength': 1000000,
+      'thinkingTruncateMode': 'preview',
+    };
+
+    expect(buildPersistentDeepThinkingCardData(card), card);
+  });
+
   test('persists a long deep-thinking trace verbatim', () {
     final thinking = List<String>.filled(5000, '推理🙂\n').join();
     final cardData = <String, dynamic>{

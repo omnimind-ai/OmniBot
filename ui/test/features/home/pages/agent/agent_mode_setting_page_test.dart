@@ -10,6 +10,7 @@ import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/settings_detail_sheet.dart';
+import 'package:ui/widgets/settings_ui.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -26,7 +27,6 @@ void main() {
         .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
           if (call.method != 'agent/list') return null;
           return <String, dynamic>{
-            'selectedAgentId': 'codex-acp',
             'agents': <Map<String, dynamic>>[
               _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
               _agent(
@@ -43,9 +43,9 @@ void main() {
                 arguments: const ['acp'],
               ),
               _agent(
-                'deepseek-harness-acp',
-                'DeepSeek Harness',
-                'dsh',
+                'kimi-code-acp',
+                'Kimi Code',
+                'kimi',
                 'unchecked',
                 managedAdapter: true,
                 lastCheckError: 'Harness 未初始化，请点击“安装官方 Harness”准备运行组件。',
@@ -110,6 +110,7 @@ void main() {
 
       await tester.pumpWidget(buildPage());
       await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
       final row = find.byKey(const Key('agent-config-na-cloud'));
       expect(find.text('Codex'), findsOneWidget);
       expect(
@@ -120,6 +121,8 @@ void main() {
         find.descendant(of: row, matching: find.text('启动失败')),
         findsNothing,
       );
+      await tester.tap(find.byKey(const Key('agent-search-button')));
+      await tester.pump();
       await tester.enterText(find.byType(TextField).first, 'Na');
       await tester.pump();
       expect(checks, 1);
@@ -239,6 +242,409 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('kept-alive Na tab checks on activation and every return', (
+    tester,
+  ) async {
+    var checks = 0;
+    var status = 'offline';
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method == 'agent/list') {
+            return {
+              'agents': [_agent('na-cloud', 'Na', 'na-cloud', status)],
+            };
+          }
+          if (call.method == 'agent/test') {
+            expect(call.arguments, {'agentId': 'na-cloud', 'readOnly': true});
+            checks++;
+            status = checks == 1 ? 'online' : 'offline';
+            return {'ok': status == 'online', 'connected': status == 'online'};
+          }
+          return null;
+        });
+    Widget page(bool active) => MaterialApp(
+      theme: AppTheme.lightTheme,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('zh'),
+      home: AgentModeSettingPage(embedded: true, active: active),
+    );
+    await tester.pumpWidget(page(false));
+    await tester.pumpAndSettle();
+    expect(checks, 0);
+    await tester.pumpWidget(page(true));
+    await tester.pumpAndSettle();
+    expect(checks, 1);
+    expect(find.text('可用'), findsOneWidget);
+    await tester.pumpWidget(page(false));
+    await tester.pumpAndSettle();
+    expect(checks, 1);
+    await tester.pumpWidget(page(true));
+    await tester.pumpAndSettle();
+    expect(checks, 2);
+    expect(find.text('启动失败'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'returning during a Na check queues one fresh check without overlap',
+    (tester) async {
+      final firstCheck = Completer<Map<String, dynamic>>();
+      var checks = 0;
+      var status = 'offline';
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method == 'agent/list') {
+              return {
+                'agents': [_agent('na-cloud', 'Na', 'na-cloud', status)],
+              };
+            }
+            if (call.method == 'agent/test') {
+              checks++;
+              if (checks == 1) {
+                final result = await firstCheck.future;
+                status = 'online';
+                return result;
+              }
+              status = 'offline';
+              return {'ok': false, 'connected': false};
+            }
+            return null;
+          });
+      Widget page(bool active) => MaterialApp(
+        theme: AppTheme.lightTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: AgentModeSettingPage(embedded: true, active: active),
+      );
+      await tester.pumpWidget(page(true));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+      expect(checks, 1);
+      expect(find.text('检测中'), findsOneWidget);
+      expect(find.byKey(const Key('agent-check-na-cloud')), findsNothing);
+      for (var i = 0; i < 2; i++) {
+        await tester.pumpWidget(page(false));
+        await tester.pump(const Duration(milliseconds: 100));
+        await tester.pumpWidget(page(true));
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(checks, 1);
+      firstCheck.complete({'ok': true, 'connected': true});
+      await tester.pumpAndSettle();
+      expect(checks, 2);
+      expect(find.text('启动失败'), findsOneWidget);
+      expect(find.text('检测中'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final scenario in [
+    (width: 1100.0, scale: 1.0, inline: true),
+    (width: 500.0, scale: 1.0, inline: false),
+    (width: 1100.0, scale: 2.0, inline: false),
+  ]) {
+    testWidgets(
+      'Agent maintenance adapts at ${scenario.width}dp and ${scenario.scale}x text',
+      (tester) async {
+        tester.view.physicalSize = Size(scenario.width, 1000);
+        tester.view.devicePixelRatio = 1;
+        tester.platformDispatcher.textScaleFactorTestValue = scenario.scale;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+        final calls = <MethodCall>[];
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+              calls.add(call);
+              if (call.method != 'agent/list') return null;
+              return {
+                'distributionId': 'pad-layout-test',
+                'agents': [
+                  {
+                    ..._agent(
+                      'kimi-code-acp',
+                      'Kimi Code',
+                      'kimi',
+                      'unchecked',
+                      managedAdapter: true,
+                    ),
+                    'uninstallable': true,
+                  },
+                ],
+              };
+            });
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: AppTheme.lightTheme,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            locale: const Locale('zh'),
+            home: const AgentModeSettingPage(embedded: true),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final action = find.byKey(const Key('agent-check-kimi-code-acp'));
+        final uninstall = find.byKey(
+          const Key('agent-uninstall-kimi-code-acp'),
+        );
+        final navigation = find.byKey(
+          const Key('agent-navigation-kimi-code-acp'),
+        );
+        for (final control in [action, uninstall, navigation]) {
+          expect(
+            tester.getSize(control).shortestSide,
+            greaterThanOrEqualTo(48),
+          );
+        }
+        final actionBounds = tester.getRect(action);
+        final navigationBounds = tester.getRect(navigation);
+        if (scenario.inline) {
+          expect(
+            actionBounds.center.dy,
+            closeTo(navigationBounds.center.dy, 1),
+          );
+          expect(
+            actionBounds.left,
+            greaterThan(tester.getRect(find.text('Kimi Code')).right),
+          );
+        } else {
+          expect(
+            actionBounds.top,
+            greaterThanOrEqualTo(navigationBounds.bottom),
+          );
+        }
+        expect(tester.widget<IconButton>(navigation).onPressed, isNotNull);
+        // Reflowing a row must not remove the existing uninstall confirmation.
+        await tester.tap(uninstall);
+        await tester.pumpAndSettle();
+        expect(
+          find.byKey(const ValueKey('agent-uninstall-confirm-kimi-code-acp')),
+          findsOneWidget,
+        );
+        expect(
+          calls.where((call) => call.method == 'agent/uninstall'),
+          isEmpty,
+        );
+        await tester.tap(
+          find.byKey(const Key('agent-uninstall-cancel-kimi-code-acp')),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          calls.where((call) => call.method == 'agent/uninstall'),
+          isEmpty,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets('embedded contacts keep search and filters when reactivated', (
+    tester,
+  ) async {
+    var catalogReads = 0;
+    var probeReads = 0;
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method == 'agent/refresh') probeReads++;
+          if (call.method != 'agent/list') return null;
+          catalogReads++;
+          return {
+            'agents': [
+              _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
+              _agent('claude-code-acp', 'Claude Code', 'claude', 'offline'),
+              if (catalogReads > 1)
+                _agent('custom-codex', 'Codex Custom', 'custom', 'online'),
+            ],
+          };
+        });
+    Widget page(bool active) => MaterialApp(
+      theme: AppTheme.lightTheme,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      locale: const Locale('zh'),
+      home: AgentModeSettingPage(embedded: true, active: active),
+    );
+    await tester.pumpWidget(page(true));
+    await tester.pumpAndSettle();
+    expect(find.text('Agents'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.chevronLeft), findsNothing);
+    expect(
+      tester.getSize(find.byKey(const ValueKey('agent-avatar-Codex'))),
+      const Size(44, 44),
+    );
+    expect(
+      tester.getTopLeft(find.text('Claude Code')).dy,
+      lessThan(tester.getTopLeft(find.text('Codex')).dy),
+    );
+    await tester.tap(find.text('可用 1'));
+    await tester.pumpAndSettle();
+    expect(find.text('Claude Code'), findsNothing);
+    expect(find.byKey(const Key('agent-contact-search')), findsNothing);
+    await tester.tap(find.byKey(const Key('agent-search-button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('agent-contact-search')),
+      'codex',
+    );
+    await tester.pumpWidget(page(false));
+    await tester.pumpAndSettle();
+    expect(catalogReads, 1);
+    expect(
+      ModalRoute.of(tester.element(find.byType(AgentModeSettingPage)))!
+          .popDisposition,
+      RoutePopDisposition.bubble,
+    );
+    await tester.pumpWidget(page(true));
+    await tester.pumpAndSettle();
+    expect(catalogReads, 2);
+    expect(probeReads, 0);
+    expect(find.text('Codex Custom'), findsOneWidget);
+    expect(find.text('Claude Code'), findsNothing);
+    expect(find.text('codex'), findsOneWidget);
+    expect(
+      ModalRoute.of(tester.element(find.byType(AgentModeSettingPage)))!
+          .popDisposition,
+      RoutePopDisposition.doNotPop,
+    );
+    await tester.enterText(
+      find.byKey(const Key('agent-contact-search')),
+      'no match',
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('没有匹配的 Agent'), findsOneWidget);
+    expect(find.text('Codex'), findsNothing);
+    await tester.tap(find.byKey(const Key('agent-close-search')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agent-contact-search')), findsNothing);
+    expect(find.text('Codex'), findsOneWidget);
+    expect(find.text('Codex Custom'), findsOneWidget);
+    expect(
+      find.text('Claude Code'),
+      findsNothing,
+    ); // Available filter survives.
+    await tester.tap(find.byKey(const Key('agent-search-button')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('agent-contact-search')))
+          .controller!
+          .text,
+      isEmpty,
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('agent-contact-search')), findsNothing);
+  });
+
+  for (final brightness in Brightness.values) {
+    for (final scale in [1.0, 1.5, 2.0]) {
+      testWidgets(
+        'settings groups fit 320dp with $brightness and text scale $scale',
+        (tester) async {
+          tester.view.physicalSize = const Size(320, 740);
+          tester.view.devicePixelRatio = 1;
+          tester.view.padding = const FakeViewPadding(bottom: 24);
+          addTearDown(tester.view.resetPhysicalSize);
+          addTearDown(tester.view.resetDevicePixelRatio);
+          addTearDown(tester.view.resetPadding);
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+              .setMockMethodCallHandler(pluginPlatformChannel, (call) async {
+                if (call.method != 'listActions') return null;
+                return [
+                  {
+                    'id': 'open_opencode_web',
+                    'pluginId': 'com.omnimind.agent-web',
+                    'displayName': 'OpenCode Web',
+                    'description':
+                        'Open the local assistant workspace in your browser',
+                    'presentation': {'placement': 'agent_settings'},
+                  },
+                ];
+              });
+          await tester.pumpWidget(
+            MaterialApp(
+              theme: brightness == Brightness.dark
+                  ? AppTheme.darkTheme
+                  : AppTheme.lightTheme,
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              locale: const Locale('en'),
+              builder: (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(scale)),
+                child: child!,
+              ),
+              home: const AgentModeSettingPage(embedded: true),
+            ),
+          );
+          await tester.pumpAndSettle();
+          final row = find.byKey(const Key('agent-config-codex-acp'));
+          expect(tester.getRect(row).left, 22);
+          expect(tester.getRect(row).right, 298);
+          expect(tester.widget<Text>(find.text('Codex')).style?.fontSize, 15);
+          expect(tester.takeException(), isNull);
+          await tester.scrollUntilVisible(
+            find.byKey(
+              const Key(
+                'plugin-action-button-com.omnimind.agent-web/open_opencode_web',
+              ),
+            ),
+            180,
+          );
+          await tester.pumpAndSettle();
+          expect(find.text('OpenCode Web'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.scrollUntilVisible(
+            find.byKey(const Key('agent-version-details')),
+            180,
+          );
+          await tester.pumpAndSettle();
+          expect(
+            tester
+                .getRect(find.byKey(const Key('agent-version-details')))
+                .bottom,
+            lessThanOrEqualTo(716),
+          );
+          expect(tester.takeException(), isNull);
+          await tester.tap(find.byKey(const Key('agent-version-details')));
+          await tester.pumpAndSettle();
+          expect(find.byType(SettingsDetailSheet), findsOneWidget);
+          expect(find.text('Version not checked'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+          await tester.binding.handlePopRoute();
+          await tester.pumpAndSettle();
+          await tester.tap(find.byKey(const Key('agent-search-button')));
+          await tester.pumpAndSettle();
+          await tester.enterText(
+            find.byKey(const Key('agent-contact-search')),
+            'Kimi',
+          );
+          await tester.pumpAndSettle();
+          expect(find.text('Kimi Code'), findsOneWidget);
+          expect(find.text('Codex'), findsNothing);
+          expect(find.byKey(const Key('agent-refresh')), findsNothing);
+          expect(find.byKey(const Key('agent-shared-model')), findsNothing);
+          await tester.tap(find.byKey(const Key('agent-close-search')));
+          await tester.pumpAndSettle();
+          await tester.scrollUntilVisible(
+            find.byKey(const Key('agent-refresh')),
+            180,
+          );
+          await tester.pumpAndSettle();
+          await tester.scrollUntilVisible(
+            find.byKey(const Key('agent-shared-model')),
+            -180,
+          );
+          await tester.pumpAndSettle();
+          expect(find.text('General'), findsOneWidget);
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
   for (final configurationAvailable in [false, true]) {
     testWidgets(
       'Na configuration visibility follows native development policy: $configurationAvailable',
@@ -249,7 +655,6 @@ void main() {
               calls.add(call);
               if (call.method == 'agent/list') {
                 return {
-                  'selectedAgentId': 'na-cloud',
                   'agents': [
                     {
                       ..._agent('na-cloud', 'Na', 'na-cloud', 'offline'),
@@ -315,7 +720,6 @@ void main() {
         .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
           if (call.method == 'agent/list') {
             return {
-              'selectedAgentId': 'codex-acp',
               'agents': [
                 _agent(
                   'codex-acp',
@@ -372,7 +776,6 @@ void main() {
             .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
               if (call.method != 'agent/list') return null;
               return <String, dynamic>{
-                'selectedAgentId': 'codex-acp',
                 'agents': [
                   _agent(
                     'codex-acp',
@@ -406,9 +809,8 @@ void main() {
       var attempts = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
-            if (call.method == 'agent/list')
+            if (call.method == 'agent/list') {
               return <String, dynamic>{
-                'selectedAgentId': 'codex-acp',
                 'agents': [
                   _agent(
                     'codex-acp',
@@ -419,6 +821,7 @@ void main() {
                   ),
                 ],
               };
+            }
             if (call.method == 'agent/prepare') {
               expect((call.arguments as Map)['force'], isTrue);
               attempts++;
@@ -456,7 +859,7 @@ void main() {
     },
   );
 
-  testWidgets('shows the managed ACP Agent catalog without Gemini', (
+  testWidgets('shows the managed ACP Agent catalog without retired agents', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(1080, 2200);
@@ -478,9 +881,10 @@ void main() {
     expect(find.text('Codex'), findsOneWidget);
     expect(find.text('Claude Code'), findsOneWidget);
     expect(find.text('Gemini CLI'), findsNothing);
+    expect(find.text('DeepSeek Harness'), findsNothing);
     expect(find.text('OpenCode'), findsOneWidget);
-    expect(find.text('DeepSeek Harness'), findsOneWidget);
-    expect(find.textContaining('DeepSeek Harness ACP Agent'), findsNothing);
+    expect(find.text('Kimi Code'), findsOneWidget);
+    expect(find.textContaining('Kimi Code ACP Agent'), findsNothing);
     expect(find.textContaining('ACP initialize'), findsNothing);
     expect(find.text('可用'), findsWidgets);
     expect(find.text('未安装'), findsOneWidget);
@@ -492,31 +896,34 @@ void main() {
     expect(find.textContaining('统一 API'), findsNothing);
     expect(find.byType(PopupMenuButton<String>), findsNothing);
     expect(find.text('初始化检测'), findsNothing);
-    expect(find.text('重新检测'), findsNWidgets(2));
+    expect(find.text('重新检测'), findsOneWidget);
+    expect(find.byTooltip('重新检测'), findsOneWidget);
     expect(find.text('重新安装'), findsOneWidget);
-    expect(find.text('配置'), findsNWidgets(4));
+    expect(find.text('配置'), findsNothing);
+    expect(find.byKey(const Key('agent-navigation-codex-acp')), findsOneWidget);
     expect(find.text('安装'), findsNothing);
     // All assistants retain configuration access, including failed startup.
     // Installation stays on the separate action button.
-    expect(find.byIcon(LucideIcons.chevronRight), findsNWidgets(5));
+    expect(find.byIcon(LucideIcons.chevronRight), findsNWidgets(7));
+    expect(find.byType(OmniSettingsGroup), findsNWidgets(3));
+    expect(find.text('4 位 Agent'), findsNothing);
+    expect(find.text('版本未检测'), findsNothing);
     expect(
       find.text('Na · 云端个人助手'),
       findsNothing,
     ); // No separate Na route tile.
     expect(
-      tester
-          .getTopLeft(find.byKey(const Key('agent-check-deepseek-harness-acp')))
-          .dy,
-      lessThan(
+      tester.getCenter(find.byKey(const Key('agent-check-kimi-code-acp'))).dy,
+      closeTo(
         tester
-            .getTopLeft(
-              find.byKey(const Key('agent-navigation-deepseek-harness-acp')),
-            )
+            .getCenter(find.byKey(const Key('agent-navigation-kimi-code-acp')))
             .dy,
+        1,
       ),
     );
     expect(find.text('远程 PC Bridge'), findsOneWidget);
-    expect(find.text('远程运行'), findsOneWidget);
+    expect(find.text('通用配置'), findsOneWidget);
+    expect(find.text('维护'), findsOneWidget);
     expect(find.text('使用'), findsNothing);
     expect(find.text('当前使用'), findsNothing);
     expect(find.text('Use Agent'), findsNothing);
@@ -531,7 +938,6 @@ void main() {
           switch (call.method) {
             case 'agent/list':
               return <String, dynamic>{
-                'selectedAgentId': 'codex-acp',
                 'agents': <Map<String, dynamic>>[
                   _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
                 ],
@@ -572,7 +978,10 @@ void main() {
     );
     expect(resultSheet, findsOneWidget);
     expect(find.byType(SettingsDetailSheet), findsOneWidget);
-    expect(find.byType(AlertDialog), findsNothing);
+    expect(
+      find.byWidgetPredicate((widget) => widget is AlertDialog),
+      findsNothing,
+    );
     expect(find.text('助手检查通过'), findsOneWidget);
     expect(find.textContaining('prompt: true'), findsNothing);
     expect(find.text('助手已准备好，可以开始对话。'), findsOneWidget);
@@ -606,7 +1015,7 @@ void main() {
       final addButton = find.byTooltip('添加自定义 ACP Agent');
       await tester.tap(addButton);
       await tester.pumpAndSettle();
-      final dialog = find.byType(AlertDialog);
+      final dialog = find.byWidgetPredicate((widget) => widget is AlertDialog);
       final dialogFields = find.descendant(
         of: dialog,
         matching: find.byType(TextField),
@@ -622,7 +1031,7 @@ void main() {
       await tester.tap(addButton);
       await tester.pumpAndSettle();
       final reopenedDialogFields = find.descendant(
-        of: find.byType(AlertDialog),
+        of: find.byWidgetPredicate((widget) => widget is AlertDialog),
         matching: find.byType(TextField),
       );
       await tester.tap(reopenedDialogFields.at(1));
@@ -653,13 +1062,12 @@ void main() {
             switch (call.method) {
               case 'agent/list':
                 return <String, dynamic>{
-                  'selectedAgentId': 'codex-acp',
                   'agents': <Map<String, dynamic>>[
                     _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
                     _agent(
-                      'deepseek-harness-acp',
-                      'DeepSeek Harness',
-                      'dsh',
+                      'kimi-code-acp',
+                      'Kimi Code',
+                      'kimi',
                       'missing',
                       managedAdapter: true,
                     ),
@@ -668,7 +1076,7 @@ void main() {
               case 'agent/prepare':
                 preparationCalls += 1;
                 expect(call.arguments, <String, Object?>{
-                  'agentId': 'deepseek-harness-acp',
+                  'agentId': 'kimi-code-acp',
                   'force': true,
                 });
                 return preparation.future;
@@ -691,12 +1099,20 @@ void main() {
       await tester.pumpWidget(buildPage());
       await tester.pumpAndSettle();
 
-      await tester.tap(
-        find.byKey(const Key('agent-check-deepseek-harness-acp')),
-      );
+      await tester.tap(find.byKey(const Key('agent-check-kimi-code-acp')));
+      await tester.pump();
+      // The page-ready gate publishes the preparation stream after the frame.
       await tester.pump();
 
-      expect(find.text('后台安装中'), findsOneWidget);
+      expect(find.text('后台安装 / 升级中'), findsOneWidget);
+      expect(
+        tester
+            .widget<IconButton>(
+              find.byKey(const Key('agent-navigation-kimi-code-acp')),
+            )
+            .onPressed,
+        isNull,
+      );
       await tester.tap(find.byTooltip('添加自定义 ACP Agent'));
       await tester.pump(const Duration(milliseconds: 400));
       expect(find.text('添加自定义 ACP Agent'), findsOneWidget);
@@ -705,11 +1121,10 @@ void main() {
       await tester.pump();
       await tester.pumpWidget(buildPage());
       await tester.pump(const Duration(milliseconds: 500));
-      expect(find.text('后台安装中'), findsOneWidget);
+      await tester.pump();
+      expect(find.text('后台安装 / 升级中'), findsOneWidget);
 
-      await tester.tap(
-        find.byKey(const Key('agent-navigation-deepseek-harness-acp')),
-      );
+      await tester.tap(find.byKey(const Key('agent-navigation-kimi-code-acp')));
       await tester.pump();
       expect(preparationCalls, 1);
 
@@ -718,7 +1133,66 @@ void main() {
         'error': 'expected test completion',
       });
       await tester.pump(const Duration(milliseconds: 500));
-      expect(find.text('后台安装中'), findsNothing);
+      expect(find.text('后台安装 / 升级中'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'custom unmanaged Agent capabilities remain available in details',
+    (tester) async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method != 'agent/list') return null;
+            return {
+              'agents': [
+                {
+                  ..._agent(
+                    'custom-acp',
+                    'Custom Agent',
+                    'custom-agent',
+                    'online',
+                  ),
+                  'builtIn': false,
+                  'capabilities': {
+                    'plugin': {
+                      'supported': true,
+                      'authoring': true,
+                      'installViaHarness': true,
+                    },
+                  },
+                },
+              ],
+            };
+          });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          locale: const Locale('zh'),
+          home: const AgentModeSettingPage(embedded: true),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('自定义 Agent'), findsOneWidget);
+      expect(find.text('预置 Agent'), findsNothing);
+      expect(find.text('插件：可通过助手创建和安装'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.byKey(const Key('agent-version-details')),
+        160,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('agent-version-details')));
+      await tester.pumpAndSettle();
+      expect(find.text('插件：可通过助手创建和安装'), findsOneWidget);
+      expect(
+        find.descendant(
+          of: find.byType(SettingsDetailSheet),
+          matching: find.text('Custom Agent'),
+        ),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
     },
   );
 
@@ -732,16 +1206,16 @@ void main() {
           if (call.method == 'listActions') {
             return <Map<String, dynamic>>[
               <String, dynamic>{
-                'id': 'open_kimi_web',
+                'id': 'open_opencode_web',
                 'pluginId': 'com.omnimind.agent-web',
-                'displayName': 'Kimi Code Web',
-                'description': 'Open Kimi Code Web',
+                'displayName': 'OpenCode Web',
+                'description': 'Open OpenCode Web',
                 'presentation': <String, dynamic>{
                   'placement': 'agent_settings',
-                  'packageId': 'kimi',
+                  'packageId': 'opencode',
                   'label': <String, String>{
-                    'zh': 'Kimi Code Web',
-                    'en': 'Kimi Code Web',
+                    'zh': 'OpenCode Web',
+                    'en': 'OpenCode Web',
                   },
                   'description': <String, String>{
                     'zh': '在系统浏览器中打开本机 Web 界面',
@@ -755,8 +1229,8 @@ void main() {
             return <String, dynamic>{
               'success': true,
               'code': 'OPENED',
-              'serviceId': 'kimi',
-              'packageId': 'kimi',
+              'serviceId': 'opencode',
+              'packageId': 'opencode',
               'running': true,
             };
           }
@@ -778,12 +1252,14 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('本地 Web 界面'), findsOneWidget);
-    expect(find.text('Kimi Code Web'), findsOneWidget);
+    expect(find.text('Agent WebUI'), findsOneWidget);
+    expect(find.text('OpenCode Web'), findsOneWidget);
     expect(find.text('在系统浏览器中打开本机 Web 界面'), findsOneWidget);
     await tester.tap(
       find.byKey(
-        const Key('plugin-action-button-com.omnimind.agent-web/open_kimi_web'),
+        const Key(
+          'plugin-action-button-com.omnimind.agent-web/open_opencode_web',
+        ),
       ),
     );
     await tester.pump();
@@ -791,7 +1267,7 @@ void main() {
     final invocation = calls.lastWhere((call) => call.method == 'invokeAction');
     expect(invocation.arguments, <String, Object?>{
       'pluginId': 'com.omnimind.agent-web',
-      'actionId': 'open_kimi_web',
+      'actionId': 'open_opencode_web',
       'arguments': <String, dynamic>{},
     });
     expect(tester.takeException(), isNull);
@@ -927,6 +1403,6 @@ Map<String, dynamic> _agent(
     'installed': status != 'missing',
     'status': status,
     'managedAdapter': managedAdapter,
-    if (lastCheckError != null) 'lastCheckError': lastCheckError,
+    'lastCheckError': ?lastCheckError,
   };
 }

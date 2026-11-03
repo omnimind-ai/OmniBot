@@ -12,6 +12,10 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
   final Color textSecondary;
   final Color textTertiary;
   final Color accentPrimary;
+
+  /// Brand color used by logos and labels.
+  final Color brandPrimary;
+  final Color brandSurface;
   final Color segmentTrack;
   final Color segmentThumb;
   final Color overlayScrim;
@@ -29,6 +33,8 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
     required this.textSecondary,
     required this.textTertiary,
     required this.accentPrimary,
+    required this.brandPrimary,
+    required this.brandSurface,
     required this.segmentTrack,
     required this.segmentThumb,
     required this.overlayScrim,
@@ -47,6 +53,8 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
     textSecondary: Color(0xFF777777),
     textTertiary: Color(0xFF929292),
     accentPrimary: Color(0xFF161616),
+    brandPrimary: Color(0xFF2C7FEB),
+    brandSurface: Color(0xFFE6EDFF),
     segmentTrack: Color(0xFFF0F0F0),
     segmentThumb: Color(0xFFFFFFFF),
     overlayScrim: Color(0x4D000000),
@@ -65,6 +73,8 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
     textSecondary: Color(0xFFB0B0B0),
     textTertiary: Color(0xFF8E8E8E),
     accentPrimary: Color(0xFFF3F3F3),
+    brandPrimary: Color(0xFF98AD90),
+    brandSurface: Color(0xFF2E382D),
     segmentTrack: Color(0xFF292929),
     segmentThumb: Color(0xFF3A3A3A),
     overlayScrim: Color(0xA6000000),
@@ -84,6 +94,8 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
     Color? textSecondary,
     Color? textTertiary,
     Color? accentPrimary,
+    Color? brandPrimary,
+    Color? brandSurface,
     Color? segmentTrack,
     Color? segmentThumb,
     Color? overlayScrim,
@@ -101,6 +113,8 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
       textSecondary: textSecondary ?? this.textSecondary,
       textTertiary: textTertiary ?? this.textTertiary,
       accentPrimary: accentPrimary ?? this.accentPrimary,
+      brandPrimary: brandPrimary ?? this.brandPrimary,
+      brandSurface: brandSurface ?? this.brandSurface,
       segmentTrack: segmentTrack ?? this.segmentTrack,
       segmentThumb: segmentThumb ?? this.segmentThumb,
       overlayScrim: overlayScrim ?? this.overlayScrim,
@@ -129,6 +143,8 @@ class OmniThemePalette extends ThemeExtension<OmniThemePalette> {
       textSecondary: Color.lerp(textSecondary, other.textSecondary, t)!,
       textTertiary: Color.lerp(textTertiary, other.textTertiary, t)!,
       accentPrimary: Color.lerp(accentPrimary, other.accentPrimary, t)!,
+      brandPrimary: Color.lerp(brandPrimary, other.brandPrimary, t)!,
+      brandSurface: Color.lerp(brandSurface, other.brandSurface, t)!,
       segmentTrack: Color.lerp(segmentTrack, other.segmentTrack, t)!,
       segmentThumb: Color.lerp(segmentThumb, other.segmentThumb, t)!,
       overlayScrim: Color.lerp(overlayScrim, other.overlayScrim, t)!,

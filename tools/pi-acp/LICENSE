@@ -1,0 +1,35 @@
+# LICENSE
+
+本项目采用 **用户分段双重许可 (Segmented Dual Licensing)** 模式：
+
+---
+
+## 1. 开源许可证（GNU AGPL v3）
+
+本项目在以下条件下，可以免费使用，并遵循 **GNU Affero General Public License v3.0 (AGPL v3)**：
+
+- 使用场景为 **非商业用途**；
+- 或者用于 **个人/教育/研究** 目的，禁止用于任何组织；
+
+AGPL v3 的全文请见：https://www.gnu.org/licenses/agpl-3.0.html
+
+> 注意：即便在 AGPL v3 下，您仍然需要遵守协议条款，例如公开源代码等义务。
+
+---
+
+## 2. 商业许可证（Commercial License）
+
+如果您的使用场景不符合上述条件，例如：
+
+- 用于 **商业用途**（直接或间接产生商业利益的服务或产品）；
+- 或者您希望避免 AGPL v3 的源代码开源义务；
+
+那么您必须事先与项目维护者签署 **商业许可证 (Commercial License)**。
+
+申请商业授权请联系 https://omnimind.com.cn
+
+---
+
+## 3. 许可政策更新
+
+项目维护者保留更新许可政策的权利。更新将通过官方渠道（如代码仓库、官方网站）进行通知。

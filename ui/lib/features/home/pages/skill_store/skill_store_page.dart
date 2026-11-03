@@ -1,4 +1,7 @@
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/models/agent_skill_item.dart';
@@ -30,7 +33,8 @@ class SkillStorePage extends StatefulWidget {
   State<SkillStorePage> createState() => _SkillStorePageState();
 }
 
-class _SkillStorePageState extends State<SkillStorePage> {
+class _SkillStorePageState extends State<SkillStorePage>
+    with FlClashPageLoadMixin {
   static const double _kSkillTileTrailingWidth = 64;
   static const double _kSkillTileTrailingHeight = 28;
 
@@ -87,16 +91,17 @@ class _SkillStorePageState extends State<SkillStorePage> {
   }
 
   Future<void> _loadSkills() async {
+    if (!await waitForPageReady() || !mounted) return;
     setState(() => _loading = true);
     try {
       final skills = await AgentSkillStoreService.listSkills();
-      if (!mounted) return;
+      if (!await waitForPageReady() || !mounted) return;
       setState(() {
         _skills = skills;
         _loading = false;
       });
     } catch (_) {
-      if (!mounted) return;
+      if (!await waitForPageReady() || !mounted) return;
       setState(() => _loading = false);
       showToast(context.l10n.skillLoadFailed, type: ToastType.error);
     }
@@ -264,58 +269,61 @@ class _SkillStorePageState extends State<SkillStorePage> {
         primary: true,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 8),
-            child: Tooltip(
-              message: context.l10n.skillSyncOfficialTooltip,
-              child: IconButton(
-                onPressed: _syncingOfficial ? null : _syncOfficialSkills,
-                icon: _syncingOfficial
-                    ? SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: palette.accentPrimary,
-                        ),
-                      )
-                    : SvgPicture.asset(
-                        _kOfficialSkillsDownloadAsset,
-                        width: 22,
-                        height: 22,
-                        colorFilter: ColorFilter.mode(
-                          palette.textPrimary,
-                          BlendMode.srcIn,
-                        ),
+            padding: const EdgeInsetsDirectional.only(end: 12),
+            child: OmniCircleButton(
+              tooltip: context.l10n.skillSyncOfficialTooltip,
+              icon: Icons.download_rounded,
+              size: 40,
+              tapTargetSize: MaterialTapTargetSize.padded,
+              onPressed: _syncingOfficial ? null : _syncOfficialSkills,
+              iconWidget: _syncingOfficial
+                  ? SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: palette.accentPrimary,
                       ),
-              ),
+                    )
+                  : SvgPicture.asset(
+                      _kOfficialSkillsDownloadAsset,
+                      width: 20,
+                      height: 20,
+                      colorFilter: ColorFilter.mode(
+                        palette.textPrimary,
+                        BlendMode.srcIn,
+                      ),
+                    ),
             ),
           ),
         ],
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-              top: false,
-              bottom: false,
-              child: Column(
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
-                    child: OmniSettingsSearchField(
-                      controller: _searchController,
-                      focusNode: _searchFocusNode,
-                      hintText: context.trLegacy('搜索技能名称或描述'),
+      body: OmniContentWidth(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : SafeArea(
+                top: false,
+                bottom: false,
+                child: Column(
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 10),
+                      child: OmniSettingsSearchField(
+                        controller: _searchController,
+                        focusNode: _searchFocusNode,
+                        hintText: context.trLegacy('搜索技能名称或描述'),
+                      ),
                     ),
-                  ),
-                  Expanded(
-                    child: RefreshIndicator(
-                      onRefresh: _loadSkills,
-                      child: _buildScrollableContent(visibleSkills),
+                    Expanded(
+                      child: RefreshIndicator(
+                        onRefresh: _loadSkills,
+                        child: _buildScrollableContent(visibleSkills),
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
+      ),
     );
   }
 

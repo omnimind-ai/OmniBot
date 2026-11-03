@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "retiredAgentIds": ["gemini-cli-acp"],
+  "retiredAgentIds": ["gemini-cli-acp", "deepseek-harness-acp"],
   "agents": [
     {
       "id": "xiaowan-acp",
@@ -15,22 +15,21 @@
       }
     },
     {
-      "id": "kimi-code-acp",
-      "name": "Kimi Code",
-      "description": "Kimi Code through its official ACP interface",
-      "command": "kimi",
-      "arguments": ["acp"],
+      "id": "na-cloud",
+      "name": "Na",
+      "description": "云端个人助手 · 独立模型、长期记忆与任务",
+      "command": "na-cloud",
+      "arguments": [],
+      "enabled": true,
       "builtIn": true,
       "runtime": {
-        "discoveryCommand": "kimi",
-        "managedAdapterPackage": "@moonshot-ai/kimi-code@latest",
-        "managedAdapterPackages": ["@moonshot-ai/kimi-code@latest"],
-        "managedAdapterHealthCommand": "export PATH=/root/.npm-global/bin:$PATH; command -v kimi >/dev/null 2>&1 && node -e 'const [major, minor] = process.versions.node.split(\".\").map(Number); if (major < 22 || (major === 22 && minor < 19)) process.exit(1)'",
-        "configAdapterId": "kimi-code",
-        "usesSharedProvider": true,
-        "terminalPackageId": "kimi",
-        "managedInstallCommand": "npm install -g --no-audit --no-fund --prefix /root/.npm-global --registry=https://registry.npmmirror.com @moonshot-ai/kimi-code@latest || npm install -g --no-audit --no-fund --prefix /root/.npm-global @moonshot-ai/kimi-code@latest",
-        "preparationRevision": "kimi-code-acp-v1"
+        "discoveryCommand": "na-cloud",
+        "embedded": true,
+        "usesSharedProvider": false,
+        "declaredCapabilities": {
+          "cloudModelManaged": true,
+          "transport": "http"
+        }
       }
     },
     {
@@ -49,6 +48,7 @@
         "configAdapterId": "claude-code",
         "usesSharedProvider": true,
         "terminalPackageId": "claude_code",
+        "managedUninstallStrategy": "claude-code",
         "preparationRevision": "claude-agent-acp-0.74.0"
       }
     },
@@ -68,6 +68,7 @@
         "configAdapterId": "codex",
         "usesSharedProvider": true,
         "terminalPackageId": "codex",
+        "managedUninstallStrategy": "codex",
         "managedInstallCommandAsset": "acp/install-codex.sh",
         "preparationRevision": "codex-acp-1.10.0-message-completion-1-title-model-1"
       }
@@ -81,72 +82,55 @@
       "builtIn": true,
       "runtime": {
         "discoveryCommand": "opencode",
-        "managedAdapterPackage": "opencode-ai@latest",
-        "managedAdapterPackages": ["opencode-ai@latest"],
+        "managedAdapterPackage": "@opencode/cli@latest",
+        "managedAdapterPackages": ["@opencode/cli@latest"],
         "configAdapterId": "open-code",
         "usesSharedProvider": true,
         "terminalPackageId": "opencode",
+        "managedUninstallStrategy": "opencode",
         "managedInstallCommandAsset": "acp/install/opencode.sh",
-        "preparationRevision": "opencode-rootfs-libc-v2"
+        "managedAdapterHealthCommand": "node -e \"const expected = require('/root/.npm-global/lib/node_modules/@opencode/cli/package.json').version; const actual = require('node:child_process').execFileSync('opencode', ['--version'], {timeout:8000,encoding:'utf8'}).trim().replace(/^opencode v/, ''); if (Number(expected.split('.')[0]) < 2 || actual !== expected) process.exit(1)\"",
+        "validateBeforeConfigWrite": true,
+        "preparationRevision": "opencode-cli-v2-rootfs-libc-v1"
       }
     },
     {
-      "id": "deepseek-harness-acp",
-      "name": "DeepSeek Harness",
-      "description": "DeepSeek Harness official ACP profile",
-      "command": "dsh-acp-android",
-      "arguments": ["--profile","acp","--patch","/root/.dsh/omnibot-acp/omnibot-dispatch.patch.yml"],
+      "id": "pi-acp",
+      "name": "Pi",
+      "description": "Pi official SDK through the OmniBot ACP adapter",
+      "command": "omnibot-pi-acp",
       "builtIn": true,
       "runtime": {
-        "discoveryCommand": "dsh",
-        "managedAdapterPackages": ["@deepseek-ai/dsh@0.1.5-rc.1"],
-        "requiresNativeBuildTools": true,
-        "configAdapterId": "deepseek-harness",
+        "discoveryCommand": "omnibot-pi-acp",
+        "managedAdapterPackages": ["@earendil-works/pi-coding-agent@1.4.0"],
+        "configAdapterId": "pi",
         "usesSharedProvider": true,
-        "terminalPackageId": "deepseek_harness",
-        "managedInstallScriptPath": "/root/.dsh/omnibot-acp/install-dsh-runtime.sh",
-        "managedInstallCommandAsset": "acp/install/deepseek-harness.sh",
-        "managedAdapterHealthCommand": "export DSH_HOME=/root/.dsh/omnibot-acp; export PATH=/root/.npm-global/bin:$PATH; command -v dsh >/dev/null 2>&1 && command -v dsh-acp-android >/dev/null 2>&1 && bash --noprofile --norc -c ':' >/dev/null 2>&1 && test -f \"$DSH_HOME/profiles/acp/package.json\" && test -f \"$DSH_HOME/profiles/acp/cordis.patch.yml\" && node -e \"const fs=require('fs'); const profile=JSON.parse(fs.readFileSync(process.env.DSH_HOME + '/profiles/acp/package.json','utf8')); const bundles=profile?.dsh?.profile?.bundles; if (!Array.isArray(bundles) || !bundles.includes('@deepseek-ai/dsh-acp-app')) process.exit(1)\" >/dev/null 2>&1 && test -f /root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/dsh-acp-app/cordis.patch.yml && node -e \"require('/root/.npm-global/lib/node_modules/@deepseek-ai/dsh/node_modules/node-pty')\" >/dev/null 2>&1",
-        "preparationRevision": "deepseek-official-acp-profile-0.1.5-rc.1-plugin-reference-v4",
-        "declaredCapabilities": {
-          "plugin": {
-            "supported": true,
-            "authoring": true,
-            "installViaHarness": true,
-            "hostInstallApi": false,
-            "source": "DeepSeek Harness Cordis profile"
-          },
-          "tools": {
-            "fileRead": true,
-            "fileWrite": true,
-            "shell": true,
-            "plan": true,
-            "subagents": true,
-            "skills": true
-          },
-          "mcp": {
-            "sessionServers": true,
-            "source": "Harness-owned MCP composition"
-          }
-        }
+        "terminalPackageId": "pi",
+        "managedUninstallStrategy": "pi",
+        "managedInstallScriptPath": "/root/.local/share/omnibot/install-pi-acp.sh",
+        "managedInstallCommandAsset": "acp/install/pi.sh",
+        "managedAdapterHealthCommand": "PATH=/root/.npm-global/bin:$PATH; export PATH; omnibot-pi-acp --health",
+        "preparationRevision": "pi-1.4.0-4a48f6d36fbd1811e5ac"
       }
     },
     {
-      "id": "na-cloud",
-      "name": "Na",
-      "description": "云端个人助手 · 独立模型、长期记忆与任务",
-      "command": "na-cloud",
-      "arguments": [],
-      "enabled": true,
+      "id": "kimi-code-acp",
+      "name": "Kimi Code",
+      "description": "Kimi Code through its official ACP interface",
+      "command": "kimi",
+      "arguments": ["acp"],
       "builtIn": true,
       "runtime": {
-        "discoveryCommand": "na-cloud",
-        "embedded": true,
-        "usesSharedProvider": false,
-        "declaredCapabilities": {
-          "cloudModelManaged": true,
-          "transport": "http"
-        }
+        "discoveryCommand": "kimi",
+        "managedAdapterPackage": "@moonshot-ai/kimi-code@latest",
+        "managedAdapterPackages": ["@moonshot-ai/kimi-code@latest"],
+        "managedAdapterHealthCommand": "export PATH=/root/.npm-global/bin:$PATH; command -v kimi >/dev/null 2>&1 && node -e 'const [major, minor] = process.versions.node.split(\".\").map(Number); if (major < 22 || (major === 22 && minor < 19)) process.exit(1)'",
+        "configAdapterId": "kimi-code",
+        "usesSharedProvider": true,
+        "terminalPackageId": "kimi",
+        "managedUninstallStrategy": "kimi-code",
+        "managedInstallCommand": "npm install -g --no-audit --no-fund --prefix /root/.npm-global --registry=https://registry.npmmirror.com @moonshot-ai/kimi-code@latest || npm install -g --no-audit --no-fund --prefix /root/.npm-global @moonshot-ai/kimi-code@latest",
+        "preparationRevision": "kimi-code-acp-v1"
       }
     }
   ]

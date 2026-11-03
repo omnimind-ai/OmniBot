@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:ui/models/conversation_model.dart';
+
 import '../../../../../models/chat_message_model.dart';
 import '../../../../../services/storage_service.dart';
 
@@ -106,6 +107,7 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
+        .where((item) => item['historyPayloadOffloaded'] != true)
         .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
         .toList();
   }

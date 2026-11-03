@@ -69,6 +69,9 @@ class ChatPageModeState {
     currentThinkingStage = 1;
     currentConversationId = null;
     currentConversation = null;
+    hasMoreMessages = false;
+    messageOffset = 0;
+    isLoadingMore = false;
     isInputAreaVisible = true;
     isExecutingTask = false;
     chatIslandDisplayLayer = ChatIslandDisplayLayer.mode;

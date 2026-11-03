@@ -1,6 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/widgets/home_quick_prompt_icon.dart';
 import 'package:ui/l10n/l10n.dart';
@@ -106,27 +109,19 @@ class _HomeSettingPageState extends State<HomeSettingPage> {
   }
 
   Future<void> _showPromptEditor({HomeQuickPrompt? prompt}) async {
-    final titleController = TextEditingController(
-      text: prompt == null ? '' : prompt.title,
-    );
-    final promptController = TextEditingController(
-      text: prompt == null ? '' : prompt.prompt,
-    );
-    final result = await showModalBottomSheet<_PromptEditorResult>(
+    final result = await showOmniGlassBottomSheet<_PromptEditorResult>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (context) {
         return _PromptEditorSheet(
-          titleController: titleController,
-          promptController: promptController,
+          initialTitle: prompt?.title ?? '',
+          initialPrompt: prompt?.prompt ?? '',
           editing: prompt != null,
         );
       },
     );
-    titleController.dispose();
-    promptController.dispose();
     if (result == null) {
       return;
     }
@@ -150,64 +145,66 @@ class _HomeSettingPageState extends State<HomeSettingPage> {
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(title: context.trLegacy('首页设置'), primary: true),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: ListView(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(22, 12, 22, 32),
-          ),
-          children: [
-            OmniSettingsGroup(
-              title: context.trLegacy('首页问候'),
-              children: [
-                OmniSettingsTile(
-                  icon: LucideIcons.hand,
-                  title: context.trLegacy('显示问候语'),
-                  subtitle: context.trLegacy('关闭后，聊天首页不再显示问候语和快捷指令'),
-                  trailing: OmniSettingsSwitch(
-                    value: settings.greetingEnabled,
-                    onToggle: _setGreetingEnabled,
-                  ),
-                  onTap: () => _setGreetingEnabled(!settings.greetingEnabled),
-                ),
-              ],
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: ListView(
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(22, 12, 22, 32),
             ),
-            const SizedBox(height: 22),
-            SettingsSectionTitle(
-              label: context.trLegacy('快捷指令'),
-              bottomPadding: 8,
-              trailing: TextButton(
-                style: TextButton.styleFrom(
-                  foregroundColor: palette.accentPrimary,
-                  minimumSize: const Size(0, 30),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
-                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                ),
-                onPressed: _resetPrompts,
-                child: Text(
-                  context.trLegacy('恢复默认'),
-                  style: const TextStyle(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-            ),
-            if (settings.quickPrompts.isEmpty)
-              OmniSettingsCard(child: _buildEmptyPrompts())
-            else
+            children: [
               OmniSettingsGroup(
-                dividerIndent: 56,
+                title: context.trLegacy('首页问候'),
                 children: [
-                  for (final prompt in settings.quickPrompts)
-                    _buildPromptTile(prompt, settings),
+                  OmniSettingsTile(
+                    icon: LucideIcons.hand,
+                    title: context.trLegacy('显示问候语'),
+                    subtitle: context.trLegacy('关闭后，聊天首页不再显示问候语和快捷指令'),
+                    trailing: OmniSettingsSwitch(
+                      value: settings.greetingEnabled,
+                      onToggle: _setGreetingEnabled,
+                    ),
+                    onTap: () => _setGreetingEnabled(!settings.greetingEnabled),
+                  ),
                 ],
               ),
-            const SizedBox(height: 14),
-            _buildAddButton(),
-          ],
+              const SizedBox(height: 22),
+              SettingsSectionTitle(
+                label: context.trLegacy('快捷指令'),
+                bottomPadding: 8,
+                trailing: TextButton(
+                  style: TextButton.styleFrom(
+                    foregroundColor: palette.accentPrimary,
+                    minimumSize: const Size(0, 30),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                  onPressed: _resetPrompts,
+                  child: Text(
+                    context.trLegacy('恢复默认'),
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w500,
+                    ),
+                  ),
+                ),
+              ),
+              if (settings.quickPrompts.isEmpty)
+                OmniSettingsCard(child: _buildEmptyPrompts())
+              else
+                OmniSettingsGroup(
+                  dividerIndent: 56,
+                  children: [
+                    for (final prompt in settings.quickPrompts)
+                      _buildPromptTile(prompt, settings),
+                  ],
+                ),
+              const SizedBox(height: 14),
+              _buildAddButton(),
+            ],
+          ),
         ),
       ),
     );
@@ -280,33 +277,29 @@ class _HomeSettingPageState extends State<HomeSettingPage> {
             ),
           ),
           const SizedBox(width: 4),
-          IconButton(
+          OmniCircleButton(
             tooltip: context.trLegacy(isPinned ? '取消固定' : '固定到首页'),
             onPressed: () => _togglePinnedPrompt(prompt, settings),
-            icon: Icon(
-              isPinned ? LucideIcons.pinOff : LucideIcons.pin,
-              size: 17,
-              color: isPinned ? palette.accentPrimary : palette.textTertiary,
-            ),
+            icon: isPinned ? LucideIcons.pinOff : LucideIcons.pin,
+            size: 36,
+            foregroundColor: isPinned
+                ? palette.accentPrimary
+                : palette.textTertiary,
           ),
           if (!prompt.builtIn)
-            IconButton(
+            OmniCircleButton(
               tooltip: context.trLegacy('编辑'),
               onPressed: () => _showPromptEditor(prompt: prompt),
-              icon: Icon(
-                LucideIcons.pencil,
-                size: 17,
-                color: palette.textTertiary,
-              ),
+              icon: LucideIcons.pencil,
+              size: 36,
+              foregroundColor: palette.textTertiary,
             ),
-          IconButton(
+          OmniCircleButton(
             tooltip: context.trLegacy('删除'),
             onPressed: () => _deletePrompt(prompt),
-            icon: Icon(
-              LucideIcons.trash2,
-              size: 17,
-              color: palette.textTertiary,
-            ),
+            icon: LucideIcons.trash2,
+            size: 36,
+            foregroundColor: palette.textTertiary,
           ),
         ],
       ),
@@ -410,16 +403,33 @@ class _PinnedBadge extends StatelessWidget {
   }
 }
 
-class _PromptEditorSheet extends StatelessWidget {
-  final TextEditingController titleController;
-  final TextEditingController promptController;
+class _PromptEditorSheet extends StatefulWidget {
+  final String initialTitle;
+  final String initialPrompt;
   final bool editing;
 
   const _PromptEditorSheet({
-    required this.titleController,
-    required this.promptController,
+    required this.initialTitle,
+    required this.initialPrompt,
     required this.editing,
   });
+
+  @override
+  State<_PromptEditorSheet> createState() => _PromptEditorSheetState();
+}
+
+class _PromptEditorSheetState extends State<_PromptEditorSheet> {
+  late final titleController = TextEditingController(text: widget.initialTitle);
+  late final promptController = TextEditingController(
+    text: widget.initialPrompt,
+  );
+
+  @override
+  void dispose() {
+    titleController.dispose();
+    promptController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -427,101 +437,102 @@ class _PromptEditorSheet extends StatelessWidget {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     return Padding(
       padding: EdgeInsets.only(bottom: bottomInset),
-      child: Material(
-        color: palette.surfacePrimary,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Center(
-                child: Container(
-                  width: 36,
-                  height: 4,
-                  margin: const EdgeInsets.only(bottom: 14),
-                  decoration: BoxDecoration(
-                    color: palette.borderStrong.withValues(alpha: 0.6),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-              ),
-              Text(
-                context.trLegacy(editing ? '编辑快捷指令' : '新增快捷指令'),
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 17,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 16),
-              TextField(
-                controller: titleController,
-                maxLength: 12,
-                style: TextStyle(fontSize: 14, color: palette.textPrimary),
-                decoration: omniSettingsInputDecoration(
-                  context,
-                  labelText: context.trLegacy('指令名称'),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: promptController,
-                minLines: 3,
-                maxLines: 5,
-                maxLength: 160,
-                style: TextStyle(fontSize: 14, color: palette.textPrimary),
-                decoration: omniSettingsInputDecoration(
-                  context,
-                  labelText: context.trLegacy('填充文本'),
-                ),
-              ),
-              const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.of(context).pop(),
-                      style: OutlinedButton.styleFrom(
-                        minimumSize: const Size.fromHeight(44),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                      ),
-                      child: Text(context.trLegacy('取消')),
+      child: OmniGlassSheet(
+        child: SafeArea(
+          top: false,
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(20, 12, 20, 20),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 14),
+                    decoration: BoxDecoration(
+                      color: palette.borderStrong.withValues(alpha: 0.6),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: FilledButton(
-                      onPressed: () {
-                        final title = titleController.text.trim();
-                        final prompt = promptController.text.trim();
-                        if (title.isEmpty || prompt.isEmpty) {
-                          showToast(
-                            context.trLegacy('请填写完整信息'),
-                            type: ToastType.error,
+                ),
+                Text(
+                  context.trLegacy(widget.editing ? '编辑快捷指令' : '新增快捷指令'),
+                  style: TextStyle(
+                    color: palette.textPrimary,
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: titleController,
+                  maxLength: 12,
+                  style: TextStyle(fontSize: 14, color: palette.textPrimary),
+                  decoration: omniSettingsInputDecoration(
+                    context,
+                    labelText: context.trLegacy('指令名称'),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: promptController,
+                  minLines: 3,
+                  maxLines: 5,
+                  maxLength: 160,
+                  style: TextStyle(fontSize: 14, color: palette.textPrimary),
+                  decoration: omniSettingsInputDecoration(
+                    context,
+                    labelText: context.trLegacy('填充文本'),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        style: OutlinedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(44),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                        child: Text(context.trLegacy('取消')),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: FilledButton(
+                        onPressed: () {
+                          final title = titleController.text.trim();
+                          final prompt = promptController.text.trim();
+                          if (title.isEmpty || prompt.isEmpty) {
+                            showToast(
+                              context.trLegacy('请填写完整信息'),
+                              type: ToastType.error,
+                            );
+                            return;
+                          }
+                          Navigator.of(context).pop(
+                            _PromptEditorResult(title: title, prompt: prompt),
                           );
-                          return;
-                        }
-                        Navigator.of(context).pop(
-                          _PromptEditorResult(title: title, prompt: prompt),
-                        );
-                      },
-                      style: FilledButton.styleFrom(
-                        backgroundColor: palette.accentPrimary,
-                        minimumSize: const Size.fromHeight(44),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
+                        },
+                        style: FilledButton.styleFrom(
+                          backgroundColor: palette.accentPrimary,
+                          minimumSize: const Size.fromHeight(44),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
                         ),
+                        child: Text(context.trLegacy('保存')),
                       ),
-                      child: Text(context.trLegacy('保存')),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

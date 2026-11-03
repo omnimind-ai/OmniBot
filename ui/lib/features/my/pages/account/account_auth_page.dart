@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/features/my/pages/account/account_page.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/common_app_bar.dart';
@@ -24,8 +25,10 @@ class AccountAuthPage extends StatelessWidget {
         primary: true,
         onBackPressed: () => Navigator.of(context).maybePop(),
       ),
-      body: AccountPage.authOnly(
-        onAuthenticated: () => Navigator.of(context).pop(true),
+      body: OmniContentWidth(
+        child: AccountPage.authOnly(
+          onAuthenticated: () => Navigator.of(context).pop(true),
+        ),
       ),
     );
   }

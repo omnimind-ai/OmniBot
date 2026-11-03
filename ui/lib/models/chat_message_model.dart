@@ -90,6 +90,21 @@ class ChatMessageModel {
     return null;
   }
 
+  /// A bounded history preview whose original payload remains in native storage.
+  bool get isHistoryPayloadOffloaded =>
+      content?['historyPayloadOffloaded'] == true ||
+      cardData?['historyPayloadOffloaded'] == true;
+
+  List<Map<String, dynamic>> get historyPayloadAttachments {
+    final raw = content?['attachments'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .where((item) => item['historyPayloadOffloaded'] == true)
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList(growable: false);
+  }
+
   /// 获取内容ID（用于卡片）
   String? get contentId {
     final value = content?['id'];

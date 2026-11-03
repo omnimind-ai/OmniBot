@@ -1,3 +1,4 @@
+import 'package:ui/widgets/navigation/page_route.dart';
 import 'dart:async';
 import 'dart:io';
 import 'dart:math' as math;
@@ -482,7 +483,7 @@ class _OmnibotInlineVideoPlayerState extends State<_OmnibotInlineVideoPlayer> {
       return;
     }
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      OmniPageRoute<void>(
         builder: (_) => _OmnibotFullscreenVideoPage(
           controller: controller,
           title: widget.metadata.title,
@@ -1269,13 +1270,63 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
   };
 
   late final WebViewController _controller;
+  bool _initialized = false;
+  ModalRoute<dynamic>? _previewRoute;
+  Animation<double>? _routeAnimation;
   bool _isLoading = true;
   String? _errorMessage;
   double? _measuredHeight;
 
   @override
-  void initState() {
-    super.initState();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _previewRoute = ModalRoute.of(context);
+    final animation = _previewRoute?.animation;
+    if (_routeAnimation != animation) {
+      _routeAnimation?.removeStatusListener(_onRouteStatus);
+      _routeAnimation = animation;
+      animation?.addStatusListener(_onRouteStatus);
+    }
+    // Hero pre-layout temporarily reports a completed animation offstage.
+    if (!_initialized &&
+        _previewRoute?.offstage != true &&
+        (animation == null || animation.status == AnimationStatus.completed)) {
+      _initializeWebView();
+    }
+  }
+
+  void _onRouteStatus(AnimationStatus status) {
+    if (!mounted ||
+        _initialized ||
+        _previewRoute?.offstage == true ||
+        status != AnimationStatus.completed) {
+      return;
+    }
+    setState(_initializeWebView);
+  }
+
+  @override
+  void dispose() {
+    _routeAnimation?.removeStatusListener(_onRouteStatus);
+    if (_initialized) {
+      // Dispose runs after the route's exit transition, not when a back gesture
+      // starts. Unload this document while the plugin waits for GC to destroy
+      // its native WebView; never pause timers belonging to other WebViews.
+      unawaited(_unloadDocument());
+    }
+    super.dispose();
+  }
+
+  Future<void> _unloadDocument() async {
+    try {
+      await _controller.loadRequest(Uri.parse('about:blank'));
+    } catch (_) {
+      // Native teardown may already have removed the platform view.
+    }
+  }
+
+  void _initializeWebView() {
+    _initialized = true;
     _controller = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
@@ -1289,6 +1340,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
             });
           },
           onPageFinished: (_) async {
+            if (!mounted) return;
             await _updateMeasuredHeight();
             if (!mounted) return;
             setState(() {
@@ -1315,7 +1367,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
   @override
   void didUpdateWidget(covariant _OmnibotInlineHtmlCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.metadata.path != widget.metadata.path) {
+    if (_initialized && oldWidget.metadata.path != widget.metadata.path) {
       _measuredHeight = null;
       _loadHtmlFile();
     }
@@ -1337,6 +1389,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
           platformController.setAllowContentAccess(true),
         ]);
       }
+      if (!mounted) return;
       await _controller.loadFile(widget.metadata.path);
     } catch (error) {
       if (!mounted) return;
@@ -1508,7 +1561,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
           child: Stack(
             fit: StackFit.expand,
             children: [
-              if (_errorMessage == null)
+              if (_initialized && _errorMessage == null)
                 ColoredBox(
                   color: Colors.white,
                   child: ChatDrawerGestureGuard(
@@ -1519,7 +1572,7 @@ class _OmnibotInlineHtmlCardState extends State<_OmnibotInlineHtmlCard> {
                     ),
                   ),
                 )
-              else
+              else if (_errorMessage != null)
                 DecoratedBox(
                   decoration: const BoxDecoration(color: Colors.white),
                   child: _buildErrorState(),

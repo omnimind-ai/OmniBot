@@ -1,3 +1,4 @@
+import 'package:ui/widgets/navigation/page_route.dart';
 import 'dart:async';
 
 import 'package:flutter/material.dart';
@@ -5,7 +6,6 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/constants/storage_keys.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
-import 'package:ui/features/my/pages/account/account_auth_page.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -23,6 +23,7 @@ import 'pages/model_inventory_page.dart';
 import 'pages/permissions_page.dart';
 import 'pages/provider_connection_page.dart';
 import 'pages/provider_page.dart';
+import 'pages/provider_selection_page.dart';
 import 'pages/scene_models_page.dart';
 import 'pages/system_page.dart';
 import 'pages/tools_page.dart';
@@ -100,12 +101,14 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
 
   void _goToPage(TutorialPage page) {
     if (_flow.page == page) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     _flow.goTo(page);
     _afterPageChange(page);
   }
 
   void _jumpToVisitedTutorialPage(TutorialPage page) {
     if (page == _flow.page || !_flow.isVisited(page)) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     _flow.jumpToVisited(page);
     _afterPageChange(page);
   }
@@ -114,7 +117,7 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
     if (_scrollController.hasClients) {
       _scrollController.jumpTo(0);
     }
-    if (page == TutorialPage.provider) {
+    if (page == TutorialPage.providerSelection) {
       unawaited(_provider.loadData(t: _t));
     }
     if (page == TutorialPage.permissions) {
@@ -126,6 +129,7 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
     if (_environment.isBusy || _provider.busy || _provider.sceneModelsSaving) {
       return;
     }
+    FocusManager.instance.primaryFocus?.unfocus();
     if (_flow.goBack()) {
       if (_scrollController.hasClients) {
         _scrollController.jumpTo(0);
@@ -145,8 +149,15 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
         () => _goToPage(TutorialPage.development),
       TutorialPage.development => () => _goToPage(TutorialPage.tools),
       TutorialPage.tools => () => _goToPage(TutorialPage.permissions),
+      TutorialPage.environmentProgress
+          when !_environment.isBusy &&
+              (_environment.ready || _environment.failed) =>
+        () => _goToPage(TutorialPage.permissions),
       TutorialPage.permissions => () => _goToPage(TutorialPage.provider),
       TutorialPage.provider => () => unawaited(_openChatTour()),
+      TutorialPage.providerSelection when !_provider.loading => () => _goToPage(
+        TutorialPage.providerConnection,
+      ),
       TutorialPage.providerConnection when _provider.connected =>
         () => _goToPage(TutorialPage.modelInventory),
       TutorialPage.modelInventory when _provider.modelOptions.isNotEmpty =>
@@ -160,10 +171,11 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
   String get _tutorialNextTooltip {
     return switch (_flow.page) {
       TutorialPage.tools => _t('暂不配置环境，先设置模型', 'Set up the environment later'),
-      TutorialPage.provider => _t(
-        '暂不配置模型，先了解聊天界面',
-        'Learn the chat interface first',
-      ),
+      TutorialPage.environmentProgress =>
+        _environment.failed
+            ? _t('暂不配置环境，继续设置', 'Set up the environment later')
+            : _t('继续设置权限', 'Continue to permissions'),
+      TutorialPage.provider => _t('了解聊天界面', 'Learn the chat interface first'),
       _ =>
         _tutorialNextAction == null
             ? _t('请先完成本页操作', 'Complete this page first')
@@ -176,8 +188,15 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
       TutorialPage.system => const ValueKey('tutorial-system-next'),
       TutorialPage.development => const ValueKey('tutorial-development-next'),
       TutorialPage.tools => const ValueKey('tutorial-skip-environment'),
+      TutorialPage.environmentProgress =>
+        _environment.failed
+            ? const ValueKey('tutorial-skip-environment-progress')
+            : const ValueKey('tutorial-environment-continue'),
       TutorialPage.permissions => const ValueKey('tutorial-permissions-next'),
       TutorialPage.provider => const ValueKey('tutorial-skip-models'),
+      TutorialPage.providerSelection => const ValueKey(
+        'tutorial-provider-selection-next',
+      ),
       TutorialPage.modelInventory => const ValueKey('tutorial-models-next'),
       TutorialPage.primaryScenes => const ValueKey(
         'tutorial-primary-scenes-next',
@@ -240,16 +259,6 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
     }
   }
 
-  Future<void> _openAccountAuth() async {
-    if (!mounted) return;
-    await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
-        builder: (_) => const AccountAuthPage(),
-        settings: const RouteSettings(name: 'onboarding-account-auth'),
-      ),
-    );
-  }
-
   Future<void> _requestShizuku() async {
     if (!mounted) return;
     await ensureShizukuPermission(context);
@@ -267,8 +276,9 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
 
   Future<void> _openChatTour() async {
     if (!mounted) return;
+    FocusManager.instance.primaryFocus?.unfocus();
     final tourCompleted = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+      OmniPageRoute<bool>(
         builder: (_) => const ChatPage(showFirstUseTour: true),
         settings: const RouteSettings(name: 'first-use-chat-spotlight-tour'),
       ),
@@ -314,45 +324,73 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
                 child: GestureDetector(
                   key: const ValueKey('tutorial-page-swipe-surface'),
                   behavior: HitTestBehavior.translucent,
-                  onHorizontalDragStart: _flow.isOnNavigationPage
+                  onHorizontalDragStart:
+                      _flow.isOnNavigationPage &&
+                          _flow.page != TutorialPage.provider
                       ? _handleTutorialDragStart
                       : null,
-                  onHorizontalDragUpdate: _flow.isOnNavigationPage
+                  onHorizontalDragUpdate:
+                      _flow.isOnNavigationPage &&
+                          _flow.page != TutorialPage.provider
                       ? _handleTutorialDragUpdate
                       : null,
-                  onHorizontalDragEnd: _flow.isOnNavigationPage
+                  onHorizontalDragEnd:
+                      _flow.isOnNavigationPage &&
+                          _flow.page != TutorialPage.provider
                       ? _handleTutorialDragEnd
                       : null,
-                  child: AnimatedSwitcher(
-                    duration: reduceMotion
-                        ? Duration.zero
-                        : const Duration(milliseconds: 240),
-                    switchInCurve: Curves.easeOutCubic,
-                    switchOutCurve: Curves.easeInCubic,
-                    transitionBuilder: (child, animation) {
-                      final slide =
-                          Tween<Offset>(
-                            begin: Offset(0.06 * _flow.transitionDirection, 0),
-                            end: Offset.zero,
-                          ).animate(
-                            CurvedAnimation(
-                              parent: animation,
-                              curve: Curves.easeOutCubic,
+                  child: IndexedStack(
+                    sizing: StackFit.expand,
+                    index: _flow.page == TutorialPage.provider ? 0 : 1,
+                    children: [
+                      // Keep in-progress sign-in/registration (including the
+                      // verification request) alive while exploring model setup.
+                      TickerMode(
+                        enabled: _flow.page == TutorialPage.provider,
+                        child: _flow.isVisited(TutorialPage.provider)
+                            ? const OnboardingProviderPage()
+                            : const SizedBox.shrink(),
+                      ),
+                      AnimatedSwitcher(
+                        duration: reduceMotion
+                            ? Duration.zero
+                            : const Duration(milliseconds: 240),
+                        switchInCurve: Curves.easeOutCubic,
+                        switchOutCurve: Curves.easeInCubic,
+                        transitionBuilder: (child, animation) {
+                          final slide =
+                              Tween<Offset>(
+                                begin: Offset(
+                                  0.06 * _flow.transitionDirection,
+                                  0,
+                                ),
+                                end: Offset.zero,
+                              ).animate(
+                                CurvedAnimation(
+                                  parent: animation,
+                                  curve: Curves.easeOutCubic,
+                                ),
+                              );
+                          return FadeTransition(
+                            opacity: animation,
+                            child: SlideTransition(
+                              position: slide,
+                              child: child,
                             ),
                           );
-                      return FadeTransition(
-                        opacity: animation,
-                        child: SlideTransition(position: slide, child: child),
-                      );
-                    },
-                    child: KeyedSubtree(
-                      key: ValueKey<TutorialPage>(_flow.page),
-                      child: _buildCurrentPage(),
-                    ),
+                        },
+                        child: KeyedSubtree(
+                          key: ValueKey<TutorialPage>(_flow.page),
+                          child: _buildCurrentPage(),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
-              if (_flow.isOnNavigationPage) _buildTutorialFooter(),
+              if (_flow.isOnNavigationPage ||
+                  _flow.page == TutorialPage.environmentProgress)
+                _buildTutorialFooter(),
               if (_flow.page == TutorialPage.completion)
                 _buildCompletionFooter(),
             ],
@@ -375,19 +413,17 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
       ),
       TutorialPage.environmentProgress => OnboardingEnvironmentProgressPage(
         controller: _environment,
-        onBack: _handleBack,
-        onContinue: () => _goToPage(TutorialPage.permissions),
-        onRetry: _startEnvironmentSetup,
       ),
       TutorialPage.permissions => OnboardingPermissionsPage(
         controller: _permission,
         scrollController: _scrollController,
         onRequestShizuku: _requestShizuku,
       ),
-      TutorialPage.provider => OnboardingProviderPage(
+      TutorialPage.provider => const SizedBox.shrink(),
+      TutorialPage.providerSelection => OnboardingProviderSelectionPage(
         controller: _provider,
         scrollController: _scrollController,
-        onOpenAccount: () => unawaited(_openAccountAuth()),
+        onSelectProvider: () => _goToPage(TutorialPage.providerConnection),
       ),
       TutorialPage.providerConnection => OnboardingProviderConnectionPage(
         controller: _provider,
@@ -431,16 +467,51 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
   }
 
   Widget _buildTutorialFooter() {
+    final isEnvironmentProgress =
+        _flow.page == TutorialPage.environmentProgress;
     return OnboardingFooter(
       currentPage: _flow.page,
       isVisited: _flow.isVisited,
-      canGoBack: _showBottomBack,
+      canGoBack: isEnvironmentProgress ? !_environment.isBusy : _showBottomBack,
       onBack: _handleBack,
       nextKey: _tutorialNextKey,
       nextTooltip: _tutorialNextTooltip,
       onNext: _tutorialNextAction == null ? null : _goToNextTutorialPage,
       onJumpToPage: _jumpToVisitedTutorialPage,
-      primaryAction: _buildTutorialPrimaryAction(),
+      navigationKey: ValueKey(
+        isEnvironmentProgress
+            ? 'tutorial-environment-progress-navigation'
+            : 'tutorial-pagination-navigation',
+      ),
+      navigationCenter: isEnvironmentProgress
+          ? _buildEnvironmentNavigationCenter()
+          : null,
+      primaryAction:
+          MediaQuery.viewInsetsOf(context).bottom > 0 &&
+              _flow.page == TutorialPage.provider
+          ? null
+          : _buildTutorialPrimaryAction(),
+    );
+  }
+
+  Widget _buildEnvironmentNavigationCenter() {
+    if (!_environment.isBusy) return const SizedBox.shrink();
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      child: TextButton(
+        key: const ValueKey('tutorial-environment-cancel'),
+        onPressed: _environment.cancelSetup,
+        style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 10),
+        ),
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            _t('取消并保留下载进度', 'Cancel and keep download progress'),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      ),
     );
   }
 
@@ -454,25 +525,18 @@ class _OnboardingChoicePageState extends State<OnboardingChoicePage> {
             ? null
             : _startEnvironmentSetup,
       ),
-      TutorialPage.provider => Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          OnboardingPrimaryButton(
-            buttonKey: const ValueKey('tutorial-skip-models-visible'),
-            label: _t('跳过模型配置，查看聊天指南', 'Skip model setup and view chat guide'),
-            icon: LucideIcons.arrowRight,
-            onPressed: _provider.loading ? null : _openChatTour,
-          ),
-          const SizedBox(height: 2),
-          TextButton.icon(
-            key: const ValueKey('tutorial-provider-next'),
-            onPressed: _provider.loading
-                ? null
-                : () => _goToPage(TutorialPage.providerConnection),
-            icon: const Icon(LucideIcons.settings2, size: 17),
-            label: Text(_t('可选：配置自己的模型', 'Optional: configure your own model')),
-          ),
-        ],
+      TutorialPage.environmentProgress when _environment.failed =>
+        OnboardingPrimaryButton(
+          buttonKey: const ValueKey('tutorial-environment-retry'),
+          label: _t('重新配置', 'Try setup again'),
+          icon: LucideIcons.rotateCw,
+          onPressed: _startEnvironmentSetup,
+        ),
+      TutorialPage.provider => TextButton.icon(
+        key: const ValueKey('tutorial-provider-next'),
+        onPressed: () => _goToPage(TutorialPage.providerSelection),
+        icon: const Icon(LucideIcons.settings2, size: 17),
+        label: Text(_t('可选：配置自己的模型', 'Optional: configure your own model')),
       ),
       TutorialPage.providerConnection => OnboardingPrimaryButton(
         buttonKey: const ValueKey('tutorial-provider-connect'),

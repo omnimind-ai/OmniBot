@@ -1,13 +1,21 @@
 package cn.com.omnimind.bot.webchat
 
+import cn.com.omnimind.bot.agent.runtime.acpProfileStoreTestContext
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 
 class WebConversationCreationTest {
+    @get:Rule
+    val temporaryFolder = TemporaryFolder()
 
     @Test
-    fun `conversation harness ownership prefers durable conversation binding`() {
+    fun `history projection preserves the durable owner even when an old session hint differs`() {
         assertEquals(
             "deepseek-harness-acp",
             resolveConversationHarnessOwner(
@@ -19,7 +27,7 @@ class WebConversationCreationTest {
     }
 
     @Test
-    fun `legacy conversation modes recover their original harness`() {
+    fun `explicit Xiaowan product modes retain their owner`() {
         assertEquals(
             "xiaowan-acp",
             resolveConversationHarnessOwner(
@@ -29,9 +37,9 @@ class WebConversationCreationTest {
             ),
         )
         assertEquals(
-            "codex-acp",
+            "xiaowan-acp",
             resolveConversationHarnessOwner(
-                storedMode = "codex",
+                storedMode = "chat_only",
                 sessionAgentId = null,
                 conversationAgentId = null,
             ),
@@ -40,14 +48,44 @@ class WebConversationCreationTest {
 
     @Test
     fun `unbound canonical agent conversation cannot inherit selected harness`() {
-        assertEquals(
-            "xiaowan-acp",
-            resolveConversationHarnessOwner(
-                storedMode = "agent",
+        for (mode in listOf(null, "", "agent", "codex", "acp", "coding")) {
+            assertNull(resolveConversationHarnessOwner(
+                storedMode = mode,
                 sessionAgentId = null,
                 conversationAgentId = null,
-            ),
-        )
+            ))
+        }
+    }
+
+    @Test
+    fun `new agent conversations fail before insertion when no owner is supplied`() = runBlocking {
+        val service = ConversationDomainService(acpProfileStoreTestContext(temporaryFolder.root))
+        for (mode in listOf("agent", "codex", "acp", "coding", "subagent", "")) {
+            val failure = runCatching {
+                service.createConversation(title = "Missing owner", mode = mode)
+            }.exceptionOrNull()
+            assertTrue(failure is IllegalArgumentException)
+            assertTrue(failure?.message.orEmpty().startsWith("agent_identity_required:"))
+        }
+    }
+
+    @Test
+    fun `creation validates explicit owners without consulting a selected Agent`() {
+        val service = ConversationDomainService(acpProfileStoreTestContext(temporaryFolder.root))
+        assertEquals("opencode-acp", service.validateRequestedAgentId("agent", " opencode-acp "))
+        assertEquals("codex-remote", service.validateRequestedAgentId("agent", " codex-remote "))
+        assertEquals("xiaowan-acp", service.validateRequestedAgentId("normal", null))
+        assertEquals("xiaowan-acp", service.validateRequestedAgentId("chat_only", null))
+        assertEquals("xiaowan-acp", service.validateRequestedAgentId("subagent", "xiaowan-acp"))
+        assertThrows(IllegalArgumentException::class.java) {
+            service.validateRequestedAgentId("normal", "opencode-acp")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            service.validateRequestedAgentId("chat_only", "codex-remote")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            service.validateRequestedAgentId("agent", "missing-agent")
+        }
     }
 
     @Test
@@ -205,6 +243,18 @@ class WebConversationCreationTest {
                 requestedAgentId = " claude-code-acp "
             )
         )
+        assertEquals(
+            "codex-remote",
+            resolveWebAgentId(storedAgentId = "codex-remote", requestedAgentId = null)
+        )
+    }
+
+    @Test
+    fun `web agent requests without a durable or explicit owner are rejected`() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            resolveWebAgentId(storedAgentId = null, requestedAgentId = null, conversationMode = "agent")
+        }
+        assertTrue(error.message.orEmpty().startsWith("agent_identity_required:"))
     }
 
     @Test(expected = IllegalArgumentException::class)

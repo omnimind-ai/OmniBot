@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="cn.com.omnimind.releaseaudit"
+    android:versionCode="1"
+    android:versionName="1.0">
+
+    <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="36" />
+
+    <application
+        android:allowBackup="false"
+        android:hasCode="true"
+        android:label="OmniBot release artifact audit"
+        android:testOnly="true" />
+
+    <!-- This process has no target providers. The runner must also substitute
+         android.app.Application and verify the process before running fixtures. -->
+    <instrumentation
+        android:name="cn.com.omnimind.releaseaudit.ReleaseArtifactInstrumentation"
+        android:functionalTest="true"
+        android:handleProfiling="false"
+        android:targetPackage="cn.com.omnimind.bot"
+        android:targetProcesses="cn.com.omnimind.bot:release_audit" />
+</manifest>

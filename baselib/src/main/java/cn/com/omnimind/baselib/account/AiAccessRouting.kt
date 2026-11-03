@@ -94,9 +94,16 @@ object AiRequestAccessResolver {
         if (!accountConfigured || !signedIn) {
             return AiRequestAccess(mode = AiAccessMode.BYOK)
         }
+        val gateway = platformGatewayUrl?.trim()?.trimEnd('/').orEmpty()
+        val safeGateway = gateway.takeIf {
+            OfficialEndpointSecurity.isAllowed(it, allowInsecureLoopback)
+        }
         if (!cloudServiceAccess.allowed) {
             return AiRequestAccess(
                 mode = AiAccessMode.PLATFORM,
+                // Keep the selected Provider address visible while requests
+                // are blocked. Metadata availability grants no credentials.
+                platformGatewayUrl = safeGateway,
                 unavailableReason = cloudServiceAccess.message.ifBlank {
                     if (cloudServiceAccess.policyKnown) {
                         "请升级应用后再使用账号与官方云服务"
@@ -106,14 +113,13 @@ object AiRequestAccessResolver {
                 },
             )
         }
-        val gateway = platformGatewayUrl?.trim()?.trimEnd('/').orEmpty()
         if (gateway.isEmpty()) {
             return AiRequestAccess(
                 mode = AiAccessMode.PLATFORM,
                 unavailableReason = "平台 AI 网关尚未配置",
             )
         }
-        if (!OfficialEndpointSecurity.isAllowed(gateway, allowInsecureLoopback)) {
+        if (safeGateway == null) {
             return AiRequestAccess(
                 mode = AiAccessMode.PLATFORM,
                 unavailableReason = "Platform AI gateway must use HTTPS",
@@ -123,6 +129,7 @@ object AiRequestAccessResolver {
         if (token.isEmpty()) {
             return AiRequestAccess(
                 mode = AiAccessMode.PLATFORM,
+                platformGatewayUrl = safeGateway,
                 unavailableReason = "登录状态已失效，请重新登录",
             )
         }

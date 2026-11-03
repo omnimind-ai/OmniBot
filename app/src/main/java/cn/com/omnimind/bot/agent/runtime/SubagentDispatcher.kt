@@ -146,6 +146,7 @@ class SubagentDispatcher(
                 content = JsonPrimitive(spec.instruction)
             )
             val subEnv = DefaultAgentExecutionEnvironment(
+                acpSessionId = parentEnv.acpSessionId,
                 agentRunId = subagentId,
                 userMessage = spec.instruction,
                 runtimeContextRepository = parentEnv.runtimeContextRepository,

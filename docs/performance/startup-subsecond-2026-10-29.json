@@ -1,0 +1,3317 @@
+{
+  "schema_version": 1,
+  "base_revision": "9a1d76878e76320e42e7cbb1775902526c12912c",
+  "metric": "am start -W TotalTime, process cold, data and OS disk caches retained; not full app readiness or physical splash visibility",
+  "comparison": {
+    "before": {
+      "count": 10,
+      "samples_ms": [
+        1252,
+        1258,
+        1293,
+        1275,
+        1319,
+        1292,
+        1229,
+        1254,
+        1355,
+        1250
+      ],
+      "median_ms": 1266.5,
+      "mean_ms": 1277.7,
+      "min_ms": 1229,
+      "max_ms": 1355,
+      "under_1000ms": 0
+    },
+    "delivered": {
+      "count": 10,
+      "samples_ms": [
+        1002,
+        1023,
+        1019,
+        995,
+        1016,
+        997,
+        1077,
+        1020,
+        1037,
+        1007
+      ],
+      "median_ms": 1017.5,
+      "mean_ms": 1019.3,
+      "min_ms": 995,
+      "max_ms": 1077,
+      "under_1000ms": 2
+    },
+    "median_reduction_percent": 19.66
+  },
+  "measurements": {
+    "before-profile": {
+      "label": "before-dex",
+      "mode": "profile",
+      "apk_sha256": "8dd96eb8a1a2dfbca2060cf96f1076572d5e6f16836dc3b0d57ada24a641b938",
+      "apk_bytes": 86669253,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:41:22+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "325"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1317",
+            "WaitTime": "1323"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 206ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 264ms",
+            "Main engine created, cost: 66ms",
+            "MainActivity onCreate total cost: 99ms",
+            "Bootstrap to first rasterized frame: 138ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1252",
+            "WaitTime": "1256"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 210ms",
+            "Workspace and built-in skills cost: 13ms",
+            "App onCreate total cost: 268ms",
+            "Main engine created, cost: 56ms",
+            "MainActivity onCreate total cost: 88ms",
+            "Bootstrap to first rasterized frame: 138ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1258",
+            "WaitTime": "1266"
+          },
+          "timings": [
+            "Startup theme and locale cost: 8ms",
+            "Credentials and providers cost: 206ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 264ms",
+            "Main engine created, cost: 59ms",
+            "MainActivity onCreate total cost: 91ms",
+            "Bootstrap to first rasterized frame: 144ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1293",
+            "WaitTime": "1301"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 210ms",
+            "Workspace and built-in skills cost: 13ms",
+            "App onCreate total cost: 273ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 97ms",
+            "Bootstrap to first rasterized frame: 130ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1275",
+            "WaitTime": "1279"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 210ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 273ms",
+            "Main engine created, cost: 60ms",
+            "MainActivity onCreate total cost: 93ms",
+            "Bootstrap to first rasterized frame: 132ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1319",
+            "WaitTime": "1337"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 213ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 272ms",
+            "Main engine created, cost: 66ms",
+            "MainActivity onCreate total cost: 100ms",
+            "Bootstrap to first rasterized frame: 124ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1252,
+          1258,
+          1293,
+          1275,
+          1319
+        ],
+        "median": 1275,
+        "min": 1252,
+        "max": 1319,
+        "mean": 1279.4
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "325"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "after-profile": {
+      "label": "after-dex",
+      "mode": "profile",
+      "apk_sha256": "8b6488d1589d3849916ba11edc5b1ab2a4276b3c1ef3f1a724550b2dbd5fe560",
+      "apk_bytes": 134767229,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:48:15+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "323"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1065",
+            "WaitTime": "1071"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 198ms",
+            "Workspace and built-in skills cost: 13ms",
+            "App onCreate total cost: 256ms",
+            "Main engine created, cost: 63ms",
+            "MainActivity onCreate total cost: 95ms",
+            "Bootstrap to first rasterized frame: 122ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1017",
+            "WaitTime": "1025"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 221ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 285ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 100ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1055",
+            "WaitTime": "1058"
+          },
+          "timings": [
+            "Startup theme and locale cost: 13ms",
+            "Credentials and providers cost: 223ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 63ms",
+            "MainActivity onCreate total cost: 102ms",
+            "Bootstrap to first rasterized frame: 172ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1018",
+            "WaitTime": "1029"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 211ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 276ms",
+            "Main engine created, cost: 60ms",
+            "MainActivity onCreate total cost: 95ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1028",
+            "WaitTime": "1032"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 224ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 63ms",
+            "MainActivity onCreate total cost: 101ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1052",
+            "WaitTime": "1061"
+          },
+          "timings": [
+            "Startup theme and locale cost: 7ms",
+            "Credentials and providers cost: 226ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 103ms",
+            "Bootstrap to first rasterized frame: 169ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1017,
+          1055,
+          1018,
+          1028,
+          1052
+        ],
+        "median": 1028,
+        "min": 1017,
+        "max": 1055,
+        "mean": 1034
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "323"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "before-profile-recheck": {
+      "label": "before-dex-recheck",
+      "mode": "profile",
+      "apk_sha256": "8dd96eb8a1a2dfbca2060cf96f1076572d5e6f16836dc3b0d57ada24a641b938",
+      "apk_bytes": 86669253,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:49:57+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "323"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1290",
+            "WaitTime": "1297"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 200ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 257ms",
+            "Main engine created, cost: 64ms",
+            "MainActivity onCreate total cost: 96ms",
+            "Bootstrap to first rasterized frame: 143ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1292",
+            "WaitTime": "1301"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 207ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 269ms",
+            "Main engine created, cost: 56ms",
+            "MainActivity onCreate total cost: 88ms",
+            "Bootstrap to first rasterized frame: 149ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1229",
+            "WaitTime": "1234"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 210ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 272ms",
+            "Main engine created, cost: 58ms",
+            "MainActivity onCreate total cost: 90ms",
+            "Bootstrap to first rasterized frame: 129ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1254",
+            "WaitTime": "1261"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 208ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 269ms",
+            "Main engine created, cost: 59ms",
+            "MainActivity onCreate total cost: 90ms",
+            "Bootstrap to first rasterized frame: 123ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1355",
+            "WaitTime": "1371"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 206ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 271ms",
+            "Main engine created, cost: 58ms",
+            "MainActivity onCreate total cost: 90ms",
+            "Bootstrap to first rasterized frame: 151ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1250",
+            "WaitTime": "1257"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 221ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 282ms",
+            "Main engine created, cost: 60ms",
+            "MainActivity onCreate total cost: 92ms",
+            "Bootstrap to first rasterized frame: 132ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1292,
+          1229,
+          1254,
+          1355,
+          1250
+        ],
+        "median": 1254,
+        "min": 1229,
+        "max": 1355,
+        "mean": 1276
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "323"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "final-profile": {
+      "label": "final-dex-and-launcher",
+      "mode": "profile",
+      "apk_sha256": "cf9f73dec5ddbbd6e550b059d524634ab65a66d600d5d8f445cec99c32a78508",
+      "apk_bytes": 134767229,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:50:53+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "324"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1068",
+            "WaitTime": "1072"
+          },
+          "timings": [
+            "Startup theme and locale cost: 7ms",
+            "Credentials and providers cost: 200ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 258ms",
+            "Main engine created, cost: 70ms",
+            "MainActivity onCreate total cost: 109ms",
+            "Bootstrap to first rasterized frame: 150ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1039",
+            "WaitTime": "1049"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 217ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 277ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 104ms",
+            "Bootstrap to first rasterized frame: 177ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "991",
+            "WaitTime": "998"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 225ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 288ms",
+            "Main engine created, cost: 69ms",
+            "MainActivity onCreate total cost: 112ms",
+            "Bootstrap to first rasterized frame: 139ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "977",
+            "WaitTime": "981"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 222ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 286ms",
+            "Main engine created, cost: 68ms",
+            "MainActivity onCreate total cost: 107ms",
+            "Bootstrap to first rasterized frame: 126ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "991",
+            "WaitTime": "1002"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 219ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 281ms",
+            "Main engine created, cost: 68ms",
+            "MainActivity onCreate total cost: 106ms",
+            "Bootstrap to first rasterized frame: 128ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "989",
+            "WaitTime": "1005"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 224ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 288ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 104ms",
+            "Bootstrap to first rasterized frame: 124ms"
+          ]
+        },
+        {
+          "index": 6,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "987",
+            "WaitTime": "996"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 221ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 282ms",
+            "Main engine created, cost: 68ms",
+            "MainActivity onCreate total cost: 113ms",
+            "Bootstrap to first rasterized frame: 117ms"
+          ]
+        },
+        {
+          "index": 7,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1007",
+            "WaitTime": "1021"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 219ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 282ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 116ms",
+            "Bootstrap to first rasterized frame: 154ms"
+          ]
+        },
+        {
+          "index": 8,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "974",
+            "WaitTime": "978"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 220ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 284ms",
+            "Main engine created, cost: 67ms",
+            "MainActivity onCreate total cost: 108ms",
+            "Bootstrap to first rasterized frame: 133ms"
+          ]
+        },
+        {
+          "index": 9,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "958",
+            "WaitTime": "967"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 216ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 279ms",
+            "Main engine created, cost: 59ms",
+            "MainActivity onCreate total cost: 98ms",
+            "Bootstrap to first rasterized frame: 67ms"
+          ]
+        },
+        {
+          "index": 10,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1037",
+            "WaitTime": "1040"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 235ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 299ms",
+            "Main engine created, cost: 71ms",
+            "MainActivity onCreate total cost: 117ms",
+            "Bootstrap to first rasterized frame: 69ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1039,
+          991,
+          977,
+          991,
+          989,
+          987,
+          1007,
+          974,
+          958,
+          1037
+        ],
+        "median": 990.0,
+        "min": 958,
+        "max": 1039,
+        "mean": 995
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "324"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "loader-profile": {
+      "label": "dex-finish-and-loader",
+      "mode": "profile",
+      "apk_sha256": "ffd3180591d8aa434a03c15d396de9322f2e936ca02fd9513c9830d734f7f1de",
+      "apk_bytes": 134963559,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:52:57+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "326"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1040",
+            "WaitTime": "1057"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 232ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 295ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 106ms",
+            "Bootstrap to first rasterized frame: 154ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1071",
+            "WaitTime": "1075"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 228ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 290ms",
+            "Main engine created, cost: 62ms",
+            "MainActivity onCreate total cost: 105ms",
+            "Bootstrap to first rasterized frame: 144ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1047",
+            "WaitTime": "1051"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 232ms",
+            "Workspace and built-in skills cost: 18ms",
+            "App onCreate total cost: 297ms",
+            "Main engine created, cost: 58ms",
+            "MainActivity onCreate total cost: 101ms",
+            "Bootstrap to first rasterized frame: 172ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1026",
+            "WaitTime": "1041"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 226ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 57ms",
+            "MainActivity onCreate total cost: 99ms",
+            "Bootstrap to first rasterized frame: 160ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1006",
+            "WaitTime": "1010"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 223ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 283ms",
+            "Main engine created, cost: 61ms",
+            "MainActivity onCreate total cost: 104ms",
+            "Bootstrap to first rasterized frame: 134ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1063",
+            "WaitTime": "1076"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 216ms",
+            "Workspace and built-in skills cost: 18ms",
+            "App onCreate total cost: 284ms",
+            "Main engine created, cost: 69ms",
+            "MainActivity onCreate total cost: 109ms",
+            "Bootstrap to first rasterized frame: 176ms"
+          ]
+        },
+        {
+          "index": 6,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1022",
+            "WaitTime": "1030"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 221ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 53ms",
+            "MainActivity onCreate total cost: 92ms",
+            "Bootstrap to first rasterized frame: 150ms"
+          ]
+        },
+        {
+          "index": 7,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1014",
+            "WaitTime": "1033"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 228ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 296ms",
+            "Main engine created, cost: 59ms",
+            "MainActivity onCreate total cost: 99ms",
+            "Bootstrap to first rasterized frame: 137ms"
+          ]
+        },
+        {
+          "index": 8,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1012",
+            "WaitTime": "1022"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 228ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 63ms",
+            "MainActivity onCreate total cost: 100ms",
+            "Bootstrap to first rasterized frame: 112ms"
+          ]
+        },
+        {
+          "index": 9,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "996",
+            "WaitTime": "1001"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 227ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 291ms",
+            "Main engine created, cost: 56ms",
+            "MainActivity onCreate total cost: 96ms",
+            "Bootstrap to first rasterized frame: 137ms"
+          ]
+        },
+        {
+          "index": 10,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1013",
+            "WaitTime": "1041"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 222ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 285ms",
+            "Main engine created, cost: 60ms",
+            "MainActivity onCreate total cost: 101ms",
+            "Bootstrap to first rasterized frame: 164ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1071,
+          1047,
+          1026,
+          1006,
+          1063,
+          1022,
+          1014,
+          1012,
+          996,
+          1013
+        ],
+        "median": 1018.0,
+        "min": 996,
+        "max": 1071,
+        "mean": 1027
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "328"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "final-profile-recheck": {
+      "label": "final-dex-and-launcher-recheck",
+      "mode": "profile",
+      "apk_sha256": "cf9f73dec5ddbbd6e550b059d524634ab65a66d600d5d8f445cec99c32a78508",
+      "apk_bytes": 134767229,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:54:47+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "328"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1001",
+            "WaitTime": "1010"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 220ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 283ms",
+            "Main engine created, cost: 69ms",
+            "MainActivity onCreate total cost: 109ms",
+            "Bootstrap to first rasterized frame: 141ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "998",
+            "WaitTime": "1005"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 227ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 286ms",
+            "Main engine created, cost: 67ms",
+            "MainActivity onCreate total cost: 107ms",
+            "Bootstrap to first rasterized frame: 137ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1027",
+            "WaitTime": "1038"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 216ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 281ms",
+            "Main engine created, cost: 64ms",
+            "MainActivity onCreate total cost: 102ms",
+            "Bootstrap to first rasterized frame: 163ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1019",
+            "WaitTime": "1037"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 238ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 306ms",
+            "Main engine created, cost: 61ms",
+            "MainActivity onCreate total cost: 97ms",
+            "Bootstrap to first rasterized frame: 136ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1017",
+            "WaitTime": "1026"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 225ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 289ms",
+            "Main engine created, cost: 70ms",
+            "MainActivity onCreate total cost: 112ms",
+            "Bootstrap to first rasterized frame: 134ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1019",
+            "WaitTime": "1031"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 226ms",
+            "Workspace and built-in skills cost: 24ms",
+            "App onCreate total cost: 303ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 103ms",
+            "Bootstrap to first rasterized frame: 155ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          998,
+          1027,
+          1019,
+          1017,
+          1019
+        ],
+        "median": 1019,
+        "min": 998,
+        "max": 1027,
+        "mean": 1016
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "330"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "delivered-profile": {
+      "label": "delivered-dex-finish-instant-exit",
+      "mode": "profile",
+      "apk_sha256": "f344fb4a599816c76f7538c7cfe3de2c84c78f805a34b124b62113ab1d51fa8a",
+      "apk_bytes": 134964115,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:56:30+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "331"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1056",
+            "WaitTime": "1067"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 243ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 317ms",
+            "Main engine created, cost: 70ms",
+            "MainActivity onCreate total cost: 111ms",
+            "Bootstrap to first rasterized frame: 134ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1002",
+            "WaitTime": "1013"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 223ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 283ms",
+            "Main engine created, cost: 70ms",
+            "MainActivity onCreate total cost: 109ms",
+            "Bootstrap to first rasterized frame: 122ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1023",
+            "WaitTime": "1030"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 220ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 282ms",
+            "Main engine created, cost: 66ms",
+            "MainActivity onCreate total cost: 102ms",
+            "Bootstrap to first rasterized frame: 153ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1019",
+            "WaitTime": "1030"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 225ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 287ms",
+            "Main engine created, cost: 62ms",
+            "MainActivity onCreate total cost: 104ms",
+            "Bootstrap to first rasterized frame: 154ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "995",
+            "WaitTime": "1003"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 221ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 284ms",
+            "Main engine created, cost: 66ms",
+            "MainActivity onCreate total cost: 109ms",
+            "Bootstrap to first rasterized frame: 136ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1016",
+            "WaitTime": "1035"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 231ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 291ms",
+            "Main engine created, cost: 67ms",
+            "MainActivity onCreate total cost: 104ms",
+            "Bootstrap to first rasterized frame: 148ms"
+          ]
+        },
+        {
+          "index": 6,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "997",
+            "WaitTime": "1010"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 226ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 290ms",
+            "Main engine created, cost: 65ms",
+            "MainActivity onCreate total cost: 105ms",
+            "Bootstrap to first rasterized frame: 142ms"
+          ]
+        },
+        {
+          "index": 7,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1077",
+            "WaitTime": "1083"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 217ms",
+            "Workspace and built-in skills cost: 17ms",
+            "App onCreate total cost: 283ms",
+            "Main engine created, cost: 61ms",
+            "MainActivity onCreate total cost: 102ms",
+            "Bootstrap to first rasterized frame: 160ms"
+          ]
+        },
+        {
+          "index": 8,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1020",
+            "WaitTime": "1050"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 228ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 294ms",
+            "Main engine created, cost: 70ms",
+            "MainActivity onCreate total cost: 107ms",
+            "Bootstrap to first rasterized frame: 126ms"
+          ]
+        },
+        {
+          "index": 9,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1037",
+            "WaitTime": "1049"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 222ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 286ms",
+            "Main engine created, cost: 64ms",
+            "MainActivity onCreate total cost: 105ms",
+            "Bootstrap to first rasterized frame: 162ms"
+          ]
+        },
+        {
+          "index": 10,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1007",
+            "WaitTime": "1013"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 227ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 290ms",
+            "Main engine created, cost: 69ms",
+            "MainActivity onCreate total cost: 108ms",
+            "Bootstrap to first rasterized frame: 135ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1002,
+          1023,
+          1019,
+          995,
+          1016,
+          997,
+          1077,
+          1020,
+          1037,
+          1007
+        ],
+        "median": 1017.5,
+        "min": 995,
+        "max": 1077,
+        "mean": 1019.3
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "332"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    }
+  },
+  "apk_artifacts": {
+    "before-profile": {
+      "bytes": 86669253,
+      "sha256": "8dd96eb8a1a2dfbca2060cf96f1076572d5e6f16836dc3b0d57ada24a641b938",
+      "dex": [
+        {
+          "name": "classes.dex",
+          "zip_compression_method": 8,
+          "bytes": 15638040,
+          "compressed_bytes": 5841876,
+          "offset_mod4": 0,
+          "sha256": "bcfeca6141876848eeec14f615de47c82b962512772be7a922959f5075c21050"
+        },
+        {
+          "name": "classes11.dex",
+          "zip_compression_method": 8,
+          "bytes": 36964,
+          "compressed_bytes": 17609,
+          "offset_mod4": 0,
+          "sha256": "df6fe913c1cc58587fd7fc70f5d3da2b7cd0fec7db215c343b5d012ef420d19a"
+        },
+        {
+          "name": "classes12.dex",
+          "zip_compression_method": 8,
+          "bytes": 113216,
+          "compressed_bytes": 52678,
+          "offset_mod4": 0,
+          "sha256": "0f6034b9244233bc031b13a4f2850bc7f5a23ad9139a8d140766136f0e9a9b77"
+        },
+        {
+          "name": "classes14.dex",
+          "zip_compression_method": 8,
+          "bytes": 290368,
+          "compressed_bytes": 125014,
+          "offset_mod4": 2,
+          "sha256": "8f9f4af649e6fef78bfa57815bb609e8bdb1dffbf6987f47e3fb0befdf09a7b9"
+        },
+        {
+          "name": "classes16.dex",
+          "zip_compression_method": 8,
+          "bytes": 250524,
+          "compressed_bytes": 117879,
+          "offset_mod4": 3,
+          "sha256": "595d4c1e5cba644cb9b570059ef8ee5751e15f4b281e9777eea0c86f013f876a"
+        },
+        {
+          "name": "classes17.dex",
+          "zip_compression_method": 8,
+          "bytes": 58200,
+          "compressed_bytes": 27440,
+          "offset_mod4": 1,
+          "sha256": "4539fcd6af96d3d92160397e9db94b1d22082e18f43afe16c952886b9eb010c0"
+        },
+        {
+          "name": "classes18.dex",
+          "zip_compression_method": 8,
+          "bytes": 670572,
+          "compressed_bytes": 175273,
+          "offset_mod4": 0,
+          "sha256": "5c3ff1ca45b8a6e10dd7eaada81dcf037d330adba04c1039393476282a4c2ce5"
+        },
+        {
+          "name": "classes19.dex",
+          "zip_compression_method": 8,
+          "bytes": 213944,
+          "compressed_bytes": 92648,
+          "offset_mod4": 0,
+          "sha256": "94928cdba0fc9045a78c22848bf687babefb2e8730fad8d90ed21042d763957a"
+        },
+        {
+          "name": "classes2.dex",
+          "zip_compression_method": 8,
+          "bytes": 2332,
+          "compressed_bytes": 1384,
+          "offset_mod4": 2,
+          "sha256": "2e7d1a4a4b08359ac331b8fc5b6d0a5508d7e2963418d73f6d9f1876f9092c95"
+        },
+        {
+          "name": "classes20.dex",
+          "zip_compression_method": 8,
+          "bytes": 181100,
+          "compressed_bytes": 77746,
+          "offset_mod4": 1,
+          "sha256": "612ac3ffcd6012fa57ef92f2c46fc74160fbeab5d0169452e8320d25059690df"
+        },
+        {
+          "name": "classes23.dex",
+          "zip_compression_method": 8,
+          "bytes": 2536968,
+          "compressed_bytes": 1008891,
+          "offset_mod4": 1,
+          "sha256": "ff3d6b282dc399acf4bb5b542bfd99e77b7a60eb911d7770037ed6410f46af9d"
+        },
+        {
+          "name": "classes24.dex",
+          "zip_compression_method": 8,
+          "bytes": 406284,
+          "compressed_bytes": 168038,
+          "offset_mod4": 3,
+          "sha256": "70df246c0afae943ca3b67037130d66b7844a1e233986c94089259c6e0d0a44c"
+        },
+        {
+          "name": "classes25.dex",
+          "zip_compression_method": 8,
+          "bytes": 196228,
+          "compressed_bytes": 84558,
+          "offset_mod4": 0,
+          "sha256": "610e78ac5234cec81625874d532ebfe360242c7b0ab896e159c621f705e4a704"
+        },
+        {
+          "name": "classes26.dex",
+          "zip_compression_method": 8,
+          "bytes": 359744,
+          "compressed_bytes": 154406,
+          "offset_mod4": 1,
+          "sha256": "7c2fb08a71871b9dfb8ac3af69a7da6935a9e01bc51985d73477cb733084c682"
+        },
+        {
+          "name": "classes28.dex",
+          "zip_compression_method": 8,
+          "bytes": 20468,
+          "compressed_bytes": 10023,
+          "offset_mod4": 1,
+          "sha256": "7d97532ee2d24c3fe85a02850fe251d92f7a147cac83ff70acb3cf84d3e68ff1"
+        },
+        {
+          "name": "classes29.dex",
+          "zip_compression_method": 8,
+          "bytes": 2465328,
+          "compressed_bytes": 1054076,
+          "offset_mod4": 3,
+          "sha256": "aa8a475c1e7e37fcd94293faa7c527c6a986e97eba0c2cc75f53ae018931cce3"
+        },
+        {
+          "name": "classes30.dex",
+          "zip_compression_method": 8,
+          "bytes": 102252,
+          "compressed_bytes": 46935,
+          "offset_mod4": 2,
+          "sha256": "10b9b12480e7278915ca6381768ddbdf4f96e2f08e02604a85b93c85fb3d868a"
+        },
+        {
+          "name": "classes31.dex",
+          "zip_compression_method": 8,
+          "bytes": 67220,
+          "compressed_bytes": 33121,
+          "offset_mod4": 0,
+          "sha256": "4d63dd3d96073d19f8349f6a36ce60a9ac84529fe5f39cb651ce5c48c6835533"
+        },
+        {
+          "name": "classes32.dex",
+          "zip_compression_method": 8,
+          "bytes": 160772,
+          "compressed_bytes": 70351,
+          "offset_mod4": 0,
+          "sha256": "33f093f57689e71d22aba4b1f3c36a827e7f4bf58dfd7e5a28ab1df0eebb9abd"
+        },
+        {
+          "name": "classes33.dex",
+          "zip_compression_method": 8,
+          "bytes": 282368,
+          "compressed_bytes": 127067,
+          "offset_mod4": 2,
+          "sha256": "ca6a13675d6ea5bd7e7005c27c2f183b0d046211c585e5649a5a60fd79e05990"
+        },
+        {
+          "name": "classes34.dex",
+          "zip_compression_method": 8,
+          "bytes": 92940,
+          "compressed_bytes": 24922,
+          "offset_mod4": 0,
+          "sha256": "dd41a71e1d7a4493b234d8e13dc327d44fd86b973547a24fb11cd0df1018b4fb"
+        },
+        {
+          "name": "classes35.dex",
+          "zip_compression_method": 8,
+          "bytes": 16092876,
+          "compressed_bytes": 6410732,
+          "offset_mod4": 1,
+          "sha256": "11e93913fea4750dc370c08057dcb4edc86e8f3b56bc31f2636fda092b9dd669"
+        },
+        {
+          "name": "classes36.dex",
+          "zip_compression_method": 8,
+          "bytes": 12117192,
+          "compressed_bytes": 5099629,
+          "offset_mod4": 0,
+          "sha256": "210cb9dabd1475793a04a2dcbe8629c805fdb11a36b256c9ad0a9b42ed1ab30c"
+        },
+        {
+          "name": "classes37.dex",
+          "zip_compression_method": 8,
+          "bytes": 9551848,
+          "compressed_bytes": 3660356,
+          "offset_mod4": 0,
+          "sha256": "ed539557be08922b8336731b5af80a0e9173198c76438a43959fab0bfc18a214"
+        },
+        {
+          "name": "classes38.dex",
+          "zip_compression_method": 8,
+          "bytes": 12055232,
+          "compressed_bytes": 4512519,
+          "offset_mod4": 3,
+          "sha256": "0009731cc74a5b0df3f350c4cbbda8e659449bc3be71021dc40b27707a90ff5c"
+        },
+        {
+          "name": "classes39.dex",
+          "zip_compression_method": 8,
+          "bytes": 12470672,
+          "compressed_bytes": 5014166,
+          "offset_mod4": 1,
+          "sha256": "c117460c7d0b4e18a5fd223dd33b54e8a7892cedabe5f8e7fe394c21e63235f3"
+        },
+        {
+          "name": "classes4.dex",
+          "zip_compression_method": 8,
+          "bytes": 25036,
+          "compressed_bytes": 11698,
+          "offset_mod4": 1,
+          "sha256": "68747d1e3450cab9be93d0e35f3c8f53f1e0f2e0f34007657d24d2a13c79d6cf"
+        },
+        {
+          "name": "classes40.dex",
+          "zip_compression_method": 8,
+          "bytes": 3174876,
+          "compressed_bytes": 1236892,
+          "offset_mod4": 2,
+          "sha256": "a2d4e487ad36eb58a4a8f27879f7dd5882a97ffd4bc6619d7cbaaa6fe5687e1a"
+        },
+        {
+          "name": "classes6.dex",
+          "zip_compression_method": 8,
+          "bytes": 314920,
+          "compressed_bytes": 133797,
+          "offset_mod4": 3,
+          "sha256": "af7a3332e93856372c08967dc508e720ec66fbfe230e1da01b0bb47f836e48e2"
+        },
+        {
+          "name": "classes7.dex",
+          "zip_compression_method": 8,
+          "bytes": 352536,
+          "compressed_bytes": 141795,
+          "offset_mod4": 2,
+          "sha256": "4ab0bd5ca0790a118771ea96155c71db9e2b04dce4ae06ce6234a4db3bd73978"
+        },
+        {
+          "name": "classes8.dex",
+          "zip_compression_method": 8,
+          "bytes": 197988,
+          "compressed_bytes": 88680,
+          "offset_mod4": 3,
+          "sha256": "84d1e99630b35926a90e228d85bb095671c4e36efaf23fe7ebb89a682d460eaf"
+        },
+        {
+          "name": "classes9.dex",
+          "zip_compression_method": 8,
+          "bytes": 594580,
+          "compressed_bytes": 243233,
+          "offset_mod4": 1,
+          "sha256": "ec32035e56b3646d175a67ada9471c613d129c8a898ea607902e5602c9da7dce"
+        },
+        {
+          "name": "classes10.dex",
+          "zip_compression_method": 8,
+          "bytes": 512884,
+          "compressed_bytes": 185294,
+          "offset_mod4": 1,
+          "sha256": "de9122c57e12575cffd4ff45f36c6c5d8a91509203e568e3902c6490051d047c"
+        },
+        {
+          "name": "classes13.dex",
+          "zip_compression_method": 8,
+          "bytes": 359376,
+          "compressed_bytes": 141815,
+          "offset_mod4": 3,
+          "sha256": "b2c3908788485f9d433a9cb92e40afd9e22b218cc4386d10fc4ea9fa6635ea2f"
+        },
+        {
+          "name": "classes21.dex",
+          "zip_compression_method": 8,
+          "bytes": 910812,
+          "compressed_bytes": 384353,
+          "offset_mod4": 2,
+          "sha256": "504e3989d715ac3274ab96b94521f5d17d14a28f5402018080050043b0cf589e"
+        },
+        {
+          "name": "classes22.dex",
+          "zip_compression_method": 8,
+          "bytes": 109560,
+          "compressed_bytes": 49177,
+          "offset_mod4": 1,
+          "sha256": "c954ef94f346ee1956a0032b8ca6e1b636ecd85faadc8c340bc3cfbd6f262ff7"
+        },
+        {
+          "name": "classes27.dex",
+          "zip_compression_method": 8,
+          "bytes": 647000,
+          "compressed_bytes": 228652,
+          "offset_mod4": 2,
+          "sha256": "029809b63e0da2bf9fe2264b25d0ad8f18c8a74c5d755a94748c3c7b346e9dc6"
+        },
+        {
+          "name": "classes3.dex",
+          "zip_compression_method": 8,
+          "bytes": 787232,
+          "compressed_bytes": 325429,
+          "offset_mod4": 0,
+          "sha256": "757e52cfbec47fdb760f959d14976ff8bbbfbed291b987e20293f41daf329bc4"
+        },
+        {
+          "name": "classes5.dex",
+          "zip_compression_method": 8,
+          "bytes": 862180,
+          "compressed_bytes": 362350,
+          "offset_mod4": 1,
+          "sha256": "85e848bf36716dd8bc71e2057cd1517bc13ea59356640fce0f3c38dacc4a4504"
+        },
+        {
+          "name": "classes15.dex",
+          "zip_compression_method": 8,
+          "bytes": 517844,
+          "compressed_bytes": 167995,
+          "offset_mod4": 2,
+          "sha256": "af4c57668093b87154ed16d3d9d84143f29ba8ac657fa55973742af46d3ce76e"
+        }
+      ],
+      "libapp_sha256": {
+        "lib/arm64-v8a/libapp.so": "1358c916620a43cd71f51dc7a99c40bc773f13f59da59b98204185e8e27adb2e"
+      }
+    },
+    "after-profile": {
+      "bytes": 134767229,
+      "sha256": "8b6488d1589d3849916ba11edc5b1ab2a4276b3c1ef3f1a724550b2dbd5fe560",
+      "dex": [
+        {
+          "name": "classes.dex",
+          "zip_compression_method": 0,
+          "bytes": 15638040,
+          "compressed_bytes": 15638040,
+          "offset_mod4": 0,
+          "sha256": "bcfeca6141876848eeec14f615de47c82b962512772be7a922959f5075c21050"
+        },
+        {
+          "name": "classes10.dex",
+          "zip_compression_method": 0,
+          "bytes": 512884,
+          "compressed_bytes": 512884,
+          "offset_mod4": 0,
+          "sha256": "de9122c57e12575cffd4ff45f36c6c5d8a91509203e568e3902c6490051d047c"
+        },
+        {
+          "name": "classes11.dex",
+          "zip_compression_method": 0,
+          "bytes": 36964,
+          "compressed_bytes": 36964,
+          "offset_mod4": 0,
+          "sha256": "df6fe913c1cc58587fd7fc70f5d3da2b7cd0fec7db215c343b5d012ef420d19a"
+        },
+        {
+          "name": "classes12.dex",
+          "zip_compression_method": 0,
+          "bytes": 113216,
+          "compressed_bytes": 113216,
+          "offset_mod4": 0,
+          "sha256": "0f6034b9244233bc031b13a4f2850bc7f5a23ad9139a8d140766136f0e9a9b77"
+        },
+        {
+          "name": "classes13.dex",
+          "zip_compression_method": 0,
+          "bytes": 359376,
+          "compressed_bytes": 359376,
+          "offset_mod4": 0,
+          "sha256": "b2c3908788485f9d433a9cb92e40afd9e22b218cc4386d10fc4ea9fa6635ea2f"
+        },
+        {
+          "name": "classes14.dex",
+          "zip_compression_method": 0,
+          "bytes": 290368,
+          "compressed_bytes": 290368,
+          "offset_mod4": 0,
+          "sha256": "8f9f4af649e6fef78bfa57815bb609e8bdb1dffbf6987f47e3fb0befdf09a7b9"
+        },
+        {
+          "name": "classes15.dex",
+          "zip_compression_method": 0,
+          "bytes": 517844,
+          "compressed_bytes": 517844,
+          "offset_mod4": 0,
+          "sha256": "af4c57668093b87154ed16d3d9d84143f29ba8ac657fa55973742af46d3ce76e"
+        },
+        {
+          "name": "classes16.dex",
+          "zip_compression_method": 0,
+          "bytes": 250524,
+          "compressed_bytes": 250524,
+          "offset_mod4": 0,
+          "sha256": "595d4c1e5cba644cb9b570059ef8ee5751e15f4b281e9777eea0c86f013f876a"
+        },
+        {
+          "name": "classes17.dex",
+          "zip_compression_method": 0,
+          "bytes": 58200,
+          "compressed_bytes": 58200,
+          "offset_mod4": 0,
+          "sha256": "4539fcd6af96d3d92160397e9db94b1d22082e18f43afe16c952886b9eb010c0"
+        },
+        {
+          "name": "classes18.dex",
+          "zip_compression_method": 0,
+          "bytes": 670572,
+          "compressed_bytes": 670572,
+          "offset_mod4": 0,
+          "sha256": "5c3ff1ca45b8a6e10dd7eaada81dcf037d330adba04c1039393476282a4c2ce5"
+        },
+        {
+          "name": "classes19.dex",
+          "zip_compression_method": 0,
+          "bytes": 213944,
+          "compressed_bytes": 213944,
+          "offset_mod4": 0,
+          "sha256": "94928cdba0fc9045a78c22848bf687babefb2e8730fad8d90ed21042d763957a"
+        },
+        {
+          "name": "classes2.dex",
+          "zip_compression_method": 0,
+          "bytes": 2332,
+          "compressed_bytes": 2332,
+          "offset_mod4": 0,
+          "sha256": "2e7d1a4a4b08359ac331b8fc5b6d0a5508d7e2963418d73f6d9f1876f9092c95"
+        },
+        {
+          "name": "classes20.dex",
+          "zip_compression_method": 0,
+          "bytes": 181100,
+          "compressed_bytes": 181100,
+          "offset_mod4": 0,
+          "sha256": "612ac3ffcd6012fa57ef92f2c46fc74160fbeab5d0169452e8320d25059690df"
+        },
+        {
+          "name": "classes21.dex",
+          "zip_compression_method": 0,
+          "bytes": 910812,
+          "compressed_bytes": 910812,
+          "offset_mod4": 0,
+          "sha256": "504e3989d715ac3274ab96b94521f5d17d14a28f5402018080050043b0cf589e"
+        },
+        {
+          "name": "classes22.dex",
+          "zip_compression_method": 0,
+          "bytes": 109560,
+          "compressed_bytes": 109560,
+          "offset_mod4": 0,
+          "sha256": "c954ef94f346ee1956a0032b8ca6e1b636ecd85faadc8c340bc3cfbd6f262ff7"
+        },
+        {
+          "name": "classes23.dex",
+          "zip_compression_method": 0,
+          "bytes": 2536968,
+          "compressed_bytes": 2536968,
+          "offset_mod4": 0,
+          "sha256": "ff3d6b282dc399acf4bb5b542bfd99e77b7a60eb911d7770037ed6410f46af9d"
+        },
+        {
+          "name": "classes24.dex",
+          "zip_compression_method": 0,
+          "bytes": 406284,
+          "compressed_bytes": 406284,
+          "offset_mod4": 0,
+          "sha256": "70df246c0afae943ca3b67037130d66b7844a1e233986c94089259c6e0d0a44c"
+        },
+        {
+          "name": "classes25.dex",
+          "zip_compression_method": 0,
+          "bytes": 196228,
+          "compressed_bytes": 196228,
+          "offset_mod4": 0,
+          "sha256": "610e78ac5234cec81625874d532ebfe360242c7b0ab896e159c621f705e4a704"
+        },
+        {
+          "name": "classes26.dex",
+          "zip_compression_method": 0,
+          "bytes": 359744,
+          "compressed_bytes": 359744,
+          "offset_mod4": 0,
+          "sha256": "7c2fb08a71871b9dfb8ac3af69a7da6935a9e01bc51985d73477cb733084c682"
+        },
+        {
+          "name": "classes27.dex",
+          "zip_compression_method": 0,
+          "bytes": 647000,
+          "compressed_bytes": 647000,
+          "offset_mod4": 0,
+          "sha256": "029809b63e0da2bf9fe2264b25d0ad8f18c8a74c5d755a94748c3c7b346e9dc6"
+        },
+        {
+          "name": "classes28.dex",
+          "zip_compression_method": 0,
+          "bytes": 20468,
+          "compressed_bytes": 20468,
+          "offset_mod4": 0,
+          "sha256": "7d97532ee2d24c3fe85a02850fe251d92f7a147cac83ff70acb3cf84d3e68ff1"
+        },
+        {
+          "name": "classes29.dex",
+          "zip_compression_method": 0,
+          "bytes": 2465328,
+          "compressed_bytes": 2465328,
+          "offset_mod4": 0,
+          "sha256": "aa8a475c1e7e37fcd94293faa7c527c6a986e97eba0c2cc75f53ae018931cce3"
+        },
+        {
+          "name": "classes3.dex",
+          "zip_compression_method": 0,
+          "bytes": 787232,
+          "compressed_bytes": 787232,
+          "offset_mod4": 0,
+          "sha256": "757e52cfbec47fdb760f959d14976ff8bbbfbed291b987e20293f41daf329bc4"
+        },
+        {
+          "name": "classes30.dex",
+          "zip_compression_method": 0,
+          "bytes": 102252,
+          "compressed_bytes": 102252,
+          "offset_mod4": 0,
+          "sha256": "10b9b12480e7278915ca6381768ddbdf4f96e2f08e02604a85b93c85fb3d868a"
+        },
+        {
+          "name": "classes31.dex",
+          "zip_compression_method": 0,
+          "bytes": 67220,
+          "compressed_bytes": 67220,
+          "offset_mod4": 0,
+          "sha256": "4d63dd3d96073d19f8349f6a36ce60a9ac84529fe5f39cb651ce5c48c6835533"
+        },
+        {
+          "name": "classes32.dex",
+          "zip_compression_method": 0,
+          "bytes": 160772,
+          "compressed_bytes": 160772,
+          "offset_mod4": 0,
+          "sha256": "33f093f57689e71d22aba4b1f3c36a827e7f4bf58dfd7e5a28ab1df0eebb9abd"
+        },
+        {
+          "name": "classes33.dex",
+          "zip_compression_method": 0,
+          "bytes": 282368,
+          "compressed_bytes": 282368,
+          "offset_mod4": 0,
+          "sha256": "ca6a13675d6ea5bd7e7005c27c2f183b0d046211c585e5649a5a60fd79e05990"
+        },
+        {
+          "name": "classes34.dex",
+          "zip_compression_method": 0,
+          "bytes": 92940,
+          "compressed_bytes": 92940,
+          "offset_mod4": 0,
+          "sha256": "dd41a71e1d7a4493b234d8e13dc327d44fd86b973547a24fb11cd0df1018b4fb"
+        },
+        {
+          "name": "classes35.dex",
+          "zip_compression_method": 0,
+          "bytes": 16092876,
+          "compressed_bytes": 16092876,
+          "offset_mod4": 0,
+          "sha256": "11e93913fea4750dc370c08057dcb4edc86e8f3b56bc31f2636fda092b9dd669"
+        },
+        {
+          "name": "classes36.dex",
+          "zip_compression_method": 0,
+          "bytes": 12117192,
+          "compressed_bytes": 12117192,
+          "offset_mod4": 0,
+          "sha256": "210cb9dabd1475793a04a2dcbe8629c805fdb11a36b256c9ad0a9b42ed1ab30c"
+        },
+        {
+          "name": "classes37.dex",
+          "zip_compression_method": 0,
+          "bytes": 9551848,
+          "compressed_bytes": 9551848,
+          "offset_mod4": 0,
+          "sha256": "ed539557be08922b8336731b5af80a0e9173198c76438a43959fab0bfc18a214"
+        },
+        {
+          "name": "classes38.dex",
+          "zip_compression_method": 0,
+          "bytes": 12055232,
+          "compressed_bytes": 12055232,
+          "offset_mod4": 0,
+          "sha256": "0009731cc74a5b0df3f350c4cbbda8e659449bc3be71021dc40b27707a90ff5c"
+        },
+        {
+          "name": "classes39.dex",
+          "zip_compression_method": 0,
+          "bytes": 12470672,
+          "compressed_bytes": 12470672,
+          "offset_mod4": 0,
+          "sha256": "c117460c7d0b4e18a5fd223dd33b54e8a7892cedabe5f8e7fe394c21e63235f3"
+        },
+        {
+          "name": "classes4.dex",
+          "zip_compression_method": 0,
+          "bytes": 25036,
+          "compressed_bytes": 25036,
+          "offset_mod4": 0,
+          "sha256": "68747d1e3450cab9be93d0e35f3c8f53f1e0f2e0f34007657d24d2a13c79d6cf"
+        },
+        {
+          "name": "classes40.dex",
+          "zip_compression_method": 0,
+          "bytes": 3174876,
+          "compressed_bytes": 3174876,
+          "offset_mod4": 0,
+          "sha256": "a2d4e487ad36eb58a4a8f27879f7dd5882a97ffd4bc6619d7cbaaa6fe5687e1a"
+        },
+        {
+          "name": "classes5.dex",
+          "zip_compression_method": 0,
+          "bytes": 862180,
+          "compressed_bytes": 862180,
+          "offset_mod4": 0,
+          "sha256": "85e848bf36716dd8bc71e2057cd1517bc13ea59356640fce0f3c38dacc4a4504"
+        },
+        {
+          "name": "classes6.dex",
+          "zip_compression_method": 0,
+          "bytes": 314920,
+          "compressed_bytes": 314920,
+          "offset_mod4": 0,
+          "sha256": "af7a3332e93856372c08967dc508e720ec66fbfe230e1da01b0bb47f836e48e2"
+        },
+        {
+          "name": "classes7.dex",
+          "zip_compression_method": 0,
+          "bytes": 352536,
+          "compressed_bytes": 352536,
+          "offset_mod4": 0,
+          "sha256": "4ab0bd5ca0790a118771ea96155c71db9e2b04dce4ae06ce6234a4db3bd73978"
+        },
+        {
+          "name": "classes8.dex",
+          "zip_compression_method": 0,
+          "bytes": 197988,
+          "compressed_bytes": 197988,
+          "offset_mod4": 0,
+          "sha256": "84d1e99630b35926a90e228d85bb095671c4e36efaf23fe7ebb89a682d460eaf"
+        },
+        {
+          "name": "classes9.dex",
+          "zip_compression_method": 0,
+          "bytes": 594580,
+          "compressed_bytes": 594580,
+          "offset_mod4": 0,
+          "sha256": "ec32035e56b3646d175a67ada9471c613d129c8a898ea607902e5602c9da7dce"
+        }
+      ],
+      "libapp_sha256": {
+        "lib/arm64-v8a/libapp.so": "1358c916620a43cd71f51dc7a99c40bc773f13f59da59b98204185e8e27adb2e"
+      }
+    },
+    "final-profile": {
+      "bytes": 134767229,
+      "sha256": "cf9f73dec5ddbbd6e550b059d524634ab65a66d600d5d8f445cec99c32a78508",
+      "dex": [
+        {
+          "name": "classes.dex",
+          "zip_compression_method": 0,
+          "bytes": 15638040,
+          "compressed_bytes": 15638040,
+          "offset_mod4": 0,
+          "sha256": "bcfeca6141876848eeec14f615de47c82b962512772be7a922959f5075c21050"
+        },
+        {
+          "name": "classes10.dex",
+          "zip_compression_method": 0,
+          "bytes": 512884,
+          "compressed_bytes": 512884,
+          "offset_mod4": 0,
+          "sha256": "de9122c57e12575cffd4ff45f36c6c5d8a91509203e568e3902c6490051d047c"
+        },
+        {
+          "name": "classes11.dex",
+          "zip_compression_method": 0,
+          "bytes": 36964,
+          "compressed_bytes": 36964,
+          "offset_mod4": 0,
+          "sha256": "df6fe913c1cc58587fd7fc70f5d3da2b7cd0fec7db215c343b5d012ef420d19a"
+        },
+        {
+          "name": "classes12.dex",
+          "zip_compression_method": 0,
+          "bytes": 113216,
+          "compressed_bytes": 113216,
+          "offset_mod4": 0,
+          "sha256": "0f6034b9244233bc031b13a4f2850bc7f5a23ad9139a8d140766136f0e9a9b77"
+        },
+        {
+          "name": "classes13.dex",
+          "zip_compression_method": 0,
+          "bytes": 359376,
+          "compressed_bytes": 359376,
+          "offset_mod4": 0,
+          "sha256": "b2c3908788485f9d433a9cb92e40afd9e22b218cc4386d10fc4ea9fa6635ea2f"
+        },
+        {
+          "name": "classes14.dex",
+          "zip_compression_method": 0,
+          "bytes": 290368,
+          "compressed_bytes": 290368,
+          "offset_mod4": 0,
+          "sha256": "8f9f4af649e6fef78bfa57815bb609e8bdb1dffbf6987f47e3fb0befdf09a7b9"
+        },
+        {
+          "name": "classes15.dex",
+          "zip_compression_method": 0,
+          "bytes": 517844,
+          "compressed_bytes": 517844,
+          "offset_mod4": 0,
+          "sha256": "af4c57668093b87154ed16d3d9d84143f29ba8ac657fa55973742af46d3ce76e"
+        },
+        {
+          "name": "classes16.dex",
+          "zip_compression_method": 0,
+          "bytes": 250524,
+          "compressed_bytes": 250524,
+          "offset_mod4": 0,
+          "sha256": "595d4c1e5cba644cb9b570059ef8ee5751e15f4b281e9777eea0c86f013f876a"
+        },
+        {
+          "name": "classes17.dex",
+          "zip_compression_method": 0,
+          "bytes": 58200,
+          "compressed_bytes": 58200,
+          "offset_mod4": 0,
+          "sha256": "4539fcd6af96d3d92160397e9db94b1d22082e18f43afe16c952886b9eb010c0"
+        },
+        {
+          "name": "classes18.dex",
+          "zip_compression_method": 0,
+          "bytes": 670572,
+          "compressed_bytes": 670572,
+          "offset_mod4": 0,
+          "sha256": "5c3ff1ca45b8a6e10dd7eaada81dcf037d330adba04c1039393476282a4c2ce5"
+        },
+        {
+          "name": "classes19.dex",
+          "zip_compression_method": 0,
+          "bytes": 213944,
+          "compressed_bytes": 213944,
+          "offset_mod4": 0,
+          "sha256": "94928cdba0fc9045a78c22848bf687babefb2e8730fad8d90ed21042d763957a"
+        },
+        {
+          "name": "classes2.dex",
+          "zip_compression_method": 0,
+          "bytes": 2332,
+          "compressed_bytes": 2332,
+          "offset_mod4": 0,
+          "sha256": "2e7d1a4a4b08359ac331b8fc5b6d0a5508d7e2963418d73f6d9f1876f9092c95"
+        },
+        {
+          "name": "classes20.dex",
+          "zip_compression_method": 0,
+          "bytes": 181100,
+          "compressed_bytes": 181100,
+          "offset_mod4": 0,
+          "sha256": "612ac3ffcd6012fa57ef92f2c46fc74160fbeab5d0169452e8320d25059690df"
+        },
+        {
+          "name": "classes21.dex",
+          "zip_compression_method": 0,
+          "bytes": 910812,
+          "compressed_bytes": 910812,
+          "offset_mod4": 0,
+          "sha256": "504e3989d715ac3274ab96b94521f5d17d14a28f5402018080050043b0cf589e"
+        },
+        {
+          "name": "classes22.dex",
+          "zip_compression_method": 0,
+          "bytes": 109560,
+          "compressed_bytes": 109560,
+          "offset_mod4": 0,
+          "sha256": "c954ef94f346ee1956a0032b8ca6e1b636ecd85faadc8c340bc3cfbd6f262ff7"
+        },
+        {
+          "name": "classes23.dex",
+          "zip_compression_method": 0,
+          "bytes": 2536968,
+          "compressed_bytes": 2536968,
+          "offset_mod4": 0,
+          "sha256": "ff3d6b282dc399acf4bb5b542bfd99e77b7a60eb911d7770037ed6410f46af9d"
+        },
+        {
+          "name": "classes24.dex",
+          "zip_compression_method": 0,
+          "bytes": 406284,
+          "compressed_bytes": 406284,
+          "offset_mod4": 0,
+          "sha256": "70df246c0afae943ca3b67037130d66b7844a1e233986c94089259c6e0d0a44c"
+        },
+        {
+          "name": "classes26.dex",
+          "zip_compression_method": 0,
+          "bytes": 359744,
+          "compressed_bytes": 359744,
+          "offset_mod4": 0,
+          "sha256": "7c2fb08a71871b9dfb8ac3af69a7da6935a9e01bc51985d73477cb733084c682"
+        },
+        {
+          "name": "classes27.dex",
+          "zip_compression_method": 0,
+          "bytes": 647000,
+          "compressed_bytes": 647000,
+          "offset_mod4": 0,
+          "sha256": "029809b63e0da2bf9fe2264b25d0ad8f18c8a74c5d755a94748c3c7b346e9dc6"
+        },
+        {
+          "name": "classes28.dex",
+          "zip_compression_method": 0,
+          "bytes": 20468,
+          "compressed_bytes": 20468,
+          "offset_mod4": 0,
+          "sha256": "7d97532ee2d24c3fe85a02850fe251d92f7a147cac83ff70acb3cf84d3e68ff1"
+        },
+        {
+          "name": "classes29.dex",
+          "zip_compression_method": 0,
+          "bytes": 2465328,
+          "compressed_bytes": 2465328,
+          "offset_mod4": 0,
+          "sha256": "aa8a475c1e7e37fcd94293faa7c527c6a986e97eba0c2cc75f53ae018931cce3"
+        },
+        {
+          "name": "classes3.dex",
+          "zip_compression_method": 0,
+          "bytes": 787232,
+          "compressed_bytes": 787232,
+          "offset_mod4": 0,
+          "sha256": "757e52cfbec47fdb760f959d14976ff8bbbfbed291b987e20293f41daf329bc4"
+        },
+        {
+          "name": "classes30.dex",
+          "zip_compression_method": 0,
+          "bytes": 102252,
+          "compressed_bytes": 102252,
+          "offset_mod4": 0,
+          "sha256": "10b9b12480e7278915ca6381768ddbdf4f96e2f08e02604a85b93c85fb3d868a"
+        },
+        {
+          "name": "classes31.dex",
+          "zip_compression_method": 0,
+          "bytes": 67220,
+          "compressed_bytes": 67220,
+          "offset_mod4": 0,
+          "sha256": "4d63dd3d96073d19f8349f6a36ce60a9ac84529fe5f39cb651ce5c48c6835533"
+        },
+        {
+          "name": "classes32.dex",
+          "zip_compression_method": 0,
+          "bytes": 160772,
+          "compressed_bytes": 160772,
+          "offset_mod4": 0,
+          "sha256": "33f093f57689e71d22aba4b1f3c36a827e7f4bf58dfd7e5a28ab1df0eebb9abd"
+        },
+        {
+          "name": "classes33.dex",
+          "zip_compression_method": 0,
+          "bytes": 282368,
+          "compressed_bytes": 282368,
+          "offset_mod4": 0,
+          "sha256": "ca6a13675d6ea5bd7e7005c27c2f183b0d046211c585e5649a5a60fd79e05990"
+        },
+        {
+          "name": "classes34.dex",
+          "zip_compression_method": 0,
+          "bytes": 92940,
+          "compressed_bytes": 92940,
+          "offset_mod4": 0,
+          "sha256": "dd41a71e1d7a4493b234d8e13dc327d44fd86b973547a24fb11cd0df1018b4fb"
+        },
+        {
+          "name": "classes35.dex",
+          "zip_compression_method": 0,
+          "bytes": 16092876,
+          "compressed_bytes": 16092876,
+          "offset_mod4": 0,
+          "sha256": "11e93913fea4750dc370c08057dcb4edc86e8f3b56bc31f2636fda092b9dd669"
+        },
+        {
+          "name": "classes36.dex",
+          "zip_compression_method": 0,
+          "bytes": 12117192,
+          "compressed_bytes": 12117192,
+          "offset_mod4": 0,
+          "sha256": "210cb9dabd1475793a04a2dcbe8629c805fdb11a36b256c9ad0a9b42ed1ab30c"
+        },
+        {
+          "name": "classes37.dex",
+          "zip_compression_method": 0,
+          "bytes": 9551848,
+          "compressed_bytes": 9551848,
+          "offset_mod4": 0,
+          "sha256": "ed539557be08922b8336731b5af80a0e9173198c76438a43959fab0bfc18a214"
+        },
+        {
+          "name": "classes38.dex",
+          "zip_compression_method": 0,
+          "bytes": 12055232,
+          "compressed_bytes": 12055232,
+          "offset_mod4": 0,
+          "sha256": "0009731cc74a5b0df3f350c4cbbda8e659449bc3be71021dc40b27707a90ff5c"
+        },
+        {
+          "name": "classes39.dex",
+          "zip_compression_method": 0,
+          "bytes": 12470672,
+          "compressed_bytes": 12470672,
+          "offset_mod4": 0,
+          "sha256": "c117460c7d0b4e18a5fd223dd33b54e8a7892cedabe5f8e7fe394c21e63235f3"
+        },
+        {
+          "name": "classes4.dex",
+          "zip_compression_method": 0,
+          "bytes": 25036,
+          "compressed_bytes": 25036,
+          "offset_mod4": 0,
+          "sha256": "68747d1e3450cab9be93d0e35f3c8f53f1e0f2e0f34007657d24d2a13c79d6cf"
+        },
+        {
+          "name": "classes40.dex",
+          "zip_compression_method": 0,
+          "bytes": 3174876,
+          "compressed_bytes": 3174876,
+          "offset_mod4": 0,
+          "sha256": "a2d4e487ad36eb58a4a8f27879f7dd5882a97ffd4bc6619d7cbaaa6fe5687e1a"
+        },
+        {
+          "name": "classes5.dex",
+          "zip_compression_method": 0,
+          "bytes": 862180,
+          "compressed_bytes": 862180,
+          "offset_mod4": 0,
+          "sha256": "85e848bf36716dd8bc71e2057cd1517bc13ea59356640fce0f3c38dacc4a4504"
+        },
+        {
+          "name": "classes6.dex",
+          "zip_compression_method": 0,
+          "bytes": 314920,
+          "compressed_bytes": 314920,
+          "offset_mod4": 0,
+          "sha256": "af7a3332e93856372c08967dc508e720ec66fbfe230e1da01b0bb47f836e48e2"
+        },
+        {
+          "name": "classes7.dex",
+          "zip_compression_method": 0,
+          "bytes": 352536,
+          "compressed_bytes": 352536,
+          "offset_mod4": 0,
+          "sha256": "4ab0bd5ca0790a118771ea96155c71db9e2b04dce4ae06ce6234a4db3bd73978"
+        },
+        {
+          "name": "classes8.dex",
+          "zip_compression_method": 0,
+          "bytes": 197988,
+          "compressed_bytes": 197988,
+          "offset_mod4": 0,
+          "sha256": "84d1e99630b35926a90e228d85bb095671c4e36efaf23fe7ebb89a682d460eaf"
+        },
+        {
+          "name": "classes9.dex",
+          "zip_compression_method": 0,
+          "bytes": 594580,
+          "compressed_bytes": 594580,
+          "offset_mod4": 0,
+          "sha256": "ec32035e56b3646d175a67ada9471c613d129c8a898ea607902e5602c9da7dce"
+        },
+        {
+          "name": "classes25.dex",
+          "zip_compression_method": 0,
+          "bytes": 196048,
+          "compressed_bytes": 196048,
+          "offset_mod4": 0,
+          "sha256": "16d8822c12c3e5d6abbcfa24d84184478145dc5ac62db2f91ab9474fb6fa47e5"
+        }
+      ],
+      "libapp_sha256": {
+        "lib/arm64-v8a/libapp.so": "1358c916620a43cd71f51dc7a99c40bc773f13f59da59b98204185e8e27adb2e"
+      }
+    },
+    "loader-profile": {
+      "bytes": 134963559,
+      "sha256": "ffd3180591d8aa434a03c15d396de9322f2e936ca02fd9513c9830d734f7f1de",
+      "dex": [
+        {
+          "name": "classes.dex",
+          "zip_compression_method": 0,
+          "bytes": 15638040,
+          "compressed_bytes": 15638040,
+          "offset_mod4": 0,
+          "sha256": "bcfeca6141876848eeec14f615de47c82b962512772be7a922959f5075c21050"
+        },
+        {
+          "name": "classes10.dex",
+          "zip_compression_method": 0,
+          "bytes": 512884,
+          "compressed_bytes": 512884,
+          "offset_mod4": 0,
+          "sha256": "de9122c57e12575cffd4ff45f36c6c5d8a91509203e568e3902c6490051d047c"
+        },
+        {
+          "name": "classes11.dex",
+          "zip_compression_method": 0,
+          "bytes": 36964,
+          "compressed_bytes": 36964,
+          "offset_mod4": 0,
+          "sha256": "df6fe913c1cc58587fd7fc70f5d3da2b7cd0fec7db215c343b5d012ef420d19a"
+        },
+        {
+          "name": "classes12.dex",
+          "zip_compression_method": 0,
+          "bytes": 113216,
+          "compressed_bytes": 113216,
+          "offset_mod4": 0,
+          "sha256": "0f6034b9244233bc031b13a4f2850bc7f5a23ad9139a8d140766136f0e9a9b77"
+        },
+        {
+          "name": "classes13.dex",
+          "zip_compression_method": 0,
+          "bytes": 359376,
+          "compressed_bytes": 359376,
+          "offset_mod4": 0,
+          "sha256": "b2c3908788485f9d433a9cb92e40afd9e22b218cc4386d10fc4ea9fa6635ea2f"
+        },
+        {
+          "name": "classes14.dex",
+          "zip_compression_method": 0,
+          "bytes": 290368,
+          "compressed_bytes": 290368,
+          "offset_mod4": 0,
+          "sha256": "8f9f4af649e6fef78bfa57815bb609e8bdb1dffbf6987f47e3fb0befdf09a7b9"
+        },
+        {
+          "name": "classes15.dex",
+          "zip_compression_method": 0,
+          "bytes": 517844,
+          "compressed_bytes": 517844,
+          "offset_mod4": 0,
+          "sha256": "af4c57668093b87154ed16d3d9d84143f29ba8ac657fa55973742af46d3ce76e"
+        },
+        {
+          "name": "classes16.dex",
+          "zip_compression_method": 0,
+          "bytes": 250524,
+          "compressed_bytes": 250524,
+          "offset_mod4": 0,
+          "sha256": "595d4c1e5cba644cb9b570059ef8ee5751e15f4b281e9777eea0c86f013f876a"
+        },
+        {
+          "name": "classes17.dex",
+          "zip_compression_method": 0,
+          "bytes": 58200,
+          "compressed_bytes": 58200,
+          "offset_mod4": 0,
+          "sha256": "4539fcd6af96d3d92160397e9db94b1d22082e18f43afe16c952886b9eb010c0"
+        },
+        {
+          "name": "classes18.dex",
+          "zip_compression_method": 0,
+          "bytes": 670572,
+          "compressed_bytes": 670572,
+          "offset_mod4": 0,
+          "sha256": "5c3ff1ca45b8a6e10dd7eaada81dcf037d330adba04c1039393476282a4c2ce5"
+        },
+        {
+          "name": "classes19.dex",
+          "zip_compression_method": 0,
+          "bytes": 213944,
+          "compressed_bytes": 213944,
+          "offset_mod4": 0,
+          "sha256": "94928cdba0fc9045a78c22848bf687babefb2e8730fad8d90ed21042d763957a"
+        },
+        {
+          "name": "classes2.dex",
+          "zip_compression_method": 0,
+          "bytes": 2332,
+          "compressed_bytes": 2332,
+          "offset_mod4": 0,
+          "sha256": "2e7d1a4a4b08359ac331b8fc5b6d0a5508d7e2963418d73f6d9f1876f9092c95"
+        },
+        {
+          "name": "classes20.dex",
+          "zip_compression_method": 0,
+          "bytes": 181100,
+          "compressed_bytes": 181100,
+          "offset_mod4": 0,
+          "sha256": "612ac3ffcd6012fa57ef92f2c46fc74160fbeab5d0169452e8320d25059690df"
+        },
+        {
+          "name": "classes21.dex",
+          "zip_compression_method": 0,
+          "bytes": 910812,
+          "compressed_bytes": 910812,
+          "offset_mod4": 0,
+          "sha256": "504e3989d715ac3274ab96b94521f5d17d14a28f5402018080050043b0cf589e"
+        },
+        {
+          "name": "classes22.dex",
+          "zip_compression_method": 0,
+          "bytes": 109560,
+          "compressed_bytes": 109560,
+          "offset_mod4": 0,
+          "sha256": "c954ef94f346ee1956a0032b8ca6e1b636ecd85faadc8c340bc3cfbd6f262ff7"
+        },
+        {
+          "name": "classes23.dex",
+          "zip_compression_method": 0,
+          "bytes": 2536968,
+          "compressed_bytes": 2536968,
+          "offset_mod4": 0,
+          "sha256": "ff3d6b282dc399acf4bb5b542bfd99e77b7a60eb911d7770037ed6410f46af9d"
+        },
+        {
+          "name": "classes24.dex",
+          "zip_compression_method": 0,
+          "bytes": 406284,
+          "compressed_bytes": 406284,
+          "offset_mod4": 0,
+          "sha256": "70df246c0afae943ca3b67037130d66b7844a1e233986c94089259c6e0d0a44c"
+        },
+        {
+          "name": "classes26.dex",
+          "zip_compression_method": 0,
+          "bytes": 359744,
+          "compressed_bytes": 359744,
+          "offset_mod4": 0,
+          "sha256": "7c2fb08a71871b9dfb8ac3af69a7da6935a9e01bc51985d73477cb733084c682"
+        },
+        {
+          "name": "classes27.dex",
+          "zip_compression_method": 0,
+          "bytes": 647000,
+          "compressed_bytes": 647000,
+          "offset_mod4": 0,
+          "sha256": "029809b63e0da2bf9fe2264b25d0ad8f18c8a74c5d755a94748c3c7b346e9dc6"
+        },
+        {
+          "name": "classes28.dex",
+          "zip_compression_method": 0,
+          "bytes": 20468,
+          "compressed_bytes": 20468,
+          "offset_mod4": 0,
+          "sha256": "7d97532ee2d24c3fe85a02850fe251d92f7a147cac83ff70acb3cf84d3e68ff1"
+        },
+        {
+          "name": "classes29.dex",
+          "zip_compression_method": 0,
+          "bytes": 2465328,
+          "compressed_bytes": 2465328,
+          "offset_mod4": 0,
+          "sha256": "aa8a475c1e7e37fcd94293faa7c527c6a986e97eba0c2cc75f53ae018931cce3"
+        },
+        {
+          "name": "classes3.dex",
+          "zip_compression_method": 0,
+          "bytes": 787232,
+          "compressed_bytes": 787232,
+          "offset_mod4": 0,
+          "sha256": "757e52cfbec47fdb760f959d14976ff8bbbfbed291b987e20293f41daf329bc4"
+        },
+        {
+          "name": "classes30.dex",
+          "zip_compression_method": 0,
+          "bytes": 102252,
+          "compressed_bytes": 102252,
+          "offset_mod4": 0,
+          "sha256": "10b9b12480e7278915ca6381768ddbdf4f96e2f08e02604a85b93c85fb3d868a"
+        },
+        {
+          "name": "classes31.dex",
+          "zip_compression_method": 0,
+          "bytes": 67220,
+          "compressed_bytes": 67220,
+          "offset_mod4": 0,
+          "sha256": "4d63dd3d96073d19f8349f6a36ce60a9ac84529fe5f39cb651ce5c48c6835533"
+        },
+        {
+          "name": "classes32.dex",
+          "zip_compression_method": 0,
+          "bytes": 160772,
+          "compressed_bytes": 160772,
+          "offset_mod4": 0,
+          "sha256": "33f093f57689e71d22aba4b1f3c36a827e7f4bf58dfd7e5a28ab1df0eebb9abd"
+        },
+        {
+          "name": "classes33.dex",
+          "zip_compression_method": 0,
+          "bytes": 282368,
+          "compressed_bytes": 282368,
+          "offset_mod4": 0,
+          "sha256": "ca6a13675d6ea5bd7e7005c27c2f183b0d046211c585e5649a5a60fd79e05990"
+        },
+        {
+          "name": "classes34.dex",
+          "zip_compression_method": 0,
+          "bytes": 92940,
+          "compressed_bytes": 92940,
+          "offset_mod4": 0,
+          "sha256": "dd41a71e1d7a4493b234d8e13dc327d44fd86b973547a24fb11cd0df1018b4fb"
+        },
+        {
+          "name": "classes35.dex",
+          "zip_compression_method": 0,
+          "bytes": 16092876,
+          "compressed_bytes": 16092876,
+          "offset_mod4": 0,
+          "sha256": "11e93913fea4750dc370c08057dcb4edc86e8f3b56bc31f2636fda092b9dd669"
+        },
+        {
+          "name": "classes36.dex",
+          "zip_compression_method": 0,
+          "bytes": 12117192,
+          "compressed_bytes": 12117192,
+          "offset_mod4": 0,
+          "sha256": "210cb9dabd1475793a04a2dcbe8629c805fdb11a36b256c9ad0a9b42ed1ab30c"
+        },
+        {
+          "name": "classes37.dex",
+          "zip_compression_method": 0,
+          "bytes": 9551848,
+          "compressed_bytes": 9551848,
+          "offset_mod4": 0,
+          "sha256": "ed539557be08922b8336731b5af80a0e9173198c76438a43959fab0bfc18a214"
+        },
+        {
+          "name": "classes38.dex",
+          "zip_compression_method": 0,
+          "bytes": 12055232,
+          "compressed_bytes": 12055232,
+          "offset_mod4": 0,
+          "sha256": "0009731cc74a5b0df3f350c4cbbda8e659449bc3be71021dc40b27707a90ff5c"
+        },
+        {
+          "name": "classes39.dex",
+          "zip_compression_method": 0,
+          "bytes": 12470672,
+          "compressed_bytes": 12470672,
+          "offset_mod4": 0,
+          "sha256": "c117460c7d0b4e18a5fd223dd33b54e8a7892cedabe5f8e7fe394c21e63235f3"
+        },
+        {
+          "name": "classes4.dex",
+          "zip_compression_method": 0,
+          "bytes": 25036,
+          "compressed_bytes": 25036,
+          "offset_mod4": 0,
+          "sha256": "68747d1e3450cab9be93d0e35f3c8f53f1e0f2e0f34007657d24d2a13c79d6cf"
+        },
+        {
+          "name": "classes40.dex",
+          "zip_compression_method": 0,
+          "bytes": 3174876,
+          "compressed_bytes": 3174876,
+          "offset_mod4": 0,
+          "sha256": "a2d4e487ad36eb58a4a8f27879f7dd5882a97ffd4bc6619d7cbaaa6fe5687e1a"
+        },
+        {
+          "name": "classes5.dex",
+          "zip_compression_method": 0,
+          "bytes": 862180,
+          "compressed_bytes": 862180,
+          "offset_mod4": 0,
+          "sha256": "85e848bf36716dd8bc71e2057cd1517bc13ea59356640fce0f3c38dacc4a4504"
+        },
+        {
+          "name": "classes6.dex",
+          "zip_compression_method": 0,
+          "bytes": 314920,
+          "compressed_bytes": 314920,
+          "offset_mod4": 0,
+          "sha256": "af7a3332e93856372c08967dc508e720ec66fbfe230e1da01b0bb47f836e48e2"
+        },
+        {
+          "name": "classes7.dex",
+          "zip_compression_method": 0,
+          "bytes": 352536,
+          "compressed_bytes": 352536,
+          "offset_mod4": 0,
+          "sha256": "4ab0bd5ca0790a118771ea96155c71db9e2b04dce4ae06ce6234a4db3bd73978"
+        },
+        {
+          "name": "classes8.dex",
+          "zip_compression_method": 0,
+          "bytes": 197988,
+          "compressed_bytes": 197988,
+          "offset_mod4": 0,
+          "sha256": "84d1e99630b35926a90e228d85bb095671c4e36efaf23fe7ebb89a682d460eaf"
+        },
+        {
+          "name": "classes9.dex",
+          "zip_compression_method": 0,
+          "bytes": 594580,
+          "compressed_bytes": 594580,
+          "offset_mod4": 0,
+          "sha256": "ec32035e56b3646d175a67ada9471c613d129c8a898ea607902e5602c9da7dce"
+        },
+        {
+          "name": "classes25.dex",
+          "zip_compression_method": 0,
+          "bytes": 196284,
+          "compressed_bytes": 196284,
+          "offset_mod4": 0,
+          "sha256": "1dd1a2fddad9e609539e2614b2779ac4368fc67f00859499595feb726a518cc2"
+        }
+      ],
+      "libapp_sha256": {
+        "lib/arm64-v8a/libapp.so": "1358c916620a43cd71f51dc7a99c40bc773f13f59da59b98204185e8e27adb2e"
+      }
+    },
+    "delivered-profile": {
+      "bytes": 134964115,
+      "sha256": "f344fb4a599816c76f7538c7cfe3de2c84c78f805a34b124b62113ab1d51fa8a",
+      "dex": [
+        {
+          "name": "classes.dex",
+          "zip_compression_method": 0,
+          "bytes": 15638040,
+          "compressed_bytes": 15638040,
+          "offset_mod4": 0,
+          "sha256": "bcfeca6141876848eeec14f615de47c82b962512772be7a922959f5075c21050"
+        },
+        {
+          "name": "classes10.dex",
+          "zip_compression_method": 0,
+          "bytes": 512884,
+          "compressed_bytes": 512884,
+          "offset_mod4": 0,
+          "sha256": "de9122c57e12575cffd4ff45f36c6c5d8a91509203e568e3902c6490051d047c"
+        },
+        {
+          "name": "classes11.dex",
+          "zip_compression_method": 0,
+          "bytes": 36964,
+          "compressed_bytes": 36964,
+          "offset_mod4": 0,
+          "sha256": "df6fe913c1cc58587fd7fc70f5d3da2b7cd0fec7db215c343b5d012ef420d19a"
+        },
+        {
+          "name": "classes12.dex",
+          "zip_compression_method": 0,
+          "bytes": 113216,
+          "compressed_bytes": 113216,
+          "offset_mod4": 0,
+          "sha256": "0f6034b9244233bc031b13a4f2850bc7f5a23ad9139a8d140766136f0e9a9b77"
+        },
+        {
+          "name": "classes13.dex",
+          "zip_compression_method": 0,
+          "bytes": 359376,
+          "compressed_bytes": 359376,
+          "offset_mod4": 0,
+          "sha256": "b2c3908788485f9d433a9cb92e40afd9e22b218cc4386d10fc4ea9fa6635ea2f"
+        },
+        {
+          "name": "classes14.dex",
+          "zip_compression_method": 0,
+          "bytes": 290368,
+          "compressed_bytes": 290368,
+          "offset_mod4": 0,
+          "sha256": "8f9f4af649e6fef78bfa57815bb609e8bdb1dffbf6987f47e3fb0befdf09a7b9"
+        },
+        {
+          "name": "classes15.dex",
+          "zip_compression_method": 0,
+          "bytes": 517844,
+          "compressed_bytes": 517844,
+          "offset_mod4": 0,
+          "sha256": "af4c57668093b87154ed16d3d9d84143f29ba8ac657fa55973742af46d3ce76e"
+        },
+        {
+          "name": "classes16.dex",
+          "zip_compression_method": 0,
+          "bytes": 250524,
+          "compressed_bytes": 250524,
+          "offset_mod4": 0,
+          "sha256": "595d4c1e5cba644cb9b570059ef8ee5751e15f4b281e9777eea0c86f013f876a"
+        },
+        {
+          "name": "classes17.dex",
+          "zip_compression_method": 0,
+          "bytes": 58200,
+          "compressed_bytes": 58200,
+          "offset_mod4": 0,
+          "sha256": "4539fcd6af96d3d92160397e9db94b1d22082e18f43afe16c952886b9eb010c0"
+        },
+        {
+          "name": "classes18.dex",
+          "zip_compression_method": 0,
+          "bytes": 670572,
+          "compressed_bytes": 670572,
+          "offset_mod4": 0,
+          "sha256": "5c3ff1ca45b8a6e10dd7eaada81dcf037d330adba04c1039393476282a4c2ce5"
+        },
+        {
+          "name": "classes19.dex",
+          "zip_compression_method": 0,
+          "bytes": 213944,
+          "compressed_bytes": 213944,
+          "offset_mod4": 0,
+          "sha256": "94928cdba0fc9045a78c22848bf687babefb2e8730fad8d90ed21042d763957a"
+        },
+        {
+          "name": "classes2.dex",
+          "zip_compression_method": 0,
+          "bytes": 2332,
+          "compressed_bytes": 2332,
+          "offset_mod4": 0,
+          "sha256": "2e7d1a4a4b08359ac331b8fc5b6d0a5508d7e2963418d73f6d9f1876f9092c95"
+        },
+        {
+          "name": "classes20.dex",
+          "zip_compression_method": 0,
+          "bytes": 181100,
+          "compressed_bytes": 181100,
+          "offset_mod4": 0,
+          "sha256": "612ac3ffcd6012fa57ef92f2c46fc74160fbeab5d0169452e8320d25059690df"
+        },
+        {
+          "name": "classes21.dex",
+          "zip_compression_method": 0,
+          "bytes": 910812,
+          "compressed_bytes": 910812,
+          "offset_mod4": 0,
+          "sha256": "504e3989d715ac3274ab96b94521f5d17d14a28f5402018080050043b0cf589e"
+        },
+        {
+          "name": "classes22.dex",
+          "zip_compression_method": 0,
+          "bytes": 109560,
+          "compressed_bytes": 109560,
+          "offset_mod4": 0,
+          "sha256": "c954ef94f346ee1956a0032b8ca6e1b636ecd85faadc8c340bc3cfbd6f262ff7"
+        },
+        {
+          "name": "classes23.dex",
+          "zip_compression_method": 0,
+          "bytes": 2536968,
+          "compressed_bytes": 2536968,
+          "offset_mod4": 0,
+          "sha256": "ff3d6b282dc399acf4bb5b542bfd99e77b7a60eb911d7770037ed6410f46af9d"
+        },
+        {
+          "name": "classes24.dex",
+          "zip_compression_method": 0,
+          "bytes": 406284,
+          "compressed_bytes": 406284,
+          "offset_mod4": 0,
+          "sha256": "70df246c0afae943ca3b67037130d66b7844a1e233986c94089259c6e0d0a44c"
+        },
+        {
+          "name": "classes26.dex",
+          "zip_compression_method": 0,
+          "bytes": 359744,
+          "compressed_bytes": 359744,
+          "offset_mod4": 0,
+          "sha256": "7c2fb08a71871b9dfb8ac3af69a7da6935a9e01bc51985d73477cb733084c682"
+        },
+        {
+          "name": "classes27.dex",
+          "zip_compression_method": 0,
+          "bytes": 647000,
+          "compressed_bytes": 647000,
+          "offset_mod4": 0,
+          "sha256": "029809b63e0da2bf9fe2264b25d0ad8f18c8a74c5d755a94748c3c7b346e9dc6"
+        },
+        {
+          "name": "classes28.dex",
+          "zip_compression_method": 0,
+          "bytes": 20468,
+          "compressed_bytes": 20468,
+          "offset_mod4": 0,
+          "sha256": "7d97532ee2d24c3fe85a02850fe251d92f7a147cac83ff70acb3cf84d3e68ff1"
+        },
+        {
+          "name": "classes29.dex",
+          "zip_compression_method": 0,
+          "bytes": 2465328,
+          "compressed_bytes": 2465328,
+          "offset_mod4": 0,
+          "sha256": "aa8a475c1e7e37fcd94293faa7c527c6a986e97eba0c2cc75f53ae018931cce3"
+        },
+        {
+          "name": "classes3.dex",
+          "zip_compression_method": 0,
+          "bytes": 787232,
+          "compressed_bytes": 787232,
+          "offset_mod4": 0,
+          "sha256": "757e52cfbec47fdb760f959d14976ff8bbbfbed291b987e20293f41daf329bc4"
+        },
+        {
+          "name": "classes30.dex",
+          "zip_compression_method": 0,
+          "bytes": 102252,
+          "compressed_bytes": 102252,
+          "offset_mod4": 0,
+          "sha256": "10b9b12480e7278915ca6381768ddbdf4f96e2f08e02604a85b93c85fb3d868a"
+        },
+        {
+          "name": "classes31.dex",
+          "zip_compression_method": 0,
+          "bytes": 67220,
+          "compressed_bytes": 67220,
+          "offset_mod4": 0,
+          "sha256": "4d63dd3d96073d19f8349f6a36ce60a9ac84529fe5f39cb651ce5c48c6835533"
+        },
+        {
+          "name": "classes32.dex",
+          "zip_compression_method": 0,
+          "bytes": 160772,
+          "compressed_bytes": 160772,
+          "offset_mod4": 0,
+          "sha256": "33f093f57689e71d22aba4b1f3c36a827e7f4bf58dfd7e5a28ab1df0eebb9abd"
+        },
+        {
+          "name": "classes33.dex",
+          "zip_compression_method": 0,
+          "bytes": 282368,
+          "compressed_bytes": 282368,
+          "offset_mod4": 0,
+          "sha256": "ca6a13675d6ea5bd7e7005c27c2f183b0d046211c585e5649a5a60fd79e05990"
+        },
+        {
+          "name": "classes34.dex",
+          "zip_compression_method": 0,
+          "bytes": 92940,
+          "compressed_bytes": 92940,
+          "offset_mod4": 0,
+          "sha256": "dd41a71e1d7a4493b234d8e13dc327d44fd86b973547a24fb11cd0df1018b4fb"
+        },
+        {
+          "name": "classes35.dex",
+          "zip_compression_method": 0,
+          "bytes": 16092876,
+          "compressed_bytes": 16092876,
+          "offset_mod4": 0,
+          "sha256": "11e93913fea4750dc370c08057dcb4edc86e8f3b56bc31f2636fda092b9dd669"
+        },
+        {
+          "name": "classes36.dex",
+          "zip_compression_method": 0,
+          "bytes": 12117192,
+          "compressed_bytes": 12117192,
+          "offset_mod4": 0,
+          "sha256": "210cb9dabd1475793a04a2dcbe8629c805fdb11a36b256c9ad0a9b42ed1ab30c"
+        },
+        {
+          "name": "classes37.dex",
+          "zip_compression_method": 0,
+          "bytes": 9551848,
+          "compressed_bytes": 9551848,
+          "offset_mod4": 0,
+          "sha256": "ed539557be08922b8336731b5af80a0e9173198c76438a43959fab0bfc18a214"
+        },
+        {
+          "name": "classes38.dex",
+          "zip_compression_method": 0,
+          "bytes": 12055232,
+          "compressed_bytes": 12055232,
+          "offset_mod4": 0,
+          "sha256": "0009731cc74a5b0df3f350c4cbbda8e659449bc3be71021dc40b27707a90ff5c"
+        },
+        {
+          "name": "classes39.dex",
+          "zip_compression_method": 0,
+          "bytes": 12470672,
+          "compressed_bytes": 12470672,
+          "offset_mod4": 0,
+          "sha256": "c117460c7d0b4e18a5fd223dd33b54e8a7892cedabe5f8e7fe394c21e63235f3"
+        },
+        {
+          "name": "classes4.dex",
+          "zip_compression_method": 0,
+          "bytes": 25036,
+          "compressed_bytes": 25036,
+          "offset_mod4": 0,
+          "sha256": "68747d1e3450cab9be93d0e35f3c8f53f1e0f2e0f34007657d24d2a13c79d6cf"
+        },
+        {
+          "name": "classes40.dex",
+          "zip_compression_method": 0,
+          "bytes": 3174876,
+          "compressed_bytes": 3174876,
+          "offset_mod4": 0,
+          "sha256": "a2d4e487ad36eb58a4a8f27879f7dd5882a97ffd4bc6619d7cbaaa6fe5687e1a"
+        },
+        {
+          "name": "classes5.dex",
+          "zip_compression_method": 0,
+          "bytes": 862180,
+          "compressed_bytes": 862180,
+          "offset_mod4": 0,
+          "sha256": "85e848bf36716dd8bc71e2057cd1517bc13ea59356640fce0f3c38dacc4a4504"
+        },
+        {
+          "name": "classes6.dex",
+          "zip_compression_method": 0,
+          "bytes": 314920,
+          "compressed_bytes": 314920,
+          "offset_mod4": 0,
+          "sha256": "af7a3332e93856372c08967dc508e720ec66fbfe230e1da01b0bb47f836e48e2"
+        },
+        {
+          "name": "classes7.dex",
+          "zip_compression_method": 0,
+          "bytes": 352536,
+          "compressed_bytes": 352536,
+          "offset_mod4": 0,
+          "sha256": "4ab0bd5ca0790a118771ea96155c71db9e2b04dce4ae06ce6234a4db3bd73978"
+        },
+        {
+          "name": "classes8.dex",
+          "zip_compression_method": 0,
+          "bytes": 197988,
+          "compressed_bytes": 197988,
+          "offset_mod4": 0,
+          "sha256": "84d1e99630b35926a90e228d85bb095671c4e36efaf23fe7ebb89a682d460eaf"
+        },
+        {
+          "name": "classes9.dex",
+          "zip_compression_method": 0,
+          "bytes": 594580,
+          "compressed_bytes": 594580,
+          "offset_mod4": 0,
+          "sha256": "ec32035e56b3646d175a67ada9471c613d129c8a898ea607902e5602c9da7dce"
+        },
+        {
+          "name": "classes25.dex",
+          "zip_compression_method": 0,
+          "bytes": 196840,
+          "compressed_bytes": 196840,
+          "offset_mod4": 0,
+          "sha256": "87eaea42cf98b9a8161fae4579ec6ed4de60bbad068daa5aa29585ed317c095f"
+        }
+      ],
+      "libapp_sha256": {
+        "lib/arm64-v8a/libapp.so": "1358c916620a43cd71f51dc7a99c40bc773f13f59da59b98204185e8e27adb2e"
+      }
+    }
+  },
+  "dex_only_payload_comparison": {
+    "all_unzipped_entries_identical": true,
+    "jni_compression_unchanged": true
+  },
+  "trace_samples_excluded_from_benchmark": {
+    "before-profile": {
+      "Extract dex file": {
+        "count": 40,
+        "total_ms": 297.862
+      },
+      "Verify dex file": {
+        "count": 40,
+        "total_ms": 202.902
+      },
+      "OpenDexFilesFromOat": {
+        "count": 1,
+        "total_ms": 502.699
+      },
+      "bindApplication": {
+        "count": 1,
+        "total_ms": 865.636
+      },
+      "system_splash_radial_exit": {
+        "trace_event_count": 43,
+        "first_to_last_event_ms": 347.149
+      },
+      "traced_launch_output": "capturing trace...\nStarting: Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }\nStatus: ok\nLaunchState: COLD\nActivity: cn.com.omnimind.bot/.activity.MainActivity\nTotalTime: 1355\nWaitTime: 1361\nComplete"
+    },
+    "after-profile": {
+      "Extract dex file": {
+        "count": 0,
+        "total_ms": 0
+      },
+      "Verify dex file": {
+        "count": 40,
+        "total_ms": 197.282
+      },
+      "OpenDexFilesFromOat": {
+        "count": 1,
+        "total_ms": 199.215
+      },
+      "bindApplication": {
+        "count": 1,
+        "total_ms": 579.711
+      },
+      "system_splash_radial_exit": {
+        "trace_event_count": 43,
+        "first_to_last_event_ms": 347.217
+      },
+      "traced_launch_output": "capturing trace...\nStarting: Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }\nStatus: ok\nLaunchState: COLD\nActivity: cn.com.omnimind.bot/.activity.MainActivity\nTotalTime: 1066\nWaitTime: 1075\nComplete"
+    },
+    "final-profile": {
+      "Extract dex file": {
+        "count": 0,
+        "total_ms": 0
+      },
+      "Verify dex file": {
+        "count": 40,
+        "total_ms": 196.807
+      },
+      "OpenDexFilesFromOat": {
+        "count": 1,
+        "total_ms": 198.543
+      },
+      "bindApplication": {
+        "count": 1,
+        "total_ms": 590.758
+      },
+      "system_splash_radial_exit": {
+        "trace_event_count": 43,
+        "first_to_last_event_ms": 346.996
+      },
+      "traced_launch_output": "capturing trace...\nStarting: Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }\nStatus: ok\nLaunchState: COLD\nActivity: cn.com.omnimind.bot/.activity.MainActivity\nTotalTime: 1022\nWaitTime: 1029\nComplete"
+    },
+    "delivered-profile": {
+      "Extract dex file": {
+        "count": 0,
+        "total_ms": 0
+      },
+      "Verify dex file": {
+        "count": 40,
+        "total_ms": 194.072
+      },
+      "OpenDexFilesFromOat": {
+        "count": 1,
+        "total_ms": 196.013
+      },
+      "bindApplication": {
+        "count": 1,
+        "total_ms": 579.926
+      },
+      "system_splash_radial_exit": {
+        "trace_event_count": 0,
+        "first_to_last_event_ms": 0
+      },
+      "traced_launch_output": "capturing trace...\nStarting: Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }\nStatus: ok\nLaunchState: COLD\nActivity: cn.com.omnimind.bot/.activity.MainActivity\nTotalTime: 1081\nWaitTime: 1097\nComplete"
+    }
+  },
+  "production_patch": "diff --git a/app/build.gradle.kts b/app/build.gradle.kts\nindex 375447c19..32490d2a9 100644\n--- a/app/build.gradle.kts\n+++ b/app/build.gradle.kts\n@@ -346,7 +346,8 @@ android {\n \n     packaging {\n         dex {\n-            useLegacyPackaging = true\n+            // Keep DEX directly mappable on API 29+ instead of inflating it during cold starts.\n+            useLegacyPackaging = false\n         }\n         jniLibs {\n             useLegacyPackaging = true\ndiff --git a/app/src/main/java/cn/com/omnimind/bot/activity/LauncherActivity.kt b/app/src/main/java/cn/com/omnimind/bot/activity/LauncherActivity.kt\nindex f25800aa5..081e1dbd4 100644\n--- a/app/src/main/java/cn/com/omnimind/bot/activity/LauncherActivity.kt\n+++ b/app/src/main/java/cn/com/omnimind/bot/activity/LauncherActivity.kt\n@@ -62,16 +62,9 @@ class LauncherActivity : ComponentActivity() {\n         }\n         OmniLog.d(TAG, \"startMainActivity\")\n         startActivity(intent)\n-        // 不调用 finish()，让 MainActivity 的 Flutter 页面自然覆盖 Loading\n-        // LauncherActivity 会在 MainActivity 渲染完成后被系统回收\n-    }\n-\n-    override fun onStop() {\n-        super.onStop()\n-        // 当 MainActivity 覆盖 LauncherActivity 后，finish 自己\n-        if (!isFinishing) {\n-            OmniLog.d(TAG, \"LauncherActivity onStop, finishing\")\n-            finish()\n-        }\n+        // This activity only routes intents and never draws content. Finish\n+        // before onResume so the starting window can transfer to MainActivity\n+        // without displaying an intermediate launcher window.\n+        finish()\n     }\n }\ndiff --git a/app/src/main/java/cn/com/omnimind/bot/activity/MainActivity.kt b/app/src/main/java/cn/com/omnimind/bot/activity/MainActivity.kt\nindex 13f0b98cb..21963c714 100644\n--- a/app/src/main/java/cn/com/omnimind/bot/activity/MainActivity.kt\n+++ b/app/src/main/java/cn/com/omnimind/bot/activity/MainActivity.kt\n@@ -57,6 +57,11 @@ class MainActivity : FlutterActivity() {\n         applyResponsiveOrientation()\n         applySoftInputResizeMode()\n         super.onCreate(savedInstanceState)\n+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {\n+            // Flutter's pre-draw gate keeps the splash until its first frame.\n+            // Reveal that frame immediately instead of playing another exit animation.\n+            splashScreen.setOnExitAnimationListener { splashView -> splashView.remove() }\n+        }\n         applyEdgeToEdgeWindow()\n         TaskRuntimeSettings.attachActivity(this)\n         TaskRuntimeSettings.consumeTaskCompletionNotificationIntent(this, intent)\n",
+  "benchmark_init_script": "// Measurement only. Keep the production release signing configuration untouched.\ngradle.beforeProject { p ->\n    p.plugins.withId('com.android.application') {\n        if (p.path == ':app') {\n            p.extensions.getByName('androidComponents').finalizeDsl { android ->\n                def profile = android.buildTypes.maybeCreate('profile')\n                profile.initWith(android.buildTypes.getByName('debug'))\n                profile.matchingFallbacks = ['debug']\n                profile.debuggable = true\n                profile.minifyEnabled = false\n                profile.shrinkResources = false\n                android.buildTypes.getByName('release').signingConfig = android.signingConfigs.getByName('debug')\n            }\n        }\n    }\n}\n",
+  "verification": {
+    "apksigner_verify": true,
+    "zipalign_c4": true,
+    "git_diff_check": true,
+    "video_capture": "Device screenrecord failed: file writes denied; stream mode stalled. No video visual acceptance claimed.",
+    "installed_apk_sha256": "f344fb4a599816c76f7538c7cfe3de2c84c78f805a34b124b62113ab1d51fa8a",
+    "screenshot": "Normal home and existing history confirmed from delivered-home.png; image retained locally only.",
+    "main_activity_focused": true,
+    "recording_cleanup": "Device denied SIGINT and SIGKILL for the stalled shell screenrecord process; no app state or device permission settings changed."
+  }
+}

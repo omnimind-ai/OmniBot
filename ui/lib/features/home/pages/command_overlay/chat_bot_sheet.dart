@@ -32,6 +32,9 @@ import 'package:ui/constants/openclaw/openclaw_keys.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/omni_glass.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
+import 'package:ui/widgets/omni_sheet_motion.dart';
 
 /// 聊天上下文存储的key
 const String kChatContextStorageKey = 'chat_context_for_summary';
@@ -51,6 +54,7 @@ enum ChatBotLaunchScene {
 
 class ChatBotSheet extends StatefulWidget {
   final String? initialMessage;
+  final String agentId;
   final List<Map<String, dynamic>> initialAttachments;
 
   /// 启动场景，用于控制是否加载之前保存的上下文
@@ -60,6 +64,7 @@ class ChatBotSheet extends StatefulWidget {
   const ChatBotSheet({
     super.key,
     this.initialMessage,
+    this.agentId = 'xiaowan-acp',
     this.initialAttachments = const [],
     this.launchScene = ChatBotLaunchScene.normal,
     this.openClawEnabled,
@@ -70,11 +75,12 @@ class ChatBotSheet extends StatefulWidget {
 }
 
 class _ChatBotSheetState extends State<ChatBotSheet>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final TextEditingController _messageController = TextEditingController();
   final ScrollController _messageScrollController = ScrollController();
   final DraggableScrollableController _sheetController =
       DraggableScrollableController();
+  late final _sheetElastic = OmniSheetElasticController(this);
   final List<ChatMessageModel> _messages = [];
   final FocusNode _inputFocusNode = FocusNode();
   final GlobalKey<ChatInputAreaState> _chatInputAreaKey =
@@ -96,7 +102,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   String? _currentDispatchTurnId;
   String? _acpSessionId;
   String? _acpPromptId;
-  String? _activeAcpAgentId;
+  String get _activeAcpAgentId => widget.agentId;
   bool _closeRequested = false;
   bool _cancelRequested = false;
   bool _acpCloseStarted = false;
@@ -180,18 +186,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     // a sheet observes fresh presentation metadata without replaying an event.
     _lastAgentEventProjection = _runtimeCoordinator.latestAgentEventProjection;
     _runtimeCoordinator.addListener(_handleRuntimeCoordinatorChanged);
-    unawaited(_loadActiveAcpAgentIdentity());
-  }
-
-  Future<void> _loadActiveAcpAgentIdentity() async {
-    try {
-      final status = await AgentRuntimeService.status();
-      final agentId = status.activeAgentId?.trim() ?? '';
-      if (!mounted || agentId.isEmpty) return;
-      setState(() => _activeAcpAgentId = agentId);
-    } catch (error) {
-      debugPrint('加载 ACP Agent 身份失败: $error');
-    }
   }
 
   Future<void> _loadOpenClawConfig() async {
@@ -513,11 +507,15 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         final newId = await ConversationService.createConversation(
           title: title,
           summary: summary,
+          mode: ConversationMode.agent,
+          agentId: widget.agentId,
         );
         if (newId != null) {
           _currentConversationId = newId;
           _currentConversation = ConversationModel(
             id: newId,
+            mode: ConversationMode.agent,
+            agentId: widget.agentId,
             title: title,
             summary: summary,
             status: 0,
@@ -544,6 +542,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
             _currentConversation ??
             ConversationModel(
               id: _currentConversationId!,
+              mode: ConversationMode.agent,
+              agentId: widget.agentId,
               title: title,
               summary: summary,
               status: 0,
@@ -720,6 +720,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     _messageController.removeListener(_handleSlashCommandInput);
     _messageController.dispose();
     _messageScrollController.dispose();
+    _sheetElastic.dispose();
     _sheetController.dispose();
     _inputFocusNode.dispose();
     _openClawBaseUrlController.dispose();
@@ -759,6 +760,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     if (sessionId != null && sessionId.isNotEmpty) {
       try {
         await AgentRuntimeService.closeSession(
+          agentId: widget.agentId,
           sessionId: sessionId,
           conversationId: conversationId,
         );
@@ -781,6 +783,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
   Future<void> _finishAcpCancellationPresentation() async {
     try {
       await AgentRuntimeService.cancelPrompt(
+        agentId: widget.agentId,
         sessionId: _acpSessionId,
         conversationId: _currentConversationId,
         promptId: _acpPromptId,
@@ -1340,16 +1343,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         conversationId: conversationId,
         mode: _runtimeMode,
       );
-      var status = await AgentRuntimeService.status();
-      if (!_canContinueAcpTurn(aiMessageId)) return false;
-      if (!status.connected) {
-        status = await AgentRuntimeService.connect();
-      }
-      if (!_canContinueAcpTurn(aiMessageId)) return false;
-      final activeAgentId = status.activeAgentId?.trim() ?? '';
-      if (activeAgentId.isNotEmpty) {
-        _activeAcpAgentId = activeAgentId;
-      }
       final catalog = await SceneModelConfigService.getSceneCatalog();
       final dispatchScene = catalog
           .where((item) => item.sceneId == 'scene.dispatch.model')
@@ -1359,6 +1352,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       // session first so cancellation and late-event attribution have a
       // stable official identity before the potentially long prompt call.
       final sessionResponse = await AgentRuntimeService.newSession(
+        agentId: widget.agentId,
         conversationId: conversationId,
         model: dispatchScene?.effectiveModel.trim(),
         conversationMode: ConversationMode.agent.storageValue,
@@ -1389,7 +1383,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
         sessionId: _acpSessionId,
         conversationId: conversationId,
         requestId: aiMessageId,
-        agentId: status.activeAgentId,
+        agentId: widget.agentId,
         text: userMessage,
         attachments: attachments,
         model: dispatchScene?.effectiveModel.trim(),
@@ -1538,6 +1532,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
       if (raw is! List) return const [];
       return raw
           .whereType<Map>()
+          .where((item) => item['historyPayloadOffloaded'] != true)
           .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
           .where(_attachmentShouldSendToModel)
           .toList();
@@ -1580,6 +1575,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     if (raw is! List) return const [];
     return raw
         .whereType<Map>()
+        .where((item) => item['historyPayloadOffloaded'] != true)
         .map((item) => item.map((k, v) => MapEntry(k.toString(), v)))
         .toList();
   }
@@ -1814,9 +1810,29 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     });
   }
 
+  void _resizeSheet(DragUpdateDetails details) {
+    if (!_sheetController.isAttached) return;
+    final height = MediaQuery.sizeOf(context).height;
+    final elasticEnabled =
+        LiquidGlassScope.of(context) &&
+        !MediaQuery.disableAnimationsOf(context);
+    final limit = (height * (1 - 0.85) - MediaQuery.paddingOf(context).top - 14)
+        .clamp(0.0, 100.0);
+    var upward = -(details.primaryDelta ?? 0);
+    if (elasticEnabled && _sheetElastic.pull > 0) {
+      upward -= _sheetElastic.dragBy(upward, limit: limit);
+    }
+    final before = _sheetController.size;
+    final after = (before + upward / height).clamp(0.4, 0.85);
+    _sheetController.jumpTo(after);
+    final excess = upward - (after - before) * height;
+    if (elasticEnabled && excess > 0) {
+      _sheetElastic.dragBy(excess, limit: limit);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screenHeight = MediaQuery.of(context).size.height;
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     final inputAreaHeight = _inputAreaHeight > 0 ? _inputAreaHeight : 72.0;
     final palette = context.omniPalette;
@@ -1853,108 +1869,99 @@ class _ChatBotSheetState extends State<ChatBotSheet>
             Listener(
               behavior: HitTestBehavior.translucent,
               onPointerDown: (event) => _handleOutsideTap(event.position),
-              child: Container(
-                decoration: BoxDecoration(
-                  color: isDark
+              child: OmniSheetElasticSurface(
+                controller: _sheetElastic,
+                keyboardInset: bottomInset,
+                child: OmniGlassSheet(
+                  backgroundColor: isDark
                       ? palette.pageBackground
                       : const Color(0xFFF9FCFF),
                   borderRadius: const BorderRadius.vertical(
                     top: Radius.circular(20),
                   ),
-                  boxShadow: [
-                    BoxShadow(
-                      color: isDark
-                          ? Colors.black.withValues(alpha: 0.28)
-                          : const Color(0x1A000000),
-                      blurRadius: 20,
-                      offset: const Offset(0, -4),
-                    ),
-                  ],
-                ),
-                child: Stack(
-                  children: [
-                    Column(
-                      children: [
-                        // 拖动指示条 - 仅用于拖动整个 sheet 高度
-                        GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onVerticalDragUpdate: (details) {
-                            final delta = details.primaryDelta ?? 0;
-                            final currentSize = _sheetController.size;
-                            // 向上拖动(delta<0)增大size，向下拖动(delta>0)减小size
-                            final newSize =
-                                currentSize - (delta / screenHeight);
-                            _sheetController.jumpTo(newSize.clamp(0.4, 0.95));
-                          },
-                          child: Container(
-                            width: double.infinity,
-                            padding: const EdgeInsets.fromLTRB(0, 8, 0, 0),
-                            child: Center(
-                              child: Container(
-                                width: 100,
-                                height: 4,
-                                decoration: BoxDecoration(
-                                  color: isDark
-                                      ? palette.borderStrong
-                                      : const Color(0xFFCCCCCC),
-                                  borderRadius: BorderRadius.circular(4),
+                  child: Stack(
+                    children: [
+                      Column(
+                        children: [
+                          // 拖动指示条 - 仅用于拖动整个 sheet 高度
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onVerticalDragUpdate: _resizeSheet,
+                            onVerticalDragEnd: (details) =>
+                                _sheetElastic.release(
+                                  velocity: -(details.primaryVelocity ?? 0),
+                                ),
+                            onVerticalDragCancel: _sheetElastic.release,
+                            child: Container(
+                              width: double.infinity,
+                              padding: const EdgeInsets.fromLTRB(0, 8, 0, 0),
+                              child: Center(
+                                child: Container(
+                                  width: 100,
+                                  height: 4,
+                                  decoration: BoxDecoration(
+                                    color: isDark
+                                        ? palette.borderStrong
+                                        : const Color(0xFFCCCCCC),
+                                    borderRadius: BorderRadius.circular(4),
+                                  ),
                                 ),
                               ),
                             ),
                           ),
-                        ),
-                        // AI 生成标识
-                        const Padding(
-                          padding: EdgeInsets.only(top: 4),
-                          child: Align(
-                            alignment: Alignment.center,
-                            child: AiGeneratedBadge(),
+                          // AI 生成标识
+                          const Padding(
+                            padding: EdgeInsets.only(top: 4),
+                            child: Align(
+                              alignment: Alignment.center,
+                              child: AiGeneratedBadge(),
+                            ),
                           ),
-                        ),
-                        // 消息列表 - 使用 NotificationListener 阻止滚动事件影响 sheet
-                        Expanded(
-                          child: NotificationListener<ScrollNotification>(
-                            onNotification: (notification) {
-                              _handleMessageScrollNotification(notification);
-                              return true; // 阻止滚动事件冒泡到 sheet
-                            },
-                            child: _buildMessageList(),
+                          // 消息列表 - 使用 NotificationListener 阻止滚动事件影响 sheet
+                          Expanded(
+                            child: NotificationListener<ScrollNotification>(
+                              onNotification: (notification) {
+                                _handleMessageScrollNotification(notification);
+                                return true; // 阻止滚动事件冒泡到 sheet
+                              },
+                              child: _buildMessageList(),
+                            ),
                           ),
-                        ),
-                        // 输入框 - 根据 _isInputAreaVisible 控制显示
-                        if (_isInputAreaVisible) _buildInputArea(),
-                        SizedBox(height: bottomInset),
-                      ],
-                    ),
-                    if (_messages.isEmpty &&
-                        homeGreetingSettings.greetingEnabled)
-                      AnimatedPositioned(
-                        duration: const Duration(milliseconds: 280),
-                        curve: Curves.easeInOutCubic,
-                        left: 0,
-                        right: 0,
-                        top: liftEmptyGreeting ? 56 : 116,
-                        child: IgnorePointer(
-                          child: AnimatedAlign(
-                            duration: const Duration(milliseconds: 280),
-                            curve: Curves.easeInOutCubic,
-                            alignment: liftEmptyGreeting
-                                ? Alignment.centerLeft
-                                : Alignment.center,
-                            child: ChatEmptyGreeting(
-                              compact: true,
-                              primaryTextColor: palette.textPrimary,
-                              secondaryTextColor: palette.textSecondary,
-                              accentColor: palette.accentPrimary,
-                              quickPrompts: homeGreetingSettings.quickPrompts,
-                              pinnedQuickPromptIds:
-                                  homeGreetingSettings.pinnedQuickPromptIds,
-                              onQuickPromptSelected: _applyHomeQuickPrompt,
+                          // 输入框 - 根据 _isInputAreaVisible 控制显示
+                          if (_isInputAreaVisible) _buildInputArea(),
+                          SizedBox(height: bottomInset),
+                        ],
+                      ),
+                      if (_messages.isEmpty &&
+                          homeGreetingSettings.greetingEnabled)
+                        AnimatedPositioned(
+                          duration: const Duration(milliseconds: 280),
+                          curve: Curves.easeInOutCubic,
+                          left: 0,
+                          right: 0,
+                          top: liftEmptyGreeting ? 56 : 116,
+                          child: IgnorePointer(
+                            child: AnimatedAlign(
+                              duration: const Duration(milliseconds: 280),
+                              curve: Curves.easeInOutCubic,
+                              alignment: liftEmptyGreeting
+                                  ? Alignment.centerLeft
+                                  : Alignment.center,
+                              child: ChatEmptyGreeting(
+                                compact: true,
+                                primaryTextColor: palette.textPrimary,
+                                secondaryTextColor: palette.textSecondary,
+                                accentColor: palette.accentPrimary,
+                                quickPrompts: homeGreetingSettings.quickPrompts,
+                                pinnedQuickPromptIds:
+                                    homeGreetingSettings.pinnedQuickPromptIds,
+                                onQuickPromptSelected: _applyHomeQuickPrompt,
+                              ),
                             ),
                           ),
                         ),
-                      ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
             ),

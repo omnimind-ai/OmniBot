@@ -26,9 +26,20 @@ class AccountRepository(
 
     fun cachedCloudUserId(): String? = synchronized(sessionLock) { tokenStore.read()?.localUserId }
 
-    private fun rememberVerifiedIdentity(accessToken: String, user: AccountUser) = synchronized(sessionLock) {
+    private fun rememberVerifiedIdentity(
+        expectedGeneration: Long,
+        accessToken: String,
+        user: AccountUser,
+    ) = synchronized(sessionLock) {
+        requireSessionGeneration(expectedGeneration)
         val tokens = tokenStore.read() ?: throw AccountNotAuthenticatedException()
-        if (tokens.accessToken != accessToken) throw AccountNotAuthenticatedException()
+        if (tokens.accessToken != accessToken) {
+            // The same login can rotate credentials while /me is in flight.
+            // Its refresh already verified the identity; retain that newer
+            // response instead of signing out or overwriting it with this one.
+            if (tokens.localUserId != user.id) throw AccountNotAuthenticatedException()
+            return@synchronized
+        }
         if (tokens.localUserId != user.id && !tokenStore.write(tokens.copy(localUserId = user.id))) {
             throw AccountCredentialStorageException()
         }
@@ -58,7 +69,7 @@ class AccountRepository(
             val user = cached ?: remote.getCurrentUser(accessToken).also {
                 synchronized(sessionLock) {
                     requireSessionGeneration(expectedGeneration)
-                    rememberVerifiedIdentity(accessToken, it)
+                    rememberVerifiedIdentity(expectedGeneration, accessToken, it)
                 }
             }
             if (expectedUserId != null && user.id != expectedUserId) throw AccountNotAuthenticatedException()
@@ -146,8 +157,14 @@ class AccountRepository(
         return session
     }
 
-    suspend fun currentUser(): AccountUser = authorized { token ->
-        remote.getCurrentUser(token).also { rememberVerifiedIdentity(token, it) }
+    suspend fun currentUser(): AccountUser {
+        val expectedGeneration = generation.value
+        return authorized { token ->
+            requireSessionGeneration(expectedGeneration)
+            remote.getCurrentUser(token).also {
+                rememberVerifiedIdentity(expectedGeneration, token, it)
+            }
+        }
     }
 
     suspend fun getAiSettings(): AiSettings = authorized(remote::getAiSettings).also {
@@ -212,16 +229,19 @@ class AccountRepository(
 
     suspend fun refreshSession(): AccountSession {
         requireCloudServiceAccess()
-        val current = tokenStore.read() ?: throw AccountNotAuthenticatedException()
+        val (expectedGeneration, current) = synchronized(sessionLock) {
+            generation.value to (tokenStore.read() ?: throw AccountNotAuthenticatedException())
+        }
         return refreshMutex.withLock {
+            requireSessionGeneration(expectedGeneration)
             val latest = tokenStore.read() ?: throw AccountNotAuthenticatedException()
             if (latest.accessToken != current.accessToken) {
                 return@withLock AccountSession(
                     user = remote.getCurrentUser(latest.accessToken),
                     tokens = latest,
-                )
+                ).also { requireSessionGeneration(expectedGeneration) }
             }
-            refreshAndStore(latest)
+            refreshAndStore(latest, expectedGeneration)
         }
     }
 
@@ -238,21 +258,26 @@ class AccountRepository(
 
     private suspend fun <T> authorized(retryUnauthorized: Boolean, operation: suspend (String) -> T): T {
         requireCloudServiceAccess()
-        val initial = tokenStore.read() ?: throw AccountNotAuthenticatedException()
-        return try {
+        val (expectedGeneration, initial) = synchronized(sessionLock) {
+            generation.value to (tokenStore.read() ?: throw AccountNotAuthenticatedException())
+        }
+        val result = try {
             operation(initial.accessToken)
         } catch (error: AccountApiException) {
+            requireSessionGeneration(expectedGeneration)
             if (error.statusCode != 401 || !retryUnauthorized) throw error
-            val refreshed = refreshAfterUnauthorized(initial)
+            val refreshed = refreshAfterUnauthorized(initial, expectedGeneration)
             try {
                 operation(refreshed.accessToken)
             } catch (retryError: AccountApiException) {
                 if (retryError.statusCode == 401) {
-                    clearRejectedSession(refreshed.accessToken)
+                    clearRejectedSession(refreshed.accessToken, expectedGeneration)
                 }
                 throw retryError
             }
         }
+        requireSessionGeneration(expectedGeneration)
+        return result
     }
 
     /**
@@ -260,31 +285,37 @@ class AccountRepository(
      * no longer usable. Clear it only if no concurrent request has already
      * installed a newer token.
      */
-    private suspend fun clearRejectedSession(rejectedAccessToken: String) {
+    private suspend fun clearRejectedSession(rejectedAccessToken: String, expectedGeneration: Long) {
         refreshMutex.withLock {
             synchronized(sessionLock) {
-                if (tokenStore.read()?.accessToken == rejectedAccessToken) {
+                if (generation.value == expectedGeneration && tokenStore.read()?.accessToken == rejectedAccessToken) {
                     clearLocalSession()
                 }
             }
         }
     }
 
-    private suspend fun refreshAfterUnauthorized(stale: AccountTokens): AccountTokens =
+    private suspend fun refreshAfterUnauthorized(stale: AccountTokens, expectedGeneration: Long): AccountTokens =
         refreshMutex.withLock {
+            requireSessionGeneration(expectedGeneration)
             val current = tokenStore.read() ?: throw AccountNotAuthenticatedException()
             if (current.accessToken != stale.accessToken) {
                 return@withLock current
             }
-            refreshAndStore(current).tokens
+            refreshAndStore(current, expectedGeneration).tokens
         }
 
-    private suspend fun refreshAndStore(current: AccountTokens): AccountSession {
+    private suspend fun refreshAndStore(current: AccountTokens, expectedGeneration: Long): AccountSession {
         return try {
             val response = remote.refresh(current.refreshToken)
             response.copy(tokens = response.tokens.copy(localUserId = response.user.id)).also { refreshed ->
                 synchronized(sessionLock) {
-                    if (tokenStore.read() != current) throw AccountNotAuthenticatedException()
+                    requireSessionGeneration(expectedGeneration)
+                    // Verifying a legacy /me response only fills localUserId;
+                    // it must not discard credentials just rotated by the server.
+                    if (tokenStore.read()?.hasSameCredentialsAs(current) != true) {
+                        throw AccountNotAuthenticatedException()
+                    }
                     if (!tokenStore.write(refreshed.tokens)) {
                         clearLocalSession()
                         throw AccountCredentialStorageException()
@@ -296,12 +327,18 @@ class AccountRepository(
         } catch (error: AccountApiException) {
             if (error.statusCode == 401) {
                 synchronized(sessionLock) {
-                    if (tokenStore.read() == current) clearLocalSession()
+                    if (generation.value == expectedGeneration && tokenStore.read()?.hasSameCredentialsAs(current) == true) {
+                        clearLocalSession()
+                    }
                 }
             }
             throw error
         }
     }
+
+    private fun AccountTokens.hasSameCredentialsAs(other: AccountTokens): Boolean =
+        accessToken == other.accessToken && accessExpiresAt == other.accessExpiresAt &&
+            refreshToken == other.refreshToken && refreshExpiresAt == other.refreshExpiresAt
 
     private fun clearLocalSession() = synchronized(sessionLock) {
         generation.value += 1

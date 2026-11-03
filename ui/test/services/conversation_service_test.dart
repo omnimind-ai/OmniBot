@@ -425,16 +425,16 @@ void main() {
     'binds an Agent conversation to its Harness when it is created',
     () async {
       final conversationId = await ConversationService.createConversation(
-        title: 'DSH 对话',
+        title: 'Kimi 对话',
         mode: ConversationMode.agent,
-        agentId: 'deepseek-harness-acp',
+        agentId: 'kimi-code-acp',
       );
 
       final created = nativeConversations.singleWhere(
         (item) => item['id'] == conversationId,
       );
       expect(created['mode'], ConversationMode.agent.storageValue);
-      expect(created['agentId'], 'deepseek-harness-acp');
+      expect(created['agentId'], 'kimi-code-acp');
     },
   );
 

@@ -229,6 +229,12 @@ extension _HomeDrawerSearch on HomeDrawerState {
       return;
     }
     final generation = ++_conversationLoadGeneration;
+    // Preserve every history invalidation's generation, but collapse reads
+    // queued while this UI is inactive or its tab is still sliding.
+    if (!await waitForPageReady() ||
+        generation != _conversationLoadGeneration) {
+      return;
+    }
     debugPrint('[HomeDrawer] Loading conversations...');
     setState(() {
       isLoadingConversations =
@@ -244,7 +250,10 @@ extension _HomeDrawerSearch on HomeDrawerState {
       debugPrint(
         '[HomeDrawer] Loaded ${loadedConversations.length} conversations',
       );
-      if (!mounted || generation != _conversationLoadGeneration) return;
+      if (!await waitForPageReady() ||
+          generation != _conversationLoadGeneration) {
+        return;
+      }
       final visibleThreadKeys = loadedConversations
           .map((conversation) => conversation.threadKey)
           .toSet();
@@ -272,7 +281,10 @@ extension _HomeDrawerSearch on HomeDrawerState {
       }
     } catch (e) {
       debugPrint('[HomeDrawer] Failed to load conversations: $e');
-      if (!mounted || generation != _conversationLoadGeneration) return;
+      if (!await waitForPageReady() ||
+          generation != _conversationLoadGeneration) {
+        return;
+      }
       setState(() {
         isLoadingConversations = false;
       });

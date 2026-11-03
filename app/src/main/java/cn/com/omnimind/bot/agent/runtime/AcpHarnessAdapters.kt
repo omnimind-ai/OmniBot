@@ -1,11 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
-import com.google.gson.GsonBuilder
-import com.google.gson.JsonParser
 import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonArray
-import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonArray
@@ -27,33 +23,6 @@ internal interface AcpHarnessAdapter {
     /** Official config accepts a local HTTP Responses endpoint and bearer grant. */
     val supportsHostManagedResponses: Boolean
         get() = false
-    val launchConfigPath: String?
-        get() = null
-    val launchConfigExecutorKey: String?
-        get() = null
-    /** Returns the adapter-owned config surface, or null when it has none. */
-    fun readConfigPayload(
-        profileId: String,
-        rawConfig: String,
-        provider: AgentProviderCredentials?,
-        model: String?,
-    ): Map<String, Any?>? = null
-
-    /** Serializes an adapter-owned config surface, or null when it has none. */
-    fun writeConfigPayload(
-        args: Map<String, Any?>,
-        rawConfig: String,
-        provider: AgentProviderCredentials?,
-        model: String?,
-    ): String? = null
-
-    /** Builds launch-only environment values for a Harness-owned transport. */
-    fun launchEnvironment(
-        provider: AgentProviderCredentials?,
-        model: String?,
-        rawConfig: String,
-    ): Map<String, String>? = null
-
     /** Official adapter metadata extensions; no additional session lifecycle. */
     fun clientCapabilityMeta(base: JsonObject): JsonObject = base
 
@@ -142,86 +111,17 @@ internal object AcpHarnessAdapters {
         override val supportsHostManagedResponses = true
     }
 
+    val pi: AcpHarnessAdapter = object : AcpHarnessAdapter {
+        override val configAdapterId = "pi"
+        override val supportsHostManagedResponses = true
+    }
+
     val openCode: AcpHarnessAdapter = object : AcpHarnessAdapter {
         override val configAdapterId = "open-code"
         override val supportsHostManagedResponses = true
         override fun resolveModelValue(model: String, available: List<String>): String? =
             super.resolveModelValue(model, available)
                 ?: "omnibot/$model".takeIf { it in available }
-    }
-
-    val deepSeekHarness: AcpHarnessAdapter = object : AcpHarnessAdapter {
-        override fun resolveModelValue(model: String, available: List<String>): String? =
-            super.resolveModelValue(model, available) ?: available.filter { value ->
-                runCatching {
-                    val tuple = JsonParser.parseString(value).asJsonArray
-                    tuple.size() == 2 && tuple[1].asString == model
-                }.getOrDefault(false)
-            }.singleOrNull()
-        // DSH ACP 0.4.x documents per-session `mcpServers` (stdio and
-        // streamable HTTP). The shared runtime keeps that declaration on the
-        // official session/new request, where DSH owns discovery and tool
-        // namespacing.
-        override val configAdapterId = "deepseek-harness"
-        override val supportsHostManagedResponses = true
-        override val launchConfigPath = DEEPSEEK_HARNESS_CONFIG_PATH
-        override val launchConfigExecutorKey = "harness-launch-config-read"
-
-        override fun readConfigPayload(
-            profileId: String,
-            rawConfig: String,
-            provider: AgentProviderCredentials?,
-            model: String?,
-        ): Map<String, Any?> {
-            val config = parseDeepSeekHarnessConfig(rawConfig)
-            return linkedMapOf(
-                "agentId" to profileId,
-                "kind" to "deepseek-harness",
-                "configPath" to DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH,
-                "baseUrl" to (provider?.baseUrl ?: config.baseUrl),
-                "model" to model.orEmpty(),
-                "apiKey" to config.apiKey,
-                "reasoningEffort" to config.reasoningEffort,
-                "permissionMode" to config.permissionMode,
-            )
-        }
-
-        override fun writeConfigPayload(
-            args: Map<String, Any?>,
-            rawConfig: String,
-            provider: AgentProviderCredentials?,
-            model: String?,
-        ): String {
-            val config = deepSeekHarnessConfigFromArgs(
-                args = args,
-                current = parseDeepSeekHarnessConfig(rawConfig),
-                sharedProvider = provider,
-                sharedModel = model,
-            )
-            return buildDeepSeekHarnessConfigJson(config)
-        }
-
-        override fun launchEnvironment(
-            provider: AgentProviderCredentials?,
-            model: String?,
-            rawConfig: String,
-        ): Map<String, String> {
-            val config = syncAgentProviderCredentials(
-                config = parseDeepSeekHarnessConfig(rawConfig),
-                sharedProvider = provider,
-                sharedModel = model,
-            )
-            require(config.model.isNotBlank()) {
-                "Harness 没有可用模型，拒绝使用默认模型启动。"
-            }
-            require(config.apiKey.isNotBlank()) {
-                "Configure an API key in Model Provider settings before starting an ACP Agent."
-            }
-            return config.toEnvironment()
-        }
-
-        override fun normalizeStdioLine(line: String): String =
-            normalizeAcpModeNames(line)
     }
 
     /** Resolve a declarative catalog converter without coupling the runtime
@@ -231,8 +131,8 @@ internal object AcpHarnessAdapters {
         "codex" -> codex
         "claude-code" -> claudeCode
         "kimi-code" -> kimiCode
+        "pi" -> pi
         "open-code" -> openCode
-        "deepseek-harness" -> deepSeekHarness
         else -> standard
     }
 
@@ -240,56 +140,6 @@ internal object AcpHarnessAdapters {
         AcpAgentProfileStore.officialRuntime(profile)?.harnessAdapter ?: standard
 }
 
-/**
- * Compatibility entrypoint retained for protocol tests and old callers. New
- * runtime code uses [AcpHarnessAdapters.forProfile] instead of an enabled
- * boolean or a concrete Harness id check.
- */
-internal fun normalizeDeepSeekHarnessAcpModeNames(
-    line: String,
-    enabled: Boolean,
-): String = if (enabled) AcpHarnessAdapters.deepSeekHarness.normalizeStdioLine(line) else line
-
-private fun normalizeAcpModeNames(line: String): String {
-    val root = runCatching { Json.parseToJsonElement(line) }.getOrNull() ?: return line
-    return normalizeAcpModeJson(root).toString()
-}
-
-private fun normalizeAcpModeJson(
-    element: JsonElement,
-    parentKey: String? = null,
-): JsonElement = when (element) {
-    is JsonObject -> buildJsonObject {
-        element.forEach { (key, value) ->
-            put(key, normalizeAcpModeJson(value, key))
-        }
-        if (element["name"] == null &&
-            (parentKey == "availableModes" || parentKey == "options")
-        ) {
-            // Some official ACP Harness registries omit the display name while
-            // still returning a stable protocol id/value.
-            val displayName = sequenceOf("label", "title", "value", "id")
-                .mapNotNull { key ->
-                    (element[key] as? JsonPrimitive)?.contentOrNull
-                        ?.takeIf(String::isNotBlank)
-                }
-                .firstOrNull()
-            displayName?.let { put("name", JsonPrimitive(it)) }
-        }
-    }
-    is JsonArray -> buildJsonArray {
-        element.forEach { add(normalizeAcpModeJson(it, parentKey)) }
-    }
-    else -> element
-}
-
-internal const val DEEPSEEK_HARNESS_CONFIG_HOME = "/root/.dsh/omnibot-acp"
-internal const val DEEPSEEK_HARNESS_CONFIG_PATH =
-    "$DEEPSEEK_HARNESS_CONFIG_HOME/config.json"
-internal const val DEEPSEEK_HARNESS_SETTINGS_PATH =
-    "$DEEPSEEK_HARNESS_CONFIG_HOME/omnibot-dispatch.patch.yml"
-internal const val DEEPSEEK_HARNESS_CONFIG_DISPLAY_PATH =
-    "~/.dsh/omnibot-acp/config.json"
 internal const val ACP_FILESYSTEM_COMPAT_PATH =
     "/root/.omnibot/acp-fs-compat.cjs"
 internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
@@ -315,118 +165,6 @@ internal val ACP_FILESYSTEM_COMPAT_SCRIPT = """
       }
     };
 """.trimIndent() + "\n"
-private val DEEPSEEK_HARNESS_REASONING_EFFORTS = setOf("off", "high", "max")
-private val DEEPSEEK_HARNESS_PERMISSION_MODES = setOf(
-    "read-only",
-    "workspace-write",
-    "danger-full-access"
-)
-private const val DEEPSEEK_HARNESS_PERSISTENCE_HOME = "/root/.dsh/omnibot-acp-clean"
-
-internal data class DeepSeekHarnessConfig(
-    val baseUrl: String = "",
-    val model: String = "",
-    val apiKey: String = "",
-    val reasoningEffort: String = "",
-    val permissionMode: String = ""
-) {
-    fun toEnvironment(): Map<String, String> = buildMap {
-        if (baseUrl.isNotBlank()) put("DEEPSEEK_BASE_URL", baseUrl)
-        if (apiKey.isNotBlank()) put("DEEPSEEK_API_KEY", apiKey)
-        if (model.isNotBlank()) put("DSH_MODEL", model)
-        if (reasoningEffort.isNotBlank()) {
-            put("DSH_REASONING_EFFORT", reasoningEffort)
-            put("DSH_PI_AI_REASONING_EFFORT", reasoningEffort)
-            put("DSH_THINKING", if (reasoningEffort == "off") "disabled" else "enabled")
-        }
-        if (permissionMode.isNotBlank()) put("DSH_PERMISSION_MODE", permissionMode)
-        put("DSH_ACP_HOME", DEEPSEEK_HARNESS_PERSISTENCE_HOME)
-        put("DSH_SESSION_ROOT", "$DEEPSEEK_HARNESS_PERSISTENCE_HOME/sessions")
-        put("DSH_HOME", DEEPSEEK_HARNESS_CONFIG_HOME)
-        put("DSH_PROVIDER", "deepseek-official")
-        put("NODE_NO_WARNINGS", "1")
-    }
-}
-
-internal fun parseDeepSeekHarnessConfig(source: String): DeepSeekHarnessConfig {
-    val json = runCatching {
-        JsonParser.parseString(source)
-            .takeIf { it.isJsonObject }
-            ?.asJsonObject
-    }.getOrNull() ?: return DeepSeekHarnessConfig()
-    fun stringValue(key: String): String? = json.get(key)
-        ?.takeIf { it.isJsonPrimitive }
-        ?.asString
-        ?.trim()
-        ?.takeIf(String::isNotEmpty)
-    val reasoningEffort = stringValue("reasoningEffort").orEmpty()
-    require(reasoningEffort.isEmpty() || reasoningEffort in DEEPSEEK_HARNESS_REASONING_EFFORTS) {
-        "DeepSeek Harness reasoning effort is invalid."
-    }
-    val permissionMode = stringValue("permissionMode").orEmpty()
-    require(permissionMode.isEmpty() || permissionMode in DEEPSEEK_HARNESS_PERMISSION_MODES) {
-        "DeepSeek Harness permission mode is invalid."
-    }
-    return DeepSeekHarnessConfig(
-        baseUrl = stringValue("baseUrl").orEmpty(),
-        model = stringValue("model").orEmpty(),
-        apiKey = stringValue("apiKey").orEmpty(),
-        reasoningEffort = reasoningEffort,
-        permissionMode = permissionMode
-    )
-}
-
-internal fun deepSeekHarnessConfigFromArgs(
-    args: Map<String, Any?>,
-    current: DeepSeekHarnessConfig = DeepSeekHarnessConfig(),
-    sharedProvider: AgentProviderCredentials? = null,
-    sharedModel: String? = null
-): DeepSeekHarnessConfig {
-    val reasoningEffort = args.agentConfigStringValue("reasoningEffort")
-        ?: current.reasoningEffort
-    require(reasoningEffort.isEmpty() || reasoningEffort in DEEPSEEK_HARNESS_REASONING_EFFORTS) {
-        "DeepSeek Harness reasoning effort is invalid."
-    }
-    val permissionMode = args.agentConfigStringValue("permissionMode")
-        ?: current.permissionMode
-    require(permissionMode.isEmpty() || permissionMode in DEEPSEEK_HARNESS_PERMISSION_MODES) {
-        "DeepSeek Harness permission mode is invalid."
-    }
-    val updatedPreferences = current.copy(
-        reasoningEffort = reasoningEffort,
-        permissionMode = permissionMode,
-    )
-    // Provider credentials are a launch concern. In particular, never save a
-    // process-scoped relay grant while editing reasoning or permission mode.
-    if (sharedProvider == null || sharedProvider.isHostManaged) return updatedPreferences
-    require(sharedProvider.baseUrl.isNotBlank()) { "DeepSeek Base URL is required." }
-    require(!sharedModel.isNullOrBlank()) {
-        "DeepSeek model ID is required. Select a model from the active Provider first."
-    }
-    require(sharedProvider.apiKey.isNotBlank()) { "DeepSeek API key is required." }
-    return updatedPreferences.copy(
-        baseUrl = sharedProvider.baseUrl,
-        model = sharedModel,
-        apiKey = sharedProvider.apiKey,
-    )
-}
-
-internal fun buildDeepSeekHarnessConfigJson(config: DeepSeekHarnessConfig): String =
-    GsonBuilder()
-        .setPrettyPrinting()
-        .create()
-        .toJson(
-            linkedMapOf(
-                "baseUrl" to config.baseUrl,
-                "model" to config.model,
-                "apiKey" to config.apiKey,
-                "reasoningEffort" to config.reasoningEffort,
-                "permissionMode" to config.permissionMode
-            )
-        ) + "\n"
-
-private fun Map<String, Any?>.agentConfigStringValue(key: String): String? =
-    this[key]?.toString()?.trim()?.takeIf { it.isNotEmpty() }
 
 private fun normalizeCodexPlanIdentity(line: String): String {
     if (!line.contains("planId")) return line

@@ -1,5 +1,5 @@
 {
-  "name": "Preserve draft across DSH and Xiaowan selection, then send once",
+  "name": "Preserve draft across Kimi Code and Xiaowan selection, then send once",
   "requireClockSync": true,
   "steps": [
     {
@@ -10,21 +10,22 @@
     },
     {
       "action": "tap",
-      "label": "Switch chat mode"
+      "label": "Switch Agent mode"
     },
     {
       "action": "tap",
-      "label": "DeepSeek Harness"
+      "label": "Kimi Code"
     },
     {
       "action": "assert-draft",
       "marker": "OOB_LIVE_SWITCH_DRAFT",
       "scenario": "xiaowan-switch-reply.json",
-      "agentId": "deepseek-harness-acp"
+      "agentId": "kimi-code-acp",
+      "agentLabel": "Kimi Code"
     },
     {
       "action": "tap",
-      "label": "Switch chat mode"
+      "label": "Switch Agent mode"
     },
     {
       "action": "tap",
@@ -34,7 +35,8 @@
       "action": "assert-draft",
       "marker": "OOB_LIVE_SWITCH_DRAFT",
       "scenario": "xiaowan-switch-reply.json",
-      "agentId": "xiaowan-acp"
+      "agentId": "xiaowan-acp",
+      "agentLabel": "小万"
     },
     {
       "action": "tap",
@@ -44,6 +46,7 @@
       "action": "turn-outcome",
       "marker": "OOB_LIVE_SWITCH_DRAFT",
       "expected": "done",
+      "agentId": "xiaowan-acp",
       "timeoutMs": 180000
     },
     {
@@ -52,7 +55,8 @@
     {
       "action": "turn-outcome",
       "marker": "OOB_LIVE_SWITCH_DRAFT",
-      "expected": "done"
+      "expected": "done",
+      "agentId": "xiaowan-acp"
     }
   ]
 }

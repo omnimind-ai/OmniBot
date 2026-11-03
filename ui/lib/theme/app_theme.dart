@@ -29,48 +29,46 @@ class AppTheme {
     final globalInputDecorationTheme = _buildInputDecorationTheme(
       palette: palette,
     );
-    final colorScheme =
-        ColorScheme.fromSeed(
-          seedColor: palette.accentPrimary,
-          brightness: brightness,
-        ).copyWith(
-          primary: palette.accentPrimary,
-          onPrimary: onAccentColor,
-          primaryContainer: palette.surfaceElevated,
-          onPrimaryContainer: palette.textPrimary,
-          secondary: palette.textSecondary,
-          onSecondary: palette.surfacePrimary,
-          secondaryContainer: palette.surfaceSecondary,
-          onSecondaryContainer: palette.textPrimary,
-          tertiary: palette.textSecondary,
-          onTertiary: palette.surfacePrimary,
-          tertiaryContainer: palette.surfaceElevated,
-          onTertiaryContainer: palette.textPrimary,
-          error: AppColors.alertRed,
-          onError: Colors.white,
-          surface: palette.surfacePrimary,
-          onSurface: palette.textPrimary,
-          onSurfaceVariant: palette.textSecondary,
-          surfaceBright: palette.surfacePrimary,
-          surfaceDim: palette.surfaceElevated,
-          surfaceContainerLowest: palette.surfacePrimary,
-          surfaceContainerLow: palette.pageBackground,
-          surfaceContainer: palette.surfaceSecondary,
-          surfaceContainerHigh: palette.surfaceElevated,
-          surfaceContainerHighest: palette.surfaceElevated,
-          inverseSurface: isDark
-              ? OmniThemePalette.light.surfacePrimary
-              : OmniThemePalette.dark.surfacePrimary,
-          onInverseSurface: isDark
-              ? OmniThemePalette.light.textPrimary
-              : OmniThemePalette.dark.textPrimary,
-          inversePrimary: isDark
-              ? OmniThemePalette.light.accentPrimary
-              : OmniThemePalette.dark.accentPrimary,
-          outline: palette.borderStrong,
-          outlineVariant: palette.borderSubtle,
-          surfaceTint: Colors.transparent,
-        );
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: palette.accentPrimary,
+      brightness: brightness,
+      primary: palette.accentPrimary,
+      onPrimary: onAccentColor,
+      primaryContainer: palette.surfaceElevated,
+      onPrimaryContainer: palette.textPrimary,
+      secondary: palette.textSecondary,
+      onSecondary: palette.surfacePrimary,
+      secondaryContainer: palette.surfaceSecondary,
+      onSecondaryContainer: palette.textPrimary,
+      tertiary: palette.textSecondary,
+      onTertiary: palette.surfacePrimary,
+      tertiaryContainer: palette.surfaceElevated,
+      onTertiaryContainer: palette.textPrimary,
+      error: AppColors.alertRed,
+      onError: Colors.white,
+      surface: palette.surfacePrimary,
+      onSurface: palette.textPrimary,
+      onSurfaceVariant: palette.textSecondary,
+      surfaceBright: palette.surfacePrimary,
+      surfaceDim: palette.surfaceElevated,
+      surfaceContainerLowest: palette.surfacePrimary,
+      surfaceContainerLow: palette.pageBackground,
+      surfaceContainer: palette.surfaceSecondary,
+      surfaceContainerHigh: palette.surfaceElevated,
+      surfaceContainerHighest: palette.surfaceElevated,
+      inverseSurface: isDark
+          ? OmniThemePalette.light.surfacePrimary
+          : OmniThemePalette.dark.surfacePrimary,
+      onInverseSurface: isDark
+          ? OmniThemePalette.light.textPrimary
+          : OmniThemePalette.dark.textPrimary,
+      inversePrimary: isDark
+          ? OmniThemePalette.light.accentPrimary
+          : OmniThemePalette.dark.accentPrimary,
+      outline: palette.borderStrong,
+      outlineVariant: palette.borderSubtle,
+      surfaceTint: Colors.transparent,
+    );
 
     final baseTheme = ThemeData(
       useMaterial3: true,

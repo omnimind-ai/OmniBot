@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_switch/flutter_switch.dart';
+import 'package:ui/widgets/settings_ui.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -152,7 +152,9 @@ void main() {
     );
     await tester.pump();
 
-    final betaSwitch = tester.widget<FlutterSwitch>(find.byType(FlutterSwitch));
+    final betaSwitch = tester.widget<OmniSettingsSwitch>(
+      find.byType(OmniSettingsSwitch),
+    );
     expect(betaSwitch.value, isTrue);
     expect(betaSwitch.duration, Duration.zero);
 

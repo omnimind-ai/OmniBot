@@ -3,6 +3,7 @@ package cn.com.omnimind.bot.agent
 import cn.com.omnimind.baselib.llm.ChatCompletionUsage
 import cn.com.omnimind.baselib.llm.contentText
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
@@ -125,7 +126,7 @@ class AgentOrchestratorTest {
     }
 
     @Test
-    fun providerPromptLengthRejectionTriggersOneCanonicalPreOutputCompactionRecovery() = runBlocking {
+    fun providerPromptLengthRejectionAfterToolOutputDoesNotReplayTheContinuation() = runBlocking {
         val raw = JsonObject(mapOf("content" to JsonPrimitive("x".repeat(1119534)))).toString()
         var rejected = false
         val llm = FakeLlmClient(
@@ -167,11 +168,12 @@ class AgentOrchestratorTest {
             )
         )
 
-        assertTrue(result is AgentResult.Success)
+        assertTrue(result is AgentResult.Error)
         assertTrue(rejected)
-        assertTrue(offloaded.single().contains("x".repeat(1119534)))
+        assertTrue(offloaded.isEmpty())
         assertEquals(listOf("file_read"), tools.executeCalls)
-        assertEquals(3, llm.requests.size)
+        assertEquals(2, llm.requests.size)
+        assertEquals(listOf(true, false), llm.transportRetryAllowances)
     }
 
     @Test
@@ -1974,6 +1976,127 @@ class AgentOrchestratorTest {
     }
 
     @Test
+    fun initial503RecoversWithinTheClientWithoutReplayingTheLogicalUserTurn() = runBlocking {
+        val requestBodies = mutableListOf<String>()
+        val client = retryFixtureClient(this) { body, listener, source ->
+            requestBodies += body
+            if (requestBodies.size == 1) failFixtureRequest(listener, source)
+            else completeFixtureReply(listener, source, "完成")
+        }
+        val callback = RecordingCallback()
+        val tools = FakeToolExecutor()
+        val result = createOrchestrator(client, tools).run(AgentOrchestrator.Input(
+            callback = callback, initialMessages = initialMessages("只发送一次"),
+            executionEnv = FakeExecutionEnvironment("只发送一次"),
+        ))
+
+        assertTrue(result is AgentResult.Success)
+        assertEquals(2, requestBodies.size)
+        assertEquals(requestBodies[0], requestBodies[1])
+        val request = eventJson.parseToJsonElement(requestBodies.last()) as JsonObject
+        val history = request["messages"] as kotlinx.serialization.json.JsonArray
+        assertEquals(1, history.count { (it as JsonObject)["role"]?.jsonPrimitive?.content == "user" })
+        assertEquals(listOf("完成"), callback.finalChatMessages())
+        assertTrue(callback.errors.isEmpty())
+        assertTrue(tools.executeCalls.isEmpty())
+    }
+
+    @Test
+    fun toolContinuation503DoesNotRetryOrExecuteTheToolAgain() = runBlocking {
+        val requestBodies = mutableListOf<String>()
+        val client = retryFixtureClient(this) { body, listener, source ->
+            requestBodies += body
+            if (requestBodies.size == 1) {
+                listener.onEvent(source, null, "message",
+                    """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"read-1","function":{"name":"file_read","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}""")
+                listener.onEvent(source, null, "message", "[DONE]")
+            } else failFixtureRequest(listener, source)
+        }
+        val callback = RecordingCallback()
+        val tools = FakeToolExecutor(mapOf("file_read" to listOf(successfulContextResult("file_read"))))
+        val result = createOrchestrator(client, tools).run(AgentOrchestrator.Input(
+            callback = callback, initialMessages = initialMessages("读取一次"),
+            executionEnv = FakeExecutionEnvironment("读取一次"),
+        ))
+
+        assertTrue(result is AgentResult.Error)
+        assertEquals(2, requestBodies.size)
+        assertEquals(listOf("file_read"), tools.executeCalls)
+        assertEquals(listOf("file_read"), callback.toolCallStarts)
+        assertEquals(listOf("file_read"), callback.toolCallCompletions)
+        assertEquals(1, callback.errors.size)
+        assertTrue(callback.finalChatMessages().isEmpty())
+        val request = eventJson.parseToJsonElement(requestBodies.last()) as JsonObject
+        val history = request["messages"] as kotlinx.serialization.json.JsonArray
+        assertEquals(1, history.count { (it as JsonObject)["role"]?.jsonPrimitive?.content == "user" })
+        assertEquals(1, history.count { (it as JsonObject)["role"]?.jsonPrimitive?.content == "tool" })
+    }
+
+    @Test
+    fun visibleContentOrReasoningIsPreservedWithoutTransportReplay() = runBlocking {
+        for (field in listOf("content", "reasoning_content")) {
+            var attempts = 0
+            val client = retryFixtureClient(this) { _, listener, source ->
+                attempts++
+                listener.onEvent(source, null, "message",
+                    """{"choices":[{"delta":{"$field":"已经输出"}}]}""")
+                failFixtureRequest(listener, source)
+            }
+            val callback = ThinkingCaptureCallback()
+            val tools = FakeToolExecutor()
+            val result = createOrchestrator(client, tools).run(AgentOrchestrator.Input(
+                callback = callback, initialMessages = initialMessages("保持原回合"),
+                executionEnv = FakeExecutionEnvironment("保持原回合"),
+            ))
+
+            assertTrue(result is AgentResult.Error)
+            assertEquals(1, attempts)
+            assertEquals(1, callback.errors.size)
+            if (field == "content") {
+                assertEquals(listOf("已经输出" to false), callback.chatMessages)
+            } else {
+                assertEquals(listOf("已经输出"), callback.thinkingUpdates)
+            }
+            assertTrue(tools.executeCalls.isEmpty())
+        }
+    }
+
+    @Test
+    fun freshLogicalRunGetsItsOwnRetryAllowanceWhenClientIsReused() = runBlocking {
+        var attempts = 0
+        val client = retryFixtureClient(this) { _, listener, source ->
+            attempts++
+            when (attempts) {
+                1 -> {
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"第一轮已有输出"}}]}""")
+                    failFixtureRequest(listener, source)
+                }
+                2 -> failFixtureRequest(listener, source)
+                else -> completeFixtureReply(listener, source, "新回合完成")
+            }
+        }
+        val tools = FakeToolExecutor()
+        val orchestrator = createOrchestrator(client, tools)
+        val firstCallback = RecordingCallback()
+        val first = orchestrator.run(AgentOrchestrator.Input(
+            callback = firstCallback, initialMessages = initialMessages("第一轮"),
+            executionEnv = FakeExecutionEnvironment("第一轮"),
+        ))
+        assertTrue(first is AgentResult.Error)
+        assertEquals(1, attempts)
+        val secondCallback = RecordingCallback()
+        val second = orchestrator.run(AgentOrchestrator.Input(
+            callback = secondCallback, initialMessages = initialMessages("新回合"),
+            executionEnv = FakeExecutionEnvironment("新回合"),
+        ))
+        assertTrue(second is AgentResult.Success)
+        assertEquals(3, attempts)
+        assertEquals(listOf("新回合完成"), secondCallback.finalChatMessages())
+        assertTrue(secondCallback.errors.isEmpty())
+    }
+
+    @Test
     fun `surfaces transient stream failure without replaying the logical turn`() = runBlocking {
         val llmClient = FakeLlmClient(
             turns = listOf(assistantTurn(content = "已在重连后成功完成。")),
@@ -2257,6 +2380,43 @@ class AgentOrchestratorTest {
         )
     }
 
+    private fun retryFixtureClient(
+        scope: CoroutineScope,
+        respond: suspend (String, okhttp3.sse.EventSourceListener, okhttp3.sse.EventSource) -> Unit,
+    ) = HttpAgentLlmClient(
+        scope = scope,
+        modelOverride = AgentModelOverride(
+            providerProfileId = "test-provider", apiBase = "https://example.invalid/v1",
+            apiKey = "fixture", modelId = "test-model",
+        ),
+        maxTransientStreamRetries = 2,
+        transientStreamRetryDelayMs = 0,
+        streamRequestOp = { _, body, listener, _, _, _, _, _, _, _ ->
+            val source = object : okhttp3.sse.EventSource {
+                override fun request() = okhttp3.Request.Builder().url("https://example.invalid/v1").build()
+                override fun cancel() = Unit
+            }
+            respond(body, listener, source)
+            source
+        },
+    )
+
+    private fun failFixtureRequest(listener: okhttp3.sse.EventSourceListener, source: okhttp3.sse.EventSource) {
+        listener.onFailure(source, java.io.IOException("upstream temporarily unavailable"),
+            okhttp3.Response.Builder().request(source.request()).protocol(okhttp3.Protocol.HTTP_1_1)
+                .code(503).message("Service Unavailable").build())
+    }
+
+    private fun completeFixtureReply(
+        listener: okhttp3.sse.EventSourceListener,
+        source: okhttp3.sse.EventSource,
+        content: String,
+    ) {
+        listener.onEvent(source, null, "message",
+            """{"choices":[{"delta":{"content":"$content"},"finish_reason":"stop"}]}""")
+        listener.onEvent(source, null, "message", "[DONE]")
+    }
+
     private fun initialMessages(userMessage: String): List<ChatCompletionMessage> {
         return listOf(
             ChatCompletionMessage(
@@ -2340,14 +2500,17 @@ class AgentOrchestratorTest {
         )
         private val queuedFailures = ArrayDeque(failures)
         val requests = mutableListOf<ChatCompletionRequest>()
+        val transportRetryAllowances = mutableListOf<Boolean>()
 
         override suspend fun streamTurn(
             request: ChatCompletionRequest,
             onReasoningUpdate: (suspend (String) -> Unit)?,
             onContentUpdate: (suspend (String) -> Unit)?,
             onToolCallInput: (suspend (AssistantToolCall) -> Unit)?,
+            allowTransportRetry: Boolean,
         ): ChatCompletionTurn {
             requests += request
+            transportRetryAllowances += allowTransportRetry
             checkRequest(request)
             failuresByRequest[requests.size]?.let { throw it }
             if (queuedFailures.isNotEmpty()) {

@@ -3,14 +3,17 @@ package cn.com.omnimind.uikit.loader
 import android.app.AlertDialog
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Rect
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.text.InputType
+import android.util.TypedValue
 import android.view.inputmethod.InputMethodManager
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewTreeObserver
 import android.view.WindowManager
 import android.provider.Settings
 import android.widget.EditText
@@ -22,6 +25,7 @@ import cn.com.omnimind.assists.HumanTrajectoryLearningSession
 import cn.com.omnimind.assists.ManualInputTarget
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.util.dpToPx
+import cn.com.omnimind.uikit.R
 import cn.com.omnimind.uikit.UIKit
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -753,11 +757,9 @@ object ManualRecordingControlOverlay {
             dialog.getButton(AlertDialog.BUTTON_NEUTRAL)?.setOnClickListener { submit(true) }
             input.requestFocus()
             dialog.window?.apply {
-                setGravity(Gravity.BOTTOM)
-                setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
-                setLayout(
-                    WindowManager.LayoutParams.MATCH_PARENT,
-                    WindowManager.LayoutParams.WRAP_CONTENT,
+                setSoftInputMode(
+                    WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                        WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
                 )
             }
             input.post {
@@ -986,8 +988,13 @@ object ManualRecordingControlOverlay {
     private fun showOverlayDialog(dialog: AlertDialog): Boolean {
         return runCatching {
             applyOverlayWindowType(dialog)
+            dialog.window?.apply {
+                setGravity(Gravity.BOTTOM)
+                setWindowAnimations(R.style.OmniOverlayBottomSheetAnimation)
+            }
             dialog.show()
             applyOverlayWindowType(dialog)
+            configureOverlayBottomSheet(dialog)
             true
         }.getOrElse { error ->
             OmniLog.e(TAG, "show manual action dialog failed: ${error.message}", error)
@@ -997,6 +1004,64 @@ object ManualRecordingControlOverlay {
 
     private fun applyOverlayWindowType(dialog: AlertDialog) {
         dialog.window?.setType(AndroidGuiOverlayHost.resolve(dialog.context).windowType)
+    }
+
+    private fun configureOverlayBottomSheet(dialog: AlertDialog) {
+        val window = dialog.window ?: return
+        val decor = window.decorView
+        val content = decor.findViewById<View>(android.R.id.content) ?: return
+        val density = dialog.context.resources.displayMetrics.density
+        val background = TypedValue()
+        dialog.context.theme.resolveAttribute(android.R.attr.colorBackground, background, true)
+        window.setBackgroundDrawable(GradientDrawable().apply {
+            setColor(background.data)
+            val radius = 28f * density
+            cornerRadii = floatArrayOf(radius, radius, radius, radius, 0f, 0f, 0f, 0f)
+        })
+        decor.clipToOutline = true
+        window.setSoftInputMode(
+            (window.attributes.softInputMode and WindowManager.LayoutParams.SOFT_INPUT_MASK_STATE) or
+                WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE,
+        )
+
+        val visibleFrame = Rect()
+        fun updateBounds() {
+            decor.getWindowVisibleDisplayFrame(visibleFrame)
+            val metrics = dialog.context.resources.displayMetrics
+            val availableHeight = visibleFrame.height().takeIf { it > 0 } ?: metrics.heightPixels
+            val availableWidth = visibleFrame.width().takeIf { it > 0 } ?: metrics.widthPixels
+            val minimumHeight = (availableHeight * 0.5f).toInt()
+            val maximumHeight = (availableHeight * 0.9f).toInt().coerceAtLeast(minimumHeight)
+            if (content.minimumHeight != minimumHeight) {
+                content.minimumHeight = minimumHeight
+            }
+            // ADJUST_RESIZE already removes the IME from the visible frame. Do
+            // not add a second keyboard inset to the sheet or its input fields.
+            content.measure(
+                View.MeasureSpec.makeMeasureSpec(availableWidth, View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(maximumHeight, View.MeasureSpec.AT_MOST),
+            )
+            val height = content.measuredHeight.coerceIn(minimumHeight, maximumHeight)
+            if (window.attributes.width != WindowManager.LayoutParams.MATCH_PARENT ||
+                window.attributes.height != height
+            ) {
+                window.setLayout(WindowManager.LayoutParams.MATCH_PARENT, height)
+            }
+        }
+
+        val layoutListener = ViewTreeObserver.OnGlobalLayoutListener { updateBounds() }
+        decor.viewTreeObserver.addOnGlobalLayoutListener(layoutListener)
+        decor.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(view: View) = Unit
+
+            override fun onViewDetachedFromWindow(view: View) {
+                if (view.viewTreeObserver.isAlive) {
+                    view.viewTreeObserver.removeOnGlobalLayoutListener(layoutListener)
+                }
+                view.removeOnAttachStateChangeListener(this)
+            }
+        })
+        updateBounds()
     }
 
     private fun attachDragHandler(

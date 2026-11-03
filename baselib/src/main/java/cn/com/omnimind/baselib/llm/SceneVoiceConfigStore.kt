@@ -50,6 +50,7 @@ object SceneVoiceConfigStore {
         TTS_MODE_CUSTOM_CURL
     )
 
+    @Synchronized
     fun getConfig(): SceneVoiceConfig {
         val mmkv = MMKV.defaultMMKV() ?: return defaultConfig
         val raw = mmkv.decodeString(KEY_SCENE_VOICE_CONFIG)

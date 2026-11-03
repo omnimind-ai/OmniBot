@@ -81,6 +81,7 @@ object WebChatRoutes {
                             "browserMirror" to true
                         ),
                         "agentProfiles" to conversationService.listWebAgentProfiles(),
+                        "retiredAgentIds" to conversationService.retiredAgentIds(),
                         "routes" to mapOf(
                             "events" to "/webchat/api/events",
                             "browserFrame" to "/webchat/api/browser/frame",

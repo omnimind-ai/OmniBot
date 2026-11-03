@@ -71,10 +71,13 @@ class EnvironmentInstallExecutionTest {
         }
     }
 
-    @Test fun deepSeekMissingAdapterFilesCannotBeReportedInstalled() {
-        val command = "command() { return 0; }; test() { return 1; }; " +
-            EnvironmentSetupLogic.buildCheckCommand("deepseek_harness", "")
-        val (_, output) = execute(command)
-        assertEquals(output, "MISSING", output.trim())
+    @Test fun retiredHarnessDoesNotSchedulePackagesOrInstallation() {
+        for (mode in listOf(WorkingMode.UBUNTU, WorkingMode.ALPINE)) {
+            val commands = EnvironmentSetupLogic.buildInstallCommands(
+                listOf("deepseek_harness", "dsh", "deepseek-harness"), "", mode,
+                harnessInstallCommands = mapOf("deepseek_harness" to "stale-install-command"),
+            )
+            assertTrue(commands.isEmpty())
+        }
     }
 }

@@ -5,13 +5,14 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:ui/services/agent_avatar_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 
 Future<AgentAvatarState?> showAgentAvatarPicker(BuildContext context) {
-  return showDialog<AgentAvatarState>(
+  return showOmniGlassCardSheet<AgentAvatarState>(
     context: context,
     barrierColor: Colors.black.withValues(alpha: 0.28),
     builder: (context) => const _AgentAvatarPickerDialog(),
@@ -114,6 +115,7 @@ class AgentAvatarCircle extends StatelessWidget {
     this.showEditBadge = false,
     this.showCompletedBadge = false,
     this.showBorder = true,
+    this.backgroundColor,
   });
 
   final AgentAvatarState? state;
@@ -128,6 +130,9 @@ class AgentAvatarCircle extends StatelessWidget {
   /// 边线是 `foregroundDecoration`,盖在已铺满 `size` 的图片外沿上,
   /// 去掉后图片自然补满这 1.5px,整体 `size×size` 尺寸不变。
   final bool showBorder;
+
+  /// Solid backing for the built-in monochrome mark; custom photos are kept.
+  final Color? backgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -169,6 +174,7 @@ class AgentAvatarCircle extends StatelessWidget {
                 presetIndex: resolvedPresetIndex,
                 customImagePath: resolvedCustomImagePath,
                 size: size,
+                backgroundColor: backgroundColor,
               ),
             ),
           ),
@@ -202,11 +208,13 @@ class _AvatarImage extends StatelessWidget {
     required this.presetIndex,
     required this.customImagePath,
     required this.size,
+    this.backgroundColor,
   });
 
   final int presetIndex;
   final String customImagePath;
   final double size;
+  final Color? backgroundColor;
 
   @override
   Widget build(BuildContext context) {
@@ -219,6 +227,10 @@ class _AvatarImage extends StatelessWidget {
         width: size,
         height: size,
         fit: BoxFit.cover,
+        color: presetAsset == AgentAvatarService.defaultAvatarAsset
+            ? backgroundColor
+            : null,
+        colorBlendMode: BlendMode.modulate,
         errorBuilder: (_, _, _) {
           return ColoredBox(
             color: palette.surfaceElevated,
@@ -297,7 +309,7 @@ class _AgentAvatarPickerDialogState extends State<_AgentAvatarPickerDialog> {
       if (!context.mounted) {
         return;
       }
-      final croppedBytes = await showDialog<Uint8List>(
+      final croppedBytes = await showOmniGlassCardSheet<Uint8List>(
         context: context,
         barrierColor: Colors.black.withValues(alpha: 0.36),
         builder: (context) =>
@@ -328,105 +340,78 @@ class _AgentAvatarPickerDialogState extends State<_AgentAvatarPickerDialog> {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final isDark = context.isDarkTheme;
-    final surfaceColor = isDark ? palette.surfacePrimary : Colors.white;
 
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 36),
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 326),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: surfaceColor,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: isDark ? palette.borderSubtle : const Color(0xFFE2EAF4),
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: palette.shadowColor.withValues(
-                  alpha: isDark ? 0.36 : 0.16,
-                ),
-                blurRadius: 28,
-                offset: const Offset(0, 16),
-              ),
-            ],
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
+    return OmniGlassCardBody(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
               children: [
-                Row(
-                  children: [
-                    ValueListenableBuilder<AgentAvatarState>(
-                      valueListenable: AgentAvatarService.avatarStateNotifier,
-                      builder: (context, state, _) {
-                        return AgentAvatarCircle(state: state, size: 42);
-                      },
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Agent 头像',
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: 17,
-                          fontWeight: FontWeight.w700,
-                          fontFamily: 'PingFang SC',
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: '关闭',
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: Icon(
-                        Icons.close_rounded,
-                        size: 20,
-                        color: palette.textTertiary,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                _LocalAvatarPickerButton(
-                  isBusy: _isPickingLocalImage,
-                  onTap: () => _pickLocalImage(context),
-                ),
-                const SizedBox(height: 14),
                 ValueListenableBuilder<AgentAvatarState>(
                   valueListenable: AgentAvatarService.avatarStateNotifier,
-                  builder: (context, selectedState, _) {
-                    return GridView.builder(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      itemCount: AgentAvatarService.presetAvatars.length,
-                      gridDelegate:
-                          const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            mainAxisSpacing: 12,
-                            crossAxisSpacing: 12,
-                          ),
-                      itemBuilder: (context, index) {
-                        final selected =
-                            !selectedState.hasCustomImage &&
-                            selectedState.presetIndex == index;
-                        return _AgentAvatarPickerItem(
-                          avatarIndex: index,
-                          selected: selected,
-                          onTap: () => _selectPresetAvatar(context, index),
-                        );
-                      },
-                    );
+                  builder: (context, state, _) {
+                    return AgentAvatarCircle(state: state, size: 42);
                   },
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Agent 头像',
+                    style: TextStyle(
+                      color: palette.textPrimary,
+                      fontSize: 17,
+                      fontWeight: FontWeight.w700,
+                      fontFamily: 'PingFang SC',
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => Navigator.of(context).pop(),
+                  icon: Icon(
+                    Icons.close_rounded,
+                    size: 20,
+                    color: palette.textTertiary,
+                  ),
                 ),
               ],
             ),
-          ),
+            const SizedBox(height: 16),
+            _LocalAvatarPickerButton(
+              isBusy: _isPickingLocalImage,
+              onTap: () => _pickLocalImage(context),
+            ),
+            const SizedBox(height: 14),
+            ValueListenableBuilder<AgentAvatarState>(
+              valueListenable: AgentAvatarService.avatarStateNotifier,
+              builder: (context, selectedState, _) {
+                return GridView.builder(
+                  shrinkWrap: true,
+                  physics: const NeverScrollableScrollPhysics(),
+                  itemCount: AgentAvatarService.presetAvatars.length,
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 3,
+                    mainAxisSpacing: 12,
+                    crossAxisSpacing: 12,
+                  ),
+                  itemBuilder: (context, index) {
+                    final selected =
+                        !selectedState.hasCustomImage &&
+                        selectedState.presetIndex == index;
+                    return _AgentAvatarPickerItem(
+                      avatarIndex: index,
+                      selected: selected,
+                      onTap: () => _selectPresetAvatar(context, index),
+                    );
+                  },
+                );
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -742,26 +727,12 @@ class _AgentAvatarCropDialogState extends State<_AgentAvatarCropDialog> {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final isDark = context.isDarkTheme;
-    final screenWidth = MediaQuery.of(context).size.width;
-    final cropSize = math.min(260.0, screenWidth - 96).clamp(190.0, 260.0);
-
-    return Dialog(
-      insetPadding: const EdgeInsets.symmetric(horizontal: 28),
-      backgroundColor: Colors.transparent,
-      elevation: 0,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 356),
-        child: DecoratedBox(
-          decoration: BoxDecoration(
-            color: isDark ? palette.surfacePrimary : Colors.white,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: isDark ? palette.borderSubtle : const Color(0xFFE2EAF4),
-            ),
-          ),
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+    return OmniGlassCardBody(
+      padding: const EdgeInsets.fromLTRB(20, 4, 20, 20),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final cropSize = math.min(260.0, constraints.maxWidth);
+          return SingleChildScrollView(
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -867,8 +838,8 @@ class _AgentAvatarCropDialogState extends State<_AgentAvatarCropDialog> {
                 ),
               ],
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }

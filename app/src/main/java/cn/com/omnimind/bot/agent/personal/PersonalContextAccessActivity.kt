@@ -11,7 +11,6 @@ import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.result.contract.ActivityResultContracts
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
-import cn.com.omnimind.bot.util.PredictiveBackGate
 
 /** 只承载用户在权限页发起的系统授权，工具执行不会启动这个 Activity。 */
 class PersonalContextAccessActivity : ComponentActivity() {
@@ -37,7 +36,6 @@ class PersonalContextAccessActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        PredictiveBackGate.install(this)
         setTheme(cn.com.omnimind.baselib.R.style.Theme_OmnibotApp_Permission)
         if (savedInstanceState != null) return
         val id = intent.getStringExtra("capability").orEmpty()

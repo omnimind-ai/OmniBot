@@ -31,9 +31,9 @@ export function respondHarnessSuccess(req, res, body, {completedTextOnly = false
     event('response.completed',{response});res.end();return;
   }
   const usage={prompt_tokens:5,completion_tokens:1,total_tokens:6};
-  if (!body.stream) {res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:'chat_fixture',object:'chat.completion',created:1,model,choices:[{index:0,message:{role:'assistant',content:'OK'},finish_reason:'stop'}],usage}));return;}
+  if (!body.stream) {res.writeHead(200,{'content-type':'application/json'});res.end(JSON.stringify({id:'chat_fixture',object:'chat.completion',created:1,model,choices:[{index:0,message:{role:'assistant',content:reply},finish_reason:'stop'}],usage}));return;}
   res.writeHead(200,{'content-type':'text/event-stream'});
-  for (const [delta,finish] of [[{role:'assistant',content:'OK'},null],[{},'stop']]) {
+  for (const [delta,finish] of [[{role:'assistant',content:reply},null],[{},'stop']]) {
     res.write(`data: ${JSON.stringify({id:'chat_fixture',object:'chat.completion.chunk',created:1,model,choices:[{index:0,delta,finish_reason:finish}],usage})}\n\n`);
   }
   res.end('data: [DONE]\n\n');

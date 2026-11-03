@@ -1,3 +1,7 @@
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/glass_popup.dart';
+import 'package:ui/widgets/flclash/popup.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/features/home/pages/authorize/accessibility_permission_prompt.dart';
@@ -5,6 +9,7 @@ import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/personal_context_service.dart';
 import 'package:ui/features/home/pages/authorize_setting/personal_context_labels.dart';
+import 'package:ui/features/home/pages/authorize_setting/root_access_setting.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/omni_menu.dart';
 import 'package:ui/utils/cache_util.dart';
@@ -21,7 +26,7 @@ class AuthorizeSettingPage extends StatefulWidget {
 }
 
 class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, FlClashPageLoadMixin {
   bool notificationEnabled = true; // 接收消息通知
 
   // 权限状态
@@ -30,6 +35,8 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   bool _overlayPermission = false;
   bool _installedAppsPermission = false;
   bool _publicStoragePermission = false;
+  bool _localNetworkPermissionRequired = false;
+  bool _localNetworkPermissionGranted = false;
   ShizukuStatusSnapshot _shizukuStatus = ShizukuStatusSnapshot.fallback();
   Map<String, PersonalContextCapability> _personalContext = {};
   bool _personalContextLoaded = false;
@@ -75,9 +82,10 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   }
 
   Future<void> _loadSettings() async {
+    if (!await waitForPageReady() || !mounted) return;
     try {
       final notification = await CacheUtil.getBool("notification_enabled");
-      if (!mounted) return;
+      if (!await waitForPageReady() || !mounted) return;
       setState(() {
         notificationEnabled = notification;
       });
@@ -196,11 +204,30 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
       ),
       _AuthorizeSettingSection(
         label: _localeText(zh: '扩展能力', en: 'Advanced Access'),
+        footer: const RootAccessSetting(),
         subtitle: _localeText(
           zh: '按需开启，可获得更完整的系统级能力与兼容性支持。',
           en: 'Enable when needed for broader system-level capabilities and compatibility.',
         ),
         items: [
+          if (_localNetworkPermissionRequired)
+            _AuthorizeSettingItem(
+              icon: LucideIcons.wifi,
+              title: _localeText(zh: '局域网访问', en: 'Local network'),
+              subtitle: _localeText(
+                zh: '连接同一网络中的电脑、模型和 MCP 服务，或让电脑访问小万。',
+                en: 'Connect to computers, model providers and MCP services on your network, or access Omnibot from a computer.',
+              ),
+              trailing: _buildPermissionTrailing(
+                label: context.trLegacy(
+                  _localNetworkPermissionGranted ? '已开启' : '去开启',
+                ),
+                color: _localNetworkPermissionGranted
+                    ? _tertiaryTextColor
+                    : _accentColor,
+              ),
+              onTap: _requestLocalNetworkAccess,
+            ),
           _AuthorizeSettingItem(
             icon: LucideIcons.folderOpen,
             title: _localeText(zh: '所有文件访问权限', en: 'All files access'),
@@ -262,7 +289,15 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
                   ? _tertiaryTextColor
                   : _accentColor,
             ),
-            onTap: () => _openPersonalContext(item.id),
+            onTap: item.id == 'documents'
+                ? null
+                : () => _openPersonalContext(item.id),
+            onMenuTap: item.id == 'documents'
+                ? (anchorContext) => _openPersonalContext(
+                    item.id,
+                    anchorContext: anchorContext,
+                  )
+                : null,
           ),
         _AuthorizeSettingItem(
           icon: LucideIcons.trash2,
@@ -315,9 +350,10 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   }
 
   Future<void> _refreshPersonalContext() async {
+    if (!await waitForPageReady() || !mounted) return;
     try {
       final capabilities = await PersonalContextService.capabilities();
-      if (mounted) {
+      if (await waitForPageReady() && mounted) {
         setState(() {
           _personalContext = capabilities;
           _personalContextLoaded = true;
@@ -325,7 +361,7 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
         });
       }
     } catch (_) {
-      if (mounted) {
+      if (await waitForPageReady() && mounted) {
         setState(() {
           _personalContextLoaded = true;
           _personalContextFailed = true;
@@ -361,7 +397,10 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
     }
   }
 
-  Future<void> _openPersonalContext(String id) async {
+  Future<void> _openPersonalContext(
+    String id, {
+    BuildContext? anchorContext,
+  }) async {
     if (_personalContextFailed || !_personalContextLoaded) {
       await _refreshPersonalContext();
       return;
@@ -389,40 +428,33 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
       return;
     }
     if (id == 'documents') {
-      final action = await showModalBottomSheet<String>(
+      if (anchorContext == null) return;
+      final anchor = glassPopupAnchorFromContext(anchorContext);
+      if (anchor == null) return;
+      final action = await showOmniMenu<String>(
         context: context,
-        backgroundColor: context.omniPalette.surfacePrimary,
-        shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        builder: (sheetContext) => SafeArea(
-          child: Padding(
-            padding: OmniMenuStyle.panelPadding,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                OmniMenuItem(
-                  label: _localeText(zh: '选择文件', en: 'Select files'),
-                  onTap: () => Navigator.pop(sheetContext, 'files'),
-                ),
-                OmniMenuItem(
-                  label: _localeText(zh: '选择文件夹', en: 'Select a folder'),
-                  onTap: () => Navigator.pop(sheetContext, 'directory'),
-                ),
-                OmniMenuItem(
-                  child: Text(
-                    _localeText(
-                      zh: '取消已选文件与文件夹的授权',
-                      en: 'Remove selected file and folder access',
-                    ),
-                  ),
-                  onTap: () => Navigator.pop(sheetContext, 'revoke'),
-                ),
-              ],
+        sourceContext: anchorContext,
+        anchor: anchor,
+        width: 300,
+        items: [
+          OmniPopupMenuItem(
+            value: 'files',
+            child: Text(_localeText(zh: '选择文件', en: 'Select files')),
+          ),
+          OmniPopupMenuItem(
+            value: 'directory',
+            child: Text(_localeText(zh: '选择文件夹', en: 'Select a folder')),
+          ),
+          OmniPopupMenuItem(
+            value: 'revoke',
+            child: Text(
+              _localeText(
+                zh: '取消已选文件与文件夹的授权',
+                en: 'Remove selected file and folder access',
+              ),
             ),
           ),
-        ),
+        ],
       );
       if (action == null || !mounted) return;
       if (action == 'revoke') {
@@ -441,7 +473,9 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
   }
 
   Future<void> _checkPermissions() async {
+    if (!await waitForPageReady() || !mounted) return;
     await _refreshPersonalContext();
+    if (!await waitForPageReady() || !mounted) return;
     try {
       final backgroundRunning = await isBackgroundRunAllowed();
       final accessibilityReady =
@@ -457,20 +491,67 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
           ) ??
           false;
       final publicStoragePermission = await isPublicStorageAccessGranted();
+      final localNetworkStatus = await spePermission
+          .invokeMapMethod<String, dynamic>('getLocalNetworkPermissionStatus');
       final shizukuStatus = await getShizukuStatus();
 
-      if (mounted) {
+      if (await waitForPageReady() && mounted) {
         setState(() {
           _backgroundRunning = backgroundRunning;
           _accessibilityReady = accessibilityReady;
           _overlayPermission = overlayPermission;
           _installedAppsPermission = installedAppsPermission;
           _publicStoragePermission = publicStoragePermission;
+          _localNetworkPermissionRequired =
+              localNetworkStatus?['required'] == true;
+          _localNetworkPermissionGranted =
+              localNetworkStatus?['granted'] == true;
           _shizukuStatus = shizukuStatus;
         });
       }
     } catch (e) {
       debugPrint('Error checking permissions: $e');
+    }
+  }
+
+  Future<void> _requestLocalNetworkAccess() async {
+    try {
+      if (_localNetworkPermissionGranted) {
+        await spePermission.invokeMethod('openAppDetailsSettings');
+        return;
+      }
+      final granted = await spePermission.invokeMethod<bool>(
+        'requestLocalNetworkPermission',
+      );
+      if (!mounted) return;
+      if (granted != true) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              _localeText(
+                zh: '局域网访问未授权，可在系统应用权限中允许「附近的设备」。',
+                en: 'Local network access was denied. Allow Nearby devices in system app permissions.',
+              ),
+            ),
+            action: SnackBarAction(
+              label: _localeText(zh: '打开设置', en: 'Open settings'),
+              onPressed: () =>
+                  spePermission.invokeMethod('openAppDetailsSettings'),
+            ),
+          ),
+        );
+      }
+      await _checkPermissions();
+    } catch (error) {
+      if (mounted) {
+        showToast(
+          _localeText(
+            zh: '无法申请局域网权限，请在系统应用权限中开启。',
+            en: 'Could not request local network access. Enable it in system app permissions.',
+          ),
+          type: ToastType.warning,
+        );
+      }
     }
   }
 
@@ -484,22 +565,24 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
         title: context.l10n.authorizePageTitle,
         primary: true,
       ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: ListView.separated(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(22, 12, 22, 32),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: ListView.separated(
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(22, 12, 22, 32),
+            ),
+            itemCount: sections.length + 1,
+            separatorBuilder: (_, __) => const SizedBox(height: 22),
+            itemBuilder: (context, index) {
+              if (index == 0) {
+                return _buildOverview();
+              }
+              return _buildSettingsSection(sections[index - 1]);
+            },
           ),
-          itemCount: sections.length + 1,
-          separatorBuilder: (_, __) => const SizedBox(height: 22),
-          itemBuilder: (context, index) {
-            if (index == 0) {
-              return _buildOverview();
-            }
-            return _buildSettingsSection(sections[index - 1]);
-          },
         ),
       ),
     );
@@ -600,14 +683,30 @@ class _AuthorizeSettingPageState extends State<AuthorizeSettingPage>
       translateTitle: false,
       children: [
         for (final item in section.items)
-          OmniSettingsTile(
-            icon: item.icon,
-            title: item.title,
-            subtitle: item.subtitle,
-            trailing: item.trailing,
-            onTap: item.onTap,
-            translateText: false,
-          ),
+          if (item.onMenuTap != null)
+            FlClashPopupSource(
+              glass: false,
+              color: Colors.transparent,
+              shape: const RoundedRectangleBorder(),
+              builder: (anchorContext) => OmniSettingsTile(
+                icon: item.icon,
+                title: item.title,
+                subtitle: item.subtitle,
+                trailing: item.trailing,
+                onTap: () => item.onMenuTap!(anchorContext),
+                translateText: false,
+              ),
+            )
+          else
+            OmniSettingsTile(
+              icon: item.icon,
+              title: item.title,
+              subtitle: item.subtitle,
+              trailing: item.trailing,
+              onTap: item.onTap,
+              translateText: false,
+            ),
+        if (section.footer != null) section.footer!,
       ],
     );
   }
@@ -645,11 +744,13 @@ class _AuthorizeSettingSection {
   final String label;
   final String? subtitle;
   final List<_AuthorizeSettingItem> items;
+  final Widget? footer;
 
   const _AuthorizeSettingSection({
     required this.label,
     this.subtitle,
     required this.items,
+    this.footer,
   });
 }
 
@@ -659,6 +760,7 @@ class _AuthorizeSettingItem {
   final String? subtitle;
   final Widget? trailing;
   final VoidCallback? onTap;
+  final ValueChanged<BuildContext>? onMenuTap;
 
   const _AuthorizeSettingItem({
     required this.icon,
@@ -666,5 +768,6 @@ class _AuthorizeSettingItem {
     this.subtitle,
     this.trailing,
     this.onTap,
+    this.onMenuTap,
   });
 }

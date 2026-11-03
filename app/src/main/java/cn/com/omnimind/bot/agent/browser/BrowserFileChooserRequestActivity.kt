@@ -6,7 +6,6 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import cn.com.omnimind.bot.util.PredictiveBackGate
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
 
@@ -57,7 +56,6 @@ class BrowserFileChooserRequestActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        PredictiveBackGate.install(this)
         setTheme(cn.com.omnimind.baselib.R.style.Theme_OmnibotApp_Permission)
         requestId = intent.getStringExtra(BrowserFileChooserCoordinator.requestIdExtra()).orEmpty()
         if (requestId.isBlank()) {

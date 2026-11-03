@@ -1071,12 +1071,12 @@ class BrowserUserscriptSummary {
 
   factory BrowserUserscriptSummary.fromMap(Map<dynamic, dynamic> raw) {
     return BrowserUserscriptSummary(
-      installedScripts: _browserMapList(
-        raw['installedScripts'],
-      ).map(BrowserUserscriptItem.fromMap).toList(growable: false),
-      currentPageMenuCommands: _browserMapList(
-        raw['currentPageMenuCommands'],
-      ).map(BrowserUserscriptMenuCommand.fromMap).toList(growable: false),
+      installedScripts: _browserMapList(raw['installedScripts'])
+          .map(BrowserUserscriptItem.fromMap)
+          .toList(growable: false),
+      currentPageMenuCommands: _browserMapList(raw['currentPageMenuCommands'])
+          .map(BrowserUserscriptMenuCommand.fromMap)
+          .toList(growable: false),
       pendingInstall: raw['pendingInstall'] == null
           ? null
           : BrowserUserscriptInstallPreview.fromMap(
@@ -1275,21 +1275,21 @@ class ChatBrowserSessionSnapshot {
       recommendedNextAction: normalized['recommendedNextAction']?.toString(),
       throttleDelayMs: _browserInt(normalized['throttleDelayMs']),
       activeDownloadCount: _browserInt(normalized['activeDownloadCount']) ?? 0,
-      tabs: _browserMapList(
-        normalized['tabs'],
-      ).map(AgentBrowserTab.fromMap).toList(growable: false),
-      bookmarks: _browserMapList(
-        normalized['bookmarks'],
-      ).map(AgentBrowserHistoryEntry.fromMap).toList(growable: false),
-      history: _browserMapList(
-        normalized['history'],
-      ).map(AgentBrowserHistoryEntry.fromMap).toList(growable: false),
-      sessionHistory: _browserMapList(
-        normalized['sessionHistory'],
-      ).map(AgentBrowserHistoryEntry.fromMap).toList(growable: false),
-      downloads: _browserMapList(
-        normalized['downloads'],
-      ).map(BrowserDownloadItem.fromMap).toList(growable: false),
+      tabs: _browserMapList(normalized['tabs'])
+          .map(AgentBrowserTab.fromMap)
+          .toList(growable: false),
+      bookmarks: _browserMapList(normalized['bookmarks'])
+          .map(AgentBrowserHistoryEntry.fromMap)
+          .toList(growable: false),
+      history: _browserMapList(normalized['history'])
+          .map(AgentBrowserHistoryEntry.fromMap)
+          .toList(growable: false),
+      sessionHistory: _browserMapList(normalized['sessionHistory'])
+          .map(AgentBrowserHistoryEntry.fromMap)
+          .toList(growable: false),
+      downloads: _browserMapList(normalized['downloads'])
+          .map(BrowserDownloadItem.fromMap)
+          .toList(growable: false),
       downloadSummary: BrowserDownloadSummary.fromMap(
         _browserMap(normalized['downloadSummary']),
       ),
@@ -1435,8 +1435,7 @@ class HdPadPaneLayout {
   final double rightWidth;
 }
 
-const double kHdPadMinShortestSide = 600;
-const double kHdPadMinLandscapeWidth = 960;
+const double kChatWorkspaceMinWidth = 720;
 const double kChatKeyboardComposerClearance = 10.0;
 const double kChatComposerEdgeInset = 24.0;
 
@@ -1498,23 +1497,24 @@ double resolveChatComposerKeyboardSpacer({
   return normalizedBottomInset + closingClearance;
 }
 
-bool isHdPadLandscapeViewport(Size size) {
-  return size.width > size.height &&
-      size.shortestSide >= kHdPadMinShortestSide &&
-      size.width >= kHdPadMinLandscapeWidth;
+bool isChatWorkspaceViewport(Size size) {
+  // Choose columns from available width; short windows and the IME do not
+  // change the layout merely by reducing height.
+  return size.width.isFinite && size.width >= kChatWorkspaceMinWidth;
 }
 
 class HdPadPaneLayoutResolver {
   const HdPadPaneLayoutResolver();
 
-  static const double dividerHitWidth = 12;
+  static const double dividerHitWidth = 24;
   static const double defaultLeftWidth = 260;
   static const double minLeftWidth = 220;
   static const double maxLeftWidth = 360;
   static const double defaultRightWidth = 300;
   static const double minRightWidth = 240;
   static const double maxRightWidth = 420;
-  static const double minCenterWidth = 320;
+  static const double minCenterWidth = 420;
+  static const double threePaneMinWidth = 1120;
 
   HdPadPaneLayout resolve(
     double totalWidth, {
@@ -1523,13 +1523,18 @@ class HdPadPaneLayoutResolver {
     bool collapseLeftPane = false,
     bool collapseRightPane = false,
   }) {
-    final showLeftPane = !collapseLeftPane;
-    final showRightPane = !collapseRightPane;
+    final width = totalWidth.isFinite ? math.max(0.0, totalWidth) : 0.0;
+    // Narrow windows keep the transcript usable. The workspace can replace
+    // the conversation sidebar explicitly, without changing either owner.
+    final showLeftPane =
+        !collapseLeftPane &&
+        width >= minLeftWidth + minCenterWidth + dividerHitWidth;
+    final showRightPane =
+        !collapseRightPane &&
+        width >= minRightWidth + minCenterWidth + dividerHitWidth &&
+        (!showLeftPane || width >= threePaneMinWidth);
     final dividerCount = (showLeftPane ? 1 : 0) + (showRightPane ? 1 : 0);
-    final availableWidth = math.max(
-      0,
-      totalWidth - dividerHitWidth * dividerCount,
-    );
+    final availableWidth = math.max(0, width - dividerHitWidth * dividerCount);
 
     var leftWidth = showLeftPane
         ? (preferredLeftWidth ?? defaultLeftWidth)

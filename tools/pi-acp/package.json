@@ -1,0 +1,32 @@
+{
+  "name": "@omnibot/pi-acp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "OmniBot ACP adapter for the official Pi SDK",
+  "license": "SEE LICENSE IN LICENSE",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "bin": {
+    "omnibot-pi-acp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "npm run build && node --import tsx --test test/*.test.ts",
+    "package:android": "npm run build && node scripts/package-android.mjs",
+    "package:check": "npm run build && node scripts/package-android.mjs --check"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "2.0.0",
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.0",
+    "tsx": "4.20.6",
+    "typescript": "5.9.3"
+  }
+}

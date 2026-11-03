@@ -88,6 +88,12 @@ OmniBot 是一个基于 Android 原生 Kotlin 与 Flutter 构建的端侧 AI Age
 
 设备 MCP 与内置 Agent 共用工具定义和执行服务。`context_capabilities` 返回真实授权状态；缺少权限不会自动弹窗或终止普通聊天。联系人修改使用查询返回的 `rawContactId` 和 `version`，只修改选定账户记录；日历查询支持 `offset` 分页，全天日程使用 UTC 日期和不含结束日的区间。
 
+### 可选 Root 与设备控制
+
+直接 Root 默认关闭。在“设置 → 应用权限授权 → 扩展能力”开启 **Root 高级能力**，主动向设备的 Root 管理器申请授权。授权有效时优先使用直接 Root；关闭后停止其命令与持久 shell。Shizuku 仍作为独立的可选后端使用。
+
+Agent 可查询和修改支持的系统开关、显示与声音设置，管理应用权限、执行诊断和高权限 shell。状态修改与 shell 命令继续通过 ACP 客户端逐次确认；设备状态读回后才报告修改成功，ROM 不支持的接口明确返回错误。工具约定和兼容范围见 [Android 高权限操作](docs/android-privileged-actions.md)。
+
 ### Skills
 
 你可以直接把 skills 仓库链接发给小万，让她帮你安装。推荐仓库：https://github.com/OpenMinis/MinisSkills

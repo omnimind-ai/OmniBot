@@ -188,7 +188,7 @@ void main() {
     'codex-acp',
     'claude-code-acp',
     'opencode-acp',
-    'deepseek-harness-acp',
+    'deepseek-harness-acp', // Retired Agent history keeps its brand.
   ]) {
     testWidgets('$agentId brand fills the run avatar without a nested circle', (
       tester,

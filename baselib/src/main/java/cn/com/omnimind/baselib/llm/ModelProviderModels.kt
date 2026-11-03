@@ -96,6 +96,22 @@ data class ProviderModelOption(
     val supportedReasoningLevels: List<String> = emptyList(),
     @field:SerializedName("defaultReasoningLevel")
     val defaultReasoningLevel: String? = null,
+    /** Independent of enabled effort levels; null means the Provider has not declared it. */
+    @field:SerializedName("reasoningCanDisable")
+    val reasoningCanDisable: Boolean? = null,
+    /** A default effort alone does not declare whether thinking starts enabled. */
+    @field:SerializedName("reasoningDefaultEnabled")
+    val reasoningDefaultEnabled: Boolean? = null,
+    @field:SerializedName("reasoningSupportsAdaptive")
+    val reasoningSupportsAdaptive: Boolean? = null,
+    @field:SerializedName("reasoningWireFormat")
+    val reasoningWireFormat: String? = null,
+    @field:SerializedName("reasoningEffortSupported")
+    val reasoningEffortSupported: Boolean? = null,
+    @field:SerializedName("reasoningContentRequired")
+    val reasoningContentRequired: Boolean? = null,
+    @field:SerializedName("reasoningCapabilitySource")
+    val reasoningCapabilitySource: String? = null,
     @field:SerializedName("toolCall")
     val toolCall: Boolean? = null,
     @field:SerializedName("structuredOutput")

@@ -110,6 +110,10 @@ void main() {
   testWidgets(
     'automatically opens a missing task permission and resumes after grant',
     (tester) async {
+      tester.view.physicalSize = const Size(1366, 1024);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
       var overlayGranted = false;
       var openOverlaySettingsCalls = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
@@ -178,6 +182,26 @@ void main() {
       await tester.pumpAndSettle();
       expect(openOverlaySettingsCalls, 1);
       expect(router.state.uri.path, '/home/authorize');
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('authorize-permission-scroll')))
+            .width,
+        840,
+      );
+      final continueButton = find.byKey(const ValueKey('authorize-continue'));
+      expect(tester.getSize(continueButton).width, 796);
+      final pageState = tester.state(find.byType(AuthorizePage));
+      tester.view.physicalSize = const Size(600, 900);
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .getSize(find.byKey(const ValueKey('authorize-permission-scroll')))
+            .width,
+        600,
+      );
+      expect(tester.getSize(continueButton).width, 556);
+      expect(tester.state(find.byType(AuthorizePage)), same(pageState));
+      expect(openOverlaySettingsCalls, 1);
 
       overlayGranted = true;
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);

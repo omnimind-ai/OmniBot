@@ -1,4 +1,5 @@
-import 'package:ui/widgets/predictive_back_route.dart';
+import 'package:ui/widgets/navigation/page_route.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 import 'dart:async';
 
@@ -264,7 +265,7 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
 
   Future<void> _scanQr() async {
     final result = await Navigator.of(context).push<CodexBridgeQrScanResult>(
-      PredictiveBackMaterialPageRoute(
+      OmniPageRoute(
         builder: (_) => const CodexBridgeQrScannerPage(),
         fullscreenDialog: true,
       ),
@@ -317,168 +318,174 @@ class _RemoteCodexSettingPageState extends State<RemoteCodexSettingPage> {
         title: _text('远程 PC Bridge', 'Remote PC Bridge'),
         primary: true,
       ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: edgeToEdgeScrollPadding(
-                  context,
-                  const EdgeInsets.fromLTRB(22, 12, 22, 28),
-                ),
-                children: [
-                  SettingsSectionTitle(
-                    label: _text('Codex 远程运行', 'Remote Codex runtime'),
-                    subtitle: _text(
-                      '这里只保留远程 PC Bridge。本地 Agent 的 API、账号与默认模型请在“Agent 模式”中分别配置。',
-                      'This page only manages Remote PC Bridge. Configure each local Agent API, account, and default model in Agent mode.',
-                    ),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: _loading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView(
+                  padding: edgeToEdgeScrollPadding(
+                    context,
+                    const EdgeInsets.fromLTRB(22, 12, 22, 28),
                   ),
-                  OmniSettingsCard(
-                    key: const Key('remote-pc-bridge-settings-card'),
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                _text(
-                                  '启用远程 PC Bridge',
-                                  'Enable Remote PC Bridge',
-                                ),
-                                style: TextStyle(
-                                  color: palette.textPrimary,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.w500,
-                                ),
-                              ),
-                            ),
-                            OmniSettingsSwitch(
-                              value: _enabled,
-                              enabled: !_saving,
-                              onToggle: _setEnabled,
-                            ),
-                          ],
-                        ),
-                        Text(
-                          _enabled
-                              ? _text(
-                                  'Agent 聊天将使用远程 ACP。',
-                                  'Agent chat will use the remote ACP runtime.',
-                                )
-                              : _text(
-                                  '远程连接已关闭，本地聊天使用所选 ACP Agent。',
-                                  'Remote is off; local chat uses the selected ACP Agent.',
-                                ),
-                          style: TextStyle(
-                            color: palette.textSecondary,
-                            fontSize: 12,
-                          ),
-                        ),
-                        const SizedBox(height: 14),
-                        _field(
-                          key: const Key(
-                            'codex-config-remote-bridge-url-field',
-                          ),
-                          controller: _bridgeUrlController,
-                          label: 'Bridge URL',
-                          hint: 'ws://192.168.1.10:17321/codex',
-                          keyboardType: TextInputType.url,
-                        ),
-                        const SizedBox(height: 12),
-                        _field(
-                          key: const Key('codex-config-remote-cwd-field'),
-                          controller: _bridgeCwdController,
-                          label: _text('远程工作目录', 'Remote cwd'),
-                          hint: '/Users/name/code/project',
-                          suffix: IconButton(
-                            tooltip: _text('选择目录', 'Choose directory'),
-                            onPressed: _chooseDirectory,
-                            icon: const Icon(LucideIcons.folderOpen, size: 18),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        _field(
-                          key: const Key('codex-config-remote-token-field'),
-                          controller: _bridgeTokenController,
-                          label: _text(
-                            'Bridge Token（可选）',
-                            'Bridge Token (optional)',
-                          ),
-                          hint: 'OMNIBOT_BRIDGE_TOKEN',
-                          obscure: _obscureToken,
-                          suffix: IconButton(
-                            tooltip: _obscureToken
-                                ? _text('显示 Token', 'Show token')
-                                : _text('隐藏 Token', 'Hide token'),
-                            onPressed: () =>
-                                setState(() => _obscureToken = !_obscureToken),
-                            icon: Icon(
-                              _obscureToken
-                                  ? LucideIcons.eye
-                                  : LucideIcons.eyeOff,
-                              size: 18,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              key: const Key(
-                                'codex-config-scan-bridge-qr-button',
-                              ),
-                              onPressed: _saving ? null : _scanQr,
-                              icon: const Icon(
-                                LucideIcons.scanQrCode,
-                                size: 17,
-                              ),
-                              label: Text(_text('扫码连接', 'Scan QR')),
-                            ),
-                            OutlinedButton.icon(
-                              onPressed: _testing ? null : _testConnection,
-                              icon: _testing
-                                  ? const SizedBox(
-                                      width: 14,
-                                      height: 14,
-                                      child: CircularProgressIndicator(
-                                        strokeWidth: 2,
-                                      ),
-                                    )
-                                  : const Icon(
-                                      LucideIcons.radioTower,
-                                      size: 17,
-                                    ),
-                              label: Text(
-                                _testing
-                                    ? _text('测试中…', 'Testing…')
-                                    : _text('测试连接', 'Test connection'),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  if (_status != null || _error != null) ...[
-                    const SizedBox(height: 12),
-                    Text(
-                      _error ?? _status!,
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: _error != null
-                            ? Theme.of(context).colorScheme.error
-                            : palette.textSecondary,
+                  children: [
+                    SettingsSectionTitle(
+                      label: _text('Codex 远程运行', 'Remote Codex runtime'),
+                      subtitle: _text(
+                        '这里只保留远程 PC Bridge。本地 Agent 的 API、账号与默认模型请在“Agent 模式”中分别配置。',
+                        'This page only manages Remote PC Bridge. Configure each local Agent API, account, and default model in Agent mode.',
                       ),
                     ),
+                    OmniSettingsCard(
+                      key: const Key('remote-pc-bridge-settings-card'),
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _text(
+                                    '启用远程 PC Bridge',
+                                    'Enable Remote PC Bridge',
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ),
+                              OmniSettingsSwitch(
+                                value: _enabled,
+                                enabled: !_saving,
+                                onToggle: _setEnabled,
+                              ),
+                            ],
+                          ),
+                          Text(
+                            _enabled
+                                ? _text(
+                                    'Agent 聊天将使用远程 ACP。',
+                                    'Agent chat will use the remote ACP runtime.',
+                                  )
+                                : _text(
+                                    '远程连接已关闭，本地聊天使用所选 ACP Agent。',
+                                    'Remote is off; local chat uses the selected ACP Agent.',
+                                  ),
+                            style: TextStyle(
+                              color: palette.textSecondary,
+                              fontSize: 12,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          _field(
+                            key: const Key(
+                              'codex-config-remote-bridge-url-field',
+                            ),
+                            controller: _bridgeUrlController,
+                            label: 'Bridge URL',
+                            hint: 'ws://192.168.1.10:17321/codex',
+                            keyboardType: TextInputType.url,
+                          ),
+                          const SizedBox(height: 12),
+                          _field(
+                            key: const Key('codex-config-remote-cwd-field'),
+                            controller: _bridgeCwdController,
+                            label: _text('远程工作目录', 'Remote cwd'),
+                            hint: '/Users/name/code/project',
+                            suffix: IconButton(
+                              tooltip: _text('选择目录', 'Choose directory'),
+                              onPressed: _chooseDirectory,
+                              icon: const Icon(
+                                LucideIcons.folderOpen,
+                                size: 18,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          _field(
+                            key: const Key('codex-config-remote-token-field'),
+                            controller: _bridgeTokenController,
+                            label: _text(
+                              'Bridge Token（可选）',
+                              'Bridge Token (optional)',
+                            ),
+                            hint: 'OMNIBOT_BRIDGE_TOKEN',
+                            obscure: _obscureToken,
+                            suffix: IconButton(
+                              tooltip: _obscureToken
+                                  ? _text('显示 Token', 'Show token')
+                                  : _text('隐藏 Token', 'Hide token'),
+                              onPressed: () => setState(
+                                () => _obscureToken = !_obscureToken,
+                              ),
+                              icon: Icon(
+                                _obscureToken
+                                    ? LucideIcons.eye
+                                    : LucideIcons.eyeOff,
+                                size: 18,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Wrap(
+                            spacing: 8,
+                            runSpacing: 8,
+                            children: [
+                              OutlinedButton.icon(
+                                key: const Key(
+                                  'codex-config-scan-bridge-qr-button',
+                                ),
+                                onPressed: _saving ? null : _scanQr,
+                                icon: const Icon(
+                                  LucideIcons.scanQrCode,
+                                  size: 17,
+                                ),
+                                label: Text(_text('扫码连接', 'Scan QR')),
+                              ),
+                              OutlinedButton.icon(
+                                onPressed: _testing ? null : _testConnection,
+                                icon: _testing
+                                    ? const SizedBox(
+                                        width: 14,
+                                        height: 14,
+                                        child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      )
+                                    : const Icon(
+                                        LucideIcons.radioTower,
+                                        size: 17,
+                                      ),
+                                label: Text(
+                                  _testing
+                                      ? _text('测试中…', 'Testing…')
+                                      : _text('测试连接', 'Test connection'),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (_status != null || _error != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        _error ?? _status!,
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: _error != null
+                              ? Theme.of(context).colorScheme.error
+                              : palette.textSecondary,
+                        ),
+                      ),
+                    ],
                   ],
-                ],
-              ),
+                ),
+        ),
       ),
     );
   }

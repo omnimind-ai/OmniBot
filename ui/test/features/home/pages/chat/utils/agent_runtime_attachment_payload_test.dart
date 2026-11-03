@@ -2,6 +2,24 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/chat/utils/agent_runtime_attachment_payload.dart';
 
 void main() {
+  test(
+    'complete history records are display files, not prompt attachments',
+    () {
+      final attachments = buildAgentRuntimeAttachmentsFromMessageContent({
+        'attachments': [
+          {'name': 'original.txt', 'path': '/workspace/original.txt'},
+          {
+            'name': 'complete.json',
+            'path': '/workspace/complete.json',
+            'historyPayloadOffloaded': true,
+          },
+        ],
+      });
+
+      expect(attachments.single['name'], 'original.txt');
+    },
+  );
+
   test('keeps local image attachments path-only for native agent runtime', () {
     final attachments = buildAgentRuntimeAttachmentsFromMessageContent({
       'attachments': [

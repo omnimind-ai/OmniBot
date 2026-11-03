@@ -42,18 +42,22 @@ void main() {
       switch (call.method) {
         case 'replaceConversationMessages':
           final incoming = normalizeMessageList(args['messages']);
+          final byId = {
+            for (final m in nativeMessages[key] ?? <Map<String, dynamic>>[])
+              m['id']: m,
+          };
           if (args['allowHistoryRemoval'] == true) {
-            nativeMessages[key] = incoming;
-          } else {
-            final byId = {
-              for (final m in nativeMessages[key] ?? <Map<String, dynamic>>[])
-                m['id']: m,
-            };
-            for (final m in incoming) {
-              byId[m['id']] = m;
+            for (final id in args['removedMessageIds'] as List) {
+              byId.remove(id);
             }
-            nativeMessages[key] = byId.values.toList();
           }
+          for (final m in incoming) {
+            if ((m['content'] as Map?)?['historyPayloadOffloaded'] == true) {
+              continue;
+            }
+            byId[m['id']] = m;
+          }
+          nativeMessages[key] = byId.values.toList();
           return 'SUCCESS';
         case 'getConversationMessages':
           return nativeMessages[key] ?? <Map<String, dynamic>>[];
@@ -113,10 +117,79 @@ void main() {
       99112,
       [],
       allowHistoryRemoval: true,
+      removedMessageIds: ['old', 'reply'],
     );
     expect(writes.last['messages'], isEmpty);
     expect(writes.last['allowHistoryRemoval'], true);
+    expect(writes.last['removedMessageIds'], ['old', 'reply']);
   });
+
+  test(
+    'a page edit removes only explicitly selected items from long history',
+    () async {
+      const id = 88101;
+      final key = threadKey(id, ConversationMode.agent);
+      final original = '原始完整内容' * 10000;
+      nativeMessages[key] = [
+        for (var index = 0; index < 1000; index++)
+          ChatMessageModel.userMessage(
+            'message $index',
+            id: 'item-$index',
+          ).toJson(),
+        ChatMessageModel.userMessage(original, id: 'large-record').toJson(),
+        ChatMessageModel.userMessage(
+          'concurrent',
+          id: 'concurrent-new',
+        ).toJson(),
+      ];
+      final visible = [
+        for (var index = 950; index < 998; index++)
+          ChatMessageModel.userMessage('message $index', id: 'item-$index'),
+        ChatMessageModel(
+          id: 'large-record',
+          type: 1,
+          user: 1,
+          content: {'text': 'preview', 'historyPayloadOffloaded': true},
+        ),
+      ];
+      await ConversationHistoryService.saveConversationMessages(
+        id,
+        visible,
+        allowHistoryRemoval: true,
+        removedMessageIds: ['item-998', 'item-999'],
+      );
+      final remaining = nativeMessages[key]!;
+      expect(remaining, hasLength(1000));
+      expect(remaining.any((row) => row['id'] == 'item-0'), isTrue);
+      expect(remaining.any((row) => row['id'] == 'concurrent-new'), isTrue);
+      expect(remaining.any((row) => row['id'] == 'item-998'), isFalse);
+      expect(
+        (remaining.firstWhere((row) => row['id'] == 'large-record')['content']
+            as Map)['text'],
+        original,
+      );
+    },
+  );
+
+  test(
+    'destructive snapshots without explicit scope never reach native',
+    () async {
+      var calls = 0;
+      messenger.setMockMethodCallHandler(channel, (_) async {
+        calls++;
+        return 'SUCCESS';
+      });
+      await expectLater(
+        ConversationHistoryService.saveConversationMessages(
+          88102,
+          [],
+          allowHistoryRemoval: true,
+        ),
+        throwsArgumentError,
+      );
+      expect(calls, 0);
+    },
+  );
 
   test('failed native writes are not acknowledged and clear invalidates acknowledgements', () async {
     var attempts = 0;

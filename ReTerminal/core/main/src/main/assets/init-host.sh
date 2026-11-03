@@ -11,8 +11,6 @@ ACTIVE_CHILD_PID=
 
 [ ! -f "$ROOTFS_ARCHIVE" ] && ROOTFS_ARCHIVE=$PREFIX/files/$TERMINAL_DISTRIBUTION.tar
 
-mkdir -p "$ROOTFS_DIR"
-
 terminate_active_child() {
     if [ -n "$ACTIVE_CHILD_PID" ]; then
         # PRoot ignores TERM/INT. QUIT invokes its own tracee cleanup;
@@ -82,6 +80,18 @@ mark_rootfs_ready() {
         mv -f "$marker_tmp" "$ROOTFS_READY_MARKER"
 }
 
+# Maintenance may only enter an existing distribution. Carry this constraint
+# into the shell as well: the rootfs can change after the host's readiness check.
+if [ "${OMNIBOT_TERMINAL_NO_INSTALL:-0}" = "1" ]; then
+    if [ ! -d "$ROOTFS_DIR" ] || ! rootfs_has_minimum_layout ||
+        { [ ! -f "$ROOTFS_READY_MARKER" ] && ! rootfs_has_legacy_layout; }; then
+        echo "Terminal maintenance requires an installed $TERMINAL_DISTRIBUTION rootfs." >&2
+        exit 1
+    fi
+else
+    mkdir -p "$ROOTFS_DIR"
+fi
+
 trap handle_termination HUP INT TERM
 
 mkdir -p "$PREFIX/local/bin" "$PREFIX/local/lib"
@@ -104,46 +114,48 @@ for sofile in "$PREFIX/files/"*.so.2; do
     install_runtime_file "$sofile" "$dest" 644
 done
 
-if [ -f "$ROOTFS_READY_MARKER" ]; then
-    if ! rootfs_has_minimum_layout; then
+if [ "${OMNIBOT_TERMINAL_NO_INSTALL:-0}" != "1" ]; then
+    if [ -f "$ROOTFS_READY_MARKER" ]; then
+        if ! rootfs_has_minimum_layout; then
+            if ! clear_incomplete_rootfs; then
+                echo "Failed to reset incomplete $TERMINAL_DISTRIBUTION rootfs." >&2
+                exit 1
+            fi
+        fi
+    elif rootfs_has_legacy_layout; then
+        if ! mark_rootfs_ready; then
+            echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
+            exit 1
+        fi
+    else
         if ! clear_incomplete_rootfs; then
             echo "Failed to reset incomplete $TERMINAL_DISTRIBUTION rootfs." >&2
             exit 1
         fi
     fi
-elif rootfs_has_legacy_layout; then
-    if ! mark_rootfs_ready; then
-        echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
-        exit 1
-    fi
-else
-    if ! clear_incomplete_rootfs; then
-        echo "Failed to reset incomplete $TERMINAL_DISTRIBUTION rootfs." >&2
-        exit 1
-    fi
-fi
 
-if [ ! -f "$ROOTFS_READY_MARKER" ]; then
-    if [ ! -f "$ROOTFS_ARCHIVE" ]; then
-        echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
-        exit 1
-    fi
-    # Android app UIDs cannot create archive hardlinks. Use the bundled
-    # PRoot's official emulation while extracting immutable rootfs members;
-    # this does not change the separate interactive/ACP launch options.
-    if ! run_child "$LINKER" "$PREFIX/local/bin/proot" --link2symlink \
-        /system/bin/tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
-        echo "Failed to extract $TERMINAL_DISTRIBUTION rootfs." >&2
-        exit 1
-    fi
-    if ! rootfs_has_legacy_layout; then
-        clear_incomplete_rootfs
-        echo "Extracted $TERMINAL_DISTRIBUTION rootfs is incomplete." >&2
-        exit 1
-    fi
-    if ! mark_rootfs_ready; then
-        echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
-        exit 1
+    if [ ! -f "$ROOTFS_READY_MARKER" ]; then
+        if [ ! -f "$ROOTFS_ARCHIVE" ]; then
+            echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
+            exit 1
+        fi
+        # Android app UIDs cannot create archive hardlinks. Use the bundled
+        # PRoot's official emulation while extracting immutable rootfs members;
+        # this does not change the separate interactive/ACP launch options.
+        if ! run_child "$LINKER" "$PREFIX/local/bin/proot" --link2symlink \
+            /system/bin/tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
+            echo "Failed to extract $TERMINAL_DISTRIBUTION rootfs." >&2
+            exit 1
+        fi
+        if ! rootfs_has_legacy_layout; then
+            clear_incomplete_rootfs
+            echo "Extracted $TERMINAL_DISTRIBUTION rootfs is incomplete." >&2
+            exit 1
+        fi
+        if ! mark_rootfs_ready; then
+            echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
+            exit 1
+        fi
     fi
 fi
 

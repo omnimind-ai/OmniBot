@@ -842,6 +842,7 @@ private class XiaowanAgentSession(
                 requestPermission(sessionId.value, toolCallId, title, detail)
             },
             historyMessagesOverride = messages.toList().takeIf { conversationId == null },
+            acpSessionId = sessionId.value,
         )
         if (result is AgentResult.Error) {
             val error = result.exception
@@ -914,6 +915,8 @@ private class XiaowanAgentSession(
                 if (!cleanupComplete) {
                     closed.set(true)
                     this@XiaowanAgentSession.cancel()
+                    cn.com.omnimind.baselib.privileged.PrivilegedCapabilityManager
+                        .closeExistingAcpSession(sessionId.value)
                     mcpSession.close()
                     onClosed(sessionId.value)
                     cleanupComplete = true

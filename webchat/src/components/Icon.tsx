@@ -17,6 +17,7 @@ export type IconName =
   | "folder"
   | "menu"
   | "opencode"
+  | "pi"
   | "panel-left"
   | "panel-right"
   | "plus"
@@ -72,6 +73,7 @@ export function Icon({ name, size = 20, ...props }: IconProps) {
     folder: <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />,
     menu: <path d="M3 5h12M3 12h18M3 19h16" />,
     opencode: <path d="M16 6H8v12h8V6zm4 16H4V2h16v20z" fill="currentColor" stroke="none" />,
+    pi: <text x="12" y="19" textAnchor="middle" fontSize="22" fontWeight="600" fill="currentColor" stroke="none">π</text>,
     "panel-left": (
       <>
         <rect width="18" height="18" x="3" y="3" rx="2" />

@@ -1,31 +1,73 @@
+// Adapted from FlClash lib/ui/context_menu.dart and lib/ui/popup.dart at
+// 7fd417fb9a9a277c6a9339a8ac87f907df7c25f7. The independent no-source popup
+// keeps OmnibotApp's existing menu placement. See docs/third-party/flclash-NOTICE.md.
+// SPDX-License-Identifier: GPL-3.0-only
+
 import 'dart:math' as math;
+import 'dart:ui' show SemanticsRole;
 
 import 'package:flutter/material.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
+import 'package:ui/widgets/flclash/popup.dart';
+import 'package:ui/widgets/omni_menu.dart';
 
-/// A focused preview and action surface for the selected conversation.
-/// The caller retains all action and conversation ownership.
-/// Its route transition must also absorb pointers while reversing: ModalRoute
-/// ignores its entire page subtree during that phase.
+/// FlClash's context-menu clock: the independent pane shrinks away in 200ms,
+/// rather than returning into a captured button over 500ms.
+class ConversationContextMenuRoute<T> extends RawDialogRoute<T> {
+  ConversationContextMenuRoute({
+    required super.pageBuilder,
+    required super.barrierLabel,
+    this.reduceMotion = false,
+  }) : super(
+         barrierDismissible: true,
+         barrierColor: null,
+         transitionDuration: reduceMotion
+             ? Duration.zero
+             : FlClashPopupMotion.openingDuration,
+         transitionBuilder: (_, animation, _, child) => AbsorbPointer(
+           absorbing: animation.status == AnimationStatus.reverse,
+           child: child,
+         ),
+       );
+
+  final bool reduceMotion;
+
+  @override
+  Duration get reverseTransitionDuration =>
+      reduceMotion ? Duration.zero : FlClashPopupMotion.shrinkingDuration;
+
+  @override
+  bool didPop(T? result) {
+    // Even an interrupted opening gets the full, continuous closing clock.
+    controller!.reverseDuration =
+        reverseTransitionDuration * (1 / math.max(controller!.value, 1e-3));
+    return super.didPop(result);
+  }
+}
+
+/// FlClash's independent action pane, with an optional lifted conversation row.
+/// The focus layer never becomes the popup's source: menu placement and its
+/// independent opening/closing motion stay separate from the row animation.
 class ConversationContextMenu extends StatelessWidget {
   const ConversationContextMenu({
     super.key,
     required this.anchor,
-    required this.title,
+    required this.origin,
     required this.actions,
     required this.animation,
     required this.onDismiss,
+    this.preview,
   });
 
   final Rect anchor;
-  final String title;
+  final Offset origin;
   final List<Widget> actions;
   final Animation<double> animation;
   final VoidCallback onDismiss;
+  final Widget? preview;
 
   void _dismiss(BuildContext context) {
-    // Check synchronously too: a second pointer can arrive before the first
-    // reverse-animation frame rebuilds the AbsorbPointer below.
     if (animation.status == AnimationStatus.reverse ||
         ModalRoute.of(context)?.isCurrent == false) {
       return;
@@ -35,273 +77,365 @@ class ConversationContextMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final palette = context.omniPalette;
     final media = MediaQuery.of(context);
-    final isDark = context.isDarkTheme;
+    final menu = FlClashPopupTransition(
+      anchor: origin & Size.zero,
+      animation: animation,
+      sourceColor: Colors.transparent,
+      child: IntrinsicWidth(
+        child: Material(
+          type: MaterialType.transparency,
+          child: Semantics(
+            role: SemanticsRole.menu,
+            scopesRoute: true,
+            namesRoute: true,
+            explicitChildNodes: true,
+            label: MaterialLocalizations.of(context).popupMenuLabel,
+            child: OmniMenuSurface(
+              key: const ValueKey('conversation-context-actions'),
+              child: SingleChildScrollView(
+                key: const ValueKey('conversation-context-scroll'),
+                hitTestBehavior: HitTestBehavior.deferToChild,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: actions,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (preview != null) {
+      return _ConversationFocusLayer(
+        anchor: anchor,
+        animation: animation,
+        actionCount: actions.length,
+        preview: preview!,
+        menu: menu,
+        onDismiss: () => _dismiss(context),
+      );
+    }
+    return Stack(
+      children: [
+        Positioned.fill(
+          child: GestureDetector(
+            key: const ValueKey('conversation-context-dismiss'),
+            behavior: HitTestBehavior.opaque,
+            onTap: () => _dismiss(context),
+            child: Semantics(
+              label: MaterialLocalizations.of(context).modalBarrierDismissLabel,
+              button: true,
+              child: const ColoredBox(color: Colors.transparent),
+            ),
+          ),
+        ),
+        CustomSingleChildLayout(
+          delegate: _ConversationMenuLayout(
+            anchor: anchor,
+            actionCount: actions.length,
+            media: media,
+          ),
+          child: menu,
+        ),
+      ],
+    );
+  }
+}
+
+class _ConversationFocusLayer extends StatelessWidget {
+  const _ConversationFocusLayer({
+    required this.anchor,
+    required this.animation,
+    required this.actionCount,
+    required this.preview,
+    required this.menu,
+    required this.onDismiss,
+  });
+
+  final Rect anchor;
+  final Animation<double> animation;
+  final int actionCount;
+  final Widget preview;
+  final Widget menu;
+  final VoidCallback onDismiss;
+
+  @override
+  Widget build(BuildContext context) {
+    final media = MediaQuery.of(context);
+    final palette = context.omniPalette;
+    final glass = LiquidGlassScope.of(context);
+    final dark = context.isDarkTheme;
+    const radius = BorderRadius.all(Radius.circular(18));
+    final shadows = [
+      BoxShadow(
+        color: Colors.black.withValues(alpha: dark ? 0.20 : 0.06),
+        blurRadius: 18,
+        offset: const Offset(0, 6),
+      ),
+    ];
+    final content = LiquidGlassSurfaceScope(
+      enabled: true,
+      child: ClipRRect(
+        borderRadius: radius,
+        child: Material(type: MaterialType.transparency, child: preview),
+      ),
+    );
+    final surface = GestureDetector(
+      key: const ValueKey('conversation-context-preview'),
+      behavior: HitTestBehavior.opaque,
+      onTap: () {},
+      child: IgnorePointer(
+        child: glass
+            ? LiquidGlass(
+                style: LiquidGlassStyle.menu(Theme.of(context).colorScheme),
+                borderRadius: radius,
+                shadows: shadows,
+                child: content,
+              )
+            : DecoratedBox(
+                decoration: BoxDecoration(
+                  color: palette.surfacePrimary,
+                  borderRadius: radius,
+                  boxShadow: shadows,
+                ),
+                child: content,
+              ),
+      ),
+    );
     return LayoutBuilder(
       builder: (context, constraints) {
-        const margin = 24.0;
         final width = math.max(
           0.0,
-          math.min(
-            anchor.width,
-            math.min(360.0, constraints.maxWidth - margin * 2),
-          ),
+          // The lifted row keeps its own layout; only the independent action
+          // menu has a compact width. Narrow windows may still constrain it.
+          math.min(anchor.width, constraints.maxWidth - 32),
         );
-        final topInset = media.padding.top + 12;
-        final bottomInset =
-            math.max(media.padding.bottom, media.viewInsets.bottom) + 12;
-        final shadow = [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: isDark ? 0.20 : 0.06),
-            blurRadius: 18,
-            offset: const Offset(0, 6),
-          ),
-        ];
-        final preview = _buildPreview(context, width, shadow);
-        final menu = _buildActions(context, width, shadow);
         return AnimatedBuilder(
           animation: animation,
-          builder: (context, _) {
+          child: menu,
+          builder: (context, menu) {
             final progress = media.disableAnimations ? 1.0 : animation.value;
             final lift = const Interval(
               0,
               0.72,
               curve: Curves.easeOutCubic,
             ).transform(progress);
-            final reveal = const Interval(
-              0.22,
-              1,
-              curve: Curves.easeOutCubic,
-            ).transform(progress);
-            final previewOpacity = const Interval(
+            final opacity = const Interval(
               0,
               0.25,
               curve: Curves.easeOutCubic,
             ).transform(progress);
-            return AbsorbPointer(
-              absorbing: animation.status == AnimationStatus.reverse,
-              child: Stack(
-                children: [
-                  Positioned.fill(
-                    child: GestureDetector(
-                      key: const ValueKey('conversation-context-dismiss'),
-                      behavior: HitTestBehavior.opaque,
-                      onTap: () => _dismiss(context),
-                      child: Semantics(
-                        label: MaterialLocalizations.of(context)
-                            .modalBarrierDismissLabel,
-                        button: true,
-                        child: ColoredBox(
-                          color: palette.overlayScrim.withValues(
-                            alpha:
-                                (isDark ? 0.24 : 0.12) *
-                                Curves.easeOut.transform(progress),
+            final scrim = palette.overlayScrim.withValues(
+              alpha: (dark ? 0.24 : 0.12) * Curves.easeOut.transform(progress),
+            );
+            final dismiss = GestureDetector(
+              key: const ValueKey('conversation-context-dismiss'),
+              behavior: HitTestBehavior.opaque,
+              onTap: onDismiss,
+              child: Semantics(
+                label: MaterialLocalizations.of(context)
+                    .modalBarrierDismissLabel,
+                button: true,
+                child: ColoredBox(color: glass ? Colors.transparent : scrim),
+              ),
+            );
+            return Stack(
+              children: [
+                Positioned.fill(
+                  child: glass
+                      ? LiquidGlassVeil(
+                          color: AlwaysStoppedAnimation(scrim),
+                          child: dismiss,
+                        )
+                      : dismiss,
+                ),
+                CustomMultiChildLayout(
+                  delegate: _ConversationFocusLayout(
+                    anchor: anchor,
+                    actionCount: actionCount,
+                    media: media,
+                    lift: lift,
+                    width: width,
+                  ),
+                  children: [
+                    LayoutId(
+                      id: 'preview',
+                      child: Transform.scale(
+                        scale: 0.97 + 0.03 * lift,
+                        alignment: Alignment.topLeft,
+                        child: LiquidGlassFade(
+                          opacity: AlwaysStoppedAnimation(opacity),
+                          child: FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.topLeft,
+                            child: SizedBox(width: width, child: surface),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                  CustomSingleChildLayout(
-                    delegate: _ConversationMenuLayout(
-                      anchor: anchor,
-                      width: width,
-                      topInset: topInset,
-                      bottomInset: bottomInset,
-                      lift: lift,
-                    ),
-                    child: Material(
-                      type: MaterialType.transparency,
-                      child: SingleChildScrollView(
-                        key: const ValueKey('conversation-context-scroll'),
-                        // Only the painted preview and action surface own taps.
-                        // The unused right side of the narrower menu must fall
-                        // through to the full-screen dismiss surface.
-                        hitTestBehavior: HitTestBehavior.deferToChild,
-                        clipBehavior: Clip.hardEdge,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Transform.scale(
-                              scale: 0.97 + 0.03 * lift,
-                              alignment: Alignment.topLeft,
-                              child: Opacity(
-                                key: const ValueKey(
-                                  'conversation-context-preview-opacity',
-                                ),
-                                opacity: previewOpacity,
-                                child: preview,
-                              ),
-                            ),
-                            const SizedBox(height: 14),
-                            IgnorePointer(
-                              ignoring: reveal == 0,
-                              child: ExcludeSemantics(
-                                excluding: reveal < 1,
-                                child: ClipRect(
-                                  clipper: _ConversationMenuReveal(reveal),
-                                  child: Opacity(
-                                    key: const ValueKey(
-                                      'conversation-context-actions-opacity',
-                                    ),
-                                    opacity: reveal,
-                                    child: Transform.translate(
-                                      offset: Offset(0, -8 * (1 - reveal)),
-                                      child: menu,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                    LayoutId(id: 'menu', child: menu!),
+                  ],
+                ),
+              ],
             );
           },
         );
       },
     );
   }
-
-  Widget _buildPreview(
-    BuildContext context,
-    double width,
-    List<BoxShadow> shadow,
-  ) {
-    final palette = context.omniPalette;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {},
-      child: Container(
-        key: const ValueKey('conversation-context-preview'),
-        width: width,
-        constraints: const BoxConstraints(minHeight: 54),
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        decoration: BoxDecoration(
-          color: palette.surfacePrimary,
-          borderRadius: BorderRadius.circular(18),
-          boxShadow: shadow,
-        ),
-        child: Row(
-          children: [
-            Container(
-              width: 6,
-              height: 6,
-              decoration: BoxDecoration(
-                color: palette.borderStrong,
-                shape: BoxShape.circle,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                title,
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: palette.textPrimary,
-                  fontSize: 15,
-                  height: 1.4,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildActions(
-    BuildContext context,
-    double width,
-    List<BoxShadow> shadow,
-  ) {
-    final palette = context.omniPalette;
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () {},
-      child: Container(
-        key: const ValueKey('conversation-context-actions'),
-        width: math.min(width, 250),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: palette.surfacePrimary,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: shadow,
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: actions,
-        ),
-      ),
-    );
-  }
 }
 
-class _ConversationMenuReveal extends CustomClipper<Rect> {
-  const _ConversationMenuReveal(this.progress);
-  final double progress;
-
-  @override
-  Rect getClip(Size size) =>
-      Rect.fromLTRB(-32, -32, size.width + 32, (size.height + 32) * progress);
-
-  @override
-  bool shouldReclip(_ConversationMenuReveal oldClipper) =>
-      oldClipper.progress != progress;
-}
-
-class _ConversationMenuLayout extends SingleChildLayoutDelegate {
-  const _ConversationMenuLayout({
+class _ConversationFocusLayout extends MultiChildLayoutDelegate {
+  _ConversationFocusLayout({
     required this.anchor,
-    required this.width,
-    required this.topInset,
-    required this.bottomInset,
+    required this.actionCount,
+    required this.media,
     required this.lift,
+    required this.width,
   });
 
   final Rect anchor;
-  final double width;
-  final double topInset;
-  final double bottomInset;
+  final int actionCount;
+  final MediaQueryData media;
   final double lift;
+  final double width;
+
+  @override
+  void performLayout(Size size) {
+    final menuLayout = _ConversationMenuLayout(
+      anchor: anchor,
+      actionCount: actionCount,
+      media: media,
+    );
+    final available = math.max(
+      0.0,
+      size.height - menuLayout._topInset - menuLayout._bottomInset,
+    );
+    final gap = math.min(14.0, available * 0.05);
+    final previewSize = layoutChild(
+      'preview',
+      BoxConstraints.tightFor(width: width)
+          .copyWith(maxHeight: available * 0.4),
+    );
+    final menuConstraints = menuLayout.getConstraintsForChild(
+      BoxConstraints.loose(size),
+    );
+    final menuSize = layoutChild(
+      'menu',
+      menuConstraints.copyWith(
+        maxHeight: math.min(
+          menuConstraints.maxHeight,
+          math.max(0.0, available - previewSize.height - gap),
+        ),
+      ),
+    );
+    final originalMenuPosition = menuLayout.getPositionForChild(size, menuSize);
+    final menuPosition = Offset(
+      originalMenuPosition.dx,
+      math.max(
+        originalMenuPosition.dy,
+        menuLayout._topInset + previewSize.height + gap,
+      ),
+    );
+    positionChild('menu', menuPosition);
+    final destination = Offset(
+      menuPosition.dx.clamp(
+        16.0,
+        math.max(16.0, size.width - 16 - previewSize.width),
+      ),
+      menuPosition.dy - gap - previewSize.height,
+    );
+    positionChild('preview', Offset.lerp(anchor.topLeft, destination, lift)!);
+  }
+
+  @override
+  bool shouldRelayout(_ConversationFocusLayout oldDelegate) =>
+      anchor != oldDelegate.anchor ||
+      actionCount != oldDelegate.actionCount ||
+      media != oldDelegate.media ||
+      lift != oldDelegate.lift ||
+      width != oldDelegate.width;
+}
+
+/// Retains the former action panel's x/y without mounting an invisible preview.
+/// Only insufficient space (keyboard/large text) may move it to stay reachable.
+class _ConversationMenuLayout extends SingleChildLayoutDelegate {
+  const _ConversationMenuLayout({
+    required this.anchor,
+    required this.actionCount,
+    required this.media,
+  });
+
+  final Rect anchor;
+  final int actionCount;
+  final MediaQueryData media;
+
+  double get _topInset => media.padding.top + 12;
+  double get _bottomInset =>
+      math.max(media.padding.bottom, media.viewInsets.bottom) + 12;
 
   @override
   BoxConstraints getConstraintsForChild(BoxConstraints constraints) {
+    final maxWidth = math.max(
+      0.0,
+      math.min(280.0, math.min(anchor.width, constraints.maxWidth - 48)),
+    );
     return BoxConstraints(
-      minWidth: width,
-      maxWidth: width,
-      maxHeight: math.max(0, constraints.maxHeight - topInset - bottomInset),
+      minWidth: math.min(160, maxWidth),
+      maxWidth: maxWidth,
+      maxHeight: math.max(
+        0,
+        math.min(
+          constraints.maxHeight - _topInset - _bottomInset,
+          16 + 7.5 * (24 + media.textScaler.scale(20)),
+        ),
+      ),
     );
   }
 
   @override
   Offset getPositionForChild(Size size, Size childSize) {
-    final destination = Offset(
+    final oldAlignmentWidth = math.max(
+      0.0,
+      math.min(anchor.width, math.min(360, size.width - 48)),
+    );
+    final sourceHeight =
+        24.0 +
+        math.max(
+          50.0,
+          media.textScaler.scale(16) * 1.25 +
+              4 +
+              media.textScaler.scale(14) * 1.3,
+        );
+    final reservedAbove = sourceHeight + 14;
+    final oldRowHeight = math.max(48, 24 + media.textScaler.scale(16) * 1.25);
+    final oldMenuHeight = 20 + actionCount * oldRowHeight;
+    final available = math.max(0.0, size.height - _topInset - _bottomInset);
+    final oldViewportHeight = math.min(
+      reservedAbove + oldMenuHeight,
+      available,
+    );
+    final oldGroupTop = (anchor.top - 8).clamp(
+      _topInset,
+      math.max(_topInset, size.height - _bottomInset - oldViewportHeight),
+    );
+    return Offset(
       anchor.left.clamp(
         24.0,
-        math.max(24.0, size.width - 24 - childSize.width),
+        math.max(24, size.width - 24 - oldAlignmentWidth),
       ),
-      (anchor.top - 8).clamp(
-        topInset,
-        math.max(topInset, size.height - bottomInset - childSize.height),
+      (oldGroupTop + reservedAbove).clamp(
+        _topInset,
+        math.max(_topInset, size.height - _bottomInset - childSize.height),
       ),
     );
-    return Offset.lerp(anchor.topLeft, destination, lift)!;
   }
 
   @override
   bool shouldRelayout(_ConversationMenuLayout oldDelegate) =>
       anchor != oldDelegate.anchor ||
-      width != oldDelegate.width ||
-      topInset != oldDelegate.topInset ||
-      bottomInset != oldDelegate.bottomInset ||
-      lift != oldDelegate.lift;
+      actionCount != oldDelegate.actionCount ||
+      media != oldDelegate.media;
 }

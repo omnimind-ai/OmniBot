@@ -130,13 +130,30 @@ class ConversationHistoryService {
   /// 保存对话消息列表。
   ///
   /// Runtime snapshots merge by message identity. Only explicit user history
-  /// edits may remove missing entries; writes remain ordered per conversation.
+  /// edits may remove listed identities; an absent row may be an unloaded page.
+  /// Writes remain ordered per conversation.
   static Future<void> saveConversationMessages(
     int conversationId,
     List<ChatMessageModel> messages, {
     ConversationMode mode = ConversationMode.agent,
     bool allowHistoryRemoval = false,
+    List<String>? removedMessageIds,
   }) {
+    if (allowHistoryRemoval && removedMessageIds == null) {
+      return Future<void>.error(
+        ArgumentError('History removal requires explicit message IDs'),
+      );
+    }
+    final removals = removedMessageIds == null
+        ? null
+        : List<String>.unmodifiable(removedMessageIds.toSet());
+    if ((!allowHistoryRemoval && removals?.isNotEmpty == true) ||
+        (removals?.any((id) => id.trim().isEmpty) ?? false) ||
+        messages.any((message) => removals?.contains(message.id) == true)) {
+      return Future<void>.error(
+        ArgumentError('History removal conflicts with the retained snapshot'),
+      );
+    }
     final key = '${mode.canonicalStorageValue}:$conversationId';
     final snapshot = List<ChatMessageModel>.from(messages);
     return _enqueueConversationMessageWrite(
@@ -146,6 +163,7 @@ class ConversationHistoryService {
         snapshot,
         mode: mode,
         allowHistoryRemoval: allowHistoryRemoval,
+        removedMessageIds: removals,
       ),
     );
   }
@@ -183,6 +201,7 @@ class ConversationHistoryService {
     List<ChatMessageModel> messages, {
     required ConversationMode mode,
     bool allowHistoryRemoval = false,
+    List<String>? removedMessageIds,
   }) async {
     final key = '${mode.canonicalStorageValue}:$conversationId';
     final previous =
@@ -203,11 +222,11 @@ class ConversationHistoryService {
       changed,
       mode: mode,
       allowHistoryRemoval: allowHistoryRemoval,
+      removedMessageIds: removedMessageIds,
     );
     if (stored) {
-      _acknowledgedWrites[key] = allowHistoryRemoval
-          ? next
-          : {...previous, ...next};
+      _acknowledgedWrites[key] = {...previous, ...next}
+        ..removeWhere((id, _) => removedMessageIds?.contains(id) == true);
       return;
     }
 
@@ -221,6 +240,7 @@ class ConversationHistoryService {
     List<Map<String, dynamic>> jsonList, {
     required ConversationMode mode,
     bool allowHistoryRemoval = false,
+    List<String>? removedMessageIds,
   }) async {
     try {
       await _assistCore.invokeMethod('replaceConversationMessages', {
@@ -228,6 +248,7 @@ class ConversationHistoryService {
         'mode': mode.canonicalStorageValue,
         'messages': jsonList,
         'allowHistoryRemoval': allowHistoryRemoval,
+        'removedMessageIds': removedMessageIds,
       });
       return true;
     } on PlatformException catch (e) {

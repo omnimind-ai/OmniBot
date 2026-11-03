@@ -33,6 +33,18 @@ class AgentAvatarService {
   static final ValueNotifier<AgentAvatarState> avatarStateNotifier =
       ValueNotifier<AgentAvatarState>(const AgentAvatarState());
   static bool _isLoaded = false;
+  static Future<AgentAvatarState>? _loadFuture;
+  // Saves invalidate reads both when admitted and when committed. A read that
+  // began during a save must not overwrite that save after its final await.
+  static int _stateRevision = 0;
+
+  @visibleForTesting
+  static void resetForTesting() {
+    assert(_loadFuture == null, 'Finish pending avatar reads before resetting');
+    _stateRevision++;
+    _isLoaded = false;
+    avatarStateNotifier.value = const AgentAvatarState();
+  }
 
   static int normalizeIndex(int? index) {
     if (index == null || index < 0 || index >= presetAvatars.length) {
@@ -45,31 +57,42 @@ class AgentAvatarService {
     return presetAvatars[normalizeIndex(index)];
   }
 
-  static Future<AgentAvatarState> load() async {
+  static Future<AgentAvatarState> load() =>
+      _loadFuture ??= _load(_stateRevision).whenComplete(() {
+        _loadFuture = null;
+      });
+
+  static Future<AgentAvatarState> _load(int revision) async {
     final prefs = await SharedPreferences.getInstance();
+    if (revision != _stateRevision) return avatarStateNotifier.value;
     final avatarIndex = normalizeIndex(prefs.getInt(storageKey));
     var customImagePath = prefs.getString(customImagePathKey)?.trim() ?? '';
     if (customImagePath.isNotEmpty && !await File(customImagePath).exists()) {
+      if (revision != _stateRevision) return avatarStateNotifier.value;
+      if (prefs.getString(customImagePathKey)?.trim() == customImagePath) {
+        await prefs.remove(customImagePathKey);
+      }
       customImagePath = '';
-      await prefs.remove(customImagePathKey);
     }
+    if (revision != _stateRevision) return avatarStateNotifier.value;
     final state = AgentAvatarState(
       presetIndex: avatarIndex,
       customImagePath: customImagePath,
     );
-    avatarStateNotifier.value = state;
     _isLoaded = true;
+    avatarStateNotifier.value = state;
     return state;
   }
 
-  static Future<AgentAvatarState> ensureLoaded() async {
+  static Future<AgentAvatarState> ensureLoaded() {
     if (_isLoaded) {
-      return avatarStateNotifier.value;
+      return Future.value(avatarStateNotifier.value);
     }
     return load();
   }
 
   static Future<AgentAvatarState> setPresetAvatarIndex(int index) async {
+    _stateRevision++;
     final avatarIndex = normalizeIndex(index);
     final prefs = await SharedPreferences.getInstance();
     final previousCustomPath =
@@ -78,6 +101,7 @@ class AgentAvatarService {
     await prefs.setInt(storageKey, avatarIndex);
     await prefs.remove(customImagePathKey);
     final state = AgentAvatarState(presetIndex: avatarIndex);
+    _stateRevision++;
     _isLoaded = true;
     avatarStateNotifier.value = state;
     await _deleteManagedAvatar(previousCustomPath);
@@ -85,6 +109,7 @@ class AgentAvatarService {
   }
 
   static Future<AgentAvatarState> setCustomAvatarBytes(Uint8List bytes) async {
+    _stateRevision++;
     final prefs = await SharedPreferences.getInstance();
     final previousCustomPath =
         prefs.getString(customImagePathKey)?.trim() ??
@@ -99,6 +124,7 @@ class AgentAvatarService {
     );
     await prefs.setString(customImagePathKey, targetPath);
     await prefs.setInt(storageKey, state.presetIndex);
+    _stateRevision++;
     _isLoaded = true;
     avatarStateNotifier.value = state;
     if (previousCustomPath != targetPath) {

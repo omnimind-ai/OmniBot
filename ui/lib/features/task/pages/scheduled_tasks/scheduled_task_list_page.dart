@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/features/task/pages/scheduled_tasks/widgets/schedule_task_sheet.dart';
 import 'package:ui/models/scheduled_task.dart';
@@ -28,7 +31,6 @@ class _ScheduledTaskListPageState extends State<ScheduledTaskListPage> {
 
   late final PageController _pageController;
   int _currentTab = _scheduleTab;
-  double _tabSwitcherDragDelta = 0;
 
   List<ScheduledTask> _scheduledTasks = [];
   List<_AgentExactAlarmItem> _exactAlarms = [];
@@ -137,22 +139,12 @@ class _ScheduledTaskListPageState extends State<ScheduledTaskListPage> {
     );
   }
 
-  void _handleTabSwitcherDragEnd({double velocity = 0}) {
-    final shouldSwitchRight = (_tabSwitcherDragDelta + velocity * 0.015) > 0;
-    final shouldSwitch =
-        _tabSwitcherDragDelta.abs() > 14 || velocity.abs() > 250;
-    if (shouldSwitch) {
-      _switchTab(shouldSwitchRight ? _alarmTab : _scheduleTab);
-    }
-    _tabSwitcherDragDelta = 0;
-  }
-
   Future<void> _deleteScheduledTask(ScheduledTask task) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOmniGlassCardSheet<bool>(
       context: context,
       builder: (context) {
         final palette = context.omniPalette;
-        return AlertDialog(
+        return OmniGlassAlertDialog(
           backgroundColor: context.isDarkTheme ? palette.surfacePrimary : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -220,11 +212,11 @@ class _ScheduledTaskListPageState extends State<ScheduledTaskListPage> {
   }
 
   Future<void> _deleteExactAlarm(_AgentExactAlarmItem alarm) async {
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOmniGlassCardSheet<bool>(
       context: context,
       builder: (context) {
         final palette = context.omniPalette;
-        return AlertDialog(
+        return OmniGlassAlertDialog(
           backgroundColor: context.isDarkTheme ? palette.surfacePrimary : null,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(18),
@@ -402,149 +394,50 @@ class _ScheduledTaskListPageState extends State<ScheduledTaskListPage> {
         title: LegacyTextLocalizer.isEnglish ? 'Scheduled' : '定时',
         primary: true,
       ),
-      body: Column(
-        children: [
-          const SizedBox(height: 8),
-          _buildTabSwitcher(),
-          const SizedBox(height: 12),
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : PageView(
-                    controller: _pageController,
-                    onPageChanged: (index) {
-                      if (!mounted) return;
-                      setState(() {
-                        _currentTab = index;
-                      });
-                    },
-                    children: [_buildSchedulePage(), _buildAlarmPage()],
-                  ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTabSwitcher() {
-    final palette = context.omniPalette;
-    final isDark = context.isDarkTheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Builder(
-        builder: (sliderContext) => GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onHorizontalDragUpdate: (details) {
-            _tabSwitcherDragDelta += details.delta.dx;
-          },
-          onHorizontalDragEnd: (details) {
-            _handleTabSwitcherDragEnd(velocity: details.primaryVelocity ?? 0);
-          },
-          onTapUp: (details) {
-            final box = sliderContext.findRenderObject() as RenderBox?;
-            if (box == null || !box.hasSize) return;
-            final local = box.globalToLocal(details.globalPosition);
-            final targetTab = local.dx >= box.size.width / 2
-                ? _alarmTab
-                : _scheduleTab;
-            if (targetTab != _currentTab) {
-              performOmniSelectionHaptic();
-            }
-            _switchTab(targetTab);
-          },
-          child: Container(
-            height: 38,
-            padding: const EdgeInsets.all(3),
-            decoration: BoxDecoration(
-              color: palette.segmentTrack,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: palette.borderSubtle.withValues(
-                  alpha: isDark ? 0.55 : 0.7,
-                ),
-                width: 0.65,
-              ),
+      body: OmniContentWidth(
+        child: Column(
+          children: [
+            const SizedBox(height: 8),
+            _buildTabSwitcher(),
+            const SizedBox(height: 12),
+            Expanded(
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : PageView(
+                      controller: _pageController,
+                      onPageChanged: (index) {
+                        if (!mounted) return;
+                        setState(() {
+                          _currentTab = index;
+                        });
+                      },
+                      children: [_buildSchedulePage(), _buildAlarmPage()],
+                    ),
             ),
-            child: Stack(
-              children: [
-                AnimatedAlign(
-                  duration: const Duration(milliseconds: 200),
-                  curve: Curves.easeOutCubic,
-                  alignment: _currentTab == _scheduleTab
-                      ? Alignment.centerLeft
-                      : Alignment.centerRight,
-                  child: FractionallySizedBox(
-                    widthFactor: 0.5,
-                    child: Container(
-                      margin: const EdgeInsets.symmetric(horizontal: 1),
-                      decoration: BoxDecoration(
-                        color: palette.segmentThumb,
-                        borderRadius: BorderRadius.circular(9.5),
-                        border: Border.all(
-                          color: palette.borderSubtle.withValues(
-                            alpha: isDark ? 0.45 : 0.55,
-                          ),
-                          width: 0.5,
-                        ),
-                        boxShadow: [
-                          BoxShadow(
-                            color: palette.shadowColor.withValues(
-                              alpha: isDark ? 0.16 : 0.04,
-                            ),
-                            blurRadius: 3,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                Row(
-                  children: [
-                    _buildTabButton(
-                      label: LegacyTextLocalizer.isEnglish
-                          ? 'Scheduled Tasks'
-                          : '定时任务',
-                      tabIndex: _scheduleTab,
-                    ),
-                    _buildTabButton(
-                      label: LegacyTextLocalizer.isEnglish ? 'Alarms' : '闹钟列表',
-                      tabIndex: _alarmTab,
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildTabButton({required String label, required int tabIndex}) {
-    final selected = _currentTab == tabIndex;
-    final palette = context.omniPalette;
-
-    return Expanded(
-      child: Center(
-        child: AnimatedScale(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOutCubic,
-          scale: selected ? 1 : 0.97,
-          child: AnimatedDefaultTextStyle(
-            duration: const Duration(milliseconds: 180),
-            curve: Curves.easeOutCubic,
-            style: TextStyle(
-              color: selected ? palette.textPrimary : palette.textSecondary,
-              fontSize: 15,
-              fontWeight: selected ? FontWeight.w600 : FontWeight.w500,
-            ),
-            child: Text(label),
-          ),
+  Widget _buildTabSwitcher() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: OmniSegmentedSlider<int>(
+      value: _currentTab,
+      keyPrefix: 'scheduled-view',
+      options: [
+        OmniSegmentedOption(
+          value: _scheduleTab,
+          label: LegacyTextLocalizer.isEnglish ? 'Scheduled Tasks' : '定时任务',
         ),
-      ),
-    );
-  }
+        OmniSegmentedOption(
+          value: _alarmTab,
+          label: LegacyTextLocalizer.isEnglish ? 'Alarms' : '闹钟列表',
+        ),
+      ],
+      onChanged: _switchTab,
+    ),
+  );
 
   Widget _buildSchedulePage() {
     if (_scheduledTasks.isEmpty) {

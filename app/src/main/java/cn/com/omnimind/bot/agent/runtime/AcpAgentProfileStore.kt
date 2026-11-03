@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
 import com.google.gson.Gson
+import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
 import java.util.UUID
 
@@ -26,7 +27,6 @@ internal data class AcpAgentProfile(
     @Transient val officialRuntime: AcpOfficialRuntime? = null,
 ) {
     fun toPayload(
-        selected: Boolean = false,
         health: AcpAgentHealth = AcpAgentHealth()
     ): Map<String, Any?> {
         val runtime = officialRuntime
@@ -41,7 +41,6 @@ internal data class AcpAgentProfile(
             "enabled" to enabled,
             "builtIn" to builtIn,
             "source" to if (builtIn) "official" else "custom",
-            "selected" to selected,
             "configurationAvailable" to (id != NA_AGENT_ID || NaCloudEnvironment.developmentAvailable),
             "installed" to agentHealth.installed,
             "status" to agentHealth.status,
@@ -57,7 +56,8 @@ internal data class AcpAgentProfile(
                 negotiated = agentHealth.capabilities,
             ),
             "discoveryCommand" to runtime?.discoveryCommand,
-            "managedAdapter" to (runtime?.managedAdapterPackage != null)
+            "managedAdapter" to (runtime?.managedAdapterPackage != null),
+            "uninstallable" to (builtIn && runtime?.managedUninstallStrategy != null),
         )
     }
 
@@ -129,13 +129,14 @@ internal data class AcpOfficialRuntime(
     val managedAdapterPackages: List<String> = managedAdapterPackage
         ?.let { listOf(it) }
         .orEmpty(),
-    val requiresNativeBuildTools: Boolean = false,
     val managedAdapterHealthCommand: String? = null,
+    val validateBeforeConfigWrite: Boolean = false,
     val harnessAdapter: AcpHarnessAdapter = AcpHarnessAdapters.standard,
     val usesSharedProvider: Boolean = false,
     val terminalPackageId: String? = null,
     val managedInstallScriptPath: String? = null,
     val managedInstallCommand: String? = null,
+    val managedUninstallStrategy: ManagedAgentUninstallStrategy? = null,
     val preparationRevision: String? = null,
     val embedded: Boolean = false,
     /**
@@ -174,25 +175,74 @@ internal class AcpAgentProfileStore(context: Context) {
         )
     }
 
+    init {
+        // Retire the old UI-wide choice once. Conversation and session owners
+        // remain untouched; no replacement global default is created.
+        if (preferences.contains(LEGACY_SELECTED_PROFILE_KEY)) {
+            check(preferences.edit().remove(LEGACY_SELECTED_PROFILE_KEY).commit()) {
+                "Unable to remove the legacy global Agent selection."
+            }
+        }
+    }
+
+    val retiredAgentIds: Set<String> get() = catalog.retiredAgentIds
+
+    fun requireProfile(id: String): AcpAgentProfile {
+        val normalizedId = id.trim()
+        require(normalizedId.isNotEmpty()) { "ACP agentId is required." }
+        requireSupportedAgent(normalizedId)
+        return list().firstOrNull { it.id == normalizedId }
+            ?: throw IllegalArgumentException("Unknown ACP agent: $normalizedId")
+    }
+
+    fun catalogPayload(): Map<String, Any?> = linkedMapOf(
+        "retiredAgentIds" to retiredAgentIds.toList(),
+        "agents" to list().map { it.toPayload(health = health(it.id)) },
+    )
+
+    fun requireSupportedAgent(vararg agentIds: String?) {
+        val retired = agentIds.firstOrNull { it?.trim() in catalog.retiredAgentIds } ?: return
+        throw IllegalStateException(
+            "agent_retired: ACP agent ${retired.trim()} is no longer supported. " +
+                "History is still available; create a new conversation with another agent.",
+        )
+    }
+
+    /** Retire launch settings, never the durable owners or conversation history. */
+    @Synchronized
+    private fun migrateRetiredProfiles() {
+        val stored = readStoredProfiles()
+        val profiles = stored.filterNot { it.id in catalog.retiredAgentIds }
+        val health = readHealth()
+        val activeHealth = health.filterKeys { it !in catalog.retiredAgentIds }
+        val obsoleteInventory = preferences.all.keys.filter { key ->
+            key.startsWith("package_version:") && key.substringAfterLast(':') in catalog.retiredAgentIds
+        }
+        if (profiles.size == stored.size && health.size == activeHealth.size &&
+            obsoleteInventory.isEmpty()) return
+        val editor = preferences.edit()
+        if (profiles.size != stored.size) editor.putString(KEY_PROFILES, gson.toJson(profiles))
+        if (health.size != activeHealth.size) editor.putString(KEY_HEALTH, gson.toJson(activeHealth))
+        obsoleteInventory.forEach(editor::remove)
+        check(editor.commit()) { "Unable to retire removed ACP agents." }
+    }
+
     @Synchronized
     fun list(): List<AcpAgentProfile> {
         migrateLegacyXiaowanAliases()
+        migrateRetiredProfiles()
         val stored = readStoredProfiles()
             .mapNotNull(::normalize)
             .filterNot { it.id in catalog.retiredAgentIds }
         val storedById = stored.associateBy { it.id }
         val official = catalog.agents.map { definition ->
             val override = storedById[definition.id] ?: return@map definition
-            val migratedOfficialCommand =
-                definition.id == DEEPSEEK_HARNESS_AGENT_ID &&
-                    override.command == "dsh-acp"
             definition.copy(
-                command = if (migratedOfficialCommand) definition.command else override.command,
-                arguments = if (migratedOfficialCommand) definition.arguments else override.arguments,
+                command = override.command,
+                arguments = override.arguments,
                 environment = override.environment,
                 enabled = override.enabled,
                 officialRuntime = if (
-                    migratedOfficialCommand ||
                     (override.command == definition.command &&
                         override.arguments == definition.arguments)
                 ) {
@@ -208,20 +258,17 @@ internal class AcpAgentProfileStore(context: Context) {
         return official + custom
     }
 
-    fun selected(): AcpAgentProfile {
-        val profiles = list()
-        val selectedId = preferences.getString(KEY_SELECTED_PROFILE_ID, null)
-        return profiles.firstOrNull { it.id == selectedId && it.enabled }
-            ?: profiles.firstOrNull { it.enabled }
-            ?: profiles.first()
-    }
-
     @Synchronized
     fun bindSession(sessionId: String, agentId: String) {
         val normalizedSessionId = sessionId.trim()
         val normalizedAgentId = agentId.trim()
         if (normalizedSessionId.isEmpty() || normalizedAgentId.isEmpty()) return
         val bindings = sessionBindings().toMutableMap()
+        val existingOwner = bindings[normalizedSessionId]?.trim()?.takeIf(String::isNotEmpty)
+        require(existingOwner == null || existingOwner == normalizedAgentId) {
+            "agent_owner_conflict: ACP session $normalizedSessionId belongs to $existingOwner, not $normalizedAgentId."
+        }
+        if (existingOwner == normalizedAgentId) return
         bindings[normalizedSessionId] = normalizedAgentId
         preferences.edit().putString(KEY_SESSION_BINDINGS, gson.toJson(bindings)).apply()
     }
@@ -230,7 +277,6 @@ internal class AcpAgentProfileStore(context: Context) {
         migrateLegacyXiaowanAliases()
         return sessionBindings()[sessionId.trim()]
             ?.takeIf(String::isNotBlank)
-            ?.takeUnless { it in catalog.retiredAgentIds }
     }
 
     /** Embedded Agent settings share the existing session owner and deletion path. */
@@ -276,9 +322,8 @@ internal class AcpAgentProfileStore(context: Context) {
         val currentAgentId = bindings[key]
             ?.trim()
             ?.takeIf { it.isNotEmpty() }
-            ?.takeUnless { it in catalog.retiredAgentIds }
         // Existing ownership is immutable. Harness switching creates a new
-        // conversation; only retired aliases may be replaced by migration.
+        // conversation. Retirement must preserve the original owner as well.
         if (currentAgentId != null) return
         bindings[key] = normalizedAgentId
         preferences.edit().putString(KEY_CONVERSATION_BINDINGS, gson.toJson(bindings)).apply()
@@ -290,6 +335,7 @@ internal class AcpAgentProfileStore(context: Context) {
         val normalizedAgentId = agentId.trim()
         if (normalizedAgentId.isEmpty()) return
         val bindings = conversationBindings().toMutableMap()
+        requireSupportedAgent(bindings[conversationId.toString()])
         bindings[conversationId.toString()] = normalizedAgentId
         preferences.edit().putString(KEY_CONVERSATION_BINDINGS, gson.toJson(bindings)).apply()
     }
@@ -299,7 +345,6 @@ internal class AcpAgentProfileStore(context: Context) {
         migrateLegacyXiaowanAliases()
         return conversationBindings()[conversationId.toString()]
             ?.takeIf(String::isNotBlank)
-            ?.takeUnless { it in catalog.retiredAgentIds }
     }
 
     fun naOwnerForConversation(conversationId: Long): String? =
@@ -328,22 +373,11 @@ internal class AcpAgentProfileStore(context: Context) {
     }
 
     @Synchronized
-    fun select(id: String): AcpAgentProfile {
-        val selected = list().firstOrNull { it.id == id.trim() }
-            ?: throw IllegalArgumentException("Unknown ACP agent: $id")
-        require(selected.enabled) { "ACP agent ${selected.name} is disabled." }
-        preferences.edit().putString(KEY_SELECTED_PROFILE_ID, selected.id).apply()
-        return selected
-    }
-
-    @Synchronized
     fun save(raw: AcpAgentProfile): AcpAgentProfile {
         val current = list()
-        val selectedIdBeforeSave = preferences
-            .getString(KEY_SELECTED_PROFILE_ID, null)
-            ?: selected().id
         val requestedId = raw.id.trim()
         val targetId = requestedId.ifBlank { UUID.randomUUID().toString() }
+        requireSupportedAgent(targetId)
         val officialDefinition = catalog.definition(targetId)
         val candidate = if (officialDefinition != null) {
             officialDefinition.copy(
@@ -363,12 +397,6 @@ internal class AcpAgentProfileStore(context: Context) {
             .apply { add(profile) }
         writeProfiles(stored)
         clearHealth(profile.id)
-        if (!profile.enabled && selectedIdBeforeSave == profile.id) {
-            val fallback = list().firstOrNull { it.enabled && it.id != profile.id }
-            if (fallback != null) {
-                preferences.edit().putString(KEY_SELECTED_PROFILE_ID, fallback.id).apply()
-            }
-        }
         return list().first { it.id == profile.id }
     }
 
@@ -382,19 +410,9 @@ internal class AcpAgentProfileStore(context: Context) {
         val remaining = list().filterNot { it.builtIn || it.id == normalizedId }
         val officialOverrides = readStoredProfiles().filter { it.id in catalog.officialIds }
         writeProfiles(officialOverrides + remaining)
-        val remainingBindings = sessionBindings().filterValues { it != normalizedId }
-        val remainingConversationBindings =
-            conversationBindings().filterValues { it != normalizedId }
-        preferences.edit()
-            .putString(KEY_SESSION_BINDINGS, gson.toJson(remainingBindings))
-            .putString(KEY_CONVERSATION_BINDINGS, gson.toJson(remainingConversationBindings))
-            .apply()
+        // Directory removal does not reassign historical conversations or
+        // ACP sessions. Their former owner remains explicit and unavailable.
         clearHealth(normalizedId)
-        if (preferences.getString(KEY_SELECTED_PROFILE_ID, null) == normalizedId) {
-            // Xiaowan is the single built-in default entry.  Deleting a
-            // custom profile must not silently switch the user to Codex.
-            preferences.edit().putString(KEY_SELECTED_PROFILE_ID, XIAOWAN_AGENT_ID).apply()
-        }
     }
 
     @Synchronized
@@ -405,6 +423,29 @@ internal class AcpAgentProfileStore(context: Context) {
             saveHealth(agentId, health)
         }
         return health
+    }
+
+    // Package inventory is distribution-scoped and independent of ACP health.
+    // A handshake/availability refresh must not erase the last update check.
+    fun packageVersion(distributionId: String, agentId: String): ManagedAgentVersion? = runCatching {
+        val source = preferences.getString("package_version:$distributionId:$agentId", null)
+            ?: return null
+        val value = JsonParser.parseString(source).asJsonObject
+        fun string(key: String) = value.get(key)?.takeUnless { it.isJsonNull }?.asString
+        ManagedAgentVersion(
+            installedVersion = string("installedVersion"),
+            latestVersion = string("latestVersion"),
+            targetVersion = string("targetVersion"),
+            checkedAt = value.get("checkedAt")?.takeUnless { it.isJsonNull }?.asLong,
+            error = string("error"),
+            pinned = value.get("pinned")?.asBoolean == true,
+        )
+    }.getOrNull()
+
+    fun savePackageVersion(distributionId: String, agentId: String, version: ManagedAgentVersion) {
+        preferences.edit().putString(
+            "package_version:$distributionId:$agentId", gson.toJson(version.toPayload()),
+        ).apply()
     }
 
     @Synchronized
@@ -510,7 +551,6 @@ internal class AcpAgentProfileStore(context: Context) {
         val aliasIds = aliases.mapTo(linkedSetOf()) { it.id }
         writeProfiles(stored.filterNot { it.id in aliasIds })
 
-        val selectedId = preferences.getString(KEY_SELECTED_PROFILE_ID, null)
         val sessionBindings = sessionBindings().mapValues { (_, agentId) ->
             if (agentId in aliasIds) XIAOWAN_AGENT_ID else agentId
         }
@@ -519,9 +559,6 @@ internal class AcpAgentProfileStore(context: Context) {
         }
         val health = readHealth().filterKeys { it !in aliasIds }
         preferences.edit().apply {
-            if (selectedId in aliasIds) {
-                putString(KEY_SELECTED_PROFILE_ID, XIAOWAN_AGENT_ID)
-            }
             putString(KEY_SESSION_BINDINGS, gson.toJson(sessionBindings))
             putString(KEY_CONVERSATION_BINDINGS, gson.toJson(conversationBindings))
             putString(KEY_HEALTH, gson.toJson(health))
@@ -596,10 +633,8 @@ internal class AcpAgentProfileStore(context: Context) {
 
     companion object {
         const val CODEX_AGENT_ID = "codex-acp"
-        const val DEEPSEEK_HARNESS_AGENT_ID = "deepseek-harness-acp"
         const val KIMI_CODE_AGENT_ID = "kimi-code-acp"
         const val XIAOWAN_AGENT_ID = "xiaowan-acp"
-        const val DEFAULT_AGENT_ID = XIAOWAN_AGENT_ID
 
         /**
          * Compatibility accessor for callers that already have a resolved
@@ -622,12 +657,10 @@ internal class AcpAgentProfileStore(context: Context) {
         private const val PREFERENCES_NAME = "acp_agent_profiles"
         private const val CONFIG_HISTORY_PREFERENCES_NAME = "acp_agent_config_history"
         private const val KEY_PROFILES = "profiles"
-        private const val KEY_SELECTED_PROFILE_ID = "selected_profile_id"
+        private const val LEGACY_SELECTED_PROFILE_KEY = "selected_profile_id"
         private const val KEY_SESSION_BINDINGS = "session_bindings"
         private const val KEY_CONVERSATION_BINDINGS = "conversation_bindings"
         private const val KEY_HEALTH = "health"
-        private const val DEEPSEEK_HARNESS_CORDIS_PATH =
-            "/root/.dsh/omnibot-acp/cordis.yml"
         private val ENVIRONMENT_NAME = Regex("[A-Za-z_][A-Za-z0-9_]*")
     }
 }

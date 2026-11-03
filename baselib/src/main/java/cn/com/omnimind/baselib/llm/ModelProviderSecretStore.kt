@@ -13,6 +13,44 @@ internal data class ModelProviderSecrets(
     val customHeaders: Map<String, String> = emptyMap()
 )
 
+/**
+ * Compares stored values before creating an encrypted editor: rewriting the
+ * same credentials still encrypts and synchronously commits them. Compare the
+ * exact JSON, not decoded headers, so damaged or noncanonical data is repaired.
+ * A null target means the key must be absent, not just decode to an empty value.
+ * Returns true only when a write was committed and needs semantic verification.
+ */
+internal fun writeProviderSecretValuesIfChanged(
+    preferences: SharedPreferences,
+    apiKeyStorageKey: String,
+    headersStorageKey: String,
+    apiKey: String?,
+    headersJson: String?,
+): Boolean {
+    fun matches(key: String, expected: String?): Boolean = if (expected == null) {
+        !preferences.contains(key)
+    } else {
+        preferences.getString(key, null) == expected
+    }
+
+    if (matches(apiKeyStorageKey, apiKey) && matches(headersStorageKey, headersJson)) {
+        return false
+    }
+    val editor = preferences.edit()
+    if (apiKey == null) {
+        editor.remove(apiKeyStorageKey)
+    } else {
+        editor.putString(apiKeyStorageKey, apiKey)
+    }
+    if (headersJson == null) {
+        editor.remove(headersStorageKey)
+    } else {
+        editor.putString(headersStorageKey, headersJson)
+    }
+    check(editor.commit()) { "failed to store encrypted model-provider credentials" }
+    return true
+}
+
 internal interface ModelProviderSecretStore {
     fun isAvailable(): Boolean
 
@@ -83,18 +121,16 @@ internal class EncryptedModelProviderSecretStore(context: Context) : ModelProvid
         val headersStorageKey = "$PROFILE_HEADERS_PREFIX$encodedId"
         val apiKey = secrets.apiKey.trim()
         val headers = ProviderCustomHeaderUtils.sanitizeCustomHeaders(secrets.customHeaders)
-        val editor = preferences.edit()
-        if (apiKey.isEmpty()) {
-            editor.remove(apiKeyStorageKey)
-        } else {
-            editor.putString(apiKeyStorageKey, apiKey)
+        if (!writeProviderSecretValuesIfChanged(
+                preferences = preferences,
+                apiKeyStorageKey = apiKeyStorageKey,
+                headersStorageKey = headersStorageKey,
+                apiKey = apiKey.takeIf(String::isNotEmpty),
+                headersJson = headers.takeIf { it.isNotEmpty() }?.let { gson.toJson(it) },
+            )
+        ) {
+            return
         }
-        if (headers.isEmpty()) {
-            editor.remove(headersStorageKey)
-        } else {
-            editor.putString(headersStorageKey, gson.toJson(headers))
-        }
-        check(editor.commit()) { "failed to store encrypted model-provider credentials" }
         val expected = ModelProviderSecrets(apiKey, headers)
             .takeUnless { it.apiKey.isEmpty() && it.customHeaders.isEmpty() }
         check(readProfile(profileId) == expected) {

@@ -1,6 +1,6 @@
 ---
 name: install-acp-agent
-description: 在当前 Android 设备安装、升级或修复 DSH、Codex、Claude Code、Kimi、OpenCode 等 ACP 助手；用户提供安装命令、要求自主安装或反馈安装未完成时使用。
+description: 在当前 Android 设备安装、升级或修复 Codex、Claude Code、Kimi、OpenCode 等 ACP 助手；用户提供安装命令、要求自主安装或反馈安装未完成时使用。
 ---
 
 # 在本机安装 ACP 助手
@@ -16,7 +16,7 @@ description: 在当前 Android 设备安装、升级或修复 DSH、Codex、Clau
 ## 2. 核对官方安装说明
 
 读取目标项目当前官方 README、发布说明及 ACP adapter 文档，确认包名、维护者、版本、Node engines、CPU、musl/glibc 和认证方式。普通聊天 CLI 不一定支持 ACP；必须核对官方 ACP 启动方式，不猜测 --acp 参数。
-优先使用官方安装器或包管理器。若官方不支持当前环境，说明具体不兼容项，不伪造兼容成功。DSH 的运行时、ACP profile 和 Cordis 插件是不同层级；需要插件时读取实际安装版本自带的 README，不将其解释为 OmniFlow 函数。
+优先使用官方安装器或包管理器。若官方不支持当前环境，说明具体不兼容项，不伪造兼容成功。
 完成条件：有可追溯官方来源和适合当前设备的安装命令。
 
 ## 3. 分步安装并诊断
@@ -35,5 +35,5 @@ description: 在当前 Android 设备安装、升级或修复 DSH、Codex、Clau
 ## 5. 验证后报告
 
 依次验证实际版本、官方 ACP initialize、App 内真实对话及一次无副作用工具调用。复用 App 的现有 Conversation → Session → Turn 生命周期，不建立第二套 Agent loop。
-退出并重新打开目标助手，确认启动配置和用户文件保留，重复同一操作。DSH 持久插件必须使用上游支持的 profile/持久机制；动态 Cordis 定义不能当作重启后仍可用。
+退出并重新打开目标助手，确认启动配置和用户文件保留，重复同一操作。
 分别报告“依赖已安装”“ACP 握手通过”“App 对话/工具通过”“重启通过”。未执行、失败和待真机验证明确列出；版本输出或模拟器成功不能替代真机验收。

@@ -74,7 +74,7 @@ a separate Agent allowlist.
 | Agent | Shared ChatGPT OAuth Provider |
 | --- | --- |
 | Xiaowan | Supported through the native model client. |
-| Codex, OpenCode, Kimi, DeepSeek Harness (DSH) | Supported through the native relay and their Responses custom-provider adapters. |
+| Codex, OpenCode, Kimi | Supported through the native relay and their Responses custom-provider adapters. |
 | Claude Code | Unsupported: its Messages protocol is incompatible with this Responses route. Select a compatible provider or another Agent. |
 | Custom ACP Agent | Requires a shared-provider adapter that supports this Responses route; an arbitrary launch command is insufficient. |
 | Remote PC Bridge | Manages authentication on the remote computer; it cannot use the Android loopback relay. |

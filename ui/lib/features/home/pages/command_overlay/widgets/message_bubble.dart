@@ -1,3 +1,4 @@
+import 'package:ui/widgets/navigation/page_route.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -22,6 +23,7 @@ import '../../../../../theme/theme_context.dart';
 import '../../../../../widgets/streaming_text.dart';
 import 'thinking_dots_indicator.dart';
 import 'na_attachment_preview.dart';
+import 'history_payload_attachments.dart';
 import 'cards/card_widget_factory.dart';
 
 import 'package:flutter_svg/flutter_svg.dart';
@@ -205,7 +207,13 @@ class MessageBubble extends StatelessWidget {
         return _buildTextMessage(context, isUserMessage);
 
       case 2: // 卡片消息
-        return _buildCardMessage(context);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildCardMessage(context),
+            HistoryPayloadAttachments(message: message),
+          ],
+        );
 
       default:
         return _buildTextMessage(context, isUserMessage);
@@ -222,7 +230,7 @@ class MessageBubble extends StatelessWidget {
       // 用户消息：整块气泡长按触发快捷操作。
       return LayoutBuilder(
         builder: (context, constraints) {
-          final fallbackMaxWidth = MediaQuery.of(context).size.width * 0.75;
+          final fallbackMaxWidth = MediaQuery.sizeOf(context).width * 0.75;
           final availableWidth = constraints.maxWidth.isFinite
               ? constraints.maxWidth
               : fallbackMaxWidth;
@@ -338,13 +346,16 @@ class MessageBubble extends StatelessWidget {
       spacing: 8,
       runSpacing: 8,
       children: attachments.map((item) {
+        if (item['historyPayloadOffloaded'] == true) {
+          return HistoryPayloadAttachment(attachment: item);
+        }
         if (item['source'] == 'na-cloud') {
           return GestureDetector(
             onTap: item['deleted'] == true
                 ? null
                 : () {
                     Navigator.of(context).push(
-                      MaterialPageRoute<void>(
+                      OmniPageRoute<void>(
                         builder: (_) => CodexRemoteFilePreviewPage(
                           agentId: 'na-cloud',
                           sessionId: item['sessionId'] as String?,
@@ -996,7 +1007,7 @@ class MessageBubble extends StatelessWidget {
       ),
       textAlign: TextAlign.left,
     );
-    if (onEditTap == null) {
+    if (onEditTap == null || message.isHistoryPayloadOffloaded) {
       return textWidget;
     }
     final underlineColor = _resolvedUserPrimaryTextColor(context)
@@ -1291,7 +1302,10 @@ class MessageBubble extends StatelessWidget {
         .toString()
         .trim();
     final retryable = message.content?['agentRetryable'] == true;
-    final showRetryButton = retryable && onRetryAgentMessage != null;
+    final showRetryButton =
+        retryable &&
+        !message.isHistoryPayloadOffloaded &&
+        onRetryAgentMessage != null;
     final showErrorText = errorText.isNotEmpty && errorText != text.trim();
     if (!showErrorText && !showRetryButton) {
       return null;

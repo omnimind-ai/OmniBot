@@ -69,7 +69,7 @@ internal class RemoteCodexAppServerSession(
                     .associate { (key, value) -> key.toString() to value }
             }
             sendNotification("initialized", null)
-            onServerMessage(
+            emitServerMessage(
                 mapOf(
                     "method" to "codex/connected",
                     "params" to mapOf("clientVersion" to clientVersion),
@@ -175,7 +175,7 @@ internal class RemoteCodexAppServerSession(
             )
         }
         pending.clear()
-        onServerMessage(
+        emitServerMessage(
             mapOf(
                 "method" to "codex/disconnected",
                 "_remoteConnectionToken" to connectionToken,
@@ -190,7 +190,7 @@ internal class RemoteCodexAppServerSession(
             jsonElementToMethodValue(element) as? Map<String, Any?>
                 ?: throw IllegalArgumentException("JSONL root is not an object")
         } catch (error: Throwable) {
-            onServerMessage(
+            emitServerMessage(
                 mapOf(
                     "method" to "codex/parseError",
                     "params" to mapOf(
@@ -208,7 +208,12 @@ internal class RemoteCodexAppServerSession(
             pending.remove(responseId)?.complete(message)
             return
         }
-        onServerMessage(message)
+        emitServerMessage(message)
+    }
+
+    /** Preserve the existing connection identity on every callback, not only exit. */
+    private suspend fun emitServerMessage(message: Map<String, Any?>) {
+        onServerMessage(message + ("_remoteConnectionToken" to connectionToken))
     }
 
     private suspend fun writeJsonLine(message: Map<String, Any?>) {

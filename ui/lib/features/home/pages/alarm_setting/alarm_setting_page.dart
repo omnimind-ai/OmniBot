@@ -1,4 +1,6 @@
 import 'package:file_picker/file_picker.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
@@ -18,7 +20,8 @@ class AlarmSettingPage extends StatefulWidget {
   State<AlarmSettingPage> createState() => _AlarmSettingPageState();
 }
 
-class _AlarmSettingPageState extends State<AlarmSettingPage> {
+class _AlarmSettingPageState extends State<AlarmSettingPage>
+    with FlClashPageLoadMixin {
   static const String _sourceDefault = 'default';
   static const String _sourceLocalMp3 = 'local_mp3';
   static const String _sourceRemoteMp3 = 'remote_mp3_url';
@@ -43,8 +46,9 @@ class _AlarmSettingPageState extends State<AlarmSettingPage> {
   }
 
   Future<void> _loadAlarmSettings() async {
+    if (!await waitForPageReady() || !mounted) return;
     final payload = await AssistsMessageService.getAlarmSettings();
-    if (!mounted) return;
+    if (!await waitForPageReady() || !mounted) return;
 
     setState(() {
       _source = (payload['source'] ?? _sourceDefault).toString();
@@ -152,55 +156,68 @@ class _AlarmSettingPageState extends State<AlarmSettingPage> {
         title: context.l10n.settingsAlarmTitle,
         primary: true,
       ),
-      body: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : SafeArea(
-              top: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    SettingsSectionTitle(
-                      label: context.l10n.alarmRingtoneSource,
-                    ),
-                    _buildSourceCard(),
-                    if (_source == _sourceLocalMp3) ...[
-                      const SizedBox(height: 20),
-                      SettingsSectionTitle(label: context.l10n.alarmLocalFile),
-                      _buildLocalFileCard(),
-                    ],
-                    if (_source == _sourceRemoteMp3) ...[
-                      const SizedBox(height: 20),
-                      SettingsSectionTitle(label: context.trLegacy('远程地址')),
-                      _buildRemoteUrlCard(),
-                    ],
-                    const Spacer(),
-                    SizedBox(
-                      width: double.infinity,
-                      child: FilledButton(
-                        onPressed: _saving ? null : _saveSettings,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: palette.accentPrimary,
-                          foregroundColor: Theme.of(context)
-                              .colorScheme
-                              .onPrimary,
-                          minimumSize: const Size.fromHeight(48),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(14),
-                          ),
-                        ),
-                        child: Text(
-                          _saving
-                              ? context.trLegacy('保存中...')
-                              : context.trLegacy('保存'),
+      body: OmniContentWidth(
+        child: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(22, 12, 22, 24),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: ListView(
+                          padding: EdgeInsets.zero,
+                          children: [
+                            SettingsSectionTitle(
+                              label: context.l10n.alarmRingtoneSource,
+                            ),
+                            _buildSourceCard(),
+                            if (_source == _sourceLocalMp3) ...[
+                              const SizedBox(height: 20),
+                              SettingsSectionTitle(
+                                label: context.l10n.alarmLocalFile,
+                              ),
+                              _buildLocalFileCard(),
+                            ],
+                            if (_source == _sourceRemoteMp3) ...[
+                              const SizedBox(height: 20),
+                              SettingsSectionTitle(
+                                label: context.trLegacy('远程地址'),
+                              ),
+                              _buildRemoteUrlCard(),
+                            ],
+                          ],
                         ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: _saving ? null : _saveSettings,
+                          style: FilledButton.styleFrom(
+                            backgroundColor: palette.accentPrimary,
+                            foregroundColor: Theme.of(context)
+                                .colorScheme
+                                .onPrimary,
+                            minimumSize: const Size.fromHeight(48),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(14),
+                            ),
+                          ),
+                          child: Text(
+                            _saving
+                                ? context.trLegacy('保存中...')
+                                : context.trLegacy('保存'),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
+      ),
     );
   }
 

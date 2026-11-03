@@ -8,6 +8,7 @@ class PermissionRequestTest {
     @Test
     fun sensitivePermissionDisclosuresCoverExistingAndNewCapabilities() {
         val permissions = listOf(
+            Manifest.permission.ACCESS_LOCAL_NETWORK,
             Manifest.permission.BLUETOOTH_CONNECT,
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.RECORD_AUDIO,

@@ -76,6 +76,7 @@ export interface BrowserSnapshot {
 }
 
 export interface BootstrapPayload {
+  retiredAgentIds?: string[];
   agentProfiles?: AgentProfile[];
   workspace?: {
     workspace?: WorkspaceInfo | null;

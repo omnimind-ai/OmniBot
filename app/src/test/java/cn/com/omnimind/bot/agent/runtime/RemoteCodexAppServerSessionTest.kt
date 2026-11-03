@@ -6,9 +6,35 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Test
 
 class RemoteCodexAppServerSessionTest {
+    @Test
+    fun `every callback retains its transport owner without putting host metadata on the wire`() = runBlocking {
+        val callbacks = mutableListOf<Map<String, Any?>>()
+        val received = CompletableDeferred<Unit>()
+        val firstConnection = RecordingConnection()
+        val first = RemoteCodexAppServerSession(this, { message ->
+            callbacks += message
+            if (message["method"] == "session/update") received.complete(Unit)
+        }, { firstConnection })
+        first.start("test")
+        val second = RemoteCodexAppServerSession(this, {}, { RecordingConnection() })
+        second.start("test")
+        // A delayed callback must retain the first connection's identity, even
+        // when the peer supplies a forged host-only token in its JSON frame.
+        firstConnection.emit("""{"jsonrpc":"2.0","method":"session/update","_remoteConnectionToken":"forged","params":{"sessionId":"same-session","update":{"sessionUpdate":"agent_message_chunk"}}}""")
+        withTimeout(1_000) { received.await() }
+        assertNotEquals(first.connectionToken, second.connectionToken)
+        assertTrue(callbacks.isNotEmpty())
+        assertTrue(callbacks.all { it["_remoteConnectionToken"] == first.connectionToken })
+        assertFalse(firstConnection.writes.any { it.contains("_remoteConnectionToken") })
+        first.disconnect()
+        second.disconnect()
+    }
+
     @Test
     fun `transport terminal bypasses a blocked inbound event`() = runBlocking {
         val eventStarted = CompletableDeferred<Unit>()
@@ -84,6 +110,8 @@ class RemoteCodexAppServerSessionTest {
                 onStdoutLine("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}")
             }
         }
+
+        suspend fun emit(line: String) = onStdoutLine(line)
 
         override suspend fun close() = Unit
     }

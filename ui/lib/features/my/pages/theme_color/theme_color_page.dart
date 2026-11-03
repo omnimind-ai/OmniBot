@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
@@ -15,12 +16,14 @@ class ThemeColorPage extends StatelessWidget {
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(title: context.l10n.themeModeTitle, primary: true),
-      body: ListView(
-        padding: edgeToEdgeScrollPadding(
-          context,
-          const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      body: OmniContentWidth(
+        child: ListView(
+          padding: edgeToEdgeScrollPadding(
+            context,
+            const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          ),
+          children: [const ThemeModeSettingCard()],
         ),
-        children: [const ThemeModeSettingCard()],
       ),
     );
   }

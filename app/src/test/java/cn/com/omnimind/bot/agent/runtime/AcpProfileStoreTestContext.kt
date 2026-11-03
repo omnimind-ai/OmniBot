@@ -76,6 +76,7 @@ private fun filePreferences(file: File): SharedPreferences {
             "getString" -> read()[call.getArgument<String>(0)] as? String ?: call.getArgument<String?>(1)
             "getBoolean" -> read()[call.getArgument<String>(0)] as? Boolean ?: call.getArgument<Boolean>(1)
             "getAll" -> read().toMap()
+            "contains" -> read().containsKey(call.getArgument<String>(0))
             "edit" -> editor()
             else -> error("Unexpected preferences call: ${call.method.name}")
         }

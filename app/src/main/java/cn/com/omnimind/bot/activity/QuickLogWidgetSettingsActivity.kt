@@ -42,7 +42,6 @@ import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.quicklog.QuickLogService
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetSettings
-import cn.com.omnimind.bot.util.PredictiveBackGate
 
 class QuickLogWidgetSettingsActivity : ComponentActivity() {
     override fun attachBaseContext(newBase: Context?) {
@@ -53,7 +52,6 @@ class QuickLogWidgetSettingsActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        PredictiveBackGate.install(this)
         window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
         val service = QuickLogService(this)
         setContent {

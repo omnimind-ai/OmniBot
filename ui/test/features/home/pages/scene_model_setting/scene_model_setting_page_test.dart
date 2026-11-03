@@ -333,7 +333,12 @@ void main() {
       ],
     );
     final loader = Completer<ModelsDevCatalog>();
+    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(pathProvider, (_) async => null);
     addTearDown(() {
+      messenger.setMockMethodCallHandler(pathProvider, null);
       if (!loader.isCompleted) {
         loader.complete(const ModelsDevCatalog(providers: {}));
       }

@@ -1,10 +1,13 @@
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher_string.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/authorize/authorize_page_args.dart';
 import 'package:ui/services/special_permission.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:ui/utils/ui.dart';
 
 class OmnibotResourceMetadata {
   final String? uri;
@@ -163,7 +166,12 @@ class OmnibotResourceService {
     );
   }
 
-  static Future<void> openFilePath(
+  static bool usesNativeHtmlPreview(String previewKind) =>
+      !kIsWeb &&
+      defaultTargetPlatform == TargetPlatform.android &&
+      previewKind == 'html';
+
+  static Future<bool> openFilePath(
     String path, {
     String? uri,
     String? title,
@@ -174,7 +182,7 @@ class OmnibotResourceService {
   }) async {
     await ensureWorkspacePathsLoaded();
     if (!await _ensureResourceAccess(path: path, uri: uri)) {
-      return;
+      return false;
     }
     final metadata = describePath(
       path,
@@ -184,6 +192,33 @@ class OmnibotResourceService {
       previewKind: previewKind,
       mimeType: mimeType,
     );
+
+    if (usesNativeHtmlPreview(metadata.previewKind)) {
+      try {
+        final opened = await _fileChannel.invokeMethod<bool>(
+          'openHtmlPreview',
+          <String, dynamic>{'sourcePath': path, 'title': metadata.title},
+        );
+        if (opened != true) {
+          throw PlatformException(
+            code: 'html-preview-unavailable',
+            message: 'The native HTML preview could not be opened.',
+          );
+        }
+        return true;
+      } catch (error) {
+        final detail = error is PlatformException
+            ? error.message ?? error.code
+            : error.toString();
+        showToast(
+          LegacyTextLocalizer.isEnglish
+              ? 'Could not open HTML preview: $detail'
+              : 'HTML 预览打开失败：$detail',
+          type: ToastType.error,
+        );
+        return false;
+      }
+    }
 
     GoRouterManager.push(
       '/home/omnibot_artifact_preview',
@@ -198,6 +233,7 @@ class OmnibotResourceService {
         'startInEditMode': startInEditMode,
       },
     );
+    return true;
   }
 
   static Future<void> openWorkspace({

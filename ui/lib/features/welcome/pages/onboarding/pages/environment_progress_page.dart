@@ -4,23 +4,15 @@ import 'package:ui/theme/theme_context.dart';
 
 import '../onboarding_environment_controller.dart';
 import '../onboarding_l10n.dart';
-import '../widgets/onboarding_common.dart';
-import '../widgets/onboarding_footer.dart';
 
 /// Transient page shown while the local environment is being installed.
 class OnboardingEnvironmentProgressPage extends StatelessWidget {
   const OnboardingEnvironmentProgressPage({
     super.key,
     required this.controller,
-    required this.onBack,
-    required this.onContinue,
-    required this.onRetry,
   });
 
   final OnboardingEnvironmentController controller;
-  final VoidCallback onBack;
-  final VoidCallback onContinue;
-  final VoidCallback onRetry;
 
   @override
   Widget build(BuildContext context) {
@@ -137,36 +129,9 @@ class OnboardingEnvironmentProgressPage extends StatelessWidget {
                               'Setup time depends on your connection and selected tools. Keep the app open.',
                             ),
                       textAlign: TextAlign.center,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: palette.textTertiary,
-                        height: 1.5,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: palette.textTertiary, height: 1.5),
                     ),
-                    if (failed) ...[
-                      const SizedBox(height: 28),
-                      OnboardingPrimaryButton(
-                        buttonKey: const ValueKey('tutorial-environment-retry'),
-                        label: onbTr(context, '重新配置', 'Try setup again'),
-                        icon: LucideIcons.rotateCw,
-                        onPressed: onRetry,
-                      ),
-                    ] else if (controller.isBusy) ...[
-                      const SizedBox(height: 28),
-                      TextButton.icon(
-                        key: const ValueKey('tutorial-environment-cancel'),
-                        onPressed: controller.cancelSetup,
-                        icon: const Icon(LucideIcons.x),
-                        label: Text(
-                          onbTr(
-                            context,
-                            '取消并保留下载进度',
-                            'Cancel and keep download progress',
-                          ),
-                        ),
-                      ),
-                    ],
-                    const SizedBox(height: 10),
-                    _buildNavigation(context, success: success, failed: failed),
                   ],
                 ),
               ),
@@ -228,40 +193,6 @@ class OnboardingEnvironmentProgressPage extends StatelessWidget {
     }
     return value;
   }
-
-  Widget _buildNavigation(
-    BuildContext context, {
-    required bool success,
-    required bool failed,
-  }) {
-    final canLeave = !controller.isBusy;
-    final canContinue = canLeave && (success || failed);
-    return SizedBox(
-      key: const ValueKey('tutorial-environment-progress-navigation'),
-      height: 58,
-      child: Row(
-        children: [
-          OnboardingArrowButton(
-            buttonKey: const ValueKey('tutorial-bottom-back'),
-            icon: LucideIcons.arrowLeft,
-            tooltip: onbTr(context, '上一步', 'Previous'),
-            onPressed: canLeave ? onBack : null,
-          ),
-          const Spacer(),
-          OnboardingArrowButton(
-            buttonKey: failed
-                ? const ValueKey('tutorial-skip-environment-progress')
-                : const ValueKey('tutorial-environment-continue'),
-            icon: LucideIcons.arrowRight,
-            tooltip: failed
-                ? onbTr(context, '暂不配置环境，先设置模型', 'Set up the environment later')
-                : onbTr(context, '继续配置模型', 'Continue to models'),
-            onPressed: canContinue ? onContinue : null,
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 /// Cross-fades when [text] changes so stage updates feel smooth.
@@ -316,8 +247,8 @@ class _MilestoneStepper extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final width = constraints.maxWidth;
-        return SizedBox(
-          height: 58,
+        return ConstrainedBox(
+          constraints: const BoxConstraints(minHeight: 58),
           child: Stack(
             children: [
               Positioned(

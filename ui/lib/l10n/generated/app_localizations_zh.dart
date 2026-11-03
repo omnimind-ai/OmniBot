@@ -169,13 +169,6 @@ class AppLocalizationsZh extends AppLocalizations {
       '开启后，聊天页键盘回车为换行；关闭后，回车直接发送';
 
   @override
-  String get settingsPredictiveBackTitle => '预测性返回手势';
-
-  @override
-  String get settingsPredictiveBackSubtitle =>
-      '开启后，返回手势可跟随手指预览上一页面或桌面；关闭则保持旧版返回行为';
-
-  @override
   String get settingsHabitualHandTitle => '惯用手';
 
   @override
@@ -1460,10 +1453,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get alpineOpenCode => 'OpenCode CLI（内置 ACP 支持）';
 
   @override
-  String get alpineDeepSeekHarness => 'DeepSeek Harness（dsh）官方 ACP 运行组件';
+  String get alpineKimiCode => 'Kimi Code 官方 CLI 与本地 Web 界面';
 
   @override
-  String get alpineKimiCode => 'Kimi Code 官方 CLI 与本地 Web 界面';
+  String get alpinePi => 'Pi Agent 与 MCP 工具支持';
 
   @override
   String get alpineSshClient => 'SSH 客户端';

@@ -4,7 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_switch/flutter_switch.dart';
+import 'package:ui/widgets/settings_ui.dart';
 import 'package:ui/features/home/pages/settings/experience_misc_setting_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/storage_service.dart';
@@ -32,48 +32,39 @@ void main() {
         .setMockMethodCallHandler(assistChannel, null);
   });
 
-  testWidgets('misc entries use the expected home and predictive back icons', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1;
-    tester.view.physicalSize = const Size(800, 1600);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
+  testWidgets(
+    'misc settings retain home entry and remove the retired back toggle',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(800, 1600);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
 
-    await tester.pumpWidget(
-      ProviderScope(
-        child: MaterialApp(
-          locale: const Locale('zh'),
-          theme: AppTheme.lightTheme,
-          localizationsDelegates: AppLocalizations.localizationsDelegates,
-          supportedLocales: AppLocalizations.supportedLocales,
-          home: const ExperienceMiscSettingPage(),
+      await tester.pumpWidget(
+        ProviderScope(
+          child: MaterialApp(
+            locale: const Locale('zh'),
+            theme: AppTheme.lightTheme,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: const ExperienceMiscSettingPage(),
+          ),
         ),
-      ),
-    );
-    await tester.pumpAndSettle();
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.text('首页设置'), findsOneWidget);
-    expect(find.byIcon(LucideIcons.house), findsOneWidget);
+      expect(find.text('首页设置'), findsOneWidget);
+      expect(find.byIcon(LucideIcons.house), findsOneWidget);
 
-    final predictiveBackTitle = find.text('预测性返回手势');
-    await tester.scrollUntilVisible(
-      predictiveBackTitle,
-      400,
-      scrollable: find.byType(Scrollable).first,
-    );
-    final predictiveBackTile = find.ancestor(
-      of: predictiveBackTitle,
-      matching: find.byType(InkWell),
-    );
-    expect(
-      find.descendant(
-        of: predictiveBackTile,
-        matching: find.byIcon(Icons.swipe_left_rounded),
-      ),
-      findsOneWidget,
-    );
-  });
+      await tester.scrollUntilVisible(
+        find.text('振动反馈'),
+        400,
+        scrollable: find.byType(Scrollable).first,
+      );
+      expect(find.text('预测性返回手势'), findsNothing);
+      expect(find.byIcon(Icons.swipe_left_rounded), findsNothing);
+    },
+  );
 
   testWidgets('recent seven-day conversations switch defaults to disabled', (
     tester,
@@ -101,17 +92,17 @@ void main() {
     final tile = find.ancestor(of: title, matching: find.byType(InkWell));
     final toggle = find.descendant(
       of: tile,
-      matching: find.byType(FlutterSwitch),
+      matching: find.byType(OmniSettingsSwitch),
     );
-    expect(tester.widget<FlutterSwitch>(toggle).value, isFalse);
+    expect(tester.widget<OmniSettingsSwitch>(toggle).value, isFalse);
 
-    tester.widget<FlutterSwitch>(toggle).onToggle(true);
+    await tester.tap(toggle);
     await tester.pumpAndSettle();
 
     expect(
       StorageService.getBool(StorageService.kRecentConversationsOnlyEnabledKey),
       isTrue,
     );
-    expect(tester.widget<FlutterSwitch>(toggle).value, isTrue);
+    expect(tester.widget<OmniSettingsSwitch>(toggle).value, isTrue);
   });
 }

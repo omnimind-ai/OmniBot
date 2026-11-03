@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Explicit variants also support startup before the stored UI mode applies. -->
+    <color name="omni_brand_primary_light">#2C7FEB</color>
+    <color name="omni_brand_primary_dark">#98AD90</color>
+    <color name="omni_brand_surface_light">#E6EDFF</color>
+    <color name="omni_brand_surface_dark">#2E382D</color>
+
+    <color name="omni_brand_primary">@color/omni_brand_primary_light</color>
+    <color name="omni_brand_surface">@color/omni_brand_surface_light</color>
+</resources>

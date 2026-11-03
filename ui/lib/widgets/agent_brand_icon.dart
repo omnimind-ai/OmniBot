@@ -6,7 +6,7 @@ import 'package:ui/widgets/agent_avatar.dart';
 
 /// ACP Agent 品牌图标。
 ///
-/// 已知的内置 Agent（Kimi Code / DeepSeek Harness / Codex / Claude Code / OpenCode）渲染各自来自 Lobe Icons
+/// 已知 Agent（包括历史会话中的已停用 Agent）渲染各自来自 Lobe Icons
 /// (https://icons.lobehub.com) 的原始品牌 SVG。小万沿用可编辑的 AgentAvatarService，
 /// 让头像选择器同时影响 ACP 顶部、运行头和旧兼容卡片；未识别的自定义 Agent
 /// 回退到默认机器人图标 [Icons.smart_toy_outlined]。
@@ -17,9 +17,10 @@ class AgentBrandIcon extends StatelessWidget {
     this.size = 20,
     this.fallbackColor,
     this.tint,
+    this.avatarBackgroundColor,
   });
 
-  /// [AcpAgentProfile.id]（例如 `codex-acp`、`deepseek-harness-acp`）。
+  /// [AcpAgentProfile.id]（例如 `codex-acp`、`kimi-code-acp`）。
   final String agentId;
 
   /// 图标绘制尺寸。
@@ -30,6 +31,10 @@ class AgentBrandIcon extends StatelessWidget {
 
   /// 可选的统一着色。菜单等需要表达选中态时使用；未提供时保留品牌色。
   final Color? tint;
+
+  /// Optional solid backing for the default Xiaowan artwork, e.g. home rows.
+  /// Custom images retain their original colors.
+  final Color? avatarBackgroundColor;
 
   static const Map<String, _AgentBrand> _brands = {
     'xiaowan-acp': _AgentBrand(
@@ -47,6 +52,7 @@ class AgentBrandIcon extends StatelessWidget {
       brandColor: Color(0xFFD97757),
     ),
     'opencode-acp': _AgentBrand('assets/agents/opencode.svg'),
+    // Historical conversations retain the retired Agent's visual identity.
     'deepseek-harness-acp': _AgentBrand(
       'assets/provider_icons/deepseek.svg',
       brandColor: Color(0xFF4D6BFE),
@@ -65,6 +71,7 @@ class AgentBrandIcon extends StatelessWidget {
       'kimi' || 'kimi-code' || 'kimi-code-acp' => 'kimi-code-acp',
       'claude' || 'claude-code' || 'claude-code-acp' => 'claude-code-acp',
       'opencode' || 'open-code' || 'opencode-acp' => 'opencode-acp',
+      'pi' || 'pi-acp' || 'omnibot-pi-acp' => 'pi-acp',
       'deepseek' ||
       'deepseek-acp' ||
       'deepseek-harness' ||
@@ -82,6 +89,7 @@ class AgentBrandIcon extends StatelessWidget {
   /// such as Codex. Unknown custom Harnesses still use the generic host badge.
   static bool hasKnownBrand(String agentId) {
     return normalizeAgentId(agentId) == 'na-cloud' ||
+        normalizeAgentId(agentId) == 'pi-acp' ||
         _brands.containsKey(normalizeAgentId(agentId));
   }
 
@@ -90,12 +98,13 @@ class AgentBrandIcon extends StatelessWidget {
     final palette = context.omniPalette;
     final normalizedAgentId = normalizeAgentId(agentId);
     final brand = _brands[normalizedAgentId];
-    if (normalizedAgentId == 'na-cloud') {
+    if (normalizedAgentId == 'na-cloud' || normalizedAgentId == 'pi-acp') {
+      final isPi = normalizedAgentId == 'pi-acp';
       return Semantics(
-        label: 'Na',
+        label: isPi ? 'Pi' : 'Na',
         excludeSemantics: true,
         child: Text(
-          'N',
+          isPi ? 'π' : 'N',
           style: TextStyle(
             fontSize: size,
             height: 1,
@@ -106,7 +115,10 @@ class AgentBrandIcon extends StatelessWidget {
       );
     }
     if (brand?.presentation == _AgentBrandPresentation.avatar) {
-      return _XiaowanAgentAvatar(size: size);
+      return _XiaowanAgentAvatar(
+        size: size,
+        backgroundColor: avatarBackgroundColor,
+      );
     }
     if (brand == null) {
       return Icon(
@@ -131,9 +143,10 @@ class AgentBrandIcon extends StatelessWidget {
 /// brands. Keep the same state source as the existing picker so every
 /// presentation layer updates through the notifier without a second setting.
 class _XiaowanAgentAvatar extends StatefulWidget {
-  const _XiaowanAgentAvatar({required this.size});
+  const _XiaowanAgentAvatar({required this.size, this.backgroundColor});
 
   final double size;
+  final Color? backgroundColor;
 
   @override
   State<_XiaowanAgentAvatar> createState() => _XiaowanAgentAvatarState();
@@ -155,6 +168,7 @@ class _XiaowanAgentAvatarState extends State<_XiaowanAgentAvatar> {
           state: state,
           size: widget.size,
           showBorder: false,
+          backgroundColor: widget.backgroundColor,
         );
       },
     );

@@ -1,9 +1,12 @@
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/widgets/conversation_model_selector.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:ui/widgets/glass_popup.dart';
+import 'package:ui/widgets/flclash/popup.dart';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/services/agent_runtime_service.dart';
@@ -33,6 +36,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   late final TextEditingController _commandController;
   late final TextEditingController _argumentsController;
   late final TextEditingController _environmentController;
+  final _sharedModelContentKey = GlobalKey();
 
   AcpAgentProfile? _agent;
   String _kind = '';
@@ -47,8 +51,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
   bool _naDevelopment = false;
   bool _naDevelopmentAvailable = false;
   bool _naSignedIn = false;
-  String? _reasoningEffort;
-  String? _permissionMode;
   bool _sharedModelLoading = true;
   bool _sharedModelSaving = false;
   List<ModelProviderProfileSummary> _providerProfiles = const [];
@@ -160,10 +162,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     _configPath =
         payload['configPath']?.toString() ?? payload['path']?.toString() ?? '';
     _authPath = payload['authPath']?.toString() ?? '';
-    _reasoningEffort = payload['reasoningEffort']?.toString().trim();
-    _permissionMode = payload['permissionMode']?.toString().trim();
-    if (_reasoningEffort?.isEmpty == true) _reasoningEffort = null;
-    if (_permissionMode?.isEmpty == true) _permissionMode = null;
   }
 
   Future<void> _loadSharedModelSelection() async {
@@ -202,27 +200,32 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     }
   }
 
-  Future<void> _selectSharedModel() async {
+  Future<void> _selectSharedModel(BuildContext anchorContext) async {
     if (_sharedModelSaving || _sharedModelLoading) return;
-    final selection = await showModalBottomSheet<ConversationModelSelection>(
+    final anchor = glassPopupAnchorFromContext(anchorContext);
+    if (anchor == null) return;
+    final selection = await showGlassPopup<ConversationModelSelection>(
       context: context,
-      isScrollControlled: true,
-      builder: (sheetContext) => SafeArea(
-        child: ConversationModelSelectorContent(
-          width: MediaQuery.sizeOf(sheetContext).width,
-          maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.7,
-          loadLiveProviders: true,
-          currentSelection: _sharedModelBinding == null
-              ? null
-              : ConversationModelSelection(
-                  providerProfileId: _sharedModelBinding!.providerProfileId,
-                  modelId: _sharedModelBinding!.modelId,
-                ),
-          onSelect: (value) => Navigator.of(sheetContext).pop(value),
+      sourceContext: anchorContext,
+      anchor: anchor,
+      child: Builder(
+        builder: (popupContext) => LayoutBuilder(
+          builder: (context, constraints) => ConversationModelSelectorContent(
+            width: 320,
+            maxHeight: constraints.maxHeight.clamp(220.0, 460.0),
+            loadLiveProviders: true,
+            currentSelection: _sharedModelBinding == null
+                ? null
+                : ConversationModelSelection(
+                    providerProfileId: _sharedModelBinding!.providerProfileId,
+                    modelId: _sharedModelBinding!.modelId,
+                  ),
+            onSelect: (value) => Navigator.of(popupContext).pop(value),
+          ),
         ),
       ),
     );
-    if (selection == null) return;
+    if (!mounted || selection == null) return;
     await _saveSharedModel(
       _SharedModelSelection(
         providerProfileId: selection.providerProfileId,
@@ -250,11 +253,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         _sharedModelSaving = false;
         _changed = true;
       });
-      try {
-        await AgentRuntimeService.disconnect();
-      } catch (_) {
-        // The next ACP request still prepares the selected shared mapping.
-      }
       showToast(
         _text('Agent Provider / 模型已更新。', 'Agent Provider / model updated.'),
         type: ToastType.success,
@@ -331,16 +329,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
           final payload = await AgentRuntimeService.writeAgentConfig(
             _agent!.id,
             content: _contentController.text,
-            expectedRevision: _configRevision > 0 ? _configRevision : null,
-          );
-          if (!mounted) return;
-          _syncPayload(payload);
-          break;
-        case 'deepseek-harness':
-          final payload = await AgentRuntimeService.writeAgentConfig(
-            _agent!.id,
-            reasoningEffort: _reasoningEffort,
-            permissionMode: _permissionMode,
             expectedRevision: _configRevision > 0 ? _configRevision : null,
           );
           if (!mounted) return;
@@ -459,9 +447,7 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     return PopScope(
       // Built-in Agent configuration does not mutate the catalog entry, so it
       // does not need to intercept system back just to return `_changed`.
-      // Keeping the route poppable is also required for Android predictive
-      // back: PredictiveBackGestureWrapper only starts when
-      // ModalRoute.popGestureEnabled is true.
+      // A poppable route also lets the shared pointer gesture return.
       canPop: _agent?.builtIn == true,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _close();
@@ -481,68 +467,70 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
               ),
           ],
         ),
-        body: SafeArea(
-          top: false,
-          bottom: false,
-          child: _loading
-              ? const Center(child: CircularProgressIndicator())
-              : _error != null && _agent == null
-              ? _ErrorState(error: _error!, onRetry: _load)
-              : _agent?.configurationAvailable == false
-              ? _buildManagedAccountNotice()
-              : ListView(
-                  padding: edgeToEdgeScrollPadding(
-                    context,
-                    const EdgeInsets.fromLTRB(22, 12, 22, 28),
+        body: OmniContentWidth(
+          child: SafeArea(
+            top: false,
+            bottom: false,
+            child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null && _agent == null
+                ? _ErrorState(error: _error!, onRetry: _load)
+                : _agent?.configurationAvailable == false
+                ? _buildManagedAccountNotice()
+                : ListView(
+                    padding: edgeToEdgeScrollPadding(
+                      context,
+                      const EdgeInsets.fromLTRB(22, 12, 22, 28),
+                    ),
+                    children: [
+                      SettingsSectionTitle(
+                        label: _pageTitle,
+                        subtitle: _pageSubtitle,
+                      ),
+                      OmniSettingsCard(
+                        padding: const EdgeInsets.all(16),
+                        child: _buildEditor(),
+                      ),
+                      if (_error != null) ...[
+                        const SizedBox(height: 12),
+                        Text(
+                          _error!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      if (_kind.isNotEmpty) ...[
+                        const SizedBox(height: 18),
+                        FilledButton.icon(
+                          key: const Key('agent-config-save'),
+                          onPressed:
+                              _saving ||
+                                  (_kind == 'na-cloud' &&
+                                      !_naDevelopment &&
+                                      !_naSignedIn)
+                              ? null
+                              : _save,
+                          icon: _saving
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                )
+                              : const Icon(LucideIcons.save),
+                          label: Text(
+                            _kind == 'na-cloud' && !_naDevelopment
+                                ? _text('连接我的云端空间', 'Connect my workspace')
+                                : _text('保存配置', 'Save configuration'),
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                  children: [
-                    SettingsSectionTitle(
-                      label: _pageTitle,
-                      subtitle: _pageSubtitle,
-                    ),
-                    OmniSettingsCard(
-                      padding: const EdgeInsets.all(16),
-                      child: _buildEditor(),
-                    ),
-                    if (_error != null) ...[
-                      const SizedBox(height: 12),
-                      Text(
-                        _error!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                          fontSize: 12,
-                        ),
-                      ),
-                    ],
-                    if (_kind.isNotEmpty) ...[
-                      const SizedBox(height: 18),
-                      FilledButton.icon(
-                        key: const Key('agent-config-save'),
-                        onPressed:
-                            _saving ||
-                                (_kind == 'na-cloud' &&
-                                    !_naDevelopment &&
-                                    !_naSignedIn)
-                            ? null
-                            : _save,
-                        icon: _saving
-                            ? const SizedBox(
-                                width: 16,
-                                height: 16,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Icon(LucideIcons.save),
-                        label: Text(
-                          _kind == 'na-cloud' && !_naDevelopment
-                              ? _text('连接我的云端空间', 'Connect my workspace')
-                              : _text('保存配置', 'Save configuration'),
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
+          ),
         ),
       ),
     );
@@ -580,10 +568,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       'codex' => _text('Codex API 配置', 'Codex API configuration'),
       'json' => _text('Claude Code 配置', 'Claude Code configuration'),
       'jsonc' => _text('OpenCode 配置', 'OpenCode configuration'),
-      'deepseek-harness' => _text(
-        'DeepSeek Harness 配置',
-        'DeepSeek Harness configuration',
-      ),
       'profile' => _text('ACP 启动配置', 'ACP launch configuration'),
       _ => _text('Agent 配置', 'Agent configuration'),
     };
@@ -607,10 +591,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
         '直接编辑 $_configPath；OpenCode 支持 JSON 和 JSONC。',
         'Edit $_configPath directly. OpenCode supports JSON and JSONC.',
       ),
-      'deepseek-harness' => _text(
-        '默认直接复用统一 Provider 和模型；这里仅保留官方 DSH 配置入口。安装官方 Harness 后，检测只检查当前运行状态。',
-        'The shared Provider and model are used by default. This page only keeps the official DSH configuration entry. After installation, Check only verifies the current runtime state.',
-      ),
       'profile' => _text(
         '保存不会中断当前对话；启动命令、参数与环境变量在下次启动 Agent 进程时生效。Provider 和模型由该 Agent 自身的配置管理。',
         'Saving does not interrupt the current conversation. Command, arguments, and environment changes apply when the Agent process next starts. Provider and model settings are managed by the Agent itself.',
@@ -624,7 +604,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       'na-cloud' => _buildNaConnectionEditor(),
       'codex' => _buildCodexEditor(),
       'json' || 'jsonc' => _buildRawFileEditor(),
-      'deepseek-harness' => _buildDeepSeekHarnessEditor(),
       'profile' => _buildProfileEditor(),
       _ => Text(_text('没有可编辑的配置。', 'No editable configuration.')),
     };
@@ -635,20 +614,22 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         if (_naDevelopmentAvailable)
-          SwitchListTile(
-            key: const Key('na-development-connection'),
-            contentPadding: EdgeInsets.zero,
-            title: Text(_text('使用独立测试服务', 'Use a development server')),
-            value: _naDevelopment,
-            onChanged: _saving
-                ? null
-                : (value) => setState(() {
-                    _naDevelopment = value;
-                    _apiKeyController.clear();
-                    if (value) {
-                      _baseUrlController.text = 'http://127.0.0.1:8787';
-                    }
-                  }),
+          OmniSettingsTile(
+            tileKey: const Key('na-development-connection'),
+            padding: const EdgeInsets.symmetric(vertical: 8),
+            title: _text('使用独立测试服务', 'Use a development server'),
+            translateText: false,
+            trailing: OmniSettingsSwitch(
+              value: _naDevelopment,
+              enabled: !_saving,
+              onToggle: (value) => setState(() {
+                _naDevelopment = value;
+                _apiKeyController.clear();
+                if (value) {
+                  _baseUrlController.text = 'http://127.0.0.1:8787';
+                }
+              }),
+            ),
           ),
         if (!_naDevelopment) ...[
           Text(
@@ -731,79 +712,6 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     );
   }
 
-  Widget _buildDeepSeekHarnessEditor() {
-    return Column(
-      children: [
-        _buildSharedProviderModelSelector(),
-        const SizedBox(height: 14),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: Text(
-            _text('官方配置文件：$_configPath', 'Official config: $_configPath'),
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
-        const SizedBox(height: 14),
-        InputDecorator(
-          decoration: InputDecoration(
-            labelText: _text('推理强度', 'Reasoning effort'),
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: OmniSettingsDropdown<String?>(
-              hint: _text('选择', 'Select'),
-              dropdownKey: ValueKey(
-                'deepseek-harness-reasoning-$_reasoningEffort',
-              ),
-              value: _reasoningEffort,
-              options: const [
-                OmniSettingsOption(value: 'off', label: 'Off'),
-                OmniSettingsOption(value: 'high', label: 'High'),
-                OmniSettingsOption(value: 'max', label: 'Max'),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _reasoningEffort = value);
-              },
-            ),
-          ),
-        ),
-        const SizedBox(height: 14),
-        InputDecorator(
-          decoration: InputDecoration(
-            labelText: _text('权限模式', 'Permission mode'),
-          ),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: OmniSettingsDropdown<String?>(
-              hint: _text('选择', 'Select'),
-              dropdownKey: ValueKey(
-                'deepseek-harness-permission-$_permissionMode',
-              ),
-              value: _permissionMode,
-              options: [
-                OmniSettingsOption(
-                  value: 'read-only',
-                  label: _text('只读', 'Read-only'),
-                ),
-                OmniSettingsOption(
-                  value: 'workspace-write',
-                  label: _text('工作区可写', 'Workspace write'),
-                ),
-                OmniSettingsOption(
-                  value: 'danger-full-access',
-                  label: _text('完全访问', 'Full access'),
-                ),
-              ],
-              onChanged: (value) {
-                if (value != null) setState(() => _permissionMode = value);
-              },
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildSharedProviderModelSelector() {
     final binding = _sharedModelBinding;
     final profile = binding == null
@@ -814,35 +722,52 @@ class _AgentConfigPageState extends State<AgentConfigPage> {
     final label = binding == null
         ? _text('请选择 Provider / 模型', 'Select Provider / model')
         : '${profile?.name ?? binding.providerProfileId} / ${binding.modelId}';
-    return InkWell(
-      key: const Key('agent-shared-provider-model-selector'),
-      onTap: _sharedModelSaving || _sharedModelLoading
-          ? null
-          : _selectSharedModel,
-      borderRadius: BorderRadius.circular(10),
-      child: InputDecorator(
-        decoration: InputDecoration(
-          labelText: _text(
-            '统一 Agent Provider / 模型',
-            'Shared Agent Provider / model',
+    final decoration = InputDecoration(
+      labelText: _text(
+        '统一 Agent Provider / 模型',
+        'Shared Agent Provider / model',
+      ),
+      suffixIcon: _sharedModelSaving
+          ? const Padding(
+              padding: EdgeInsets.all(12),
+              child: SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            )
+          : const Icon(LucideIcons.chevronDown),
+    ).applyDefaults(Theme.of(context).inputDecorationTheme);
+    return FlClashPopupSource(
+      glass: false,
+      color: decoration.filled == true
+          ? decoration.fillColor ?? Colors.transparent
+          : Colors.transparent,
+      shape: decoration.enabledBorder ?? decoration.border ?? InputBorder.none,
+      captureRect: (context) => glassPopupInputContainerRect(
+        context,
+        _sharedModelContentKey.currentContext,
+      ),
+      captureOverflow: (context) => glassPopupInputLabelRects(
+        context,
+        _sharedModelContentKey.currentContext,
+      ),
+      builder: (anchorContext) => InkWell(
+        key: const Key('agent-shared-provider-model-selector'),
+        onTap: _sharedModelSaving || _sharedModelLoading
+            ? null
+            : () => _selectSharedModel(anchorContext),
+        borderRadius: BorderRadius.circular(10),
+        child: InputDecorator(
+          decoration: decoration,
+          child: Text(
+            _sharedModelLoading
+                ? _text('正在加载 Provider…', 'Loading Providers…')
+                : label,
+            key: _sharedModelContentKey,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
           ),
-          suffixIcon: _sharedModelSaving
-              ? const Padding(
-                  padding: EdgeInsets.all(12),
-                  child: SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              : const Icon(LucideIcons.chevronDown),
-        ),
-        child: Text(
-          _sharedModelLoading
-              ? _text('正在加载 Provider…', 'Loading Providers…')
-              : label,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
         ),
       ),
     );

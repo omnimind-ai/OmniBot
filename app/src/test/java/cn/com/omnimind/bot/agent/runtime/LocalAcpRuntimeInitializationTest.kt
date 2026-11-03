@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import com.rk.terminal.runtime.TerminalDistribution
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import com.agentclientprotocol.transport.StdioTransport
@@ -40,11 +41,17 @@ class LocalAcpRuntimeInitializationTest {
         val forwarded = CompletableDeferred<Unit>()
         val runtime = LocalAcpRuntime(
             context, scope, mock(AgentSessionBindingRepository::class.java), store,
+            ownerAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+            currentDistribution = { TerminalDistribution.alpine },
             prepareLaunchEnvironment = { _, _ -> PreparedAcpLaunch(emptyMap()) },
             buildHandoffContext = { _, _ -> null },
             scheduleToolBridge = mock(AgentScheduleToolBridge::class.java),
             onMessage = { delivered += it; forwarded.complete(Unit) },
         )
+        runtime.javaClass.getDeclaredField("connection").apply {
+            isAccessible = true
+            set(runtime, mock(AcpRuntimeConnection::class.java))
+        }
         val lock = runtime.javaClass.getDeclaredField("sessionMutex").run {
             isAccessible = true
             get(runtime) as kotlinx.coroutines.sync.Mutex
@@ -89,7 +96,6 @@ class LocalAcpRuntimeInitializationTest {
     private fun checkCleanup(timeout: Boolean) = runBlocking {
         val context = acpProfileStoreTestContext(temporaryFolder.root)
         val store = AcpAgentProfileStore(context)
-        store.select(AcpAgentProfileStore.XIAOWAN_AGENT_ID)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val initializedRequest = CompletableDeferred<Unit>()
         var closes = 0
@@ -121,6 +127,8 @@ class LocalAcpRuntimeInitializationTest {
         }.use {
             val runtime = LocalAcpRuntime(
                 context, scope, mock(AgentSessionBindingRepository::class.java), store,
+                ownerAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+                currentDistribution = { TerminalDistribution.alpine },
                 prepareLaunchEnvironment = { _, _ -> PreparedAcpLaunch(emptyMap()) },
                 buildHandoffContext = { _, _ -> null },
                 scheduleToolBridge = mock(AgentScheduleToolBridge::class.java),

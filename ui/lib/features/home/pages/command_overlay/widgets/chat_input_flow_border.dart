@@ -1,5 +1,25 @@
 part of 'chat_input_area.dart';
 
+extension _ChatInputVisualMotion on _ChatInputAreaStateBase {
+  Duration get _compactAnimationDuration =>
+      MediaQuery.disableAnimationsOf(context)
+      ? Duration.zero
+      : const Duration(milliseconds: 220);
+
+  void _syncComposerFlowAnimation() {
+    final animate =
+        !widget.minimalComposer &&
+        widget.useLargeComposerStyle &&
+        !LiquidGlassScope.of(context) &&
+        !MediaQuery.disableAnimationsOf(context);
+    if (animate && !_composerFlowController.isAnimating) {
+      _composerFlowController.repeat();
+    } else if (!animate) {
+      _composerFlowController.stop();
+    }
+  }
+}
+
 class _ComposerFlowBorderPainter extends CustomPainter {
   final Animation<double> progress;
   final bool interactive;

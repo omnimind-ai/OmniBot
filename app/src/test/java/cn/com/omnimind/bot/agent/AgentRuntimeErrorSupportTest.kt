@@ -8,6 +8,48 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AgentRuntimeErrorSupportTest {
+    @Test
+    fun `identity admission errors retain their actionable kind across ACP`() {
+        val missing = runCatching {
+            AgentConversationModePolicy.resolveHarness("agent", null, null, null, "xiaowan-acp")
+        }.exceptionOrNull()!!
+        val conflict = runCatching {
+            AgentConversationModePolicy.resolveHarness("agent", null, "xiaowan-acp", "codex-acp", "xiaowan-acp")
+        }.exceptionOrNull()!!
+        for ((error, kind) in listOf(missing to "agent_identity_required", conflict to "agent_owner_conflict")) {
+            val wrapped = IllegalStateException("ACP admission failed", error)
+            assertEquals(kind, AgentRuntimeErrorSupport.failureKind(wrapped))
+            val outgoing = AgentRuntimeErrorSupport.acpPromptFailure("Admission failed", wrapped)
+            val incoming = com.agentclientprotocol.protocol.JsonRpcException(
+                outgoing.code, outgoing.message,
+                kotlinx.serialization.json.Json.parseToJsonElement(outgoing.data.toString()),
+            )
+            assertEquals(kind, AgentRuntimeErrorSupport.failureKind(incoming))
+            assertTrue(AgentRuntimeErrorSupport.userFacingMessage(incoming).orEmpty().contains("对话"))
+        }
+    }
+
+    @Test
+    fun `harness upgrade requirement survives launch wrapping and ACP serialization`() {
+        val error = IllegalStateException(
+            "Failed to initialize ACP agent OpenCode",
+            AgentRuntimeUpgradeRequiredException("OpenCode"),
+        )
+        assertEquals("harness_upgrade_required", AgentRuntimeErrorSupport.failureKind(error))
+        assertEquals(
+            "当前助手运行环境需要升级，请在助手设置中升级或重新安装。",
+            AgentRuntimeErrorSupport.userFacingMessage(error),
+        )
+        val outgoing = AgentRuntimeErrorSupport.acpPromptFailure("Upgrade required", error)
+        val incoming = com.agentclientprotocol.protocol.JsonRpcException(
+            outgoing.code, outgoing.message,
+            kotlinx.serialization.json.Json.parseToJsonElement(outgoing.data.toString()),
+        )
+        assertEquals("harness_upgrade_required", AgentRuntimeErrorSupport.failureKind(incoming))
+        assertEquals(AgentRuntimeErrorSupport.userFacingMessage(error), AgentRuntimeErrorSupport.userFacingMessage(incoming))
+        assertNull(AgentRuntimeErrorSupport.failureKind(IllegalStateException("A file says runtime needs an upgrade")))
+    }
+
     @Test fun `structured provider failures do not depend on message language`() {
         for ((status, code, kind) in listOf(
             Triple(401, "unknown", "provider_authentication_failed"),
@@ -192,7 +234,7 @@ class AgentRuntimeErrorSupportTest {
     @Test
     fun `harness preparation does not turn another switch into a wait`() {
         val error = IllegalStateException(
-            "Harness preparation is already running for deepseek-harness-acp. " +
+            "Harness preparation is already running for kimi-code-acp. " +
                 "Wait for that installation to finish before starting another unprepared Harness."
         )
 
@@ -210,7 +252,7 @@ class AgentRuntimeErrorSupportTest {
     @Test
     fun `missing official harness profile points to preparation instead of raw stderr`() {
         val error = IllegalStateException(
-            "dsh: profile \"acp\" does not exist; create it with 'dsh plugin --profile acp add <package>'"
+            "agent: profile \"acp\" does not exist"
         )
 
         assertEquals(

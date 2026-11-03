@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
 import 'package:ui/features/home/pages/chat/tool_activity_utils.dart'
     hide buildAgentToolTranscript;
 import 'package:ui/features/home/pages/command_overlay/services/tool_card_detail_gesture_gate.dart';
@@ -1338,95 +1339,21 @@ class _CommandEffortSlider extends StatelessWidget {
   final ValueChanged<String>? onChanged;
 
   @override
-  Widget build(BuildContext context) {
-    final palette = context.omniPalette;
-    final colorScheme = Theme.of(context).colorScheme;
-    final activeColor = palette.accentPrimary;
-    final trackColor = palette.surfaceSecondary;
-    final selectedTextColor = colorScheme.onPrimary;
-    final idleTextColor = palette.textSecondary;
-    final selectedIndex = selectedValue == null
-        ? -1
-        : options.indexOf(selectedValue!);
-    final alignment = options.length <= 1 || selectedIndex < 0
-        ? Alignment.centerLeft
-        : Alignment(-1 + (2 * selectedIndex / (options.length - 1)), 0);
-
-    return Semantics(
-      label: semanticLabel,
-      value: selectedValue ?? '',
-      child: Container(
-        height: 22,
-        decoration: BoxDecoration(
-          color: trackColor,
-          borderRadius: BorderRadius.circular(999),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (selectedIndex >= 0)
-              Positioned.fill(
-                child: AnimatedAlign(
-                  duration: const Duration(milliseconds: 180),
-                  curve: Curves.easeOutCubic,
-                  alignment: alignment,
-                  child: FractionallySizedBox(
-                    widthFactor: 1 / options.length,
-                    heightFactor: 1,
-                    child: Padding(
-                      padding: const EdgeInsets.all(2),
-                      child: DecoratedBox(
-                        decoration: BoxDecoration(
-                          color: activeColor,
-                          borderRadius: BorderRadius.circular(999),
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            Row(
-              children: [
-                for (final option in options)
-                  Expanded(
-                    child: Semantics(
-                      button: true,
-                      selected: option == selectedValue,
-                      label: option,
-                      child: GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: onChanged == null
-                            ? null
-                            : () => onChanged!(option),
-                        child: Center(
-                          child: Text(
-                            option,
-                            maxLines: 1,
-                            overflow: TextOverflow.clip,
-                            style: TextStyle(
-                              color: option == selectedValue
-                                  ? selectedTextColor
-                                  : idleTextColor,
-                              fontSize: 8.2,
-                              fontWeight: option == selectedValue
-                                  ? FontWeight.w800
-                                  : FontWeight.w700,
-                              letterSpacing: 0,
-                              height: 1,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-              ],
-            ),
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => Semantics(
+    label: semanticLabel,
+    value: selectedValue ?? '',
+    child: OmniSegmentedSlider<String>(
+      keyPrefix: 'command-effort',
+      value: selectedValue,
+      height: 22,
+      fontSize: 8.2,
+      options: [
+        for (final option in options)
+          OmniSegmentedOption(value: option, label: option),
+      ],
+      onChanged: onChanged,
+    ),
+  );
 }
 
 class _CommandToggleSwitch extends StatelessWidget {

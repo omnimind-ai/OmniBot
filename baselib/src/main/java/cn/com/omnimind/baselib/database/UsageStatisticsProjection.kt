@@ -1,6 +1,6 @@
 package cn.com.omnimind.baselib.database
 
-/** Read-only projections; dashboard reads never load conversation text. */
+/** One deduplicated user-message timestamp; dashboard reads never load text. */
 data class ConversationActivityRow(
     val id: Long,
     val mode: String,

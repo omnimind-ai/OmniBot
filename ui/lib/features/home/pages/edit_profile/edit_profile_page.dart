@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
+import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 class EditProfilePage extends StatefulWidget {
   final int? initialAvatarIndex;
   final String? initialNickname;
-  
+
   const EditProfilePage({
-    super.key, 
-    this.initialAvatarIndex, 
+    super.key,
+    this.initialAvatarIndex,
     this.initialNickname,
   });
 
@@ -19,31 +22,10 @@ class EditProfilePage extends StatefulWidget {
 class _EditProfilePageState extends State<EditProfilePage> {
   int? selectedAvatarIndex;
   String? nickname;
-  bool isLoading = true; // 添加加载状态
+  bool isLoading = true;
+  bool _isSaving = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadUserData();
-  }
-
-  Future<void> _loadUserData() async {
-    final prefs = await SharedPreferences.getInstance();
-    setState(() {
-      selectedAvatarIndex = widget.initialAvatarIndex ?? prefs.getInt('avatarIndex');
-      nickname = widget.initialNickname ?? prefs.getString('nickname');
-      isLoading = false; // 加载完成
-    });
-  }
-
-  Future<void> _saveUserData() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('avatarIndex', selectedAvatarIndex!);
-    await prefs.setString('nickname', nickname!);
-  }
-  
-  // 预设头像列表
-  final List<String> presetAvatars = [
+  static const presetAvatars = [
     'assets/avatar/default_avatar1.png',
     'assets/avatar/default_avatar2.png',
     'assets/avatar/default_avatar3.png',
@@ -53,159 +35,171 @@ class _EditProfilePageState extends State<EditProfilePage> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _loadUserData();
+  }
+
+  Future<void> _loadUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (!mounted) return;
+    final savedIndex = widget.initialAvatarIndex ?? prefs.getInt('avatarIndex');
+    setState(() {
+      selectedAvatarIndex =
+          savedIndex != null &&
+              savedIndex >= 0 &&
+              savedIndex < presetAvatars.length
+          ? savedIndex
+          : 0;
+      nickname = widget.initialNickname ?? prefs.getString('nickname') ?? '';
+      isLoading = false;
+    });
+  }
+
+  Future<void> _saveUserData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt('avatarIndex', selectedAvatarIndex!);
+    await prefs.setString('nickname', nickname!);
+  }
+
+  Future<void> _saveAndClose() async {
+    if (isLoading || _isSaving) return;
+    setState(() => _isSaving = true);
+    try {
+      await _saveUserData();
+      if (!mounted) return;
+      Navigator.pop(context, {
+        'avatarIndex': selectedAvatarIndex,
+        'nickname': nickname,
+      });
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    const primaryBlack = Color(0xFF333333);
-    const lightGrey2 = Color(0xFFD8D8D8);
+    final palette = context.omniPalette;
+    final english = Localizations.localeOf(context).languageCode == 'en';
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: palette.pageBackground,
       appBar: const CommonAppBar(title: '编辑个人信息', primary: true),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator(color: primaryBlack))
-          : Padding(
-              padding: const EdgeInsets.all(24.0),
-              child: Column(
-                children: [
-                  const SizedBox(height: 40),
-                  // 头像区域
-                  Center(
-                    child: CircleAvatar(
-                      radius: 60,
-                      backgroundColor: Colors.grey[300],
-                      backgroundImage: selectedAvatarIndex != null
-                          ? AssetImage(presetAvatars[selectedAvatarIndex!])
-                          : null,
-                        onBackgroundImageError: (_, __) {},
-                        child: selectedAvatarIndex != null
-                            ? null
-                            : Icon(
-                                Icons.person,
-                                size: 60,
-                                color: Colors.grey[600],
-                              ),
-                      ),
+      body: SafeArea(
+        top: false,
+        bottom: false,
+        child: OmniContentWidth(
+          child: isLoading
+              ? Center(
+                  child: CircularProgressIndicator(
+                    color: palette.accentPrimary,
                   ),
-                  const SizedBox(height: 60),
-                  // 昵称区域
-                  // Align(
-                  //   alignment: Alignment.centerLeft,
-                  //   child: Column(
-                  //     crossAxisAlignment: CrossAxisAlignment.start,
-                  //     children: [
-                  //       Padding(
-                  //         padding: const EdgeInsets.only(left: 4.0),
-                  //         child: const Text(
-                  //           '昵称',
-                  //           style: TextStyle(
-                  //             fontSize: 12,
-                  //             color: Colors.grey,
-                  //             fontWeight: FontWeight.w400,
-                  //           ),
-                  //         ),
-                  //       ),
-                  //       const SizedBox(height: 8),
-                  //       Container(
-                  //         width: double.infinity,
-                  //         padding: const EdgeInsets.symmetric(vertical: 16),
-                  //         decoration: const BoxDecoration(
-                  //           color: Color(0xFFF5F5F5),
-                  //           borderRadius: BorderRadius.all(Radius.circular(8)),
-                  //         ),
-                  //         child: Padding(
-                  //           padding: const EdgeInsets.symmetric(horizontal: 16),
-                  //           child: Text(
-                  //             nickname ?? "",
-                  //             style: const TextStyle(
-                  //               fontSize: 16,
-                  //               color: Colors.grey,
-                  //             ),
-                  //           ),
-                  //         ),
-                  //       ),
-                  //     ],
-                  //   ),
-                  // ),
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        GridView.builder(
+                )
+              : SingleChildScrollView(
+                  key: const ValueKey('profile-avatar-scroll'),
+                  padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+                  child: Column(
+                    children: [
+                      CircleAvatar(
+                        key: const ValueKey('profile-selected-avatar'),
+                        radius: 56,
+                        backgroundColor: palette.surfaceElevated,
+                        backgroundImage: AssetImage(
+                          presetAvatars[selectedAvatarIndex!],
+                        ),
+                        onBackgroundImageError: (_, _) {},
+                      ),
+                      const SizedBox(height: 24),
+                      Text(
+                        english ? 'Choose an avatar' : '选择头像',
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+                      OmniContentWidth(
+                        maxWidth: 360,
+                        child: GridView.builder(
                           shrinkWrap: true,
-                          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                            crossAxisCount: 3,
-                            crossAxisSpacing: 15,
-                            mainAxisSpacing: 15,
-                          ),
+                          physics: const NeverScrollableScrollPhysics(),
+                          gridDelegate:
+                              const SliverGridDelegateWithMaxCrossAxisExtent(
+                                maxCrossAxisExtent: 112,
+                                crossAxisSpacing: 16,
+                                mainAxisSpacing: 16,
+                              ),
                           itemCount: presetAvatars.length,
-                          itemBuilder: (context, index) {
-                            return GestureDetector(
-                              onTap: () {
-                                setState(() {
-                                  selectedAvatarIndex = index;
-                                });
-                              },
-                              child: Container(
-                                decoration: BoxDecoration(
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: selectedAvatarIndex == index 
-                                        ? Colors.blue 
-                                        : Colors.transparent,
-                                    width: 3,
+                          itemBuilder: (context, index) => Semantics(
+                            label: english
+                                ? 'Avatar ${index + 1}'
+                                : '头像 ${index + 1}',
+                            selected: selectedAvatarIndex == index,
+                            child: Material(
+                              color: Colors.transparent,
+                              child: InkWell(
+                                key: ValueKey('profile-avatar-$index'),
+                                customBorder: const CircleBorder(),
+                                onTap: _isSaving
+                                    ? null
+                                    : () => setState(
+                                        () => selectedAvatarIndex = index,
+                                      ),
+                                child: Container(
+                                  padding: const EdgeInsets.all(4),
+                                  decoration: BoxDecoration(
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: selectedAvatarIndex == index
+                                          ? palette.accentPrimary
+                                          : Colors.transparent,
+                                      width: 3,
+                                    ),
+                                  ),
+                                  child: CircleAvatar(
+                                    backgroundColor: palette.surfaceElevated,
+                                    backgroundImage: AssetImage(
+                                      presetAvatars[index],
+                                    ),
+                                    onBackgroundImageError: (_, _) {},
                                   ),
                                 ),
-                                child: CircleAvatar(
-                                  radius: 40,
-                                  backgroundColor: Colors.grey[300],
-                                  backgroundImage: AssetImage(presetAvatars[index]),
-                                  onBackgroundImageError: (_, __) {},
-                                  child: presetAvatars[index].contains('assets') 
-                                      ? null 
-                                      : Icon(
-                                          Icons.person,
-                                          size: 40,
-                                          color: Colors.grey[600],
-                                        ),
-                                ),
                               ),
-                            );
-                          },
+                            ),
+                          ),
                         ),
-                        const SizedBox(height: 20),
-                      ],
-                    ),
-                  ),
-
-                  Container(
-                    margin: const EdgeInsets.only(right: 16),
-                    child: ElevatedButton(
-                      onPressed: isLoading
-                          ? null
-                          : () async {
-                              await _saveUserData();
-                              Navigator.pop(context, {
-                                'avatarIndex': selectedAvatarIndex,
-                                'nickname': nickname,
-                              });
-                            },
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: lightGrey2,
-                        foregroundColor: Colors.black,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
                       ),
-                      child: const Text(
-                        '保存',
-                        style: TextStyle(fontSize: 14),
-                      ),
-                    ),
+                    ],
                   ),
-                ],
+                ),
+        ),
+      ),
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          OmniContentWidth(
+            child: SafeArea(
+              top: false,
+              minimum: const EdgeInsets.fromLTRB(22, 12, 22, 16),
+              child: FilledButton(
+                key: const ValueKey('profile-save'),
+                onPressed: isLoading || _isSaving ? null : _saveAndClose,
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                  backgroundColor: palette.accentPrimary,
+                  foregroundColor: Theme.of(context).colorScheme.onPrimary,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                child: Text(
+                  LegacyTextLocalizer.localize(_isSaving ? '保存中...' : '保存'),
+                ),
               ),
             ),
+          ),
+        ],
+      ),
     );
   }
 }

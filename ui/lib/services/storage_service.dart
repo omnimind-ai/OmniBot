@@ -168,7 +168,6 @@ class StorageService {
   static const String kWorkspaceMemoryConfiguredKey =
       'workspace_memory_configured';
   static const String kRemoteBridgeEnabledKey = 'remote_bridge_enabled';
-  static const String kPredictiveBackEnabledKey = 'predictive_back_enabled';
   static const String kRecentConversationsOnlyEnabledKey =
       'recent_conversations_only_enabled';
 
@@ -267,14 +266,6 @@ class StorageService {
 
   static Future<bool> setIndependentChatSendButtonEnabled(bool enabled) {
     return setBool(kUseIndependentChatSendButtonKey, enabled);
-  }
-
-  static bool isPredictiveBackEnabled() {
-    return getBool(kPredictiveBackEnabledKey, defaultValue: true) ?? true;
-  }
-
-  static Future<bool> setPredictiveBackEnabled(bool enabled) {
-    return setBool(kPredictiveBackEnabledKey, enabled);
   }
 
   static bool isRecentConversationsOnlyEnabled() {

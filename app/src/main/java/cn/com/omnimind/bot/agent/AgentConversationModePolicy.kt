@@ -23,28 +23,35 @@ object AgentConversationModePolicy {
         requestedAgentId: String?,
         conversationAgentId: String?,
         sessionAgentId: String?,
-        selectedAgentId: String?,
         xiaowanAgentId: String,
     ): HarnessResolution {
         val normalizedRequested = requestedAgentId.normalizedAgentId()
         val normalizedConversation = conversationAgentId.normalizedAgentId()
         val normalizedSession = sessionAgentId.normalizedAgentId()
-        val normalizedSelected = selectedAgentId.normalizedAgentId()
         val normalizedXiaowan = xiaowanAgentId.normalizedAgentId()
             ?: xiaowanAgentId
 
+        require(normalizedConversation == null || normalizedSession == null ||
+            normalizedConversation == normalizedSession) {
+            "agent_owner_conflict: Conversation agent $normalizedConversation does not match session agent $normalizedSession."
+        }
+        val persistedOwner = normalizedConversation ?: normalizedSession
         if (isNormalMode(conversationMode) || isChatOnlyMode(conversationMode)) {
+            require(persistedOwner == null || persistedOwner == normalizedXiaowan) {
+                "agent_owner_conflict: Xiaowan product mode cannot replace persisted agent $persistedOwner."
+            }
             return HarnessResolution(
                 agentId = normalizedXiaowan,
                 requestedAgentId = normalizedRequested,
                 conflictWithAgentId = normalizedRequested
-                    ?.takeUnless { it == normalizedXiaowan },
+                    ?.takeUnless { it == normalizedXiaowan }
+                    ?.let { normalizedXiaowan },
             )
         }
 
-        val persistedOwner = normalizedConversation ?: normalizedSession
-        val resolvedAgent = persistedOwner ?: normalizedRequested
-            ?: normalizedSelected ?: normalizedXiaowan
+        val resolvedAgent = requireNotNull(persistedOwner ?: normalizedRequested) {
+            "agent_identity_required: Agent requests without a Conversation or Session owner must specify agentId."
+        }
         return HarnessResolution(
             agentId = resolvedAgent,
             requestedAgentId = normalizedRequested,

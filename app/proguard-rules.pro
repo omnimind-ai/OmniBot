@@ -25,47 +25,68 @@
     public static final java.lang.String BASE_URL;
 }
 
-# Gson persists these Kotlin models. Keep only their instance field names as a
-# compatibility safety net; classes, constructors, methods, and service/store
-# fields remain eligible for shrinking and optimization. Persisted baselib
-# models also declare stable @SerializedName values.
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.runtime.AcpAgentProfile {
+# Gson constructs these models reflectively. Keep their class identity,
+# constructors and fields: keeping fields alone lets R8 erase generic targets,
+# merge model classes or remove Kotlin default constructors. Unlisted methods
+# remain eligible for shrinking and optimization.
+-keep class cn.com.omnimind.bot.agent.runtime.AcpAgentProfile {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.runtime.AcpAgentHealth {
+-keep class cn.com.omnimind.bot.agent.runtime.AcpAgentHealth {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.BuiltinSkillManifest {
+-keep class cn.com.omnimind.bot.agent.BuiltinSkillManifest {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.BuiltinSkillAsset {
+-keep class cn.com.omnimind.bot.agent.BuiltinSkillAsset {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.SkillRegistryEntry {
+-keep class cn.com.omnimind.bot.agent.SkillRegistryEntry {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.AgentAlarmToolService$AlarmSoundSettings {
+-keep class cn.com.omnimind.bot.agent.AgentAlarmToolService$AlarmSoundSettings {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.AgentAlarmToolService$ExactAlarmRecordRaw {
+-keep class cn.com.omnimind.bot.agent.AgentAlarmToolService$ExactAlarmRecordRaw {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.AgentAlarmToolService$ExactAlarmRecord {
+-keep class cn.com.omnimind.bot.agent.AgentAlarmToolService$ExactAlarmRecord {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler$StoredTask {
+-keep class cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler$StoredTask {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.agent.MemoryIndexEntry {
+-keep class cn.com.omnimind.bot.agent.MemoryIndexEntry {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.mcp.RemoteMcpServerConfig {
+-keep class cn.com.omnimind.bot.agent.PlatformEmbeddingGateway$EmbeddingResponse {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.quicklog.QuickLogRecord {
+-keep class cn.com.omnimind.bot.agent.PlatformEmbeddingGateway$EmbeddingItem {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.bot.quicklog.QuickLogWidgetSettings {
+-keep class cn.com.omnimind.bot.mcp.RemoteMcpServerConfig {
+    <init>(...);
+    <fields>;
+}
+-keep class cn.com.omnimind.bot.quicklog.QuickLogRecord {
+    <init>(...);
+    <fields>;
+}
+-keep class cn.com.omnimind.bot.quicklog.QuickLogWidgetSettings {
+    <init>(...);
     <fields>;
 }
 -keepclassmembers,allowoptimization class cn.com.omnimind.baselib.config.ModelSceneConfigCache$CacheData {
@@ -74,16 +95,24 @@
 -keepclassmembers,allowoptimization class cn.com.omnimind.baselib.config.ModelSceneConfigCache$Metadata {
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.AiRequestLogEntry {
+-keep class cn.com.omnimind.baselib.llm.OfficialVlmOperationConfig {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.ModelProviderConfigStore$StoredModelProviderProfile {
+-keep class cn.com.omnimind.baselib.llm.AiRequestLogEntry {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.baselib.llm.SceneModelBindingEntry {
+-keep class cn.com.omnimind.baselib.llm.ModelProviderConfigStore$StoredModelProviderProfile {
+    <init>(...);
     <fields>;
 }
--keepclassmembers,allowoptimization class cn.com.omnimind.baselib.util.RuntimeLogEntry {
+-keep class cn.com.omnimind.baselib.llm.SceneModelBindingEntry {
+    <init>(...);
+    <fields>;
+}
+-keep class cn.com.omnimind.baselib.util.RuntimeLogEntry {
+    <init>(...);
     <fields>;
 }
 

@@ -81,9 +81,8 @@ android {
 
 
     compileOptions {
-        // Miuix 0.9.4's public Compose DSL contains JVM 21 inline functions.
-        sourceCompatibility = JavaVersion.VERSION_21
-        targetCompatibility = JavaVersion.VERSION_21
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
     buildFeatures {
@@ -99,9 +98,8 @@ android {
 }
 
 kotlin {
-    jvmToolchain(21)
     compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_21)
+        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 
@@ -316,7 +314,6 @@ dependencies {
     api(libs.ui.graphics)
     api(libs.material3)
     api(libs.navigation.compose)
-    implementation(libs.miuix.nav)
     implementation(libs.kotlinx.serialization.json)
     api(project(":core:terminal-view"))
     api(project(":core:terminal-emulator"))

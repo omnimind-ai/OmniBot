@@ -16,7 +16,7 @@ import 'package:ui/widgets/agent_brand_icon.dart';
 import 'package:ui/widgets/agent_avatar.dart';
 import 'package:ui/widgets/streaming_text.dart';
 import 'package:ui/services/storage_service.dart';
-import 'package:ui/widgets/predictive_back_route.dart';
+import 'package:ui/widgets/navigation/page_route.dart';
 
 void main() {
   testWidgets('Claude Code ACP answers survive completion and history reload', (tester) async {
@@ -1984,17 +1984,10 @@ void main() {
           locale: const Locale('zh'),
           localizationsDelegates: AppLocalizations.localizationsDelegates,
           supportedLocales: AppLocalizations.supportedLocales,
-          theme: ThemeData(
-            pageTransitionsTheme: const PageTransitionsTheme(
-              builders: {
-                TargetPlatform.android: MiuixPageTransitionsBuilder(),
-              },
-            ),
-          ),
           home: const Scaffold(body: Text('Home route')),
         ),
       );
-      final chatRoute = PredictiveBackMaterialPageRoute<void>(
+      final chatRoute = OmniPageRoute<void>(
         builder: (_) => Scaffold(
           body: ChatMessageList(
             messages: _buildCompletedAgentRunMessages(),
@@ -2055,11 +2048,12 @@ void main() {
       expect(chatRoute.isCurrent, isTrue);
       expect(chatRoute.animation!.value, 1);
 
-      // Once the modal is gone, the original page again owns finger progress.
+      // Once the modal is gone, system back targets chat and commits its
+      // ordinary page return; progress does not start another animation.
       await _sendTestBackGesture(tester, 'startBackGesture', progress: 0);
       await _sendTestBackGesture(tester, 'updateBackGestureProgress', progress: .4);
       await tester.pump();
-      expect(chatRoute.animation!.value, closeTo(.6, .001));
+      expect(chatRoute.animation!.value, 1);
       await _sendTestBackGesture(tester, 'cancelBackGesture');
       await tester.pumpAndSettle();
       expect(chatRoute.animation!.value, 1);
@@ -2160,7 +2154,7 @@ void main() {
   );
 
   testWidgets(
-    'DSH completion folds the tool between separate step messages instead of leaving it at the bottom',
+    'legacy DSH history folds the tool between separate step messages instead of leaving it at the bottom',
     (tester) async {
       final controller = ScrollController();
       var messages = _buildDshMultiStepAgentRunMessages(

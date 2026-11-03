@@ -91,41 +91,59 @@ object OmniAccount {
     fun currentCloudServiceAccess(): CloudServiceAccessState =
         configuredCloudServiceAccessProvider()
 
-    fun currentAiRequestAccess(): AiRequestAccess {
-        val repository = configuredRepository
-        val cloudServiceAccess = currentCloudServiceAccess()
-        if (repository == null) {
-            return AiRequestAccess(mode = AiAccessMode.BYOK)
-        }
-        val signedIn = try {
-            repository.isSignedIn()
-        } catch (_: AccountCredentialStorageException) {
-            return AiRequestAccess(
-                mode = AiAccessMode.PLATFORM,
-                unavailableReason = "登录凭证暂时无法读取，请重启应用后重试",
-            )
-        }
-        if (!signedIn) {
-            return AiRequestAccess(mode = AiAccessMode.BYOK)
-        }
-        val accessToken = try {
-            repository.accessTokenForPlatformGateway()
-        } catch (_: AccountCredentialStorageException) {
-            return AiRequestAccess(
-                mode = AiAccessMode.PLATFORM,
-                unavailableReason = "登录凭证暂时无法读取，请重启应用后重试",
-            )
-        } catch (_: AccountNotAuthenticatedException) {
-            null
-        }
-        return AiRequestAccessResolver.resolve(
-            accountConfigured = true,
+    fun currentAiRequestAccess(): AiRequestAccess = resolveAccountAiRequestAccess(
+        repository = configuredRepository,
+        platformGatewayUrl = configuredPlatformGatewayUrl,
+        allowInsecureLoopback = configuredAllowInsecureLoopback,
+        cloudServiceAccess = currentCloudServiceAccess(),
+    )
+}
+
+/** Projects account availability without turning a cloud-policy block into a failed settings read. */
+internal fun resolveAccountAiRequestAccess(
+    repository: AccountRepository?,
+    platformGatewayUrl: String,
+    allowInsecureLoopback: Boolean = false,
+    cloudServiceAccess: CloudServiceAccessState,
+): AiRequestAccess {
+    fun resolve(signedIn: Boolean, accessToken: String? = null): AiRequestAccess =
+        AiRequestAccessResolver.resolve(
+            accountConfigured = repository != null,
             signedIn = signedIn,
-            cachedMode = repository.cachedAiAccessMode(),
-            platformGatewayUrl = configuredPlatformGatewayUrl,
+            cachedMode = null,
+            platformGatewayUrl = platformGatewayUrl,
             accessToken = accessToken,
-            allowInsecureLoopback = configuredAllowInsecureLoopback,
+            allowInsecureLoopback = allowInsecureLoopback,
             cloudServiceAccess = cloudServiceAccess,
         )
+
+    fun unavailable(reason: String): AiRequestAccess =
+        resolve(signedIn = true).copy(unavailableReason = reason)
+
+    if (repository == null) {
+        return resolve(signedIn = false)
     }
+    val signedIn = try {
+        repository.isSignedIn()
+    } catch (_: AccountCredentialStorageException) {
+        return unavailable("登录凭证暂时无法读取，请重启应用后重试")
+    }
+    if (!signedIn || !cloudServiceAccess.allowed) {
+        // Token access enforces the request policy and may throw. A passive
+        // Provider/settings read needs only its unavailable descriptor.
+        return resolve(signedIn = signedIn)
+    }
+    val accessToken = try {
+        repository.accessTokenForPlatformGateway()
+    } catch (_: AccountCredentialStorageException) {
+        return unavailable("登录凭证暂时无法读取，请重启应用后重试")
+    } catch (error: CloudServiceUpgradeRequiredException) {
+        return unavailable(error.message.orEmpty())
+    } catch (error: CloudServicePolicyUnavailableException) {
+        // The policy can change after the snapshot above was captured.
+        return unavailable(error.message.orEmpty())
+    } catch (_: AccountNotAuthenticatedException) {
+        null
+    }
+    return resolve(signedIn = true, accessToken = accessToken)
 }

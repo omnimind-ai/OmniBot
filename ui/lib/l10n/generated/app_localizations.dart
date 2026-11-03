@@ -410,18 +410,6 @@ abstract class AppLocalizations {
   /// **'开启后，聊天页键盘回车为换行；关闭后，回车直接发送'**
   String get settingsIndependentSendButtonSubtitle;
 
-  /// No description provided for @settingsPredictiveBackTitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'预测性返回手势'**
-  String get settingsPredictiveBackTitle;
-
-  /// No description provided for @settingsPredictiveBackSubtitle.
-  ///
-  /// In zh, this message translates to:
-  /// **'开启后，返回手势可跟随手指预览上一页面或桌面；关闭则保持旧版返回行为'**
-  String get settingsPredictiveBackSubtitle;
-
   /// No description provided for @settingsHabitualHandTitle.
   ///
   /// In zh, this message translates to:
@@ -2798,17 +2786,17 @@ abstract class AppLocalizations {
   /// **'OpenCode CLI（内置 ACP 支持）'**
   String get alpineOpenCode;
 
-  /// No description provided for @alpineDeepSeekHarness.
-  ///
-  /// In zh, this message translates to:
-  /// **'DeepSeek Harness（dsh）官方 ACP 运行组件'**
-  String get alpineDeepSeekHarness;
-
   /// No description provided for @alpineKimiCode.
   ///
   /// In zh, this message translates to:
   /// **'Kimi Code 官方 CLI 与本地 Web 界面'**
   String get alpineKimiCode;
+
+  /// No description provided for @alpinePi.
+  ///
+  /// In zh, this message translates to:
+  /// **'Pi Agent 与 MCP 工具支持'**
+  String get alpinePi;
 
   /// No description provided for @alpineSshClient.
   ///

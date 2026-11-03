@@ -101,14 +101,21 @@ try {
     } else if (step.action === 'assert-draft') {
       const scenario=JSON.parse(readFileSync(resolve(scripts,'fixtures','user-scenarios',step.scenario),'utf8'));
       const expected=`${scenario.prompt.replaceAll('{{MARKER}}',step.marker)} End your final reply with ${step.marker}_DONE.`;
-      const inputs=snapshot().filter(n=>field(n,'class')==='android.widget.EditText');
+      const nodes=snapshot();
+      const inputs=nodes.filter(n=>field(n,'class')==='android.widget.EditText');
       assert.equal(inputs.length,1,'Expected unique draft input');
       assert.equal(field(inputs[0],'text'),expected,'Switch changed the draft');
-      const selected=execFileSync('python3',['-c',
-        "import sys,xml.etree.ElementTree as E; r=E.fromstring(sys.stdin.read()); print(next((n.text for n in r if n.get('name')=='selected_profile_id'),''))"],
-        {input:adb('exec-out','run-as','cn.com.omnimind.bot','cat','shared_prefs/acp_agent_profiles.xml'),encoding:'utf8'}).trim();
-      assert.equal(selected,step.agentId,'Wrong native selected Harness');
-      writeFileSync(resolve(out,`${index}-draft.json`),JSON.stringify({passed:true,marker:step.marker,selectedAgentId:selected,characters:expected.length}));
+      assert.equal(typeof step.agentLabel,'string','Draft owner requires a visible Agent label');
+      assert(nodes.some(n=>label(n).split('\n').includes(step.agentLabel)),'Expected draft Agent label is not visible');
+      const target=JSON.parse(execFileSync('python3',['-c',
+        "import sys,json,xml.etree.ElementTree as E; r=E.fromstring(sys.stdin.read()); " +
+        "raw=next((n.text for n in r if n.get('name')=='flutter.last_visible_conversation_target'),'null'); " +
+        "target=json.loads(raw) or {}; print(json.dumps({k:target.get(k) for k in ('agentId','mode','isNewConversation','conversationId')}))"],
+        {input:adb('exec-out','run-as','cn.com.omnimind.bot','cat','shared_prefs/FlutterSharedPreferences.xml'),encoding:'utf8'}));
+      assert.equal(target.agentId,step.agentId,'Wrong draft conversation owner');
+      assert.equal(target.isNewConversation,true,'Expected an unsent conversation draft');
+      assert(target.conversationId == null || target.conversationId === 0,'Draft selection created durable history before send');
+      writeFileSync(resolve(out,`${index}-draft.json`),JSON.stringify({passed:true,marker:step.marker,draftAgentId:target.agentId,mode:target.mode,visibleAgentLabel:step.agentLabel,characters:expected.length}));
     } else if (step.action === 'search') {
       assert(/^[A-Za-z0-9._-]+$/.test(step.text), 'Search only accepts a non-private model ID');
       const inputs = snapshot().filter(n => field(n, 'class') === 'android.widget.EditText' &&
@@ -245,6 +252,10 @@ try {
         }
       }
       assert(verified.passed, 'Canonical turn did not complete');
+      if (step.agentId) {
+        verified.owner = JSON.parse(execFileSync('python3', [resolve(scripts, 'assert-agent-prompt-owner.py'), serial, step.marker, step.agentId],
+          {encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'pipe']}));
+      }
       writeFileSync(resolve(out, `${index}-turn-outcome.json`), JSON.stringify(verified, null, 2));
     } else if (step.action === 'workspace-file-absent') {
       assert(/^OOB_FAILURE_STREAMTOOL_\d+$/.test(step.marker), 'Only synthetic failed-tool output may be checked');

@@ -4,7 +4,10 @@ import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
+import android.os.SystemClock
 import androidx.appcompat.app.AppCompatDelegate
+import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.R
 
 object StartupThemeResolver {
@@ -38,7 +41,25 @@ object StartupThemeResolver {
     }
 
     fun applyStoredApplicationNightMode(context: Context) {
-        applyApplicationNightMode(context, readStoredThemeMode(context))
+        val readStart = SystemClock.elapsedRealtime()
+        val mode = readStoredThemeMode(context)
+        if (BuildConfig.DEBUG) {
+            OmniLog.i(
+                "AppStartup",
+                "Startup theme preference read cost: ${SystemClock.elapsedRealtime() - readStart}ms",
+            )
+        }
+        val applyStart = SystemClock.elapsedRealtime()
+        try {
+            applyApplicationNightMode(context, mode)
+        } finally {
+            if (BuildConfig.DEBUG) {
+                OmniLog.i(
+                    "AppStartup",
+                    "Startup theme platform apply cost: ${SystemClock.elapsedRealtime() - applyStart}ms",
+                )
+            }
+        }
     }
 
     fun applyApplicationNightMode(context: Context, rawMode: String?) {

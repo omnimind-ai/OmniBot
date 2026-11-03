@@ -8,7 +8,6 @@ import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetProvider
-import cn.com.omnimind.bot.util.PredictiveBackGate
 
 class QuickLogWidgetBridgeActivity : AppCompatActivity() {
     companion object {
@@ -28,7 +27,6 @@ class QuickLogWidgetBridgeActivity : AppCompatActivity() {
             setTheme(R.style.Theme_OmnibotApp)
         }
         super.onCreate(savedInstanceState)
-        PredictiveBackGate.install(this)
         routeWidgetAction(intent)
     }
 

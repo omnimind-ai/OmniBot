@@ -3,43 +3,6 @@ package cn.com.omnimind.bot.agent.runtime
 import cn.com.omnimind.baselib.llm.ProviderModelOption
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import com.google.gson.JsonParser
-import cn.com.omnimind.bot.plugin.official.agentweb.DEEPSEEK_HARNESS_API_KEY_ENV
-import cn.com.omnimind.bot.plugin.official.agentweb.buildDeepSeekProviderPatch
-
-internal object DeepSeekHarnessConfigAdapter : AgentConfigAdapter {
-    override fun map(input: AgentProviderMappingInput): AgentProviderMapping {
-        val config = syncAgentProviderCredentials(
-            config = input.rawHarnessConfig?.let(::parseDeepSeekHarnessConfig)
-                ?: input.deepSeekConfig,
-            sharedProvider = input.provider,
-            sharedModel = input.model
-        )
-        return AgentProviderMapping(
-            environment = config.toEnvironment() + mapOf(DEEPSEEK_HARNESS_API_KEY_ENV to config.apiKey),
-            deepSeekConfig = config
-        )
-    }
-
-    override fun launchConfigWrites(
-        input: AgentProviderMappingInput,
-        mapping: AgentProviderMapping,
-        providerModels: List<ProviderModelOption>,
-        existingConfig: String,
-    ): List<AgentConfigWrite> {
-        val model = input.model?.trim()?.takeIf { it.isNotEmpty() } ?: return emptyList()
-        val provider = input.provider ?: return emptyList()
-        return listOf(
-            AgentConfigWrite(
-                path = DEEPSEEK_HARNESS_SETTINGS_PATH,
-                content = buildDeepSeekProviderPatch(
-                    provider, model, mapping.deepSeekConfig?.reasoningEffort, acp = true,
-                    providerModelIds = providerModels.map { it.id },
-                ),
-                executorKey = "deepseek-agent-settings-write",
-            )
-        )
-    }
-}
 
 internal object CodexConfigAdapter : AgentConfigAdapter {
     override suspend fun readConfig(
@@ -162,7 +125,7 @@ internal object CodexConfigAdapter : AgentConfigAdapter {
             // Current Codex ACP (1.1.x) removed the legacy Chat Completions
             // wire and rejects `wire_api = "chat"` during every request.
             // The shared Provider may still use Chat Completions for the app
-            // and DSH, but Codex must receive its own official Responses
+            // and other agents, but Codex must receive its official Responses
             // transport setting.
             codexWireApi = provider?.let { OpenAiWireApi.RESPONSES },
             codexBaseUrl = provider?.baseUrl?.let(::normalizeCodexBaseUrl),
@@ -460,25 +423,24 @@ internal fun buildCodexConfigToml(
 /** Keep the managed route stateless while retaining unrelated user settings. */
 private fun configureHostManagedOpenCode(config: String): String {
     val root = JsonParser.parseString(config).asJsonObject
-    val provider = root.getAsJsonObject("provider").getAsJsonObject(OPEN_CODE_PROVIDER_ID)
-    fun statelessOptionsValues(options: com.google.gson.JsonObject) {
-        options.addProperty("store", false)
-        options.remove("previousResponseId")
-        options.remove("previous_response_id")
-    }
-    fun statelessOptions(parent: com.google.gson.JsonObject) {
-        val options = parent.getAsJsonObject("options") ?: com.google.gson.JsonObject().also {
-            parent.add("options", it)
+    val provider = root.getAsJsonObject("providers").getAsJsonObject(OPEN_CODE_PROVIDER_ID)
+    fun statelessRequest(parent: com.google.gson.JsonObject) {
+        for (key in listOf("settings", "body")) {
+            parent.getAsJsonObject(key)?.apply {
+                remove("store")
+                remove("previousResponseId")
+                remove("previous_response_id")
+            }
         }
-        statelessOptionsValues(options)
+        parent.objectOrCreate("body").addProperty("store", false)
     }
-    statelessOptions(provider)
+    statelessRequest(provider)
     provider.getAsJsonObject("models").entrySet().forEach { (_, entry) ->
         if (entry.isJsonObject) {
             val model = entry.asJsonObject
-            statelessOptions(model)
-            model.getAsJsonObject("variants")?.entrySet()?.forEach { (_, variant) ->
-                if (variant.isJsonObject) statelessOptionsValues(variant.asJsonObject)
+            statelessRequest(model)
+            model.getAsJsonArray("variants")?.forEach { variant ->
+                if (variant.isJsonObject) statelessRequest(variant.asJsonObject)
             }
         }
     }

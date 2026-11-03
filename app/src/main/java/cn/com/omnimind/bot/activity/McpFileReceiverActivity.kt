@@ -12,7 +12,6 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.mcp.McpFileInbox
 import cn.com.omnimind.bot.share.SharedOpenPreferenceStore
 import cn.com.omnimind.bot.share.SharedOpenDraftStore
-import cn.com.omnimind.bot.util.PredictiveBackGate
 import cn.com.omnimind.bot.util.TaskCompletionNavigator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -25,7 +24,6 @@ class McpFileReceiverActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        PredictiveBackGate.install(this)
         handleIntent(intent)
     }
 

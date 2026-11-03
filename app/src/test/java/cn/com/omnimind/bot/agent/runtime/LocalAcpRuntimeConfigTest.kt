@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import com.rk.terminal.runtime.TerminalDistribution
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import com.agentclientprotocol.agent.AgentInfo
@@ -50,7 +51,9 @@ class LocalAcpRuntimeConfigTest {
         val store = AcpAgentProfileStore(context)
         fun runtime() = LocalAcpRuntime(
             context, scope, mock(AgentSessionBindingRepository::class.java),
-            AcpAgentProfileStore(context), prepareLaunchEnvironment = { _, _ -> PreparedAcpLaunch(emptyMap()) },
+            AcpAgentProfileStore(context), ownerAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+            currentDistribution = { TerminalDistribution.alpine },
+            prepareLaunchEnvironment = { _, _ -> PreparedAcpLaunch(emptyMap()) },
             buildHandoffContext = { _, _ -> null },
             scheduleToolBridge = mock(AgentScheduleToolBridge::class.java), onMessage = {},
         )
@@ -142,7 +145,6 @@ class LocalAcpRuntimeConfigTest {
         val context = acpProfileStoreTestContext(temporaryFolder.root)
         val store = AcpAgentProfileStore(context)
         store.save(original)
-        store.select(original.id)
         val persisted = if (rejectSave) original else edited
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val launches = mutableListOf<AcpAgentProfile>()
@@ -152,6 +154,8 @@ class LocalAcpRuntimeConfigTest {
             scope = scope,
             bindingRepository = mock(AgentSessionBindingRepository::class.java),
             profileStore = store,
+            ownerAgentId = original.id,
+            currentDistribution = { TerminalDistribution.alpine },
             prepareLaunchEnvironment = { profile, _ ->
                 launches.add(profile)
                 throw stopBeforeProcessLaunch
@@ -168,6 +172,7 @@ class LocalAcpRuntimeConfigTest {
         runtime.setField("client", mock(Client::class.java))
         runtime.setField("agentInfo", mock(AgentInfo::class.java))
         runtime.setField("activeProfile", original)
+        runtime.setField("connectionDistributionId", "alpine")
         runtime.setField("activeLaunchEnvironment", original.environment)
         runtime.setField("workspaceManager", mock(AgentWorkspaceManager::class.java))
         val promptJob = Job()
@@ -183,20 +188,18 @@ class LocalAcpRuntimeConfigTest {
             assertTrue(runtime.isConnected)
             if (rejectSave) {
                 try {
-                    runtime.handleMethod("agent/save", mapOf("agent" to edited.toPayload()))
+                    store.save(edited)
                     fail("The original save error must reach the caller")
                 } catch (error: IllegalArgumentException) {
                     assertEquals("Agent name and command are required.", error.message)
                 }
             } else {
-                val response = runtime.handleMethod(
-                    "agent/save", mapOf("agent" to edited.toPayload()),
-                ) as Map<*, *>
-                assertEquals(edited.command, (response["agent"] as Map<*, *>)["command"])
-                assertEquals(edited.environment, (response["agent"] as Map<*, *>)["environment"])
+                val response = store.save(edited)
+                assertEquals(edited.command, response.command)
+                assertEquals(edited.environment, response.environment)
             }
             val reopenedStore = AcpAgentProfileStore(acpProfileStoreTestContext(temporaryFolder.root))
-            assertEquals(persisted, reopenedStore.selected())
+            assertEquals(persisted, reopenedStore.requireProfile(original.id))
 
             assertFalse("Saving settings cancelled the pending prompt", promptJob.isCancelled)
             assertTrue(runtime.isConnected)

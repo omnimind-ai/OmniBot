@@ -1,7 +1,6 @@
 package cn.com.omnimind.bot.activity
 
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -40,14 +39,6 @@ class TerminalActivity : ComponentActivity() {
                     putExtra(EXTRA_OPEN_SETUP, intent?.getBooleanExtra(EXTRA_OPEN_SETUP, false) == true)
                 }
             )
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE &&
-                cn.com.omnimind.bot.util.PredictiveBackGate.isPredictiveBackEnabled(this@TerminalActivity)
-            ) {
-                overridePendingTransition(
-                    cn.com.omnimind.bot.R.anim.activity_in,
-                    cn.com.omnimind.bot.R.anim.activity_slide_out,
-                )
-            }
             finish()
         }
     }

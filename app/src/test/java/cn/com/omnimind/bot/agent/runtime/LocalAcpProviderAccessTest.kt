@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import com.rk.terminal.runtime.TerminalDistribution
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
 import cn.com.omnimind.baselib.llm.OpenAiWireApi
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
@@ -125,6 +126,7 @@ class LocalAcpProviderAccessTest {
             try {
                 withTimeout(5000) { fixture.runtime.connect(fixture.profile) }
                 assertSame(fixture.access, fixture.runtime.activeProviderAccess())
+                assertEquals("alpine", fixture.runtime.connectionDistributionId)
                 assertEquals(0, fixture.access.closes)
                 fixture.runtime.connect(fixture.profile)
                 assertEquals(1, fixture.preparations)
@@ -134,6 +136,7 @@ class LocalAcpProviderAccessTest {
                 fixture.runtime.disconnect()
                 assertEquals(listOf("grant", "process"), fixture.closedResources)
                 assertNull(fixture.runtime.activeProviderAccess())
+                assertNull(fixture.runtime.connectionDistributionId)
             } finally { fixture.scope.cancel() }
         }
     }
@@ -247,11 +250,10 @@ class LocalAcpProviderAccessTest {
         } finally { fixture.scope.cancel() }
     }
 
-    @Test fun testingOrPreparingANonselectedOwnedRuntimeNeverRestoresAnotherAgentIntoIt() = runBlocking {
+    @Test fun testingOrPreparingAnOwnedRuntimeNeverChangesItsOwner() = runBlocking {
         for (method in listOf("agent/test", "agent/prepare")) {
             val custom = AcpAgentProfile("owned-test-agent", "Owned test agent", command = "fixture-acp")
             val fixture = fixture(profileOverride = custom)
-            fixture.store.select(AcpAgentProfileStore.XIAOWAN_AGENT_ID)
             fixture.seedConnected(custom)
             try {
                 val response = withTimeout(5000) {
@@ -259,7 +261,6 @@ class LocalAcpProviderAccessTest {
                 }
                 assertEquals(true, response["ok"])
                 assertEquals(custom.id, fixture.runtime.activeAgentId())
-                assertEquals(AcpAgentProfileStore.XIAOWAN_AGENT_ID, fixture.store.selected().id)
                 assertTrue(fixture.runtime.isConnected)
                 assertSame(fixture.access, fixture.runtime.activeProviderAccess())
                 assertEquals(0, fixture.preparations)
@@ -277,7 +278,7 @@ class LocalAcpProviderAccessTest {
             // Stop before the Android terminal command; the existing live process stays untouched.
             throw IllegalStateException("probe boundary")
         })
-        val existing = fixture.store.list().first { it.id == AcpAgentProfileStore.XIAOWAN_AGENT_ID }
+        val existing = fixture.profile
         fixture.seedConnected(existing)
         try {
             val result = fixture.runtime.handleMethod("agent/prepare", mapOf("agentId" to fixture.profile.id)) as Map<*, *>
@@ -309,6 +310,8 @@ class LocalAcpProviderAccessTest {
         val fixture = Fixture(scope, profile, store)
         fixture.runtime = LocalAcpRuntime(
             context, scope, mock(AgentSessionBindingRepository::class.java), store,
+            ownerAgentId = profile.id,
+            currentDistribution = { TerminalDistribution.alpine },
             prepareLaunchEnvironment = { _, purpose ->
                 fixture.preparationPurposes += purpose
                 fixture.preparations++
@@ -378,7 +381,8 @@ class LocalAcpProviderAccessTest {
         `when`(info.capabilities).thenReturn(AgentCapabilities())
         for ((name, value) in mapOf(
             "connection" to connection, "client" to mock(Client::class.java), "agentInfo" to info,
-            "activeProfile" to activeProfile, "activePreparedLaunch" to PreparedAcpLaunch(emptyMap(), access),
+            "activeProfile" to activeProfile, "connectionDistributionId" to "alpine",
+            "activePreparedLaunch" to PreparedAcpLaunch(emptyMap(), access),
         )) {
             runtime.javaClass.getDeclaredField(name).apply { isAccessible = true }.set(runtime, value)
         }

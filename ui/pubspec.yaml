@@ -35,6 +35,7 @@ dependencies:
   dotted_border: ^3.1.0
   http: ^1.6.0
   flutter_riverpod: ^3.4.2
+  material_color_utilities: ^0.13.0
   webview_flutter: ^4.14.1
   webview_flutter_android: ^4.10.13
   go_router: ^18.0.0
@@ -72,6 +73,9 @@ flutter:
   # included with your application, so that you can use the icons in
   # the material Icons class.
   uses-material-design: true
+
+  shaders:
+    - shaders/liquid_glass.frag
 
   # To add Flutter specific assets to your application, add an assets section,
   # like this:

@@ -767,8 +767,7 @@ void main() {
       'correct current password',
     );
     await tester.tap(find.byKey(const ValueKey('confirm-change-password')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
 
     expect(successfulCall?.arguments, <String, Object?>{
       'currentPassword': 'correct current password',

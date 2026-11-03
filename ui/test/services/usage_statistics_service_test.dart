@@ -108,7 +108,7 @@ void main() {
   );
 
   test(
-    'one failing query retains the other summary and empty chart weeks',
+    'a failed token query propagates without affecting conversation reads',
     () async {
       messenger.setMockMethodCallHandler(channel, (call) async {
         if (call.method == 'getTokenUsageSummary') {
@@ -120,17 +120,52 @@ void main() {
           'currentStreak': 1,
         };
       });
-      final token = await UsageStatisticsService.getTokenUsage(
-        alignedStart: start,
-        weekStarts: [start],
+      await expectLater(
+        UsageStatisticsService.getTokenUsage(
+          alignedStart: start,
+          weekStarts: [start],
+        ),
+        throwsA(isA<PlatformException>()),
       );
       final activity = await UsageStatisticsService.getConversationActivity(
         startDate: start,
         today: today,
       );
-      expect(token.weeklyData.single.weekStart, start);
-      expect(token.modelTotals, isEmpty);
       expect(activity.totalConversations, 1);
     },
   );
+
+  test(
+    'failed conversation queries propagate instead of returning zero',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        throw PlatformException(code: 'READ_FAILED');
+      });
+      await expectLater(
+        UsageStatisticsService.getConversationActivity(
+          startDate: start,
+          today: today,
+        ),
+        throwsA(isA<PlatformException>()),
+      );
+    },
+  );
+
+  test('missing host summaries are not treated as empty statistics', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async => null);
+    await expectLater(
+      UsageStatisticsService.getConversationActivity(
+        startDate: start,
+        today: today,
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      UsageStatisticsService.getTokenUsage(
+        alignedStart: start,
+        weekStarts: [start],
+      ),
+      throwsStateError,
+    );
+  });
 }

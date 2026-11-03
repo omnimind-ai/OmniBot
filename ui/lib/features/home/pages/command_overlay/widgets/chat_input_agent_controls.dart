@@ -30,39 +30,44 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
       await Future<void>.sync(() => settings.onOpen(anchorContext));
     }
 
-    return TextFieldTapRegion(
-      child: SizedBox(
-        key: buttonKey,
-        width: compact ? 24 : 28,
-        height: compact ? 24 : 28,
-        child: Listener(
-          behavior: HitTestBehavior.opaque,
-          onPointerDown: (_) => settings.onPointerDown?.call(),
-          child: Tooltip(
-            message: modelId.isEmpty
-                ? (english ? 'Select Provider / model' : '选择 Provider / 模型')
-                : (english
-                      ? 'Switch Provider / model: $modelId'
-                      : '切换服务商 / 模型：$modelId'),
-            waitDuration: const Duration(milliseconds: 400),
-            child: InkWell(
-              key: const ValueKey('chat-input-model-picker-button'),
-              borderRadius: BorderRadius.circular(8),
-              onTap: enabled ? openPicker : null,
-              child: Center(
-                child: RotationTransition(
-                  turns: CurvedAnimation(
-                    parent: _modelPickerSpinController,
-                    curve: Curves.easeOutCubic,
-                  ),
-                  child: ProviderVendorIcon(
-                    vendor: vendor,
-                    size: compact ? 20 : 22,
-                    disabled: !enabled,
-                    forceMonochrome: true,
-                    monochromeColor: enabled
-                        ? selectedColor
-                        : palette.textTertiary.withValues(alpha: 0.82),
+    return FlClashPopupSource(
+      glass: false,
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      builder: (_) => TextFieldTapRegion(
+        child: SizedBox(
+          key: buttonKey,
+          width: compact ? 24 : 28,
+          height: compact ? 24 : 28,
+          child: Listener(
+            behavior: HitTestBehavior.opaque,
+            onPointerDown: (_) => settings.onPointerDown?.call(),
+            child: Tooltip(
+              message: modelId.isEmpty
+                  ? (english ? 'Select Provider / model' : '选择 Provider / 模型')
+                  : (english
+                        ? 'Switch Provider / model: $modelId'
+                        : '切换服务商 / 模型：$modelId'),
+              waitDuration: const Duration(milliseconds: 400),
+              child: InkWell(
+                key: const ValueKey('chat-input-model-picker-button'),
+                borderRadius: BorderRadius.circular(8),
+                onTap: enabled ? openPicker : null,
+                child: Center(
+                  child: RotationTransition(
+                    turns: CurvedAnimation(
+                      parent: _modelPickerSpinController,
+                      curve: Curves.easeOutCubic,
+                    ),
+                    child: ProviderVendorIcon(
+                      vendor: vendor,
+                      size: compact ? 20 : 22,
+                      disabled: !enabled,
+                      forceMonochrome: true,
+                      monochromeColor: enabled
+                          ? selectedColor
+                          : palette.textTertiary.withValues(alpha: 0.82),
+                    ),
                   ),
                 ),
               ),
@@ -134,6 +139,7 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
           : (english ? 'No models available' : '未获取到可用模型');
       final handle = showOverlayGlassPopup<_AgentRunSettingsMenuAction>(
         context: anchorContext,
+        sourceContext: anchorContext,
         anchor: anchor,
         preferBelow: false,
         builder: (handle) => _AgentRunSettingsMenuContent(
@@ -167,7 +173,8 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
       _composerStateMachine.popupOpened(ChatComposerPopup.agentRunSettings);
       try {
         final action = await handle.future;
-        if (action == null) return;
+        await handle.closed;
+        if (!mounted || action == null) return;
         final changed = widget.onAgentRunSettingsChanged;
         if (changed == null) return;
         unawaited(
@@ -190,61 +197,66 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
       }
     }
 
-    return TextFieldTapRegion(
-      child: SizedBox(
-        key: buttonKey,
-        width: compact ? 24 : 28,
-        height: compact ? 24 : 28,
-        child: Tooltip(
-          message: [
-            if (modelId.isNotEmpty) modelId,
-            if (agentName.isNotEmpty) agentName,
-            if (effort.isNotEmpty) _agentReasoningEffortLabel(effort),
-          ].join(' · '),
-          waitDuration: const Duration(milliseconds: 400),
-          child: InkWell(
-            key: const ValueKey('chat-input-agent-run-settings-button'),
-            borderRadius: BorderRadius.circular(8),
-            onTap: openMenu,
-            child: AnimatedContainer(
-              duration: _buttonAnimationDuration,
-              curve: _buttonAnimationCurve,
-              width: compact ? 24 : 28,
-              height: compact ? 24 : 28,
-              alignment: Alignment.center,
-              child: RepaintBoundary(
-                child: AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 240),
-                  reverseDuration: const Duration(milliseconds: 190),
-                  switchInCurve: Curves.easeOutCubic,
-                  switchOutCurve: Curves.easeInCubic,
-                  transitionBuilder: (child, animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: ScaleTransition(
-                        scale: Tween<double>(
-                          begin: 0.84,
-                          end: 1,
-                        ).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: Icon(
-                    _composerStateMachine.value.isPopupOpen(
-                          ChatComposerPopup.agentRunSettings,
-                        )
-                        ? LucideIcons.packageOpen
-                        : LucideIcons.package,
-                    key: ValueKey(
+    return FlClashPopupSource(
+      glass: false,
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      builder: (_) => TextFieldTapRegion(
+        child: SizedBox(
+          key: buttonKey,
+          width: compact ? 24 : 28,
+          height: compact ? 24 : 28,
+          child: Tooltip(
+            message: [
+              if (modelId.isNotEmpty) modelId,
+              if (agentName.isNotEmpty) agentName,
+              if (effort.isNotEmpty) _agentReasoningEffortLabel(effort),
+            ].join(' · '),
+            waitDuration: const Duration(milliseconds: 400),
+            child: InkWell(
+              key: const ValueKey('chat-input-agent-run-settings-button'),
+              borderRadius: BorderRadius.circular(8),
+              onTap: openMenu,
+              child: AnimatedContainer(
+                duration: _buttonAnimationDuration,
+                curve: _buttonAnimationCurve,
+                width: compact ? 24 : 28,
+                height: compact ? 24 : 28,
+                alignment: Alignment.center,
+                child: RepaintBoundary(
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 240),
+                    reverseDuration: const Duration(milliseconds: 190),
+                    switchInCurve: Curves.easeOutCubic,
+                    switchOutCurve: Curves.easeInCubic,
+                    transitionBuilder: (child, animation) {
+                      return FadeTransition(
+                        opacity: animation,
+                        child: ScaleTransition(
+                          scale: Tween<double>(
+                            begin: 0.84,
+                            end: 1,
+                          ).animate(animation),
+                          child: child,
+                        ),
+                      );
+                    },
+                    child: Icon(
                       _composerStateMachine.value.isPopupOpen(
                             ChatComposerPopup.agentRunSettings,
                           )
-                          ? 'chat-input-agent-run-settings-package-open-icon'
-                          : 'chat-input-agent-run-settings-package-icon',
+                          ? LucideIcons.packageOpen
+                          : LucideIcons.package,
+                      key: ValueKey(
+                        _composerStateMachine.value.isPopupOpen(
+                              ChatComposerPopup.agentRunSettings,
+                            )
+                            ? 'chat-input-agent-run-settings-package-open-icon'
+                            : 'chat-input-agent-run-settings-package-icon',
+                      ),
+                      size: compact ? 20 : 22,
+                      color: selectedColor,
                     ),
-                    size: compact ? 20 : 22,
-                    color: selectedColor,
                   ),
                 ),
               ),
@@ -255,22 +267,11 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
     );
   }
 
-  String _agentReasoningEffortLabel(String effort, {bool compact = false}) {
-    final normalized = effort.trim().toLowerCase();
+  String _agentReasoningEffortLabel(String effort) {
+    final value = effort.trim();
+    if (value.isNotEmpty) return value;
     final english = Localizations.localeOf(context).languageCode == 'en';
-    return switch (normalized) {
-      'none' || 'no' => english ? 'No reasoning' : (compact ? '无' : '无推理'),
-      'minimal' || 'min' => english ? 'Minimal' : '极低',
-      'low' => english ? 'Low' : '低',
-      'medium' || 'med' => english ? 'Medium' : '中',
-      'high' => english ? 'High' : '高',
-      'xhigh' ||
-      'extra_high' ||
-      'extra-high' ||
-      'very_high' ||
-      'very-high' => english ? 'XHigh' : '超高',
-      _ => effort.trim().isEmpty ? (english ? 'Reasoning' : '推理') : effort,
-    };
+    return english ? 'Reasoning' : '推理';
   }
 
   List<String> _agentRunSettingsOptions({
@@ -299,37 +300,45 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
         widget.agentPermissionMode ?? AgentPermissionMode.fullAccess;
     final palette = context.omniPalette;
     final selectedColor = palette.accentPrimary;
+    final sourceColor = context.isDarkTheme
+        ? palette.surfaceSecondary.withValues(alpha: 0.72)
+        : const Color(0xFFEAF1FF);
 
     final buttonKey = _agentPermissionButtonKey;
 
-    return TextFieldTapRegion(
-      child: Tooltip(
-        message: _agentPermissionTooltip(),
-        waitDuration: const Duration(milliseconds: 400),
-        child: InkWell(
-          key: const ValueKey('chat-input-agent-permission-button'),
-          borderRadius: BorderRadius.circular(999),
-          onTap: () {
-            final anchorContext = buttonKey.currentContext;
-            if (anchorContext != null) _openAgentPermissionMenu(anchorContext);
-          },
-          child: AnimatedContainer(
-            key: buttonKey,
-            duration: _buttonAnimationDuration,
-            curve: _buttonAnimationCurve,
-            width: 24,
-            height: 24,
-            decoration: BoxDecoration(
-              color: context.isDarkTheme
-                  ? palette.surfaceSecondary.withValues(alpha: 0.72)
-                  : const Color(0xFFEAF1FF),
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: _buildAgentPermissionIcon(
-                selected,
-                size: iconSize,
-                color: selectedColor,
+    return FlClashPopupSource(
+      glass: false,
+      color: sourceColor,
+      shape: const CircleBorder(),
+      builder: (_) => TextFieldTapRegion(
+        child: Tooltip(
+          message: _agentPermissionTooltip(),
+          waitDuration: const Duration(milliseconds: 400),
+          child: InkWell(
+            key: const ValueKey('chat-input-agent-permission-button'),
+            borderRadius: BorderRadius.circular(999),
+            onTap: () {
+              final anchorContext = buttonKey.currentContext;
+              if (anchorContext != null) {
+                _openAgentPermissionMenu(anchorContext);
+              }
+            },
+            child: AnimatedContainer(
+              key: buttonKey,
+              duration: _buttonAnimationDuration,
+              curve: _buttonAnimationCurve,
+              width: 24,
+              height: 24,
+              decoration: BoxDecoration(
+                color: sourceColor,
+                shape: BoxShape.circle,
+              ),
+              child: Center(
+                child: _buildAgentPermissionIcon(
+                  selected,
+                  size: iconSize,
+                  color: selectedColor,
+                ),
               ),
             ),
           ),
@@ -341,6 +350,7 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
   Future<void> _openAgentPermissionMenu(
     BuildContext anchorContext, {
     bool? preferBelow,
+    Rect? anchorOverride,
   }) async {
     final selected =
         widget.agentPermissionMode ?? AgentPermissionMode.fullAccess;
@@ -353,14 +363,16 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
         )) {
       return;
     }
-    final anchor = glassPopupAnchorFromContext(anchorContext);
+    final anchor = anchorOverride ?? glassPopupAnchorFromContext(anchorContext);
     if (anchor == null) {
       _composerStateMachine.popupClosed(ChatComposerPopup.agentPermission);
       return;
     }
     final handle = showOverlayGlassPopup<AgentPermissionMode>(
       context: anchorContext,
+      sourceContext: anchorContext,
       anchor: anchor,
+      placementAnchor: anchorOverride,
       preferBelow: preferBelow ?? widget.minimalComposer,
       builder: (handle) => _AgentPermissionGlassMenuContent(
         width: 244,
@@ -383,7 +395,8 @@ extension _ChatInputAgentControls on _ChatInputAreaStateBase {
     _composerStateMachine.popupOpened(ChatComposerPopup.agentPermission);
     try {
       final mode = await handle.future;
-      if (mode == null) return;
+      await handle.closed;
+      if (!mounted || mode == null) return;
       await widget.onAgentPermissionModeChanged?.call(mode);
     } finally {
       if (_agentPermissionMenuHandle == handle) {

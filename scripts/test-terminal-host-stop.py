@@ -12,7 +12,45 @@ class HostStopTest(unittest.TestCase):
     def test_nonzero_exit_and_stdin_are_preserved(self):
         self.run_contract(cancel=False)
 
-    def run_contract(self, cancel):
+    def test_maintenance_launch_preserves_existing_runtime_stdio(self):
+        self.run_contract(cancel=False, maintenance=True)
+
+    def test_maintenance_never_initializes_missing_or_incomplete_rootfs(self):
+        for distribution in ('alpine', 'ubuntu'):
+            for incomplete in (False, True):
+                with self.subTest(distribution=distribution, incomplete=incomplete):
+                    with tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        archive = root / 'files' / f'{distribution}.tar.gz'
+                        archive.parent.mkdir(parents=True)
+                        archive.write_bytes(b'archive must not be extracted')
+                        rootfs = root / 'local' / distribution
+                        if incomplete:
+                            # A stale ready marker must not authorize reset or extraction.
+                            for name in ('bin/sh', '.omnibot-rootfs-ready', 'root/history', 'etc/user-config'):
+                                target = rootfs / name
+                                target.parent.mkdir(parents=True, exist_ok=True)
+                                target.write_text('preserve this existing file')
+
+                        def snapshot():
+                            return {
+                                str(path.relative_to(root)): path.read_bytes() if path.is_file() else None
+                                for path in root.rglob('*')
+                            }
+
+                        before = snapshot()
+                        result = subprocess.run(
+                            ['/bin/sh', str(SCRIPT)],
+                            env={**os.environ, 'PREFIX': directory,
+                                 'OMNIBOT_TERMINAL_DISTRIBUTION': distribution,
+                                 'OMNIBOT_TERMINAL_NO_INSTALL': '1'},
+                            capture_output=True, text=True, timeout=3,
+                        )
+                        self.assertNotEqual(result.returncode, 0)
+                        self.assertIn('maintenance requires an installed', result.stderr)
+                        self.assertEqual(before, snapshot(), 'Maintenance changed an unavailable rootfs')
+
+    def run_contract(self, cancel, maintenance=False):
         with tempfile.TemporaryDirectory() as directory:
             root=Path(directory)
             for name in ['local/alpine/bin/sh','local/alpine/etc/os-release','local/alpine/.omnibot-rootfs-ready']:
@@ -32,7 +70,7 @@ if line.strip() == 'EXIT7':
 while True: time.sleep(.1)
 ''')
             linker.chmod(0o755)
-            process=subprocess.Popen(['/bin/sh',str(SCRIPT)],env={**os.environ,'PREFIX':directory,'LINKER':str(linker),'OMNIBOT_TERMINAL_DISTRIBUTION':'alpine','OMNIBOT_HOST_WORKSPACE':'','OMNIBOT_MT_STORAGE_HOST':''},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
+            process=subprocess.Popen(['/bin/sh',str(SCRIPT)],env={**os.environ,'PREFIX':directory,'LINKER':str(linker),'OMNIBOT_TERMINAL_DISTRIBUTION':'alpine','OMNIBOT_TERMINAL_NO_INSTALL':'1' if maintenance else '0','OMNIBOT_HOST_WORKSPACE':'','OMNIBOT_MT_STORAGE_HOST':''},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
             runtime=None
             def line():
                 with selectors.DefaultSelector() as ready:

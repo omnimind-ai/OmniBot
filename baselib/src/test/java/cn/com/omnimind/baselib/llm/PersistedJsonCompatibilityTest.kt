@@ -24,7 +24,10 @@ class PersistedJsonCompatibilityTest {
             modelsDevProviderId = "fixture", modelsDevProviderName = "Fixture Provider",
             providerLogoUrl = "https://example.invalid/logo.svg", family = "fixture", group = "chat",
             attachment = true, reasoning = true, supportedReasoningLevels = listOf("low", "high"),
-            defaultReasoningLevel = "low", toolCall = true, structuredOutput = true, temperature = false,
+            defaultReasoningLevel = "low", reasoningCanDisable = true, reasoningDefaultEnabled = false,
+            reasoningSupportsAdaptive = true, reasoningCapabilitySource = "provider",
+            reasoningWireFormat = "deepseek", reasoningEffortSupported = true, reasoningContentRequired = true,
+            toolCall = true, structuredOutput = true, temperature = false,
         )
         val namingIndependentGson = GsonBuilder()
             .setFieldNamingPolicy(FieldNamingPolicy.LOWER_CASE_WITH_UNDERSCORES).create()
@@ -34,6 +37,9 @@ class PersistedJsonCompatibilityTest {
             "inputModalities", "outputModalities", "modelsDevProviderId", "modelsDevProviderName",
             "providerLogoUrl", "family", "group", "attachment", "reasoning", "supportedReasoningLevels",
             "defaultReasoningLevel", "toolCall", "structuredOutput", "temperature",
+            "reasoningCanDisable", "reasoningDefaultEnabled", "reasoningCapabilitySource",
+            "reasoningSupportsAdaptive",
+            "reasoningWireFormat", "reasoningEffortSupported", "reasoningContentRequired",
         ), encoded.keySet())
         assertEquals(model, gson.fromJson(encoded, ProviderModelOption::class.java))
     }

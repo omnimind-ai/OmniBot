@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:go_router/go_router.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/models/omni_plugin_item.dart';
@@ -136,9 +138,9 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
   Future<void> _uninstall() async {
     final plugin = _plugin;
     if (plugin == null || _busy) return;
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOmniGlassCardSheet<bool>(
       context: context,
-      builder: (dialogContext) => AlertDialog(
+      builder: (dialogContext) => OmniGlassAlertDialog(
         title: Text(context.l10n.pluginUninstallTitle),
         content: Text(context.l10n.pluginUninstallConfirmMsg(plugin.name)),
         actions: [
@@ -181,26 +183,23 @@ class _PluginDetailPageState extends State<PluginDetailPage> {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    return PopScope(
-      // The route already uses PredictiveBackGestureWrapper. It must remain
-      // poppable so Android can hand gesture progress to that transition.
-      canPop: true,
-      child: Scaffold(
-        backgroundColor: palette.pageBackground,
-        appBar: CommonAppBar(
-          title: context.l10n.pluginDetailTitle,
-          primary: true,
-          onBackPressed: () => context.pop(_changed),
-        ),
-        body: _loading
+    return Scaffold(
+      backgroundColor: palette.pageBackground,
+      appBar: CommonAppBar(
+        title: context.l10n.pluginDetailTitle,
+        primary: true,
+        onBackPressed: () => context.pop(_changed),
+      ),
+      body: OmniContentWidth(
+        child: _loading
             ? const Center(child: CircularProgressIndicator())
             : _plugin == null
             ? _buildUnavailable()
             : _buildDetails(_plugin!),
-        bottomNavigationBar: _plugin == null
-            ? null
-            : _buildBottomActions(_plugin!),
       ),
+      bottomNavigationBar: _plugin == null
+          ? null
+          : _buildBottomActions(_plugin!),
     );
   }
 

@@ -4,6 +4,7 @@ import android.content.Context
 import cn.com.omnimind.baselib.database.AgentSessionBinding
 import cn.com.omnimind.baselib.database.Conversation
 import cn.com.omnimind.baselib.database.DatabaseHelper
+import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import cn.com.omnimind.bot.webchat.ConversationDomainService
 import cn.com.omnimind.bot.webchat.FlutterChatSyncBridge
 import cn.com.omnimind.bot.webchat.RealtimeHub
@@ -15,6 +16,7 @@ internal class AgentSessionBindingRepository(
 ) {
     private val appContext = context.applicationContext
     private val conversationDomainService by lazy { ConversationDomainService(appContext) }
+    private val profileStore by lazy { AcpAgentProfileStore(appContext) }
     private val bindingMutex = Mutex()
 
     suspend fun getBindingByConversationId(conversationId: Long): AgentSessionBinding? {
@@ -32,6 +34,7 @@ internal class AgentSessionBindingRepository(
 
     suspend fun ensureBinding(
         threadId: String,
+        agentId: String,
         conversationId: Long? = null,
         cwd: String = AgentRuntimeDefaults.DEFAULT_WORKSPACE_CWD,
         title: String? = null,
@@ -40,6 +43,7 @@ internal class AgentSessionBindingRepository(
     ): Long = bindingMutex.withLock {
         ensureBindingLocked(
             threadId = threadId,
+            agentId = agentId,
             conversationId = conversationId,
             cwd = cwd,
             title = title,
@@ -50,6 +54,7 @@ internal class AgentSessionBindingRepository(
 
     private suspend fun ensureBindingLocked(
         threadId: String,
+        agentId: String,
         conversationId: Long?,
         cwd: String,
         title: String?,
@@ -58,6 +63,10 @@ internal class AgentSessionBindingRepository(
     ): Long {
         val normalizedThreadId = threadId.trim()
         require(normalizedThreadId.isNotEmpty()) { "threadId is required" }
+        val normalizedAgentId = agentId.trim()
+        require(normalizedAgentId.isNotEmpty()) {
+            "agent_identity_required: Binding an ACP session requires agentId."
+        }
         // A late load/config request must not resurrect deleted history as a
         // new empty Conversation under another id.
         val requestedConversation = conversationId?.let { id ->
@@ -68,6 +77,25 @@ internal class AgentSessionBindingRepository(
         val now = System.currentTimeMillis()
 
         val existingBinding = DatabaseHelper.getAgentSessionBindingByThreadId(normalizedThreadId)
+        val existingConversation = existingBinding?.let {
+            DatabaseHelper.getConversationById(it.conversationId)
+        }
+        val sessionOwner = profileStore.agentIdForSession(normalizedThreadId)
+        val conversations: List<Conversation?> = listOfNotNull(requestedConversation, existingConversation).distinctBy { it.id }
+        for (conversation in conversations.ifEmpty { listOf(null) }) {
+            val conversationOwner = conversation?.let { profileStore.agentIdForConversation(it.id) }
+            profileStore.requireSupportedAgent(normalizedAgentId, sessionOwner, conversationOwner)
+            val resolution = AgentConversationModePolicy.resolveHarness(
+                conversationMode = conversation?.mode ?: conversationMode,
+                requestedAgentId = normalizedAgentId,
+                conversationAgentId = conversationOwner,
+                sessionAgentId = sessionOwner,
+                xiaowanAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+            )
+            require(!resolution.hasConflict && resolution.agentId == normalizedAgentId) {
+                "agent_owner_conflict: ACP session $normalizedThreadId does not belong to agent $normalizedAgentId."
+            }
+        }
         if (existingBinding != null) {
             if (conversationId != null && conversationId != existingBinding.conversationId) {
                 val oldConversation = DatabaseHelper.getConversationById(existingBinding.conversationId)
@@ -142,7 +170,12 @@ internal class AgentSessionBindingRepository(
                     ?: defaultConversationTitle(normalizedThreadId),
                 archived = archived == true,
                 mode = normalizeConversationMode(conversationMode),
-                now = now
+                agentId = normalizedAgentId,
+                expectedNaOwner = if (normalizedAgentId == NA_AGENT_ID) {
+                    requireNotNull(NaConversationAccess.sessionOwner(normalizedThreadId)) {
+                        "agent_identity_required: Na sessions require their existing account owner prefix."
+                    }
+                } else null,
             )
 
         val binding = AgentSessionBinding(
@@ -244,23 +277,20 @@ internal class AgentSessionBindingRepository(
         title: String,
         archived: Boolean,
         mode: String,
-        now: Long
+        agentId: String,
+        expectedNaOwner: String?,
     ): Conversation {
-        val conversation = Conversation(
-            id = 0,
+        val payload = conversationDomainService.createConversation(
             title = title.ifBlank { "Agent" },
             mode = mode,
-            isArchived = archived,
-            status = 0,
-            createdAt = now,
-            updatedAt = now
+            agentId = agentId,
+            archived = archived,
+            expectedNaOwner = expectedNaOwner,
         )
-        val id = DatabaseHelper.insertConversation(conversation)
-        val inserted = requireNotNull(DatabaseHelper.getConversationById(id)) {
+        val id = requireNotNull(payload["id"] as? Number).toLong()
+        return requireNotNull(DatabaseHelper.getConversationById(id)) {
             "Agent conversation was inserted but cannot be loaded back"
         }
-        publishConversationEvent("conversation_created", inserted)
-        return inserted
     }
 
     internal fun buildUpdatedConversation(

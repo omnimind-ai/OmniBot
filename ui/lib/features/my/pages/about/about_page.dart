@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/app_update_service.dart';
@@ -451,38 +452,40 @@ class _AboutPageState extends State<AboutPage> {
         title: context.l10n.settingsAboutTitle,
         primary: true,
       ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final compact = constraints.maxHeight < 760;
-            return Center(
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 520),
-                child: SingleChildScrollView(
-                  padding: edgeToEdgeScrollPadding(
-                    context,
-                    EdgeInsets.fromLTRB(
-                      16,
-                      compact ? 8 : 16,
-                      16,
-                      compact ? 20 : 32,
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact = constraints.maxHeight < 760;
+              return Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 520),
+                  child: SingleChildScrollView(
+                    padding: edgeToEdgeScrollPadding(
+                      context,
+                      EdgeInsets.fromLTRB(
+                        16,
+                        compact ? 8 : 16,
+                        16,
+                        compact ? 20 : 32,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(height: compact ? 4 : 8),
+                        _buildHero(compact),
+                        SizedBox(height: compact ? 18 : 24),
+                        _buildGroups(compact),
+                      ],
                     ),
                   ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      SizedBox(height: compact ? 4 : 8),
-                      _buildHero(compact),
-                      SizedBox(height: compact ? 18 : 24),
-                      _buildGroups(compact),
-                    ],
-                  ),
                 ),
-              ),
-            );
-          },
+              );
+            },
+          ),
         ),
       ),
     );

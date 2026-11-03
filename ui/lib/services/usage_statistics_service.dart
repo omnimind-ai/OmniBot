@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/services/assists_core_service.dart';
 
@@ -77,52 +76,42 @@ class UsageStatisticsService {
     required DateTime today,
   }) async {
     final visibility = AssistsMessageService.conversationVisibilityRevision;
-    try {
-      final result = await _channel.invokeMapMethod<dynamic, dynamic>(
-        'getConversationActivitySummary',
-        {
-          'startDateMs': startDate.millisecondsSinceEpoch,
-          'todayMs': today.millisecondsSinceEpoch,
-        },
-      );
-      if (result == null) return const ConversationActivitySummary();
-      final summary =
-          visibility == AssistsMessageService.conversationVisibilityRevision
-          ? result
-          : result['localSummary'];
-      return summary is Map
-          ? ConversationActivitySummary.fromMap(summary)
-          : const ConversationActivitySummary();
-    } catch (error) {
-      debugPrint('[UsageStatistics] Failed to get activity: $error');
-      return const ConversationActivitySummary();
+    final result = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'getConversationActivitySummary',
+      {
+        'startDateMs': startDate.millisecondsSinceEpoch,
+        'todayMs': today.millisecondsSinceEpoch,
+      },
+    );
+    if (result == null) {
+      throw StateError('Conversation activity summary is unavailable');
     }
+    final summary =
+        visibility == AssistsMessageService.conversationVisibilityRevision
+        ? result
+        : result['localSummary'];
+    return summary is Map
+        ? ConversationActivitySummary.fromMap(summary)
+        : const ConversationActivitySummary();
   }
 
   static Future<TokenUsageSummary> getTokenUsage({
     required DateTime alignedStart,
     required List<DateTime> weekStarts,
   }) async {
-    TokenUsageSummary empty() => TokenUsageSummary(
-      weeklyData: weekStarts
-          .map((date) => WeeklyTokenData(weekStart: date))
-          .toList(growable: false),
+    final result = await _channel.invokeMapMethod<dynamic, dynamic>(
+      'getTokenUsageSummary',
+      {
+        'alignedStartMs': alignedStart.millisecondsSinceEpoch,
+        'weekStartsMs': weekStarts
+            .map((date) => date.millisecondsSinceEpoch)
+            .toList(growable: false),
+      },
     );
-    try {
-      final result = await _channel.invokeMapMethod<dynamic, dynamic>(
-        'getTokenUsageSummary',
-        {
-          'alignedStartMs': alignedStart.millisecondsSinceEpoch,
-          'weekStartsMs': weekStarts
-              .map((date) => date.millisecondsSinceEpoch)
-              .toList(growable: false),
-        },
-      );
-      return result == null ? empty() : TokenUsageSummary.fromMap(result);
-    } on PlatformException catch (error) {
-      debugPrint('[UsageStatistics] Failed to get tokens: ${error.message}');
-      return empty();
+    if (result == null) {
+      throw StateError('Token usage summary is unavailable');
     }
+    return TokenUsageSummary.fromMap(result);
   }
 }
 

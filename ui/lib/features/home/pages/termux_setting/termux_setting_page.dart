@@ -2,6 +2,10 @@ import 'dart:async';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/omni_glass.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
@@ -11,8 +15,10 @@ import 'package:ui/services/workspace_mount_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:ui/widgets/settings_section_title.dart';
 import 'package:ui/widgets/settings_ui.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 
 class _EnvironmentDefinition {
   const _EnvironmentDefinition({
@@ -97,9 +103,9 @@ const List<_EnvironmentDefinition> _environmentDefinitions =
         groupKey: 'alpineAiAgent',
       ),
       _EnvironmentDefinition(
-        id: 'deepseek_harness',
-        title: 'DeepSeek Harness',
-        descriptionKey: 'alpineDeepSeekHarness',
+        id: 'pi',
+        title: 'Pi',
+        descriptionKey: 'alpinePi',
         groupKey: 'alpineAiAgent',
       ),
       _EnvironmentDefinition(
@@ -138,7 +144,7 @@ class TermuxSettingPage extends StatefulWidget {
 }
 
 class _TermuxSettingPageState extends State<TermuxSettingPage>
-    with WidgetsBindingObserver {
+    with WidgetsBindingObserver, FlClashPageLoadMixin {
   bool _isOpeningSetup = false;
   bool _isDetecting = true;
   bool _isDistributionLoading = true;
@@ -208,8 +214,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   String get _workspaceMountSectionTitle =>
       _isEnglish ? 'Workspace mounts' : 'Workspace 挂载';
   String get _workspaceMountSectionDesc => _isEnglish
-      ? 'Link a readable host directory into `/workspace`. The selected terminal system, chat resource previews, and the workspace browser will all see the same files. Unmount only removes the mount entry and never deletes the real directory.'
-      : '把一个可访问的宿主目录挂到 `/workspace` 下。当前终端系统、聊天资源预览和文件浏览器都会看到同一份文件。卸载只会删除挂载入口，不会删除真实目录。';
+      ? 'Connect a device directory to the workspace for terminal and chat access. Removing a mount keeps the original files.'
+      : '把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。';
   String get _workspaceMountAddLabel => _isEnglish ? 'Add mount' : '新增挂载';
   String get _workspaceMountEmptyDesc =>
       _isEnglish ? 'No mounted directories yet.' : '还没有挂载任何宿主目录。';
@@ -255,10 +261,10 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         return l10n.alpineClaudeCode;
       case 'alpineOpenCode':
         return l10n.alpineOpenCode;
-      case 'alpineDeepSeekHarness':
-        return l10n.alpineDeepSeekHarness;
       case 'alpineKimiCode':
         return l10n.alpineKimiCode;
+      case 'alpinePi':
+        return l10n.alpinePi;
       case 'alpineSshClient':
         return l10n.alpineSshClient;
       case 'alpineSshpass':
@@ -342,12 +348,13 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   Future<void> _loadDistributionAndInventory({
     bool selectMissingByDefault = false,
   }) async {
+    if (!await waitForPageReady()) return;
     if (_isDistributionSwitching) return;
     final request = ++_distributionRequest;
     ++_inventoryRequest;
     try {
       final distribution = await getEmbeddedTerminalDistribution();
-      if (!mounted || request != _distributionRequest) return;
+      if (!await waitForPageReady() || request != _distributionRequest) return;
       final changed = distribution != _selectedDistribution;
       setState(() {
         _selectedDistribution = distribution;
@@ -359,7 +366,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         }
       });
     } catch (_) {
-      if (!mounted || request != _distributionRequest) return;
+      if (!await waitForPageReady() || request != _distributionRequest) return;
       setState(() {
         _isDistributionLoading = false;
       });
@@ -440,6 +447,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   Future<void> _refreshInventory({bool selectMissingByDefault = false}) async {
+    if (!await waitForPageReady()) return;
     final request = ++_inventoryRequest;
     final distribution = _selectedDistribution;
     bool isCurrent() =>
@@ -470,7 +478,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           nextSelected.add(definition.id);
         }
       }
-      if (!isCurrent()) {
+      if (!await waitForPageReady() || !isCurrent()) {
         return;
       }
       setState(() {
@@ -480,7 +488,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _isDetecting = false;
       });
     } on PlatformException catch (e) {
-      if (!isCurrent()) {
+      if (!await waitForPageReady() || !isCurrent()) {
         return;
       }
       setState(() {
@@ -491,7 +499,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _detectError = e.message ?? context.l10n.alpineDetectFailed;
       });
     } catch (_) {
-      if (!isCurrent()) {
+      if (!await waitForPageReady() || !isCurrent()) {
         return;
       }
       setState(() {
@@ -505,6 +513,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   Future<void> _refreshAutoStartTasks() async {
+    if (!await waitForPageReady()) return;
     if (mounted) {
       setState(() {
         _isAutoStartLoading = true;
@@ -513,7 +522,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     }
     try {
       final tasks = await getEmbeddedTerminalAutoStartTasks();
-      if (!mounted) {
+      if (!await waitForPageReady()) {
         return;
       }
       setState(() {
@@ -521,7 +530,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _isAutoStartLoading = false;
       });
     } on PlatformException catch (e) {
-      if (!mounted) {
+      if (!await waitForPageReady()) {
         return;
       }
       setState(() {
@@ -530,7 +539,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _autoStartError = e.message ?? context.l10n.alpineBootTasksLoadFailed;
       });
     } catch (_) {
-      if (!mounted) {
+      if (!await waitForPageReady()) {
         return;
       }
       setState(() {
@@ -542,6 +551,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   Future<void> _refreshWorkspaceMounts() async {
+    if (!await waitForPageReady()) return;
     if (mounted) {
       setState(() {
         _isMountsLoading = true;
@@ -550,7 +560,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     }
     try {
       final mounts = await WorkspaceMountService.listMountedDirectories();
-      if (!mounted) {
+      if (!await waitForPageReady()) {
         return;
       }
       setState(() {
@@ -558,7 +568,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _isMountsLoading = false;
       });
     } catch (error) {
-      if (!mounted) {
+      if (!await waitForPageReady()) {
         return;
       }
       setState(() {
@@ -695,7 +705,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     final saveFailedMessage = context.l10n.alpineBootTaskSaveFailed;
     final addedMessage = context.l10n.alpineBootTaskAdded;
     final updatedMessage = context.l10n.alpineBootTaskUpdated;
-    final formResult = await showDialog<_AutoStartTaskFormResult>(
+    final formResult = await showOmniGlassCardSheet<_AutoStartTaskFormResult>(
       context: context,
       builder: (dialogContext) => _AutoStartTaskDialog(task: task),
     );
@@ -856,84 +866,72 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       groupedItems[group]!.add(item);
     }
 
+    final sections = <Widget Function()>[
+      _buildDistributionCard,
+      _buildIntroCard,
+      if (_detectError != null) () => _buildErrorCard(_detectError!),
+      for (final entry in groupedItems.entries)
+        () => OmniSettingsGroup(
+          title: entry.key,
+          dividerIndent: 54,
+          dividerEndIndent: 18,
+          children: entry.value.map(_buildEnvironmentTile).toList(),
+        ),
+      () => SizedBox(
+        width: double.infinity,
+        child: FilledButton.icon(
+          onPressed: _canStartSetup && !_isOpeningSetup
+              ? _handleOpenSetupPage
+              : null,
+          icon: _isOpeningSetup
+              ? SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2.2,
+                    color: Theme.of(context).colorScheme.onPrimary,
+                  ),
+                )
+              : const Icon(LucideIcons.squareTerminal),
+          label: Text(
+            _isDetecting
+                ? context.l10n.alpineDetecting
+                : _selectedLostCount > 0
+                ? context.l10n.alpineStartConfig(_selectedLostCount)
+                : context.l10n.alpineAllReady,
+          ),
+        ),
+      ),
+      _buildAutoStartSection,
+      _buildWorkspaceMountSection,
+    ];
+
     return Scaffold(
       backgroundColor: _pageBackground,
       appBar: CommonAppBar(
         title: context.l10n.settingsAlpineTitle,
         primary: true,
       ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: RefreshIndicator(
-          onRefresh: () async {
-            if (_isDistributionSwitching || _isDistributionLoading) return;
-            await _refreshInventory();
-            await _refreshAutoStartTasks();
-          },
-          child: ListView(
-            padding: edgeToEdgeScrollPadding(
-              context,
-              const EdgeInsets.fromLTRB(22, 12, 22, 24),
-            ),
-            children: [
-              _buildDistributionCard(),
-              const SizedBox(height: 14),
-              _buildIntroCard(),
-              const SizedBox(height: 14),
-              if (_detectError != null) ...[
-                _buildErrorCard(_detectError!),
-                const SizedBox(height: 14),
-              ],
-              for (final entry in groupedItems.entries) ...[
-                _buildSectionCard(
-                  title: entry.key,
-                  child: Column(
-                    children: [
-                      for (
-                        int index = 0;
-                        index < entry.value.length;
-                        index++
-                      ) ...[
-                        _buildEnvironmentTile(entry.value[index]),
-                        if (index != entry.value.length - 1)
-                          const Divider(height: 20, thickness: 0.6),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 14),
-              ],
-              SizedBox(
-                width: double.infinity,
-                child: FilledButton.icon(
-                  onPressed: _canStartSetup && !_isOpeningSetup
-                      ? _handleOpenSetupPage
-                      : null,
-                  icon: _isOpeningSetup
-                      ? SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2.2,
-                            color: Theme.of(context).colorScheme.onPrimary,
-                          ),
-                        )
-                      : const Icon(LucideIcons.squareTerminal),
-                  label: Text(
-                    _isDetecting
-                        ? context.l10n.alpineDetecting
-                        : _selectedLostCount > 0
-                        ? context.l10n.alpineStartConfig(_selectedLostCount)
-                        : context.l10n.alpineAllReady,
-                  ),
-                ),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: RefreshIndicator(
+            onRefresh: () async {
+              if (_isDistributionSwitching || _isDistributionLoading) return;
+              await _refreshInventory();
+              await _refreshAutoStartTasks();
+            },
+            child: ListView.separated(
+              scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+              padding: edgeToEdgeScrollPadding(
+                context,
+                const EdgeInsets.fromLTRB(16, 16, 16, 24),
               ),
-              const SizedBox(height: 14),
-              _buildAutoStartSection(),
-              const SizedBox(height: 14),
-              _buildWorkspaceMountSection(),
-            ],
+              itemCount: sections.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 28),
+              itemBuilder: (context, index) => sections[index](),
+            ),
           ),
         ),
       ),
@@ -949,8 +947,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         children: [
           Text(
             _isEnglish
-                ? 'Choose the Linux rootfs used by environment detection, commands, Agent tools, and ReTerminal.'
-                : '选择环境检测、命令执行、Agent 工具与 ReTerminal 共用的 Linux rootfs。',
+                ? 'Choose the Linux system shared by the terminal and Agents.'
+                : '选择终端与 Agent 共用的 Linux 系统。',
             style: TextStyle(
               color: _secondaryTextColor,
               fontSize: 13,
@@ -961,25 +959,23 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           const SizedBox(height: 14),
           SizedBox(
             width: double.infinity,
-            child: SegmentedButton<EmbeddedTerminalDistribution>(
-              segments: const [
-                ButtonSegment(
+            child: OmniSegmentedSlider<EmbeddedTerminalDistribution>(
+              keyPrefix: 'terminal-distribution',
+              value: _selectedDistribution,
+              options: const [
+                OmniSegmentedOption(
                   value: EmbeddedTerminalDistribution.alpine,
-                  label: Text('Alpine'),
+                  label: 'Alpine',
                 ),
-                ButtonSegment(
+                OmniSegmentedOption(
                   value: EmbeddedTerminalDistribution.ubuntu,
-                  label: Text('Ubuntu'),
+                  label: 'Ubuntu',
                 ),
               ],
-              selected: <EmbeddedTerminalDistribution>{_selectedDistribution},
-              onSelectionChanged: busy
+              onChanged: busy
                   ? null
-                  : (selection) {
-                      if (selection.isNotEmpty) {
-                        unawaited(_switchDistribution(selection.first));
-                      }
-                    },
+                  : (distribution) =>
+                        unawaited(_switchDistribution(distribution)),
             ),
           ),
           if (busy) ...[
@@ -1026,28 +1022,51 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
 
   Widget _buildIntroCard() {
     final readyCount = _items.where((item) => item.ready == true).length;
-    return _buildSectionCard(
-      title: context.l10n.alpineEnvConfig,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 18),
+      child: Row(
         children: [
-          Text(
-            _isDetecting
-                ? context.l10n.alpineDetectingDesc
-                : _detectError != null ||
-                      _items.any((item) => item.ready == null)
-                ? (_isEnglish
-                      ? 'Detection incomplete. Refresh to confirm component status.'
-                      : '检测未完成，请重新检测以确认组件状态。')
-                : context.l10n.alpineReadyCount(readyCount, _items.length),
-            style: TextStyle(
-              color: _secondaryTextColor,
-              fontSize: 13,
-              fontWeight: FontWeight.w500,
-              height: 1.6,
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  context.l10n.alpineEnvConfig,
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w600,
+                    color: _primaryTextColor,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  _isDetecting
+                      ? context.l10n.alpineDetectingDesc
+                      : _detectError != null ||
+                            _items.any((item) => item.ready == null)
+                      ? (_isEnglish
+                            ? 'Detection incomplete. Refresh to confirm component status.'
+                            : '检测未完成，请重新检测以确认组件状态。')
+                      : context.l10n.alpineReadyCount(
+                          readyCount,
+                          _items.length,
+                        ),
+                  style: TextStyle(
+                    color: _secondaryTextColor,
+                    fontSize: 12,
+                    height: 1.45,
+                  ),
+                ),
+              ],
             ),
           ),
-          const SizedBox(height: 12),
+          OmniCircleButton(
+            tooltip: _isEnglish ? 'Refresh' : '刷新',
+            onPressed: _isDetecting || _isDistributionSwitching
+                ? null
+                : () => _refreshInventory(),
+            icon: LucideIcons.refreshCw,
+          ),
         ],
       ),
     );
@@ -1094,21 +1113,14 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
               ),
             ),
           ] else if (_workspaceMounts.isEmpty) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _mutedSurfaceColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: context.omniPalette.borderSubtle),
-              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
                 _workspaceMountEmptyDesc,
                 style: TextStyle(
-                  color: _secondaryTextColor,
+                  color: _tertiaryTextColor,
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  height: 1.6,
+                  height: 1.5,
                 ),
               ),
             ),
@@ -1278,21 +1290,14 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
               ),
             ),
           ] else if (_autoStartTasks.isEmpty) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _mutedSurfaceColor,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: context.omniPalette.borderSubtle),
-              ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
               child: Text(
                 context.l10n.alpineNoTasksDesc,
                 style: TextStyle(
-                  color: _secondaryTextColor,
+                  color: _tertiaryTextColor,
                   fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  height: 1.6,
+                  height: 1.5,
                 ),
               ),
             ),
@@ -1414,7 +1419,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
           ),
         ),
         const SizedBox(height: 10),
-        Row(
+        Wrap(
+          spacing: 4,
           children: [
             TextButton.icon(
               onPressed: _isAutoStartBusy
@@ -1451,6 +1457,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     final ready = item.ready == true;
     final unknown = item.ready == null;
     final selected = _selectedPackageIds.contains(item.definition.id);
+    final canToggle = !_isDetecting && !unknown && !_isDistributionSwitching;
     final versionText = item.version?.trim().isNotEmpty == true
         ? item.version!.trim()
         : (unknown
@@ -1458,103 +1465,71 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
               : ready
               ? context.l10n.alpineVersionDetected
               : context.l10n.alpineVersionNotFound);
-
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.only(top: 2),
-          child: ready
-              ? const Icon(
-                  LucideIcons.squareCheckBig,
-                  color: Color(0xFF16A34A),
-                  size: 22,
-                )
-              : Checkbox(
-                  value: selected,
-                  activeColor: context.omniPalette.accentPrimary,
-                  checkColor: Theme.of(context).colorScheme.onPrimary,
-                  onChanged: _isDetecting || unknown || _isDistributionSwitching
-                      ? null
-                      : (value) => _togglePackage(item.definition.id, value),
-                ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                item.definition.title,
-                style: TextStyle(
-                  color: _primaryTextColor,
-                  fontSize: 15,
-                  fontWeight: FontWeight.w700,
-                ),
+    return InkWell(
+      onTap: !ready && canToggle
+          ? () => _togglePackage(item.definition.id, !selected)
+          : null,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(18, 14, 10, 14),
+        child: Row(
+          children: [
+            SizedBox.square(
+              dimension: 22,
+              child: Icon(
+                ready ? LucideIcons.circleCheck : LucideIcons.package,
+                size: 20,
+                color: ready ? const Color(0xFF16A34A) : _tertiaryTextColor,
               ),
-              const SizedBox(height: 4),
-              Text(
-                _resolveL10nKey(item.definition.descriptionKey),
-                style: TextStyle(
-                  color: _secondaryTextColor,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w500,
-                ),
+            ),
+            const SizedBox(width: 14),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.definition.title,
+                    style: TextStyle(
+                      color: _primaryTextColor,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w400,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _resolveL10nKey(item.definition.descriptionKey),
+                    style: TextStyle(
+                      color: _secondaryTextColor,
+                      fontSize: 12,
+                      height: 1.4,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    versionText,
+                    style: TextStyle(
+                      color: _tertiaryTextColor,
+                      fontSize: 11,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 10),
+            if (!ready)
+              Checkbox(
+                value: selected,
+                activeColor: context.omniPalette.accentPrimary,
+                checkColor: Theme.of(context).colorScheme.onPrimary,
+                onChanged: canToggle
+                    ? (value) => _togglePackage(item.definition.id, value)
+                    : null,
+              )
+            else
+              const SizedBox(width: 8),
+          ],
         ),
-        const SizedBox(width: 10),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 150),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              if (_isDetecting && !_inventory.containsKey(item.definition.id))
-                const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              else
-                _buildLegendTag(
-                  label: unknown
-                      ? (_isEnglish ? 'Detection failed' : '检测失败')
-                      : ready
-                      ? 'ready'
-                      : 'lost',
-                  backgroundColor: ready
-                      ? const Color(0xFFE8F7EE)
-                      : context.omniPalette.surfaceSecondary,
-                  foregroundColor: ready
-                      ? const Color(0xFF17803D)
-                      : context.omniPalette.textSecondary,
-                  darkBackgroundColor: ready
-                      ? Color.lerp(
-                          context.omniPalette.surfaceSecondary,
-                          const Color(0xFF72A778),
-                          0.22,
-                        )
-                      : context.omniPalette.surfaceSecondary,
-                  darkForegroundColor: ready
-                      ? const Color(0xFFD6E7D6)
-                      : context.omniPalette.textSecondary,
-                ),
-              const SizedBox(height: 6),
-              Text(
-                versionText,
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  color: _tertiaryTextColor,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  height: 1.4,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ],
+      ),
     );
   }
 
@@ -1597,8 +1572,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          SettingsSectionTitle(label: title, bottomPadding: 8),
-          OmniSettingsCard(child: child),
+          SettingsSectionTitle(label: title, bottomPadding: 12),
+          OmniSettingsCard(padding: const EdgeInsets.all(18), child: child),
         ],
       ),
     );
@@ -1680,7 +1655,7 @@ class _AutoStartTaskDialogState extends State<_AutoStartTaskDialog> {
   @override
   Widget build(BuildContext context) {
     final editing = widget.task != null;
-    return AlertDialog(
+    return OmniGlassAlertDialog(
       title: Text(
         editing
             ? context.l10n.alpineEditBootTask

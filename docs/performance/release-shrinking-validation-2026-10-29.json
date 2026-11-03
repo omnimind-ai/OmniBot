@@ -1,0 +1,2083 @@
+{
+  "before": {
+    "bytes": 38512421,
+    "sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe"
+  },
+  "after": {
+    "bytes": 38522525,
+    "sha256": "7f1c2ad5c213ca90e45774c809365f746557c2f7da0cb3cbf6ef0a7f6f3fd4a4",
+    "dex_uncompressed_bytes": 15243080,
+    "dex_compressed_bytes": 6631771
+  },
+  "identical_resource_asset_library_payloads": true,
+  "changed_entries": [
+    "META-INF/version-control-info.textproto",
+    "assets/dexopt/baseline.prof",
+    "assets/dexopt/baseline.profm",
+    "classes.dex",
+    "classes2.dex"
+  ],
+  "deleted_entries": [],
+  "added_entries": [],
+  "date": "2026-10-29",
+  "device_validation": {
+    "status": "passed_installed_and_test_package_removed",
+    "instrumentation_package": "cn.com.omnimind.releaseaudit",
+    "same_harness_for_both_targets": true,
+    "harness_sha256": "3b3a2582b44d62ac320a356e4ebbaf3e78ca919bf3de5d32fdafaf5f950fb11d",
+    "before_passed": 19,
+    "before_failed": 6,
+    "after_passed": 25,
+    "after_failed": 0,
+    "fixed_apk_installed": true,
+    "data_cleared": false,
+    "installation_method": "adb install -r",
+    "test_package_removed": true,
+    "final_home_visually_checked": true,
+    "scope": "25 installed-APK fixtures, static reflection/plugin/JNI/asset checks and cold launches; not all UI/network/hardware workflows"
+  },
+  "build": {
+    "variant": "developStandardRelease",
+    "flutter": "Release AOT",
+    "r8": true,
+    "resource_shrinking": true,
+    "compressed_dex": true,
+    "result": "BUILD SUCCESSFUL",
+    "elapsed_seconds": 132,
+    "command": "./gradlew --no-configuration-cache -I /tmp/omnibot-apk-size-20261029/release-local-signing.init.gradle :app:assembleDevelopStandardRelease -Ptarget=lib/main_standard.dart --console=plain",
+    "signing": "existing Android debug certificate via temporary init script; native Release remains non-debuggable",
+    "certificate_sha256": "352e2497031b3c931b6e6fdfb539e1d018685e20df0edcb06e137ff154f308a2",
+    "zip_integrity_passed": true
+  },
+  "harness": {
+    "apk": "/private/tmp/omnibot-release-audit-20261029/runner-final/release-artifact-audit.apk",
+    "apkSha256": "3b3a2582b44d62ac320a356e4ebbaf3e78ca919bf3de5d32fdafaf5f950fb11d",
+    "signerSha256": "352e2497031b3c931b6e6fdfb539e1d018685e20df0edcb06e137ff154f308a2",
+    "source": "/Users/ocean/code/OmnibotApp/scripts/verification/release_artifact/ReleaseArtifactInstrumentation.java",
+    "sourceSha256": "d73cd7a93e1f9eedbe2444bf208a4736d24f78472b1bb440d42f4fe52cc99589",
+    "sdk": "/opt/homebrew/share/android-commandlinetools",
+    "buildTools": "37.0.0",
+    "compilePlatform": "android-37.0",
+    "testPackage": "cn.com.omnimind.releaseaudit",
+    "targetPackage": "cn.com.omnimind.bot",
+    "targetProcess": "cn.com.omnimind.bot:release_audit",
+    "instrumentation": "cn.com.omnimind.releaseaudit/cn.com.omnimind.releaseaudit.ReleaseArtifactInstrumentation",
+    "installed": false
+  },
+  "reflection_before": {
+    "apk": "/tmp/omnibot-apk-size-20261029/release-compressed.apk",
+    "apk_sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+    "head": "08daea9d1",
+    "scope": {
+      "scoped_dex_classes": 2472,
+      "retained_type_tokens": 35,
+      "source_data_candidates_compared": 132,
+      "covered_active_gson_targets": [
+        "AccountApiClient response/request nested DTOs",
+        "PlatformModelApiClient response nested DTOs",
+        "ModelProviderConfigStore.StoredModelProviderProfile",
+        "ProviderModelOption",
+        "SceneModelBindingEntry",
+        "SceneVoiceConfig",
+        "SceneOperationConfig",
+        "OfficialVlmOperationConfig",
+        "RuntimeLogEntry",
+        "AiRequestLogEntry",
+        "ChatGptRegistration",
+        "AcpAgentProfile",
+        "AcpAgentHealth",
+        "AcpAgentConfigAuditEntry",
+        "SkillRegistryEntry",
+        "BuiltinSkillManifest",
+        "BuiltinSkillAsset",
+        "AgentAlarmToolService.AlarmSoundSettings",
+        "AgentAlarmToolService.ExactAlarmRecordRaw",
+        "AgentAlarmToolService.ExactAlarmRecord",
+        "WorkspaceScheduledTaskScheduler.StoredTask",
+        "MemoryIndexEntry",
+        "PlatformEmbeddingGateway.EmbeddingResponse",
+        "PlatformEmbeddingGateway.EmbeddingItem",
+        "QuickLogRecord",
+        "QuickLogWidgetSettings",
+        "RemoteMcpServerConfig serialized DTO + decoded Map",
+        "WebChat/RemoteMcp/OmniLink/OmniFlow/history/log/harness heterogeneous Map/List/JsonObject targets"
+      ]
+    },
+    "findings": [
+      {
+        "id": "alarm-raw-erased",
+        "status": "confirmed_in_actual_dex",
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/tool/alarm/AgentAlarmToolService.kt:610",
+        "evidence": "Raw class absent. TypeToken Signature List<Object>. In merged com.google.android.gms.common.api.Api.loadRecords, nonempty loop invokes ClassCastException helper and throws at 0x0048-0x004c.",
+        "impact": "Existing nonempty exact-alarm record reads fail.",
+        "fix": "Keep Raw DTO class identity, constructors and fields."
+      },
+      {
+        "id": "builtin-manifest-erased",
+        "status": "confirmed_in_actual_dex",
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/skill/AgentSkillRuntime.kt:107",
+        "evidence": "Manifest/Asset class identities absent. MenuHostHelper.listBuiltins uses const-class KotlinKCallableKt; nonnull parse result throws then catches. Packaged manifest has 5 skill entries.",
+        "impact": "Builtin skills parse as empty and cannot seed normally.",
+        "fix": "Keep both reflection DTO class identities, constructors and fields."
+      },
+      {
+        "id": "embedding-response-erased",
+        "status": "confirmed_in_actual_dex",
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/workspace/memory/PlatformEmbeddingGateway.kt:41",
+        "evidence": "Response/Item class identities absent. PlatformEmbeddingGateway.embed uses const-class KotlinKPropertyKt, then throws for every nonnull parse result at 0x00a9-0x00ae.",
+        "impact": "Official embedding successful network responses cannot produce vectors.",
+        "fix": "Keep both embedding DTO class identities, constructors and fields."
+      },
+      {
+        "id": "default-constructors-removed",
+        "status": "confirmed_in_old_installed_apk_fixtures_and_fixed",
+        "classes": [
+          "cn.com.omnimind.bot.agent.runtime.AcpAgentHealth",
+          "cn.com.omnimind.bot.agent.SkillRegistryEntry",
+          "cn.com.omnimind.baselib.llm.OfficialVlmOperationConfig"
+        ],
+        "evidence": "Source provides noarg constructors via all-default Kotlin parameters; actual DEX lacks noarg. Gson Unsafe allocation loses nonzero/non-null defaults.",
+        "fix": "Keep model noarg/all constructors and fields with class identity."
+      }
+    ],
+    "exclusions": [
+      {
+        "class": "ModelSceneConfigCache.CacheData/Metadata",
+        "reason": "Owner has no production callers and is removed; dead-code optimization, not functional defect. Original fields-only rules retained."
+      },
+      {
+        "function": "KarbonExec.launchInternalTerminal",
+        "reason": "No production caller. Stale Class.forName target not an active R8 regression."
+      },
+      {
+        "class": "SceneOperationConfig",
+        "reason": "Noarg removed but only default false equals zero-initialization; true field preserved, no current failure evidence."
+      }
+    ],
+    "other_verified": {
+      "official_account_dtos": "25 nested request/response DTO classes found, fields retain SerializedName, all response noarg constructors preserved",
+      "mcp_webchat": "Main APIs serialize explicit Map/List/JsonObject payloads; active TypeToken generic signatures preserved",
+      "reflection_buildconfig_baseurl": true
+    },
+    "rules_changes": {
+      "file": "app/proguard-rules.pro",
+      "existing_active_dto_keeps_strengthened": 17,
+      "new_targeted_dto_keeps": 3,
+      "total_precise_model_class_keeps": 20,
+      "dead_types_not_revived": 2
+    },
+    "validation": "Original independent static audit; subsequent before/after installed-APK fixture results are recorded separately in device_before and device_after."
+  },
+  "reflection_after": {
+    "result": "PASS_STATIC_ARTIFACT_CHECKS",
+    "apk": "release-fixed.apk",
+    "apk_sha256": "7f1c2ad5c213ca90e45774c809365f746557c2f7da0cb3cbf6ef0a7f6f3fd4a4",
+    "apk_bytes": 38522525,
+    "before_apk_bytes": 38512421,
+    "increase_bytes": 10104,
+    "dto_count": 20,
+    "verified_instance_field_count": 143,
+    "required_noarg_count": 11,
+    "class_field_constructor_checks": [
+      {
+        "class": "cn.com.omnimind.bot.agent.runtime.AcpAgentProfile",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/runtime/AcpAgentProfileStore.kt:18",
+        "source_instance_fields": [
+          "id",
+          "name",
+          "description",
+          "command",
+          "arguments",
+          "environment",
+          "enabled",
+          "builtIn",
+          "officialRuntime"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "arguments",
+            "type": "Ljava/util/List;",
+            "access_flags": 18
+          },
+          {
+            "name": "builtIn",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "command",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "description",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "enabled",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "environment",
+            "type": "Ljava/util/Map;",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "name",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "officialRuntime",
+            "type": "Lcn/com/omnimind/bot/agent/runtime/AcpOfficialRuntime;",
+            "access_flags": 146
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/Map;ZZLcn/com/omnimind/bot/agent/runtime/AcpOfficialRuntime;)V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/util/Map;ZZLcn/com/omnimind/bot/agent/runtime/AcpOfficialRuntime;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.runtime.AcpAgentHealth",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/runtime/AcpAgentProfileStore.kt:92",
+        "source_instance_fields": [
+          "status",
+          "installed",
+          "error",
+          "latencyMs",
+          "checkedAt",
+          "capabilities",
+          "preparationRevision"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "capabilities",
+            "type": "Ljava/util/Map;",
+            "access_flags": 18
+          },
+          {
+            "name": "checkedAt",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "error",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "installed",
+            "type": "Ljava/lang/Boolean;",
+            "access_flags": 18
+          },
+          {
+            "name": "latencyMs",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "preparationRevision",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "status",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Ljava/util/Map;Ljava/lang/String;)V",
+          "(Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Long;Ljava/util/Map;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.BuiltinSkillManifest",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/skill/AgentSkillRuntime.kt:27",
+        "source_instance_fields": [
+          "skills"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "skills",
+            "type": "Ljava/util/List;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/util/List;)V",
+          "(Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": false,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.BuiltinSkillAsset",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/skill/AgentSkillRuntime.kt:31",
+        "source_instance_fields": [
+          "id",
+          "name",
+          "description",
+          "assetPath",
+          "hasScripts",
+          "hasReferences",
+          "hasAssets",
+          "hasEvals"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "assetPath",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "description",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "hasAssets",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "hasEvals",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "hasReferences",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "hasScripts",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "name",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZ)V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZZZZILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": false,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.SkillRegistryEntry",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/skill/AgentSkillRuntime.kt:42",
+        "source_instance_fields": [
+          "enabled",
+          "source",
+          "installState"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "enabled",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "installState",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "source",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(ZLjava/lang/String;Ljava/lang/String;)V",
+          "(ZLjava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.AgentAlarmToolService$AlarmSoundSettings",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/tool/alarm/AgentAlarmToolService.kt:71",
+        "source_instance_fields": [
+          "source",
+          "localPath",
+          "remoteUrl"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "localPath",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "remoteUrl",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "source",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.AgentAlarmToolService$ExactAlarmRecordRaw",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/tool/alarm/AgentAlarmToolService.kt:77",
+        "source_instance_fields": [
+          "alarmId",
+          "title",
+          "message",
+          "triggerAtMillis",
+          "timezone",
+          "createdAtMillis",
+          "state",
+          "preAlertAtMillis",
+          "allowWhileIdle"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "alarmId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "allowWhileIdle",
+            "type": "Ljava/lang/Boolean;",
+            "access_flags": 18
+          },
+          {
+            "name": "createdAtMillis",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "message",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "preAlertAtMillis",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "state",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "timezone",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "title",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "triggerAtMillis",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/Long;Ljava/lang/Boolean;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": false,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.AgentAlarmToolService$ExactAlarmRecord",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/tool/alarm/AgentAlarmToolService.kt:89",
+        "source_instance_fields": [
+          "alarmId",
+          "title",
+          "message",
+          "triggerAtMillis",
+          "timezone",
+          "createdAtMillis",
+          "state",
+          "preAlertAtMillis",
+          "allowWhileIdle"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "alarmId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "allowWhileIdle",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "createdAtMillis",
+            "type": "J",
+            "access_flags": 18
+          },
+          {
+            "name": "message",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "preAlertAtMillis",
+            "type": "J",
+            "access_flags": 18
+          },
+          {
+            "name": "state",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "timezone",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "title",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "triggerAtMillis",
+            "type": "J",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;JLjava/lang/String;JLjava/lang/String;JZ)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.WorkspaceScheduledTaskScheduler$StoredTask",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/workspace/schedule/WorkspaceScheduledTaskScheduler.kt:43",
+        "source_instance_fields": [
+          "taskId",
+          "title",
+          "targetKind",
+          "scheduleType",
+          "fixedTime",
+          "countdownMinutes",
+          "repeatDaily",
+          "enabled",
+          "nextExecutionTime",
+          "subagentConversationId",
+          "parentConversationId",
+          "parentConversationMode",
+          "subagentPrompt",
+          "notificationEnabled",
+          "createdAt"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "countdownMinutes",
+            "type": "Ljava/lang/Integer;",
+            "access_flags": 18
+          },
+          {
+            "name": "createdAt",
+            "type": "J",
+            "access_flags": 18
+          },
+          {
+            "name": "enabled",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "fixedTime",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "nextExecutionTime",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "notificationEnabled",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "parentConversationId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "parentConversationMode",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "repeatDaily",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "scheduleType",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "subagentConversationId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "subagentPrompt",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "targetKind",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "taskId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "title",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;ZZLjava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJ)V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Integer;ZZLjava/lang/Long;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZJILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.MemoryIndexEntry",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/workspace/memory/WorkspaceMemoryService.kt:102",
+        "source_instance_fields": [
+          "id",
+          "source",
+          "date",
+          "text",
+          "slug",
+          "embedding",
+          "embeddingConfigId",
+          "embeddingDimensions",
+          "updatedAt"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "date",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "embedding",
+            "type": "Ljava/util/List;",
+            "access_flags": 18
+          },
+          {
+            "name": "embeddingConfigId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "embeddingDimensions",
+            "type": "Ljava/lang/Integer;",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "slug",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "source",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "text",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "updatedAt",
+            "type": "J",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/Integer;J)V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/List;Ljava/lang/String;Ljava/lang/Integer;JILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.PlatformEmbeddingGateway$EmbeddingResponse",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/workspace/memory/PlatformEmbeddingGateway.kt:56",
+        "source_instance_fields": [
+          "data"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "data",
+            "type": "Ljava/util/List;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/util/List;)V",
+          "(Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": false,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.agent.PlatformEmbeddingGateway$EmbeddingItem",
+        "access_flags": 16,
+        "source": "app/src/main/java/cn/com/omnimind/bot/agent/workspace/memory/PlatformEmbeddingGateway.kt:58",
+        "source_instance_fields": [
+          "embedding"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "embedding",
+            "type": "Ljava/util/List;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/util/List;)V",
+          "(Ljava/util/List;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": false,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.mcp.RemoteMcpServerConfig",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/mcp/RemoteMcpModels.kt:35",
+        "source_instance_fields": [
+          "id",
+          "name",
+          "endpointUrl",
+          "bearerToken",
+          "headers",
+          "transport",
+          "enabled",
+          "lastHealth",
+          "lastError",
+          "toolCount",
+          "lastSyncedAt"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "bearerToken",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "enabled",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "endpointUrl",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "headers",
+            "type": "Ljava/util/Map;",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "lastError",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "lastHealth",
+            "type": "Lcn/com/omnimind/bot/mcp/RemoteMcpHealth;",
+            "access_flags": 18
+          },
+          {
+            "name": "lastSyncedAt",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "name",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "toolCount",
+            "type": "I",
+            "access_flags": 18
+          },
+          {
+            "name": "transport",
+            "type": "Lcn/com/omnimind/bot/mcp/RemoteMcpTransport;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Map;Lcn/com/omnimind/bot/mcp/RemoteMcpTransport;ZLcn/com/omnimind/bot/mcp/RemoteMcpHealth;Ljava/lang/String;ILjava/lang/Long;)V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Map;Lcn/com/omnimind/bot/mcp/RemoteMcpTransport;ZLcn/com/omnimind/bot/mcp/RemoteMcpHealth;Ljava/lang/String;ILjava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.quicklog.QuickLogRecord",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/quicklog/QuickLogService.kt:16",
+        "source_instance_fields": [
+          "id",
+          "content",
+          "createdAtMillis",
+          "updatedAtMillis",
+          "source",
+          "shortMemorySynced",
+          "listId",
+          "isImportant",
+          "isCompleted",
+          "dueAtMillis",
+          "reminderAtMillis",
+          "repeatRule",
+          "reminderAlarmId"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "content",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "createdAtMillis",
+            "type": "J",
+            "access_flags": 18
+          },
+          {
+            "name": "dueAtMillis",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "isCompleted",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "isImportant",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "listId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "reminderAlarmId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "reminderAtMillis",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "repeatRule",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "shortMemorySynced",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "source",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "updatedAtMillis",
+            "type": "J",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;JJLjava/lang/String;ZLjava/lang/String;ZZLjava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;)V",
+          "(Ljava/lang/String;Ljava/lang/String;JJLjava/lang/String;ZLjava/lang/String;ZZLjava/lang/Long;Ljava/lang/Long;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.bot.quicklog.QuickLogWidgetSettings",
+        "access_flags": 17,
+        "source": "app/src/main/java/cn/com/omnimind/bot/quicklog/QuickLogService.kt:48",
+        "source_instance_fields": [
+          "selectedListId",
+          "isListMenuExpanded",
+          "opacityPercent",
+          "colorTheme",
+          "fontSize"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "colorTheme",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "fontSize",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "isListMenuExpanded",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "opacityPercent",
+            "type": "I",
+            "access_flags": 18
+          },
+          {
+            "name": "selectedListId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/lang/String;ZILjava/lang/String;Ljava/lang/String;)V",
+          "(Ljava/lang/String;ZILjava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": true
+      },
+      {
+        "class": "cn.com.omnimind.baselib.llm.OfficialVlmOperationConfig",
+        "access_flags": 17,
+        "source": "baselib/src/main/java/cn/com/omnimind/baselib/llm/ModelProviderModels.kt:159",
+        "source_instance_fields": [
+          "enabled",
+          "apiBase",
+          "model",
+          "wireApi"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "apiBase",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "enabled",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "model",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "wireApi",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+          "(ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.baselib.llm.AiRequestLogEntry",
+        "access_flags": 17,
+        "source": "baselib/src/main/java/cn/com/omnimind/baselib/llm/AiRequestLogStore.kt:12",
+        "source_instance_fields": [
+          "id",
+          "createdAt",
+          "label",
+          "model",
+          "protocolType",
+          "url",
+          "method",
+          "stream",
+          "statusCode",
+          "success",
+          "requestJson",
+          "responseJson",
+          "errorMessage"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "createdAt",
+            "type": "J",
+            "access_flags": 18
+          },
+          {
+            "name": "errorMessage",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "label",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "method",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "model",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "protocolType",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "requestJson",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "responseJson",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "statusCode",
+            "type": "Ljava/lang/Integer;",
+            "access_flags": 18
+          },
+          {
+            "name": "stream",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "success",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "url",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLjava/lang/Integer;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
+          "(Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZLjava/lang/Integer;ZLjava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [
+          "id",
+          "createdAt",
+          "label",
+          "model",
+          "protocolType",
+          "url",
+          "method",
+          "stream",
+          "statusCode",
+          "success",
+          "requestJson",
+          "responseJson",
+          "errorMessage"
+        ],
+        "before_present": true,
+        "before_noarg_present": true
+      },
+      {
+        "class": "cn.com.omnimind.baselib.llm.ModelProviderConfigStore$StoredModelProviderProfile",
+        "access_flags": 16,
+        "source": "baselib/src/main/java/cn/com/omnimind/baselib/llm/ModelProviderConfigStore.kt:99",
+        "source_instance_fields": [
+          "id",
+          "name",
+          "baseUrl",
+          "apiKey",
+          "customHeaders",
+          "sourceType",
+          "readOnly",
+          "ready",
+          "statusText",
+          "protocolType",
+          "wireApi",
+          "revision"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "apiKey",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "baseUrl",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "customHeaders",
+            "type": "Ljava/util/Map;",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "name",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "protocolType",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "readOnly",
+            "type": "Ljava/lang/Boolean;",
+            "access_flags": 18
+          },
+          {
+            "name": "ready",
+            "type": "Ljava/lang/Boolean;",
+            "access_flags": 18
+          },
+          {
+            "name": "revision",
+            "type": "Ljava/lang/Long;",
+            "access_flags": 18
+          },
+          {
+            "name": "sourceType",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "statusText",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "wireApi",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;)V",
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/util/Map;Ljava/lang/String;Ljava/lang/Boolean;Ljava/lang/Boolean;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/Long;ILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [
+          "id",
+          "name",
+          "baseUrl",
+          "apiKey",
+          "customHeaders",
+          "sourceType",
+          "readOnly",
+          "ready",
+          "statusText",
+          "protocolType",
+          "wireApi",
+          "revision"
+        ],
+        "before_present": true,
+        "before_noarg_present": true
+      },
+      {
+        "class": "cn.com.omnimind.baselib.llm.SceneModelBindingEntry",
+        "access_flags": 17,
+        "source": "baselib/src/main/java/cn/com/omnimind/baselib/llm/ModelProviderModels.kt:130",
+        "source_instance_fields": [
+          "sceneId",
+          "providerProfileId",
+          "modelId"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "modelId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "providerProfileId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "sceneId",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V"
+        ],
+        "noarg_required": false,
+        "noarg_present": false,
+        "serialized_names_verified": [
+          "sceneId",
+          "providerProfileId",
+          "modelId"
+        ],
+        "before_present": true,
+        "before_noarg_present": false
+      },
+      {
+        "class": "cn.com.omnimind.baselib.util.RuntimeLogEntry",
+        "access_flags": 17,
+        "source": "baselib/src/main/java/cn/com/omnimind/baselib/util/RuntimeLogStore.kt:11",
+        "source_instance_fields": [
+          "id",
+          "createdAt",
+          "level",
+          "tag",
+          "message",
+          "stackTrace",
+          "isCrash"
+        ],
+        "actual_instance_fields": [
+          {
+            "name": "createdAt",
+            "type": "J",
+            "access_flags": 18
+          },
+          {
+            "name": "id",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "isCrash",
+            "type": "Z",
+            "access_flags": 18
+          },
+          {
+            "name": "level",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "message",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "stackTrace",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          },
+          {
+            "name": "tag",
+            "type": "Ljava/lang/String;",
+            "access_flags": 18
+          }
+        ],
+        "missing_fields": [],
+        "constructors": [
+          "()V",
+          "(Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Z)V",
+          "(Ljava/lang/String;JLjava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V"
+        ],
+        "noarg_required": true,
+        "noarg_present": true,
+        "serialized_names_verified": [
+          "id",
+          "createdAt",
+          "level",
+          "tag",
+          "message",
+          "stackTrace",
+          "isCrash"
+        ],
+        "before_present": true,
+        "before_noarg_present": true
+      }
+    ],
+    "generic_contracts": [
+      {
+        "contract": "alarm TypeToken",
+        "before": "Lcom/google/gson/reflect/TypeToken<Ljava/util/List<Ljava/lang/Object;>;>;",
+        "after": "Lcom/google/gson/reflect/TypeToken<Ljava/util/List<+Lcn/com/omnimind/bot/agent/AgentAlarmToolService$ExactAlarmRecordRaw;>;>;",
+        "passed": true
+      },
+      {
+        "contract": "cn.com.omnimind.bot.agent.BuiltinSkillManifest.skills",
+        "after": "Ljava/util/List<Lcn/com/omnimind/bot/agent/BuiltinSkillAsset;>;",
+        "passed": true
+      },
+      {
+        "contract": "cn.com.omnimind.bot.agent.PlatformEmbeddingGateway$EmbeddingResponse.data",
+        "after": "Ljava/util/List<Lcn/com/omnimind/bot/agent/PlatformEmbeddingGateway$EmbeddingItem;>;",
+        "passed": true
+      },
+      {
+        "contract": "cn.com.omnimind.bot.agent.PlatformEmbeddingGateway$EmbeddingItem.embedding",
+        "after": "Ljava/util/List<Ljava/lang/Double;>;",
+        "passed": true
+      }
+    ],
+    "production_flow_checks": {
+      "alarm": true,
+      "builtin": true,
+      "embedding": true
+    },
+    "production_evidence": "after-relevant-disassembly.txt: alarm typed normalization/add/return; builtin correct class token/getSkills/typed Asset iteration/add/return; embedding correct Response/Item token and vector-return path. No ClassCastException instructions remain in these three selected methods.",
+    "mapping_sources": {
+      "before": "before-r8/mapping.txt",
+      "after": "/Users/ocean/code/OmnibotApp/app/build/outputs/mapping/developStandardRelease/mapping.txt"
+    },
+    "boundary": "Independent actual APK/Dex static verification. Separate device_after results in this document cover the installed APK runtime fixtures."
+  },
+  "device_before": {
+    "targetApkSha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+    "process": "cn.com.omnimind.bot:release_audit",
+    "cases": [
+      {
+        "name": "isolated_release_process",
+        "passed": true
+      },
+      {
+        "name": "alarm_record_generic_roundtrip",
+        "passed": false,
+        "error": "java.lang.AssertionError",
+        "detail": "Alarm generic decodes to com.google.gson.internal.LinkedTreeMap"
+      },
+      {
+        "name": "bundled_skill_manifest",
+        "passed": false,
+        "error": "java.lang.ClassNotFoundException"
+      },
+      {
+        "name": "agent_health_missing_field_defaults",
+        "passed": false,
+        "error": "java.lang.AssertionError",
+        "detail": "Missing capabilities default became null"
+      },
+      {
+        "name": "official_vlm_missing_field_defaults",
+        "passed": false,
+        "error": "java.lang.AssertionError",
+        "detail": "Missing apiBase default became null"
+      },
+      {
+        "name": "skill_registry_missing_field_defaults",
+        "passed": false,
+        "error": "java.lang.AssertionError",
+        "detail": "Skill enabled default lost"
+      },
+      {
+        "name": "memory_embedding_response",
+        "passed": false,
+        "error": "java.lang.ClassNotFoundException"
+      },
+      {
+        "name": "quicklog_widget_missing_field_defaults",
+        "passed": true
+      },
+      {
+        "name": "provider_legacy_and_canonical_fields",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_FilePickerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_AudioSessionPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_FlutterAndroidLifecyclePlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_GalPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_ImagePickerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_JniPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_JniFlutterPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_JustAudioPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_MobileScannerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_SharedPreferencesPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_SqflitePlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_UrlLauncherPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_VideoPlayerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_WebViewFlutterPlugin",
+        "passed": true
+      },
+      {
+        "name": "terminal_jni_subprocess",
+        "passed": true
+      },
+      {
+        "name": "room_generated_database_in_memory",
+        "passed": true
+      }
+    ],
+    "passed": 19,
+    "failed": 6
+  },
+  "device_after": {
+    "targetApkSha256": "7f1c2ad5c213ca90e45774c809365f746557c2f7da0cb3cbf6ef0a7f6f3fd4a4",
+    "process": "cn.com.omnimind.bot:release_audit",
+    "cases": [
+      {
+        "name": "isolated_release_process",
+        "passed": true
+      },
+      {
+        "name": "alarm_record_generic_roundtrip",
+        "passed": true
+      },
+      {
+        "name": "bundled_skill_manifest",
+        "passed": true
+      },
+      {
+        "name": "agent_health_missing_field_defaults",
+        "passed": true
+      },
+      {
+        "name": "official_vlm_missing_field_defaults",
+        "passed": true
+      },
+      {
+        "name": "skill_registry_missing_field_defaults",
+        "passed": true
+      },
+      {
+        "name": "memory_embedding_response",
+        "passed": true
+      },
+      {
+        "name": "quicklog_widget_missing_field_defaults",
+        "passed": true
+      },
+      {
+        "name": "provider_legacy_and_canonical_fields",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_FilePickerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_AudioSessionPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_FlutterAndroidLifecyclePlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_GalPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_ImagePickerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_JniPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_JniFlutterPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_JustAudioPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_MobileScannerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_SharedPreferencesPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_SqflitePlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_UrlLauncherPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_VideoPlayerPlugin",
+        "passed": true
+      },
+      {
+        "name": "plugin_construct_WebViewFlutterPlugin",
+        "passed": true
+      },
+      {
+        "name": "terminal_jni_subprocess",
+        "passed": true
+      },
+      {
+        "name": "room_generated_database_in_memory",
+        "passed": true
+      }
+    ],
+    "passed": 25,
+    "failed": 0
+  },
+  "startup_comparison": {
+    "before": {
+      "label": "release-before-reflection-fix",
+      "mode": "release",
+      "apk_sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+      "apk_bytes": 38512421,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T11:33:52+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "275"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "491",
+            "WaitTime": "496"
+          },
+          "timings": [
+            "Startup theme and locale cost: 3ms",
+            "Credentials and providers cost: 145ms",
+            "Workspace and built-in skills cost: 4ms",
+            "App onCreate total cost: 171ms",
+            "Main engine created, cost: 55ms",
+            "MainActivity onCreate total cost: 68ms",
+            "Bootstrap to first rasterized frame: 80ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "441",
+            "WaitTime": "444"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 137ms",
+            "Workspace and built-in skills cost: 4ms",
+            "App onCreate total cost: 155ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 48ms",
+            "Bootstrap to first rasterized frame: 72ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "440",
+            "WaitTime": "443"
+          },
+          "timings": [
+            "Startup theme and locale cost: 4ms",
+            "Credentials and providers cost: 139ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 156ms",
+            "Main engine created, cost: 36ms",
+            "MainActivity onCreate total cost: 49ms",
+            "Bootstrap to first rasterized frame: 68ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "422",
+            "WaitTime": "427"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 138ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 156ms",
+            "Main engine created, cost: 34ms",
+            "MainActivity onCreate total cost: 47ms",
+            "Bootstrap to first rasterized frame: 68ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "422",
+            "WaitTime": "426"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 134ms",
+            "Workspace and built-in skills cost: 4ms",
+            "App onCreate total cost: 152ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 47ms",
+            "Bootstrap to first rasterized frame: 71ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "444",
+            "WaitTime": "447"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 139ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 155ms",
+            "Main engine created, cost: 36ms",
+            "MainActivity onCreate total cost: 50ms",
+            "Bootstrap to first rasterized frame: 71ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          441,
+          440,
+          422,
+          422,
+          444
+        ],
+        "median": 440,
+        "min": 422,
+        "max": 444,
+        "mean": 433.8
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "276"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "after": {
+      "label": "release-after-reflection-fix",
+      "mode": "release",
+      "apk_sha256": "7f1c2ad5c213ca90e45774c809365f746557c2f7da0cb3cbf6ef0a7f6f3fd4a4",
+      "apk_bytes": 38522525,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T11:35:48+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "278"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "499",
+            "WaitTime": "506"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 137ms",
+            "Workspace and built-in skills cost: 13ms",
+            "App onCreate total cost: 166ms",
+            "Main engine created, cost: 40ms",
+            "MainActivity onCreate total cost: 54ms",
+            "Bootstrap to first rasterized frame: 120ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "509",
+            "WaitTime": "514"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 136ms",
+            "Workspace and built-in skills cost: 10ms",
+            "App onCreate total cost: 159ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 52ms",
+            "Bootstrap to first rasterized frame: 137ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "483",
+            "WaitTime": "489"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 136ms",
+            "Workspace and built-in skills cost: 8ms",
+            "App onCreate total cost: 158ms",
+            "Main engine created, cost: 40ms",
+            "MainActivity onCreate total cost: 55ms",
+            "Bootstrap to first rasterized frame: 116ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "500",
+            "WaitTime": "503"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 130ms",
+            "Workspace and built-in skills cost: 9ms",
+            "App onCreate total cost: 151ms",
+            "Main engine created, cost: 39ms",
+            "MainActivity onCreate total cost: 66ms",
+            "Bootstrap to first rasterized frame: 126ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "473",
+            "WaitTime": "477"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 136ms",
+            "Workspace and built-in skills cost: 9ms",
+            "App onCreate total cost: 159ms",
+            "Main engine created, cost: 39ms",
+            "MainActivity onCreate total cost: 53ms",
+            "Bootstrap to first rasterized frame: 109ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "502",
+            "WaitTime": "509"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 138ms",
+            "Workspace and built-in skills cost: 10ms",
+            "App onCreate total cost: 162ms",
+            "Main engine created, cost: 37ms",
+            "MainActivity onCreate total cost: 55ms",
+            "Bootstrap to first rasterized frame: 136ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          509,
+          483,
+          500,
+          473,
+          502
+        ],
+        "median": 500,
+        "min": 473,
+        "max": 509,
+        "mean": 493.4
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "279"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "median_delta_ms": 60,
+    "median_delta_percent": 13.636363636363635,
+    "interpretation": "Five sequential process-cold launches per version, one separate warmup each. Existing data and OS caches retained; not randomized or cache-cold. Observed 60 ms increase is recorded without claiming unchanged speed or isolating a cause."
+  },
+  "final_installed_state": {
+    "installed_apk_sha256": "7f1c2ad5c213ca90e45774c809365f746557c2f7da0cb3cbf6ef0a7f6f3fd4a4",
+    "main_process_alive": true,
+    "startup_error_counts": {
+      "FATAL EXCEPTION": 0,
+      "MissingPluginException": 0,
+      "NoClassDefFoundError": 0,
+      "ClassNotFoundException": 0,
+      "NoSuchMethodError": 0,
+      "Error registering plugin": 0
+    }
+  }
+}

@@ -6,13 +6,62 @@ import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 void main() {
   const resolver = HdPadPaneLayoutResolver();
 
-  test('requires a tablet-sized landscape viewport for HD pad mode', () {
-    expect(isHdPadLandscapeViewport(const Size(932, 430)), isFalse);
-    expect(isHdPadLandscapeViewport(const Size(844, 390)), isFalse);
-    expect(isHdPadLandscapeViewport(const Size(959, 600)), isFalse);
-    expect(isHdPadLandscapeViewport(const Size(768, 1024)), isFalse);
-    expect(isHdPadLandscapeViewport(const Size(960, 600)), isTrue);
-    expect(isHdPadLandscapeViewport(const Size(1024, 768)), isTrue);
+  test(
+    'uses window width for portrait, landscape and multi-window layouts',
+    () {
+      expect(isChatWorkspaceViewport(const Size(600, 1024)), isFalse);
+      expect(isChatWorkspaceViewport(const Size(719, 1366)), isFalse);
+      expect(isChatWorkspaceViewport(const Size(720, 1024)), isTrue);
+      expect(isChatWorkspaceViewport(const Size(768, 1024)), isTrue);
+      expect(isChatWorkspaceViewport(const Size(1024, 1366)), isTrue);
+      expect(isChatWorkspaceViewport(const Size(932, 430)), isTrue);
+      // Showing an IME or reducing height never changes the column choice.
+      expect(isChatWorkspaceViewport(const Size(960, 300)), isTrue);
+    },
+  );
+
+  test('portrait and small landscape keep one sidebar and a readable chat', () {
+    for (final width in [720.0, 768.0, 960.0, 1024.0]) {
+      final layout = resolver.resolve(width - 16);
+      expect(layout.leftWidth, greaterThan(0));
+      expect(layout.rightWidth, 0);
+      expect(layout.centerWidth, greaterThanOrEqualTo(420));
+      expect(
+        layout.leftWidth +
+            layout.centerWidth +
+            HdPadPaneLayoutResolver.dividerHitWidth,
+        width - 16,
+      );
+    }
+  });
+
+  test('workspace replaces the left sidebar when only two panes fit', () {
+    final layout = resolver.resolve(752, collapseLeftPane: true);
+    expect(layout.leftWidth, 0);
+    expect(layout.rightWidth, greaterThanOrEqualTo(240));
+    expect(layout.centerWidth, greaterThanOrEqualTo(420));
+    expect(
+      layout.rightWidth +
+          layout.centerWidth +
+          HdPadPaneLayoutResolver.dividerHitWidth,
+      752,
+    );
+  });
+
+  test('narrow and invalid constraints never overflow or return negatives', () {
+    for (final width in [0.0, 300.0, 600.0, 650.0, 900.0, 1366.0]) {
+      final layout = resolver.resolve(width);
+      final dividers =
+          (layout.leftWidth > 0 ? HdPadPaneLayoutResolver.dividerHitWidth : 0) +
+          (layout.rightWidth > 0 ? HdPadPaneLayoutResolver.dividerHitWidth : 0);
+      expect(
+        layout.leftWidth + layout.centerWidth + layout.rightWidth + dividers,
+        closeTo(width, .001),
+      );
+      expect(layout.centerWidth, greaterThanOrEqualTo(0));
+    }
+    expect(resolver.resolve(double.infinity).centerWidth, 0);
+    expect(resolver.resolve(double.nan).centerWidth, 0);
   });
 
   test('uses defaults within supported width', () {
@@ -40,10 +89,7 @@ void main() {
       layout.leftWidth,
       greaterThanOrEqualTo(HdPadPaneLayoutResolver.minLeftWidth),
     );
-    expect(
-      layout.rightWidth,
-      greaterThanOrEqualTo(HdPadPaneLayoutResolver.minRightWidth),
-    );
+    expect(layout.rightWidth, 0);
     expect(
       layout.centerWidth,
       greaterThanOrEqualTo(HdPadPaneLayoutResolver.minCenterWidth),

@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent.runtime
 
+import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -64,10 +65,10 @@ internal class AcpServerRequestOwnerRegistry {
         return when {
             narrowed.size == 1 -> narrowed.single()
             narrowed.isEmpty() -> throw IllegalArgumentException(
-                "ACP server request identity does not match its owner."
+                "agent_owner_conflict: ACP server request identity does not match its owner."
             )
             else -> throw IllegalArgumentException(
-                "ACP server request id is ambiguous; provide agentId or sessionId."
+                "agent_identity_required: ACP server request id is ambiguous; provide agentId or sessionId."
             )
         }
     }
@@ -98,13 +99,7 @@ internal class AcpServerRequestOwnerRegistry {
                         owner.sessionId == null ||
                         owner.sessionId == normalizedSessionId)
             }
-            if (candidates.size == 1 ||
-                candidates.isEmpty() && current.size == 1
-            ) {
-                candidates.singleOrNull() ?: current.singleOrNull()
-            } else {
-                null
-            }
+            candidates.singleOrNull()
         }
         if (target != null) {
             owners.computeIfPresent(key) { _, value ->
@@ -148,59 +143,43 @@ internal class AcpServerRequestOwnerRegistry {
         this?.trim()?.takeIf(String::isNotEmpty)
 }
 
-internal enum class AcpServerRequestRuntime {
-    LOCAL,
-    REMOTE,
-}
-
 internal sealed interface AcpServerRequestRoute {
     data class Local(val agentId: String) : AcpServerRequestRoute
     data object Remote : AcpServerRequestRoute
 }
 
-/**
- * Resolve the response transport once, from request identity.
- *
- * The pending request owner outranks UI/session metadata because it was
- * captured at the exact point the ACP request crossed the process boundary.
- * The selected runtime is only a compatibility fallback for old clients that
- * cannot provide any identity at all.
- */
+/** Resolve a reply from its captured request owner or the same explicit Agent identity policy. */
 internal fun resolveAcpServerRequestRoute(
-    remoteEnabled: Boolean,
     requestedAgentId: String?,
     sessionAgentId: String?,
     conversationAgentId: String?,
     pendingRequestAgentId: String?,
-    selectedRuntime: AcpServerRequestRuntime,
-    localCodexSessionOwned: Boolean = false,
 ): AcpServerRequestRoute {
     val pendingOwner = pendingRequestAgentId.normalizedId()
-    val explicitOwner = listOf(requestedAgentId, sessionAgentId, conversationAgentId)
-        .firstNotNullOfOrNull(String?::normalizedId)
-    if (pendingOwner != null) {
-        require(explicitOwner == null || explicitOwner == pendingOwner) {
-            "ACP server request owner does not match response identity."
+    val owner = if (pendingOwner != null) {
+        val suppliedOwners = listOf(requestedAgentId, sessionAgentId, conversationAgentId)
+            .mapNotNull(String?::normalizedId)
+        require(suppliedOwners.all { it == pendingOwner }) {
+            "agent_owner_conflict: ACP server request owner does not match response identity."
         }
-        return AcpServerRequestRoute.Local(pendingOwner)
-    }
-    if (explicitOwner != null) {
-        return if (
-            remoteEnabled &&
-            explicitOwner == AcpAgentProfileStore.CODEX_AGENT_ID &&
-            selectedRuntime == AcpServerRequestRuntime.REMOTE &&
-            !localCodexSessionOwned
-        ) {
-            AcpServerRequestRoute.Remote
-        } else {
-            AcpServerRequestRoute.Local(explicitOwner)
-        }
-    }
-    return if (selectedRuntime == AcpServerRequestRuntime.LOCAL) {
-        // The caller fills this legacy case with the selected local profile.
-        AcpServerRequestRoute.Local("")
+        pendingOwner
     } else {
+        val resolution = AgentConversationModePolicy.resolveHarness(
+            conversationMode = null,
+            requestedAgentId = requestedAgentId,
+            conversationAgentId = conversationAgentId,
+            sessionAgentId = sessionAgentId,
+            xiaowanAgentId = AcpAgentProfileStore.XIAOWAN_AGENT_ID,
+        )
+        require(!resolution.hasConflict) {
+            "agent_owner_conflict: ACP server response identity does not match its Conversation or Session owner."
+        }
+        resolution.agentId
+    }
+    return if (owner == REMOTE_CODEX_AGENT_ID) {
         AcpServerRequestRoute.Remote
+    } else {
+        AcpServerRequestRoute.Local(owner)
     }
 }
 

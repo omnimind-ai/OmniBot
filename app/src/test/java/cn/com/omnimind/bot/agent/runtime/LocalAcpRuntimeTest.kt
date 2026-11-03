@@ -54,21 +54,17 @@ class LocalAcpRuntimeTest {
     }
 
     @Test
-    fun `managed Harness preparation preserves another live ACP runtime`() {
+    fun `managed Harness preparation probes its own live runtime`() {
         assertTrue(
-            shouldPrepareManagedAgentWithoutSwitchingRuntime(
+            shouldProbePreparedManagedAgent(
                 managedAdapter = true,
                 runtimeConnected = true,
-                activeAgentId = "xiaowan-acp",
-                requestedAgentId = "opencode-acp",
             )
         )
         assertFalse(
-            shouldPrepareManagedAgentWithoutSwitchingRuntime(
+            shouldProbePreparedManagedAgent(
                 managedAdapter = true,
-                runtimeConnected = true,
-                activeAgentId = "xiaowan-acp",
-                requestedAgentId = "xiaowan-acp",
+                runtimeConnected = false,
             )
         )
     }
@@ -291,112 +287,77 @@ class LocalAcpRuntimeTest {
     }
 
     @Test
-    fun `transport routing follows identity instead of global runtime state`() {
-        assertTrue(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "session/prompt",
-                requestedAgentId = "xiaowan-acp",
-                sessionAgentId = null,
-                conversationAgentId = null,
-                localCodexSessionOwned = false,
-            )
-        )
-        assertFalse(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "session/prompt",
+    fun `server request reply follows its captured owner without session metadata`() {
+        for (owner in listOf("kimi-code-acp", "codex-acp", REMOTE_CODEX_AGENT_ID)) {
+            val expected = if (owner == REMOTE_CODEX_AGENT_ID) AcpServerRequestRoute.Remote
+                else AcpServerRequestRoute.Local(owner)
+            assertEquals(expected, resolveAcpServerRequestRoute(
                 requestedAgentId = null,
                 sessionAgentId = null,
                 conversationAgentId = null,
-                localCodexSessionOwned = false,
-            )
-        )
-        assertTrue(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "session/prompt",
-                requestedAgentId = "codex-acp",
-                sessionAgentId = null,
-                conversationAgentId = null,
-                localCodexSessionOwned = true,
-            )
-        )
-        assertFalse(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "session/prompt",
-                requestedAgentId = "codex-acp",
-                sessionAgentId = null,
-                conversationAgentId = null,
-                localCodexSessionOwned = false,
-            )
-        )
-        assertTrue(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "respondToServerRequest",
-                requestedAgentId = null,
-                sessionAgentId = "xiaowan-acp",
-                conversationAgentId = null,
-                localCodexSessionOwned = false,
-            )
-        )
-        assertTrue(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "initialize",
-                requestedAgentId = "xiaowan-acp",
-                sessionAgentId = null,
-                conversationAgentId = null,
-                localCodexSessionOwned = false,
-            )
-        )
-        assertTrue(
-            shouldRouteLocalAcpRequest(
-                remoteEnabled = true,
-                method = "\$/cancel_request",
-                requestedAgentId = "deepseek-harness-acp",
-                sessionAgentId = null,
-                conversationAgentId = null,
-                localCodexSessionOwned = false,
-            )
-        )
+                pendingRequestAgentId = owner,
+            ))
+        }
     }
 
     @Test
-    fun `server request reply follows request owner when session metadata is absent`() {
-        assertEquals(
-            AcpServerRequestRoute.Local("deepseek-harness-acp"),
-            resolveAcpServerRequestRoute(
-                remoteEnabled = true,
-                requestedAgentId = null,
-                sessionAgentId = null,
-                conversationAgentId = null,
-                pendingRequestAgentId = "deepseek-harness-acp",
-                selectedRuntime = AcpServerRequestRuntime.REMOTE,
-            ),
-        )
-        assertEquals(
-            AcpServerRequestRoute.Local("deepseek-harness-acp"),
-            resolveAcpServerRequestRoute(
-                remoteEnabled = true,
-                requestedAgentId = null,
-                sessionAgentId = null,
-                conversationAgentId = null,
-                pendingRequestAgentId = "deepseek-harness-acp",
-                selectedRuntime = AcpServerRequestRuntime.LOCAL,
-            ),
-        )
+    fun `pending server request validates every supplied identity before routing`() {
+        val owner = "codex-acp"
+        for (owners in listOf(
+            listOf(REMOTE_CODEX_AGENT_ID, owner, owner),
+            listOf(owner, REMOTE_CODEX_AGENT_ID, owner),
+            listOf(owner, owner, REMOTE_CODEX_AGENT_ID),
+        )) {
+            val error = runCatching { resolveAcpServerRequestRoute(
+                requestedAgentId = owners[0],
+                sessionAgentId = owners[1],
+                conversationAgentId = owners[2],
+                pendingRequestAgentId = owner,
+            ) }.exceptionOrNull()
+            assertTrue(error is IllegalArgumentException)
+            assertTrue(error!!.message.orEmpty().startsWith("agent_owner_conflict:"))
+        }
+        assertEquals(AcpServerRequestRoute.Local(owner), resolveAcpServerRequestRoute(
+            requestedAgentId = " $owner ", sessionAgentId = "", conversationAgentId = null,
+            pendingRequestAgentId = owner,
+        ))
+    }
+
+    @Test
+    fun `reply without pending owner uses explicit identity and never invents a default`() {
+        for (owner in listOf("codex-acp", REMOTE_CODEX_AGENT_ID)) {
+            val expected = if (owner == REMOTE_CODEX_AGENT_ID) AcpServerRequestRoute.Remote
+                else AcpServerRequestRoute.Local(owner)
+            for (owners in listOf(listOf(owner, null, null), listOf(null, owner, null), listOf(null, null, owner))) {
+                assertEquals(expected, resolveAcpServerRequestRoute(
+                    requestedAgentId = owners[0], sessionAgentId = owners[1],
+                    conversationAgentId = owners[2], pendingRequestAgentId = null,
+                ))
+            }
+        }
+        val absent = runCatching { resolveAcpServerRequestRoute(null, " ", null, null) }.exceptionOrNull()
+        assertTrue(absent is IllegalArgumentException)
+        assertTrue(absent!!.message.orEmpty().startsWith("agent_identity_required:"))
+        for (owners in listOf(
+            listOf("codex-acp", REMOTE_CODEX_AGENT_ID, null),
+            listOf(null, "codex-acp", REMOTE_CODEX_AGENT_ID),
+            listOf("codex-acp", null, REMOTE_CODEX_AGENT_ID),
+        )) {
+            val conflict = runCatching { resolveAcpServerRequestRoute(
+                owners[0], owners[1], owners[2], null,
+            ) }.exceptionOrNull()
+            assertTrue(conflict is IllegalArgumentException)
+            assertTrue(conflict!!.message.orEmpty().startsWith("agent_owner_conflict:"))
+        }
     }
 
     @Test
     fun `server request owner is released after the response lifecycle`() {
         val registry = AcpServerRequestOwnerRegistry()
-        registry.register("request-1", "deepseek-harness-acp", "session-1")
+        registry.register("request-1", "kimi-code-acp", "session-1")
 
         assertEquals(
-            AcpServerRequestOwner("deepseek-harness-acp", "session-1"),
+            AcpServerRequestOwner("kimi-code-acp", "session-1"),
             registry.ownerFor("request-1"),
         )
 
@@ -408,7 +369,7 @@ class LocalAcpRuntimeTest {
     fun `same request id on parallel ACP transports stays independently addressable`() {
         val registry = AcpServerRequestOwnerRegistry()
         registry.register("same-id", "xiaowan-acp", "xiaowan-session")
-        registry.register("same-id", "deepseek-harness-acp", "dsh-session")
+        registry.register("same-id", "kimi-code-acp", "kimi-session")
 
         assertEquals(null, registry.ownerFor("same-id"))
         assertEquals(
@@ -416,13 +377,13 @@ class LocalAcpRuntimeTest {
             registry.resolve("same-id", agentId = "xiaowan-acp"),
         )
         assertEquals(
-            AcpServerRequestOwner("deepseek-harness-acp", "dsh-session"),
-            registry.resolve("same-id", sessionId = "dsh-session"),
+            AcpServerRequestOwner("kimi-code-acp", "kimi-session"),
+            registry.resolve("same-id", sessionId = "kimi-session"),
         )
 
         registry.remove("same-id", agentId = "xiaowan-acp", sessionId = "xiaowan-session")
         assertEquals(
-            AcpServerRequestOwner("deepseek-harness-acp", "dsh-session"),
+            AcpServerRequestOwner("kimi-code-acp", "kimi-session"),
             registry.ownerFor("same-id"),
         )
     }
@@ -431,7 +392,7 @@ class LocalAcpRuntimeTest {
     fun `ambiguous ACP request id cannot fall back to selected Agent`() {
         val registry = AcpServerRequestOwnerRegistry()
         registry.register("same-id", "xiaowan-acp", null)
-        registry.register("same-id", "deepseek-harness-acp", null)
+        registry.register("same-id", "kimi-code-acp", null)
 
         var failed = false
         try {
@@ -445,7 +406,7 @@ class LocalAcpRuntimeTest {
     @Test
     fun `request identity mismatch cannot fall back to the only pending owner`() {
         val registry = AcpServerRequestOwnerRegistry()
-        registry.register("request-1", "deepseek-harness-acp", "dsh-session")
+        registry.register("request-1", "kimi-code-acp", "kimi-session")
 
         var failed = false
         try {
@@ -454,6 +415,8 @@ class LocalAcpRuntimeTest {
             failed = true
         }
         assertTrue(failed)
+        registry.remove("request-1", agentId = "xiaowan-acp")
+        assertEquals(AcpServerRequestOwner("kimi-code-acp", "kimi-session"), registry.ownerFor("request-1"))
     }
 
     @Test

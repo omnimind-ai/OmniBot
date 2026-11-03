@@ -158,12 +158,8 @@ internal class WebAgentRunBridge(
                 attachments = attachments,
                 createdAt = state.createdAt
             )
-            // `agent/select` changes the global default used by the Agent
-            // picker.  It is not a session binding and must not be issued as
-            // part of starting a conversation: two WebChat conversations can
-            // start concurrently with different Agents.  `session/prompt`
-            // carries the requested agentId and resolves the durable
-            // conversation owner at the ACP boundary.
+            // The persisted Conversation owns this request. Parallel WebChat
+            // conversations carry their own Agent identity into session/prompt.
             val arguments = buildWebAgentTurnArguments(
                 conversationId = conversationId,
                 userMessage = userMessage,

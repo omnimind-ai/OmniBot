@@ -4,7 +4,6 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 
 object OmniLog {
     enum class Level {
@@ -61,55 +60,52 @@ object OmniLog {
     var runtimeLogEnabled: Boolean = true
 
     private val runtimeLogScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-
-    private fun storeRuntimeLog(level: String, tag: String, message: String, throwable: Throwable?) {
-        if (!runtimeLogEnabled) return
-        if (tag == "RuntimeLogStore") return
-        if (tag == "[AssistsCoreChannel]") return
-        val stack = throwable?.let { buildStackTraceString(it) }
-        val entry = RuntimeLogEntry(
-            level = level,
-            tag = tag,
-            message = message,
-            stackTrace = stack,
-            isCrash = false,
+    private val runtimeLogWriter by lazy {
+        RuntimeLogWriter(
+            scope = runtimeLogScope,
+            append = RuntimeLogStore::append,
+            onError = { Log.w(globalTag + "RuntimeLogStore", "append runtime log failed", it) },
         )
-        runtimeLogScope.launch {
-            runCatching {
-                RuntimeLogStore.append(entry)
-            }.onFailure {
-                Log.w(globalTag + "RuntimeLogStore", "append runtime log failed", it)
-            }
-        }
     }
+
+    private fun storeRuntimeLog(entry: RuntimeLogEntry) {
+        if (!runtimeLogEnabled) return
+        if (entry.tag == "RuntimeLogStore") return
+        if (entry.tag == "[AssistsCoreChannel]") return
+        runtimeLogWriter.offer(entry)
+    }
+
+    private fun boundedEntry(
+        level: String,
+        tag: String,
+        message: String,
+        throwable: Throwable?,
+        isCrash: Boolean = false,
+    ): RuntimeLogEntry = RuntimeLogEntry(
+        level = level,
+        tag = tag,
+        message = message,
+        stackTrace = throwable?.let(::boundedRuntimeLogStackTrace),
+        isCrash = isCrash,
+    ).bounded()
+
+    private fun RuntimeLogEntry.logcatMessage(): String =
+        if (stackTrace.isNullOrEmpty()) message else "$message\n$stackTrace"
 
     fun storeCrashLog(tag: String, message: String, throwable: Throwable) {
         if (!runtimeLogEnabled) return
-        runCatching {
+        try {
             RuntimeLogStore.append(
-                RuntimeLogEntry(
+                boundedEntry(
                     level = "ERROR",
                     tag = tag,
                     message = message,
-                    stackTrace = buildStackTraceString(throwable),
+                    throwable = throwable,
                     isCrash = true,
-                )
+                ),
             )
-        }.onFailure {
-            Log.w(globalTag + "RuntimeLogStore", "append crash log failed", it)
-        }
-    }
-
-    private fun buildStackTraceString(throwable: Throwable): String {
-        return buildString {
-            appendLine(throwable.toString())
-            throwable.stackTrace.forEach { appendLine("    at $it") }
-            var cause = throwable.cause
-            while (cause != null) {
-                appendLine("Caused by: $cause")
-                cause.stackTrace.forEach { appendLine("    at $it") }
-                cause = cause.cause
-            }
+        } catch (error: Exception) {
+            Log.w(globalTag + "RuntimeLogStore", "append crash log failed", error)
         }
     }
 
@@ -188,10 +184,10 @@ object OmniLog {
         throwable: Throwable? = null,
     ) {
         if (minLevel.ordinal > Level.ERROR.ordinal) return
-        val actualTag = globalTag + tag
-        Log.e(actualTag, message, throwable)
-        notifyReporter(tag, message, "ERROR")
-        storeRuntimeLog("ERROR", tag, message, throwable)
+        val entry = boundedEntry("ERROR", tag, message, throwable)
+        Log.e(globalTag + entry.tag, entry.logcatMessage())
+        notifyReporter(entry.tag, entry.message, entry.level)
+        storeRuntimeLog(entry)
     }
 
     /**
@@ -205,9 +201,11 @@ object OmniLog {
         throwable: Throwable? = null,
     ) {
         if (minLevel.ordinal > Level.ASSERT.ordinal) return
-        val actualTag = globalTag + tag
-        Log.wtf(actualTag, message, throwable)
-        notifyReporter(tag, message, "ASSERT")
-        storeRuntimeLog("ASSERT", tag, message, throwable)
+        val entry = boundedEntry("ASSERT", tag, message, throwable)
+        // Keep the platform's ASSERT/terrible-failure behavior, but never hand
+        // it an unbounded Throwable message to stringify a second time.
+        Log.wtf(globalTag + entry.tag, entry.logcatMessage())
+        notifyReporter(entry.tag, entry.message, entry.level)
+        storeRuntimeLog(entry)
     }
 }

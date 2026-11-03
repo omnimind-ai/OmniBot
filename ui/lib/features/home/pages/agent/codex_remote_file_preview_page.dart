@@ -3,6 +3,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
@@ -18,7 +19,7 @@ class CodexRemoteFilePreviewPage extends StatefulWidget {
     super.key,
     required this.path,
     this.title,
-    this.agentId,
+    this.agentId = 'codex-remote',
     this.sessionId,
     this.workspaceOwner,
     this.remoteBridgeUrl = '',
@@ -28,7 +29,7 @@ class CodexRemoteFilePreviewPage extends StatefulWidget {
   });
 
   final String path;
-  final String? agentId;
+  final String agentId;
   final String? sessionId;
   final String? workspaceOwner;
   final String? title;
@@ -114,6 +115,37 @@ class _CodexRemoteFilePreviewPageState
         tempPath = await _writeTempFile(payload);
       }
       if (!mounted) return;
+      if (payload.ok &&
+          OmnibotResourceService.usesNativeHtmlPreview(payload.previewKind)) {
+        // A fetch may finish while this loading route is already sliding out.
+        if (ModalRoute.of(context)?.isCurrent != true) return;
+        if (tempPath == null) {
+          throw StateError(
+            _isEnglish ? 'The HTML file has no content' : 'HTML 文件没有可预览内容',
+          );
+        }
+        final opened = await OmnibotResourceService.openFilePath(
+          tempPath,
+          title: widget.title ?? payload.name,
+          previewKind: payload.previewKind,
+          mimeType: payload.mimeType,
+          shellPath: payload.path,
+        );
+        if (!mounted) return;
+        if (opened) {
+          // This route only fetched the remote file. The native Activity owns
+          // HTML rendering and returning from it should reveal the previous page.
+          if (ModalRoute.of(context)?.isCurrent == true) {
+            Navigator.of(context).pop();
+          }
+        } else {
+          setState(() {
+            _loading = false;
+            _error = _isEnglish ? 'Could not open HTML preview' : 'HTML 预览打开失败';
+          });
+        }
+        return;
+      }
       final keepDraft = _isEditing && _isDirty;
       if (!keepDraft && payload.isTextLike) {
         final text = payload.content ?? '';
@@ -526,10 +558,21 @@ class _CodexRemoteFilePreviewPageState
           title: title,
           primary: true,
           actions: [
-            IconButton(
-              tooltip: _isEnglish ? 'Reload' : '刷新',
-              onPressed: _loading ? null : () => unawaited(_loadFile()),
-              icon: const Icon(Icons.refresh_rounded),
+            Padding(
+              padding: const EdgeInsetsDirectional.only(end: 12),
+              child: OmniCircleButton(
+                tooltip: _isEnglish ? 'Reload' : '刷新',
+                onPressed: _loading ? null : () => unawaited(_loadFile()),
+                icon: Icons.refresh_rounded,
+                size: 40,
+                tapTargetSize: MaterialTapTargetSize.padded,
+                iconWidget: _loading
+                    ? const SizedBox.square(
+                        dimension: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : null,
+              ),
             ),
           ],
         ),

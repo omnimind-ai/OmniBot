@@ -1,0 +1,1239 @@
+{
+  "schema_version": 1,
+  "base_revision": "ace39919fb9c5b8f0283c98d291d127c253f25a6",
+  "priority": "APK size first, startup speed second",
+  "measurement_boundary": "process cold am start -W TotalTime; existing user data and OS disk caches retained; installation first-launch excluded and preserved",
+  "results": {
+    "before-profile": {
+      "label": "before-shrink",
+      "mode": "profile",
+      "apk_sha256": "f344fb4a599816c76f7538c7cfe3de2c84c78f805a34b124b62113ab1d51fa8a",
+      "apk_bytes": 134964115,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T02:16:18+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "319"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1057",
+            "WaitTime": "1067"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 222ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 285ms",
+            "Main engine created, cost: 71ms",
+            "MainActivity onCreate total cost: 119ms",
+            "Bootstrap to first rasterized frame: 156ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1047",
+            "WaitTime": "1071"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 225ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 291ms",
+            "Main engine created, cost: 63ms",
+            "MainActivity onCreate total cost: 103ms",
+            "Bootstrap to first rasterized frame: 148ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1000",
+            "WaitTime": "1009"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 234ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 294ms",
+            "Main engine created, cost: 66ms",
+            "MainActivity onCreate total cost: 105ms",
+            "Bootstrap to first rasterized frame: 132ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1024",
+            "WaitTime": "1042"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 219ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 283ms",
+            "Main engine created, cost: 68ms",
+            "MainActivity onCreate total cost: 108ms",
+            "Bootstrap to first rasterized frame: 134ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1028",
+            "WaitTime": "1041"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 229ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 293ms",
+            "Main engine created, cost: 70ms",
+            "MainActivity onCreate total cost: 110ms",
+            "Bootstrap to first rasterized frame: 136ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1013",
+            "WaitTime": "1020"
+          },
+          "timings": [
+            "Startup theme and locale cost: 12ms",
+            "Credentials and providers cost: 234ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 298ms",
+            "Main engine created, cost: 64ms",
+            "MainActivity onCreate total cost: 103ms",
+            "Bootstrap to first rasterized frame: 123ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1047,
+          1000,
+          1024,
+          1028,
+          1013
+        ],
+        "median": 1024,
+        "min": 1000,
+        "max": 1047,
+        "mean": 1022.4
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "319"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "release-stored": {
+      "label": "release-stored",
+      "mode": "release",
+      "apk_sha256": "eafc61cfd35441b16e15a6410981c4ec0cb1c54012aeb04cf48a5ab20a03bc26",
+      "apk_bytes": 47111929,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T02:23:32+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "316"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "522",
+            "WaitTime": "530"
+          },
+          "timings": [
+            "Startup theme and locale cost: 3ms",
+            "Credentials and providers cost: 144ms",
+            "Workspace and built-in skills cost: 4ms",
+            "App onCreate total cost: 166ms",
+            "Main engine created, cost: 43ms",
+            "MainActivity onCreate total cost: 57ms",
+            "Bootstrap to first rasterized frame: 155ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "454",
+            "WaitTime": "458"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 133ms",
+            "Workspace and built-in skills cost: 4ms",
+            "App onCreate total cost: 154ms",
+            "Main engine created, cost: 37ms",
+            "MainActivity onCreate total cost: 50ms",
+            "Bootstrap to first rasterized frame: 112ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "499",
+            "WaitTime": "503"
+          },
+          "timings": [
+            "Startup theme and locale cost: 4ms",
+            "Credentials and providers cost: 146ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 169ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 47ms",
+            "Bootstrap to first rasterized frame: 147ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "471",
+            "WaitTime": "474"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 145ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 162ms",
+            "Main engine created, cost: 34ms",
+            "MainActivity onCreate total cost: 49ms",
+            "Bootstrap to first rasterized frame: 110ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "468",
+            "WaitTime": "474"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 138ms",
+            "Workspace and built-in skills cost: 4ms",
+            "App onCreate total cost: 160ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 47ms",
+            "Bootstrap to first rasterized frame: 124ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "483",
+            "WaitTime": "487"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 136ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 156ms",
+            "Main engine created, cost: 39ms",
+            "MainActivity onCreate total cost: 51ms",
+            "Bootstrap to first rasterized frame: 132ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          454,
+          499,
+          471,
+          468,
+          483
+        ],
+        "median": 471,
+        "min": 454,
+        "max": 499,
+        "mean": 475
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "316"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "release-compressed": {
+      "label": "release-compressed",
+      "mode": "release",
+      "apk_sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+      "apk_bytes": 38512421,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T02:25:07+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "316"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "472",
+            "WaitTime": "476"
+          },
+          "timings": [
+            "Startup theme and locale cost: 3ms",
+            "Credentials and providers cost: 141ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 158ms",
+            "Main engine created, cost: 41ms",
+            "MainActivity onCreate total cost: 55ms",
+            "Bootstrap to first rasterized frame: 118ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "453",
+            "WaitTime": "457"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 138ms",
+            "Workspace and built-in skills cost: 5ms",
+            "App onCreate total cost: 158ms",
+            "Main engine created, cost: 36ms",
+            "MainActivity onCreate total cost: 50ms",
+            "Bootstrap to first rasterized frame: 108ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "502",
+            "WaitTime": "506"
+          },
+          "timings": [
+            "Startup theme and locale cost: 3ms",
+            "Credentials and providers cost: 138ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 154ms",
+            "Main engine created, cost: 37ms",
+            "MainActivity onCreate total cost: 50ms",
+            "Bootstrap to first rasterized frame: 146ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "481",
+            "WaitTime": "485"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 135ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 151ms",
+            "Main engine created, cost: 39ms",
+            "MainActivity onCreate total cost: 53ms",
+            "Bootstrap to first rasterized frame: 125ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "485",
+            "WaitTime": "492"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 145ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 162ms",
+            "Main engine created, cost: 41ms",
+            "MainActivity onCreate total cost: 53ms",
+            "Bootstrap to first rasterized frame: 110ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "493",
+            "WaitTime": "496"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 142ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 162ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 47ms",
+            "Bootstrap to first rasterized frame: 143ms"
+          ]
+        },
+        {
+          "index": 6,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "476",
+            "WaitTime": "480"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 136ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 154ms",
+            "Main engine created, cost: 37ms",
+            "MainActivity onCreate total cost: 51ms",
+            "Bootstrap to first rasterized frame: 123ms"
+          ]
+        },
+        {
+          "index": 7,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "472",
+            "WaitTime": "479"
+          },
+          "timings": [
+            "Startup theme and locale cost: 4ms",
+            "Credentials and providers cost: 139ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 157ms",
+            "Main engine created, cost: 34ms",
+            "MainActivity onCreate total cost: 48ms",
+            "Bootstrap to first rasterized frame: 123ms"
+          ]
+        },
+        {
+          "index": 8,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "466",
+            "WaitTime": "471"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 134ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 152ms",
+            "Main engine created, cost: 38ms",
+            "MainActivity onCreate total cost: 55ms",
+            "Bootstrap to first rasterized frame: 117ms"
+          ]
+        },
+        {
+          "index": 9,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "468",
+            "WaitTime": "474"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 138ms",
+            "Workspace and built-in skills cost: 3ms",
+            "App onCreate total cost: 156ms",
+            "Main engine created, cost: 38ms",
+            "MainActivity onCreate total cost: 52ms",
+            "Bootstrap to first rasterized frame: 117ms"
+          ]
+        },
+        {
+          "index": 10,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "470",
+            "WaitTime": "478"
+          },
+          "timings": [
+            "Startup theme and locale cost: 2ms",
+            "Credentials and providers cost: 146ms",
+            "Workspace and built-in skills cost: 2ms",
+            "App onCreate total cost: 161ms",
+            "Main engine created, cost: 35ms",
+            "MainActivity onCreate total cost: 49ms",
+            "Bootstrap to first rasterized frame: 122ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          453,
+          502,
+          481,
+          485,
+          493,
+          476,
+          472,
+          466,
+          468,
+          470
+        ],
+        "median": 474.0,
+        "min": 453,
+        "max": 502,
+        "mean": 476.6
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "317"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    }
+  },
+  "artifacts": {
+    "before-profile": {
+      "bytes": 134964115,
+      "mib": 128.7118101119995,
+      "sha256": "f344fb4a599816c76f7538c7cfe3de2c84c78f805a34b124b62113ab1d51fa8a",
+      "zip_groups": {
+        "other": {
+          "entries": 186,
+          "raw_bytes": 1937337,
+          "apk_bytes": 1401002
+        },
+        "dex": {
+          "entries": 40,
+          "raw_bytes": 95801088,
+          "apk_bytes": 95801088
+        },
+        "native_libraries": {
+          "entries": 13,
+          "raw_bytes": 41767948,
+          "apk_bytes": 19417395
+        },
+        "assets": {
+          "entries": 351,
+          "raw_bytes": 23180710,
+          "apk_bytes": 14867902
+        },
+        "android_resources": {
+          "entries": 1140,
+          "raw_bytes": 3439943,
+          "apk_bytes": 2975334
+        }
+      },
+      "zip_overhead_bytes": 501394,
+      "dex": [
+        {
+          "name": "classes.dex",
+          "method": 0,
+          "raw_bytes": 15638040,
+          "apk_bytes": 15638040,
+          "sha256": "bcfeca6141876848eeec14f615de47c82b962512772be7a922959f5075c21050"
+        },
+        {
+          "name": "classes10.dex",
+          "method": 0,
+          "raw_bytes": 512884,
+          "apk_bytes": 512884,
+          "sha256": "de9122c57e12575cffd4ff45f36c6c5d8a91509203e568e3902c6490051d047c"
+        },
+        {
+          "name": "classes11.dex",
+          "method": 0,
+          "raw_bytes": 36964,
+          "apk_bytes": 36964,
+          "sha256": "df6fe913c1cc58587fd7fc70f5d3da2b7cd0fec7db215c343b5d012ef420d19a"
+        },
+        {
+          "name": "classes12.dex",
+          "method": 0,
+          "raw_bytes": 113216,
+          "apk_bytes": 113216,
+          "sha256": "0f6034b9244233bc031b13a4f2850bc7f5a23ad9139a8d140766136f0e9a9b77"
+        },
+        {
+          "name": "classes13.dex",
+          "method": 0,
+          "raw_bytes": 359376,
+          "apk_bytes": 359376,
+          "sha256": "b2c3908788485f9d433a9cb92e40afd9e22b218cc4386d10fc4ea9fa6635ea2f"
+        },
+        {
+          "name": "classes14.dex",
+          "method": 0,
+          "raw_bytes": 290368,
+          "apk_bytes": 290368,
+          "sha256": "8f9f4af649e6fef78bfa57815bb609e8bdb1dffbf6987f47e3fb0befdf09a7b9"
+        },
+        {
+          "name": "classes15.dex",
+          "method": 0,
+          "raw_bytes": 517844,
+          "apk_bytes": 517844,
+          "sha256": "af4c57668093b87154ed16d3d9d84143f29ba8ac657fa55973742af46d3ce76e"
+        },
+        {
+          "name": "classes16.dex",
+          "method": 0,
+          "raw_bytes": 250524,
+          "apk_bytes": 250524,
+          "sha256": "595d4c1e5cba644cb9b570059ef8ee5751e15f4b281e9777eea0c86f013f876a"
+        },
+        {
+          "name": "classes17.dex",
+          "method": 0,
+          "raw_bytes": 58200,
+          "apk_bytes": 58200,
+          "sha256": "4539fcd6af96d3d92160397e9db94b1d22082e18f43afe16c952886b9eb010c0"
+        },
+        {
+          "name": "classes18.dex",
+          "method": 0,
+          "raw_bytes": 670572,
+          "apk_bytes": 670572,
+          "sha256": "5c3ff1ca45b8a6e10dd7eaada81dcf037d330adba04c1039393476282a4c2ce5"
+        },
+        {
+          "name": "classes19.dex",
+          "method": 0,
+          "raw_bytes": 213944,
+          "apk_bytes": 213944,
+          "sha256": "94928cdba0fc9045a78c22848bf687babefb2e8730fad8d90ed21042d763957a"
+        },
+        {
+          "name": "classes2.dex",
+          "method": 0,
+          "raw_bytes": 2332,
+          "apk_bytes": 2332,
+          "sha256": "2e7d1a4a4b08359ac331b8fc5b6d0a5508d7e2963418d73f6d9f1876f9092c95"
+        },
+        {
+          "name": "classes20.dex",
+          "method": 0,
+          "raw_bytes": 181100,
+          "apk_bytes": 181100,
+          "sha256": "612ac3ffcd6012fa57ef92f2c46fc74160fbeab5d0169452e8320d25059690df"
+        },
+        {
+          "name": "classes21.dex",
+          "method": 0,
+          "raw_bytes": 910812,
+          "apk_bytes": 910812,
+          "sha256": "504e3989d715ac3274ab96b94521f5d17d14a28f5402018080050043b0cf589e"
+        },
+        {
+          "name": "classes22.dex",
+          "method": 0,
+          "raw_bytes": 109560,
+          "apk_bytes": 109560,
+          "sha256": "c954ef94f346ee1956a0032b8ca6e1b636ecd85faadc8c340bc3cfbd6f262ff7"
+        },
+        {
+          "name": "classes23.dex",
+          "method": 0,
+          "raw_bytes": 2536968,
+          "apk_bytes": 2536968,
+          "sha256": "ff3d6b282dc399acf4bb5b542bfd99e77b7a60eb911d7770037ed6410f46af9d"
+        },
+        {
+          "name": "classes24.dex",
+          "method": 0,
+          "raw_bytes": 406284,
+          "apk_bytes": 406284,
+          "sha256": "70df246c0afae943ca3b67037130d66b7844a1e233986c94089259c6e0d0a44c"
+        },
+        {
+          "name": "classes26.dex",
+          "method": 0,
+          "raw_bytes": 359744,
+          "apk_bytes": 359744,
+          "sha256": "7c2fb08a71871b9dfb8ac3af69a7da6935a9e01bc51985d73477cb733084c682"
+        },
+        {
+          "name": "classes27.dex",
+          "method": 0,
+          "raw_bytes": 647000,
+          "apk_bytes": 647000,
+          "sha256": "029809b63e0da2bf9fe2264b25d0ad8f18c8a74c5d755a94748c3c7b346e9dc6"
+        },
+        {
+          "name": "classes28.dex",
+          "method": 0,
+          "raw_bytes": 20468,
+          "apk_bytes": 20468,
+          "sha256": "7d97532ee2d24c3fe85a02850fe251d92f7a147cac83ff70acb3cf84d3e68ff1"
+        },
+        {
+          "name": "classes29.dex",
+          "method": 0,
+          "raw_bytes": 2465328,
+          "apk_bytes": 2465328,
+          "sha256": "aa8a475c1e7e37fcd94293faa7c527c6a986e97eba0c2cc75f53ae018931cce3"
+        },
+        {
+          "name": "classes3.dex",
+          "method": 0,
+          "raw_bytes": 787232,
+          "apk_bytes": 787232,
+          "sha256": "757e52cfbec47fdb760f959d14976ff8bbbfbed291b987e20293f41daf329bc4"
+        },
+        {
+          "name": "classes30.dex",
+          "method": 0,
+          "raw_bytes": 102252,
+          "apk_bytes": 102252,
+          "sha256": "10b9b12480e7278915ca6381768ddbdf4f96e2f08e02604a85b93c85fb3d868a"
+        },
+        {
+          "name": "classes31.dex",
+          "method": 0,
+          "raw_bytes": 67220,
+          "apk_bytes": 67220,
+          "sha256": "4d63dd3d96073d19f8349f6a36ce60a9ac84529fe5f39cb651ce5c48c6835533"
+        },
+        {
+          "name": "classes32.dex",
+          "method": 0,
+          "raw_bytes": 160772,
+          "apk_bytes": 160772,
+          "sha256": "33f093f57689e71d22aba4b1f3c36a827e7f4bf58dfd7e5a28ab1df0eebb9abd"
+        },
+        {
+          "name": "classes33.dex",
+          "method": 0,
+          "raw_bytes": 282368,
+          "apk_bytes": 282368,
+          "sha256": "ca6a13675d6ea5bd7e7005c27c2f183b0d046211c585e5649a5a60fd79e05990"
+        },
+        {
+          "name": "classes34.dex",
+          "method": 0,
+          "raw_bytes": 92940,
+          "apk_bytes": 92940,
+          "sha256": "dd41a71e1d7a4493b234d8e13dc327d44fd86b973547a24fb11cd0df1018b4fb"
+        },
+        {
+          "name": "classes35.dex",
+          "method": 0,
+          "raw_bytes": 16092876,
+          "apk_bytes": 16092876,
+          "sha256": "11e93913fea4750dc370c08057dcb4edc86e8f3b56bc31f2636fda092b9dd669"
+        },
+        {
+          "name": "classes36.dex",
+          "method": 0,
+          "raw_bytes": 12117192,
+          "apk_bytes": 12117192,
+          "sha256": "210cb9dabd1475793a04a2dcbe8629c805fdb11a36b256c9ad0a9b42ed1ab30c"
+        },
+        {
+          "name": "classes37.dex",
+          "method": 0,
+          "raw_bytes": 9551848,
+          "apk_bytes": 9551848,
+          "sha256": "ed539557be08922b8336731b5af80a0e9173198c76438a43959fab0bfc18a214"
+        },
+        {
+          "name": "classes38.dex",
+          "method": 0,
+          "raw_bytes": 12055232,
+          "apk_bytes": 12055232,
+          "sha256": "0009731cc74a5b0df3f350c4cbbda8e659449bc3be71021dc40b27707a90ff5c"
+        },
+        {
+          "name": "classes39.dex",
+          "method": 0,
+          "raw_bytes": 12470672,
+          "apk_bytes": 12470672,
+          "sha256": "c117460c7d0b4e18a5fd223dd33b54e8a7892cedabe5f8e7fe394c21e63235f3"
+        },
+        {
+          "name": "classes4.dex",
+          "method": 0,
+          "raw_bytes": 25036,
+          "apk_bytes": 25036,
+          "sha256": "68747d1e3450cab9be93d0e35f3c8f53f1e0f2e0f34007657d24d2a13c79d6cf"
+        },
+        {
+          "name": "classes40.dex",
+          "method": 0,
+          "raw_bytes": 3174876,
+          "apk_bytes": 3174876,
+          "sha256": "a2d4e487ad36eb58a4a8f27879f7dd5882a97ffd4bc6619d7cbaaa6fe5687e1a"
+        },
+        {
+          "name": "classes5.dex",
+          "method": 0,
+          "raw_bytes": 862180,
+          "apk_bytes": 862180,
+          "sha256": "85e848bf36716dd8bc71e2057cd1517bc13ea59356640fce0f3c38dacc4a4504"
+        },
+        {
+          "name": "classes6.dex",
+          "method": 0,
+          "raw_bytes": 314920,
+          "apk_bytes": 314920,
+          "sha256": "af7a3332e93856372c08967dc508e720ec66fbfe230e1da01b0bb47f836e48e2"
+        },
+        {
+          "name": "classes7.dex",
+          "method": 0,
+          "raw_bytes": 352536,
+          "apk_bytes": 352536,
+          "sha256": "4ab0bd5ca0790a118771ea96155c71db9e2b04dce4ae06ce6234a4db3bd73978"
+        },
+        {
+          "name": "classes8.dex",
+          "method": 0,
+          "raw_bytes": 197988,
+          "apk_bytes": 197988,
+          "sha256": "84d1e99630b35926a90e228d85bb095671c4e36efaf23fe7ebb89a682d460eaf"
+        },
+        {
+          "name": "classes9.dex",
+          "method": 0,
+          "raw_bytes": 594580,
+          "apk_bytes": 594580,
+          "sha256": "ec32035e56b3646d175a67ada9471c613d129c8a898ea607902e5602c9da7dce"
+        },
+        {
+          "name": "classes25.dex",
+          "method": 0,
+          "raw_bytes": 196840,
+          "apk_bytes": 196840,
+          "sha256": "87eaea42cf98b9a8161fae4579ec6ed4de60bbad068daa5aa29585ed317c095f"
+        }
+      ],
+      "flutter_aot": true,
+      "flutter_jit_kernel": false
+    },
+    "release-stored": {
+      "bytes": 47111929,
+      "mib": 44.929436683654785,
+      "sha256": "eafc61cfd35441b16e15a6410981c4ec0cb1c54012aeb04cf48a5ab20a03bc26",
+      "zip_groups": {
+        "other": {
+          "entries": 186,
+          "raw_bytes": 1937882,
+          "apk_bytes": 1401540
+        },
+        "assets": {
+          "entries": 353,
+          "raw_bytes": 23188833,
+          "apk_bytes": 14375744
+        },
+        "dex": {
+          "entries": 2,
+          "raw_bytes": 15221120,
+          "apk_bytes": 15221120
+        },
+        "native_libraries": {
+          "entries": 12,
+          "raw_bytes": 33836780,
+          "apk_bytes": 14578654
+        },
+        "android_resources": {
+          "entries": 714,
+          "raw_bytes": 1606164,
+          "apk_bytes": 1328155
+        }
+      },
+      "zip_overhead_bytes": 206716,
+      "dex": [
+        {
+          "name": "classes.dex",
+          "method": 0,
+          "raw_bytes": 13344200,
+          "apk_bytes": 13344200,
+          "sha256": "9bfde1ea4ba9287d94e8f884d3ef9dacd1eed06b3d5da2c483ec6d35411bafcd"
+        },
+        {
+          "name": "classes2.dex",
+          "method": 0,
+          "raw_bytes": 1876920,
+          "apk_bytes": 1876920,
+          "sha256": "b231c21d45be94af08f9f72a26970b48247f43b34c8ea42a0df3cc22e60c5b86"
+        }
+      ],
+      "flutter_aot": true,
+      "flutter_jit_kernel": false
+    },
+    "release-compressed": {
+      "bytes": 38512421,
+      "mib": 36.72830677032471,
+      "sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+      "zip_groups": {
+        "other": {
+          "entries": 186,
+          "raw_bytes": 1937882,
+          "apk_bytes": 1401540
+        },
+        "assets": {
+          "entries": 353,
+          "raw_bytes": 23188833,
+          "apk_bytes": 14375744
+        },
+        "dex": {
+          "entries": 2,
+          "raw_bytes": 15221120,
+          "apk_bytes": 6621615
+        },
+        "native_libraries": {
+          "entries": 12,
+          "raw_bytes": 33836780,
+          "apk_bytes": 14578654
+        },
+        "android_resources": {
+          "entries": 714,
+          "raw_bytes": 1606164,
+          "apk_bytes": 1328155
+        }
+      },
+      "zip_overhead_bytes": 206713,
+      "dex": [
+        {
+          "name": "classes.dex",
+          "method": 8,
+          "raw_bytes": 13344200,
+          "apk_bytes": 5822924,
+          "sha256": "9bfde1ea4ba9287d94e8f884d3ef9dacd1eed06b3d5da2c483ec6d35411bafcd"
+        },
+        {
+          "name": "classes2.dex",
+          "method": 8,
+          "raw_bytes": 1876920,
+          "apk_bytes": 798691,
+          "sha256": "b231c21d45be94af08f9f72a26970b48247f43b34c8ea42a0df3cc22e60c5b86"
+        }
+      ],
+      "flutter_aot": true,
+      "flutter_jit_kernel": false
+    }
+  },
+  "release_pair_payloads_identical": true,
+  "size_reduction_percent": 71.4647,
+  "runtime_verification": {
+    "single_app_process": true,
+    "error_pattern_counts": {
+      "FATAL EXCEPTION": 0,
+      "MissingPluginException": 0,
+      "NoClassDefFoundError": 0,
+      "ClassNotFoundException": 0,
+      "NoSuchMethodError": 0,
+      "Error registering plugin": 0
+    },
+    "installed_apk_sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+    "screenshot_captured": true,
+    "screenshot_visual_review": "Normal home and pre-existing history confirmed; no video/UI interaction acceptance claimed.",
+    "native_debuggable": false,
+    "apksigner_verified": true,
+    "zipalign_4_verified": true
+  },
+  "persisted_fields": {
+    "before-profile": {
+      "Lcn/com/omnimind/bot/agent/runtime/AcpAgentProfile;": [
+        "arguments",
+        "builtIn",
+        "command",
+        "description",
+        "enabled",
+        "environment",
+        "id",
+        "name",
+        "officialRuntime"
+      ],
+      "Lcn/com/omnimind/baselib/llm/ModelProviderConfigStore$StoredModelProviderProfile;": [
+        "apiKey",
+        "baseUrl",
+        "customHeaders",
+        "id",
+        "name",
+        "protocolType",
+        "readOnly",
+        "ready",
+        "revision",
+        "sourceType",
+        "statusText",
+        "wireApi"
+      ],
+      "Lcn/com/omnimind/baselib/llm/ModelProviderProfile;": [
+        "apiKey",
+        "baseUrl",
+        "credentialRevision",
+        "customHeaders",
+        "id",
+        "name",
+        "protocolType",
+        "readOnly",
+        "ready",
+        "revision",
+        "sourceType",
+        "statusText",
+        "wireApi"
+      ],
+      "Lcn/com/omnimind/baselib/llm/SceneModelBindingEntry;": [
+        "modelId",
+        "providerProfileId",
+        "sceneId"
+      ],
+      "Lcn/com/omnimind/baselib/llm/SceneVoiceConfig;": [
+        "autoPlay",
+        "customCurlCommand",
+        "customStyle",
+        "stylePreset",
+        "ttsMode",
+        "voiceId"
+      ]
+    },
+    "release-compressed": {
+      "Lcn/com/omnimind/baselib/llm/ModelProviderConfigStore$StoredModelProviderProfile;": [
+        "apiKey",
+        "baseUrl",
+        "customHeaders",
+        "id",
+        "name",
+        "protocolType",
+        "readOnly",
+        "ready",
+        "revision",
+        "sourceType",
+        "statusText",
+        "wireApi"
+      ],
+      "Lcn/com/omnimind/baselib/llm/ModelProviderProfile;": [
+        "apiKey",
+        "baseUrl",
+        "credentialRevision",
+        "customHeaders",
+        "id",
+        "name",
+        "protocolType",
+        "readOnly",
+        "ready",
+        "revision",
+        "sourceType",
+        "statusText",
+        "wireApi"
+      ],
+      "Lcn/com/omnimind/baselib/llm/SceneModelBindingEntry;": [
+        "modelId",
+        "providerProfileId",
+        "sceneId"
+      ],
+      "Lcn/com/omnimind/baselib/llm/SceneVoiceConfig;": [
+        "autoPlay",
+        "customCurlCommand",
+        "customStyle",
+        "stylePreset",
+        "ttsMode",
+        "voiceId"
+      ],
+      "Lcn/com/omnimind/bot/agent/runtime/AcpAgentProfile;": [
+        "arguments",
+        "builtIn",
+        "command",
+        "description",
+        "enabled",
+        "environment",
+        "id",
+        "name",
+        "officialRuntime"
+      ]
+    },
+    "same_persisted_field_definitions": true
+  },
+  "legacy_tts_compatibility": {
+    "mmkv_crc_valid": true,
+    "mmkv_records_parsed": true,
+    "voice_config_present": false,
+    "legacy_tts_migration_on_read": false
+  },
+  "signing_certificate_sha256": "352e2497031b3c931b6e6fdfb539e1d018685e20df0edcb06e137ff154f308a2",
+  "production_patch": "diff --git a/app/build.gradle.kts b/app/build.gradle.kts\nindex 32490d2a9..c5ab049ea 100644\n--- a/app/build.gradle.kts\n+++ b/app/build.gradle.kts\n@@ -346,8 +346,11 @@ android {\n \n     packaging {\n         dex {\n-            // Keep DEX directly mappable on API 29+ instead of inflating it during cold starts.\n-            useLegacyPackaging = false\n+            // Favor a small APK after Release R8 shrinking. Opt out for a\n+            // directly mappable DEX comparison with -POMNIBOT_COMPRESS_DEX=false.\n+            useLegacyPackaging = providers.gradleProperty(\"OMNIBOT_COMPRESS_DEX\")\n+                .map { it.toBooleanStrict() }\n+                .getOrElse(true)\n         }\n         jniLibs {\n             useLegacyPackaging = true\n",
+  "local_signing_init_script": "// Local device verification only; repository release signing stays unchanged.\ngradle.beforeProject { p ->\n    p.plugins.withId('com.android.application') {\n        if (p.path == ':app') {\n            p.extensions.getByName('androidComponents').finalizeDsl { android ->\n                android.buildTypes.getByName('release').signingConfig = android.signingConfigs.getByName('debug')\n            }\n        }\n    }\n}\n",
+  "build_commands": {
+    "stored": "./gradlew --no-configuration-cache -I /tmp/omnibot-apk-size-20261029/release-local-signing.init.gradle :app:assembleDevelopStandardRelease -Ptarget=lib/main_standard.dart --console=plain (original useLegacyPackaging=false)",
+    "compressed": "./gradlew --no-configuration-cache -I /tmp/omnibot-apk-size-20261029/release-local-signing.init.gradle :app:assembleDevelopStandardRelease -Ptarget=lib/main_standard.dart --console=plain (current default compress=true)"
+  },
+  "tests": {
+    "status": "passed",
+    "suites": [
+      {
+        "name": "cn.com.omnimind.baselib.llm.PersistedJsonCompatibilityTest",
+        "tests": "6",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "report": "baselib/build/test-results/testDebugUnitTest/TEST-cn.com.omnimind.baselib.llm.PersistedJsonCompatibilityTest.xml"
+      },
+      {
+        "name": "cn.com.omnimind.baselib.llm.ModelProviderConfigStoreTest",
+        "tests": "10",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "report": "baselib/build/test-results/testDebugUnitTest/TEST-cn.com.omnimind.baselib.llm.ModelProviderConfigStoreTest.xml"
+      },
+      {
+        "name": "cn.com.omnimind.baselib.llm.chatgpt.ChatGptRegistrationCodecTest",
+        "tests": "7",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "report": "baselib/build/test-results/testDebugUnitTest/TEST-cn.com.omnimind.baselib.llm.chatgpt.ChatGptRegistrationCodecTest.xml"
+      },
+      {
+        "name": "cn.com.omnimind.baselib.llm.SceneVoiceConfigStoreTest",
+        "tests": "6",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "report": "baselib/build/test-results/testDebugUnitTest/TEST-cn.com.omnimind.baselib.llm.SceneVoiceConfigStoreTest.xml"
+      },
+      {
+        "name": "cn.com.omnimind.bot.vlm.DebugOmniMindProviderBootstrapTest",
+        "tests": "8",
+        "failures": "0",
+        "errors": "0",
+        "skipped": "0",
+        "report": "app/build/test-results/testDevelopStandardDebugUnitTest/TEST-cn.com.omnimind.bot.vlm.DebugOmniMindProviderBootstrapTest.xml"
+      }
+    ],
+    "total_tests": 37,
+    "scope": "Focused JVM compatibility tests on supported Debug variants; R8 artifact checked separately on device.",
+    "initial_attempt": "testReleaseUnitTest unavailable; no test assertion failed in that attempt."
+  }
+}

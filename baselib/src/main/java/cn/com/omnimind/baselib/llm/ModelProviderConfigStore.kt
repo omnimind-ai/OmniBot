@@ -162,9 +162,26 @@ object ModelProviderConfigStore {
         if (base != normalizeBaseUrl(profile.baseUrl).orEmpty() || revision != profile.revision) {
             return@runCatching emptyList()
         }
-        bucket["models"]?.asJsonArray?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
+        val discovered = bucket["models"]?.asJsonArray
+            ?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
             ?.filter { !it.id.isNullOrBlank() }.orEmpty()
+        resolveModelCapabilities(context, profile, discovered)
     }.getOrDefault(emptyList())
+
+    /**
+     * One offline capability projection for the editor and every Agent adapter.
+     * The discovery cache retains Provider declarations; bundled metadata only
+     * fills gaps here, so a newer bundle never inherits stale fallback values.
+     */
+    fun resolveModelCapabilities(
+        context: Context,
+        profile: ModelProviderProfile,
+        models: List<ProviderModelOption>,
+    ): List<ProviderModelOption> = models.map { model ->
+        ProviderModelCapabilities.normalize(
+            ProviderReasoningCatalog.enrich(context, profile, ProviderModelCapabilities.normalize(model))
+        )
+    }
 
     /** Latest successful discovery, used only to construct offline launch config.
      * Explicit refresh always calls the Provider; this is never a network cache.
@@ -180,7 +197,8 @@ object ModelProviderConfigStore {
         catalogs.add(profile.id, Gson().toJsonTree(mapOf(
             "apiBase" to normalizeBaseUrl(profile.baseUrl).orEmpty(),
             "profileRevision" to profile.revision,
-            "models" to models.filter { it.id.isNotBlank() }.distinctBy { it.id },
+            "models" to models.filter { it.id.isNotBlank() }.distinctBy { it.id }
+                .map(ProviderModelCapabilities::normalize),
         )))
         preferences.edit().putString(key, catalogs.toString()).apply()
     }

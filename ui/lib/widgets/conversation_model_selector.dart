@@ -535,11 +535,6 @@ class _ConversationModelSelectorContentState
               mainAxisSize: MainAxisSize.min,
               children: [
                 if (widget.header != null) widget.header!,
-                if (widget.loadLiveProviders)
-                  const Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Text('服务商 / 模型'),
-                  ),
                 if (widget.showSearchField) _buildSearchRow(),
                 if (_loadingProfiles) const LinearProgressIndicator(),
                 if (_profilesFailed)

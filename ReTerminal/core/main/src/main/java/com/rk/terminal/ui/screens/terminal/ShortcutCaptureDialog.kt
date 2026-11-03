@@ -1,8 +1,8 @@
 package com.rk.terminal.ui.screens.terminal
 
-import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -25,7 +25,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.res.stringResource
@@ -33,10 +32,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.platform.LocalWindowInfo
 import com.rk.resources.strings
 import com.rk.settings.Settings
+import com.rk.terminal.ui.components.OmniModalSheet
 
 /**
  * Dialog that captures a keyboard shortcut combination from the user.
@@ -54,11 +53,8 @@ fun ShortcutCaptureDialog(
     var modifierHint by remember { mutableStateOf("") }
     var conflictMessage by remember { mutableStateOf<String?>(null) }
 
-    Dialog(onDismissRequest = onDismiss) {
-        Surface(
-            shape = RoundedCornerShape(16.dp),
-            color = MaterialTheme.colorScheme.surface,
-            tonalElevation = 6.dp,
+    OmniModalSheet(onDismissRequest = onDismiss) {
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .focusRequester(focusRequester)
@@ -179,7 +175,7 @@ fun ShortcutCaptureDialog(
                 }
             }
         }
-        // Wait for the Dialog window to actually gain focus before requesting
+        // Wait for the sheet window to actually gain focus before requesting
         // Composable focus. LaunchedEffect(Unit) races with window activation,
         // causing the first keypress to be missed on hardware keyboards.
         val windowInfo = LocalWindowInfo.current

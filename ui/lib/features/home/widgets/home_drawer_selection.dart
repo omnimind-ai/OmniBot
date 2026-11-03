@@ -8,12 +8,10 @@ extension _HomeDrawerSelection on HomeDrawerState {
 
   /// Matches the rows exposed by the current search/filter and expanded groups.
   /// Offscreen rows in those groups remain selectable; folded descendants do not.
-  Map<String, ConversationModel> get _selectableVisibleConversations {
+  Map<String, ConversationModel> get _visibleConversationRows {
     final rows = <String, ConversationModel>{};
     void add(ConversationModel conversation) {
-      if (!_busyConversationKeys.contains(conversation.threadKey)) {
-        rows[conversation.threadKey] = conversation;
-      }
+      rows[conversation.threadKey] = conversation;
     }
 
     if (_isSearchActive) {
@@ -41,17 +39,15 @@ extension _HomeDrawerSelection on HomeDrawerState {
       }
     }
     for (final result in _visibleConversationResults) {
-      if (_isConversationSectionExpanded(
-        _dateConversationSectionKeyForConversation(
-          result.conversation,
-          namespace: _kOmniAiDateSectionNamespace,
-        ),
-      )) {
-        add(result.conversation);
-      }
+      add(result.conversation);
     }
     return rows;
   }
+
+  Map<String, ConversationModel> get _selectableVisibleConversations => {
+    for (final entry in _visibleConversationRows.entries)
+      if (!_busyConversationKeys.contains(entry.key)) entry.key: entry.value,
+  };
 
   void _startConversationSelection(ConversationModel conversation) {
     if (_isBatchConversationActionRunning ||
@@ -134,9 +130,9 @@ extension _HomeDrawerSelection on HomeDrawerState {
     var submitted = false;
     try {
       if (delete) {
-        final confirmed = await showDialog<bool>(
+        final confirmed = await showOmniGlassCardSheet<bool>(
           context: context,
-          builder: (dialogContext) => AlertDialog(
+          builder: (dialogContext) => OmniGlassAlertDialog(
             title: Text(
               _selectionText('删除所选对话？', 'Delete selected conversations?'),
             ),

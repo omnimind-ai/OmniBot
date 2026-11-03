@@ -1,9 +1,14 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:ui/models/scheduled_task.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/widgets/settings_ui.dart';
+import 'package:ui/widgets/settings_detail_sheet.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 /// 定时任务配置底部弹窗
 class ScheduleTaskSheet extends StatefulWidget {
@@ -20,10 +25,9 @@ class ScheduleTaskSheet extends StatefulWidget {
     required BuildContext context,
     required ScheduledTask existingTask,
   }) {
-    return showModalBottomSheet<ScheduledTask>(
+    return showSettingsDetailSheet<ScheduledTask>(
       context: context,
       isScrollControlled: true,
-      backgroundColor: Colors.transparent,
       builder: (context) => ScheduleTaskSheet(existingTask: existingTask),
     );
   }
@@ -77,239 +81,122 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    return Container(
-      decoration: BoxDecoration(
-        color: palette.surfacePrimary,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+    final textScaler = MediaQuery.textScalerOf(context);
+    final pickerHeight =
+        (textScaler.scale(36) * 1.35 + textScaler.scale(15) * 1.35 + 40)
+            .clamp(200.0, double.infinity)
+            .toDouble();
+    return SettingsDetailSheet(
+      title: LegacyTextLocalizer.isEnglish ? 'Set scheduled task' : '设置定时任务',
+      headerAction: OmniCircleButton(
+        key: const ValueKey('schedule-task-close'),
+        icon: LucideIcons.x,
+        size: 40,
+        tapTargetSize: MaterialTapTargetSize.padded,
+        tooltip: MaterialLocalizations.of(context).closeButtonTooltip,
+        onPressed: () => Navigator.pop(context),
       ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            // 拖动指示器
-            Container(
-              margin: const EdgeInsets.only(top: 12),
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: palette.borderStrong,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-
-            // 标题
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      LegacyTextLocalizer.isEnglish
-                          ? 'Set scheduled task'
-                          : '设置定时任务',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
-                        color: palette.textPrimary,
-                      ),
-                    ),
-                  ),
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: Icon(
-                      Icons.close,
-                      size: 24,
-                      color: palette.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // 任务标题显示
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: palette.surfaceSecondary,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.task_alt, size: 20, color: palette.accentPrimary),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      widget.existingTask.title,
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: palette.textPrimary,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            // 标签页切换
-            _buildTabSelector(),
-
-            const SizedBox(height: 16),
-
-            // 内容区域
-            SizedBox(
-              height: 200,
-              child: PageView(
-                controller: _pageController,
-                onPageChanged: (index) {
-                  setState(() {
-                    _selectedTabIndex = index;
-                  });
-                },
-                children: [_buildFixedTimeTab(), _buildCountdownTab()],
-              ),
-            ),
-
-            // 每日重复开关
-            if (_selectedTabIndex == 0)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    Text(
-                      LegacyTextLocalizer.isEnglish ? 'Repeat daily' : '每日重复执行',
-                      style: TextStyle(
-                        fontSize: 15,
-                        color: palette.textPrimary,
-                      ),
-                    ),
-                    const Spacer(),
-                    OmniSettingsSwitch(
-                      value: _repeatDaily,
-                      onToggle: (value) {
-                        setState(() {
-                          _repeatDaily = value;
-                        });
-                      },
-                    ),
-                  ],
-                ),
-              ),
-
-            const SizedBox(height: 24),
-
-            // 确认按钮
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: SizedBox(
-                width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
-                  onPressed: _onConfirm,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: palette.accentPrimary,
-                    foregroundColor: Theme.of(context).colorScheme.onPrimary,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    elevation: 0,
-                  ),
-                  child: Text(
-                    LegacyTextLocalizer.localize('确认'),
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
-                  ),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: 16),
-          ],
-        ),
-      ),
-    );
-  }
-
-  /// 构建标签页选择器
-  Widget _buildTabSelector() {
-    final palette = context.omniPalette;
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16),
-      padding: const EdgeInsets.all(4),
-      decoration: BoxDecoration(
-        color: palette.segmentTrack,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Row(
+      body: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Expanded(
-            child: _buildTabButton(
-              title: LegacyTextLocalizer.isEnglish ? 'Fixed time' : '固定时间',
-              isSelected: _selectedTabIndex == 0,
-              onTap: () {
-                setState(() {
-                  _selectedTabIndex = 0;
-                });
-                _pageController.animateToPage(
-                  0,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                );
-              },
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: palette.surfaceSecondary,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Row(
+              children: [
+                Icon(LucideIcons.clock, size: 20, color: palette.accentPrimary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    widget.existingTask.title,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 15, color: palette.textPrimary),
+                  ),
+                ),
+              ],
             ),
           ),
-          Expanded(
-            child: _buildTabButton(
-              title: LegacyTextLocalizer.isEnglish ? 'Countdown' : '倒计时',
-              isSelected: _selectedTabIndex == 1,
-              onTap: () {
-                setState(() {
-                  _selectedTabIndex = 1;
-                });
-                _pageController.animateToPage(
-                  1,
-                  duration: const Duration(milliseconds: 300),
-                  curve: Curves.easeInOut,
-                );
+          const SizedBox(height: 20),
+          _buildTabSelector(),
+          const SizedBox(height: 12),
+          SizedBox(
+            height: pickerHeight,
+            child: PageView(
+              controller: _pageController,
+              onPageChanged: (index) {
+                setState(() => _selectedTabIndex = index);
               },
+              children: [_buildFixedTimeTab(), _buildCountdownTab()],
             ),
           ),
+          if (_selectedTabIndex == 0)
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    LegacyTextLocalizer.isEnglish ? 'Repeat daily' : '每日重复执行',
+                    style: TextStyle(fontSize: 15, color: palette.textPrimary),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OmniSettingsSwitch(
+                  value: _repeatDaily,
+                  onToggle: (value) => setState(() => _repeatDaily = value),
+                ),
+              ],
+            ),
         ],
       ),
-    );
-  }
-
-  /// 构建单个标签按钮
-  Widget _buildTabButton({
-    required String title,
-    required bool isSelected,
-    required VoidCallback onTap,
-  }) {
-    final palette = context.omniPalette;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 10),
-        decoration: BoxDecoration(
-          color: isSelected ? palette.segmentThumb : Colors.transparent,
-          borderRadius: BorderRadius.circular(6),
-        ),
-        child: Center(
+      footer: SizedBox(
+        width: double.infinity,
+        child: ElevatedButton(
+          key: const ValueKey('schedule-task-confirm'),
+          onPressed: _onConfirm,
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size(0, 48),
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+            backgroundColor: palette.accentPrimary,
+            foregroundColor: Theme.of(context).colorScheme.onPrimary,
+            shape: const StadiumBorder(),
+            elevation: 0,
+          ),
           child: Text(
-            title,
-            style: TextStyle(
-              fontSize: 15,
-              fontWeight: isSelected ? FontWeight.w500 : FontWeight.normal,
-              color: isSelected ? palette.accentPrimary : palette.textSecondary,
-            ),
+            LegacyTextLocalizer.localize('确认'),
+            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
           ),
         ),
       ),
     );
   }
+
+  Widget _buildTabSelector() => OmniSegmentedSlider<int>(
+    keyPrefix: 'schedule-time-mode',
+    value: _selectedTabIndex,
+    options: [
+      OmniSegmentedOption(
+        value: 0,
+        label: LegacyTextLocalizer.isEnglish ? 'Fixed time' : '固定时间',
+      ),
+      OmniSegmentedOption(
+        value: 1,
+        label: LegacyTextLocalizer.isEnglish ? 'Countdown' : '倒计时',
+      ),
+    ],
+    onChanged: (index) {
+      if (_selectedTabIndex == index) return;
+      setState(() => _selectedTabIndex = index);
+      _pageController.animateToPage(
+        index,
+        duration: const Duration(milliseconds: 300),
+        curve: Curves.easeInOut,
+      );
+    },
+  );
 
   /// 构建固定时间选择
   Widget _buildFixedTimeTab() {
@@ -354,42 +241,50 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
     final palette = context.omniPalette;
     return Center(
       child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           _buildCountdownButton(
-            icon: Icons.remove,
-            onTap: () {
-              if (_countdownMinutes > 5) {
-                setState(() {
-                  _countdownMinutes -= 5;
-                });
-              }
-            },
+            icon: LucideIcons.minus,
+            tooltip: LegacyTextLocalizer.isEnglish
+                ? 'Subtract 5 minutes'
+                : '减少 5 分钟',
+            onTap: _countdownMinutes > 5
+                ? () => setState(() => _countdownMinutes -= 5)
+                : null,
           ),
-          const SizedBox(width: 24),
-          GestureDetector(
-            onTap: _showCountdownInputDialog,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 16),
-              decoration: BoxDecoration(
-                color: palette.surfaceSecondary,
-                border: Border.all(color: palette.borderStrong),
-                borderRadius: BorderRadius.circular(12),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextButton(
+              key: const ValueKey('schedule-countdown-input'),
+              onPressed: _showCountdownInputDialog,
+              style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 16,
+                ),
+                backgroundColor: palette.surfaceSecondary,
+                foregroundColor: palette.textPrimary,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                ),
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Text(
-                    _formatCountdown(_countdownMinutes),
-                    style: TextStyle(
-                      fontSize: 36,
-                      fontWeight: FontWeight.w300,
-                      color: palette.textPrimary,
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      _formatCountdown(_countdownMinutes),
+                      style: TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.w300,
+                        color: palette.textPrimary,
+                      ),
                     ),
                   ),
                   const SizedBox(height: 4),
                   Text(
                     LegacyTextLocalizer.isEnglish ? 'Execute after' : '后执行',
+                    textAlign: TextAlign.center,
                     style: TextStyle(
                       fontSize: 15,
                       color: palette.textSecondary,
@@ -399,17 +294,15 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
               ),
             ),
           ),
-          const SizedBox(width: 24),
+          const SizedBox(width: 12),
           _buildCountdownButton(
-            icon: Icons.add,
-            onTap: () {
-              if (_countdownMinutes < 1440) {
-                // 最多24小时
-                setState(() {
-                  _countdownMinutes += 5;
-                });
-              }
-            },
+            icon: LucideIcons.plus,
+            tooltip: LegacyTextLocalizer.isEnglish
+                ? 'Add 5 minutes'
+                : '增加 5 分钟',
+            onTap: _countdownMinutes < 1440
+                ? () => setState(() => _countdownMinutes += 5)
+                : null,
           ),
         ],
       ),
@@ -418,7 +311,7 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
 
   /// 显示倒计时输入对话框
   Future<void> _showCountdownInputDialog() async {
-    final minutes = await showDialog<int>(
+    final minutes = await showOmniGlassCardSheet<int>(
       context: context,
       useRootNavigator: false,
       builder: (_) => _CountdownInputDialog(initialMinutes: _countdownMinutes),
@@ -444,25 +337,19 @@ class _ScheduleTaskSheetState extends State<ScheduleTaskSheet> {
     return isEnglish ? '${minutes}m' : '$minutes分钟';
   }
 
-  /// 构建加减按钮
+  /// Uses the shared glass control for touch, focus and keyboard activation.
   Widget _buildCountdownButton({
     required IconData icon,
-    required VoidCallback onTap,
-  }) {
-    final palette = context.omniPalette;
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 48,
-        height: 48,
-        decoration: BoxDecoration(
-          color: palette.accentPrimary.withValues(alpha: 0.12),
-          shape: BoxShape.circle,
-        ),
-        child: Icon(icon, size: 24, color: palette.accentPrimary),
-      ),
-    );
-  }
+    required String tooltip,
+    required VoidCallback? onTap,
+  }) => OmniCircleButton(
+    icon: icon,
+    tooltip: tooltip,
+    size: 40,
+    tapTargetSize: MaterialTapTargetSize.padded,
+    foregroundColor: context.omniPalette.accentPrimary,
+    onPressed: onTap,
+  );
 
   /// 确认创建定时任务
   void _onConfirm() {
@@ -556,12 +443,11 @@ class _CountdownInputDialogState extends State<_CountdownInputDialog> {
       borderSide: BorderSide(color: palette.accentPrimary),
     );
     return PopScope(
-      canPop: false,
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _close();
+        if (didPop) _focusNode.unfocus();
       },
-      child: AlertDialog(
+      child: OmniGlassAlertDialog(
         backgroundColor: palette.surfacePrimary,
         surfaceTintColor: Colors.transparent,
         title: Text(

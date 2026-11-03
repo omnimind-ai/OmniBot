@@ -32,11 +32,15 @@ interface PlatformModelRemoteDataSource {
  */
 class PlatformModelApiClient(
     gatewayBaseUrl: String,
-    private val callFactory: Call.Factory = securePlatformCatalogHttpClient(),
+    callFactory: Call.Factory? = null,
     private val gson: Gson = Gson(),
     private val ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
     allowInsecureLoopback: Boolean = false,
 ) : PlatformModelRemoteDataSource {
+    private val httpCalls: Call.Factory by lazy {
+        callFactory ?: securePlatformCatalogHttpClient()
+    }
+
     private val modelsUrl = OfficialEndpointSecurity.normalizeBaseUrl(
         raw = gatewayBaseUrl,
         label = "gatewayBaseUrl",
@@ -54,7 +58,7 @@ class PlatformModelApiClient(
                 .header("Accept", "application/json")
                 .get()
                 .build()
-            callFactory.newCall(request).execute().use { response ->
+            httpCalls.newCall(request).execute().use { response ->
                 val body = readCatalogBody(response.body)
                 if (!response.isSuccessful) {
                     throw AccountApiException(

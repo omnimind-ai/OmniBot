@@ -17,6 +17,7 @@ import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/cache_util.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 class ChatHistoryPage extends StatefulWidget {
   const ChatHistoryPage({super.key, this.archivedOnly = false});
@@ -322,7 +323,11 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
                 tooltip: '\u65b0\u5efa\u5bf9\u8bdd',
               ),
       ),
-      body: _buildBody(),
+      body: SafeArea(
+        top: false,
+        bottom: false,
+        child: OmniContentWidth(child: _buildBody()),
+      ),
     );
   }
 
@@ -468,7 +473,10 @@ class _ChatHistoryPageState extends State<ChatHistoryPage> {
     final sections = _buildConversationSections(_conversations);
     return SlidableAutoCloseBehavior(
       child: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+        padding: edgeToEdgeScrollPadding(
+          context,
+          const EdgeInsets.fromLTRB(16, 10, 16, 20),
+        ),
         children: [
           for (
             int sectionIndex = 0;

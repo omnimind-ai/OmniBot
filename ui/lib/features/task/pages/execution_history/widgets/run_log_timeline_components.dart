@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:ui/features/task/run_log/run_log_metrics.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/omni_glass.dart';
 
 class RunLogOverviewPanel extends StatelessWidget {
   const RunLogOverviewPanel({
@@ -370,109 +371,225 @@ class RunLogStepDetailSheet extends StatelessWidget {
     final usage = tokenUsage;
     return SafeArea(
       top: false,
+      bottom: false,
       child: DraggableScrollableSheet(
         key: const ValueKey('run-log-step-detail'),
         expand: false,
         initialChildSize: 0.68,
         minChildSize: 0.38,
         maxChildSize: 0.94,
-        builder: (context, controller) => Material(
-          color: palette.pageBackground,
+        builder: (context, controller) => OmniGlassSheet(
+          backgroundColor: palette.pageBackground,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              const SizedBox(height: 9),
-              Container(
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: palette.borderStrong,
-                  borderRadius: BorderRadius.circular(99),
+          child: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: Column(
+              children: [
+                const SizedBox(height: 9),
+                Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: palette.borderStrong,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _text(
-                              context,
-                              '第 ${fallbackIndex + 1} 步',
-                              'Step ${fallbackIndex + 1}',
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _text(
+                                context,
+                                '第 ${fallbackIndex + 1} 步',
+                                'Step ${fallbackIndex + 1}',
+                              ),
+                              style: TextStyle(
+                                color: palette.textSecondary,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w600,
+                              ),
                             ),
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
+                            const SizedBox(height: 2),
+                            Text(
+                              _actionTitle(context, tool, args),
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            _actionTitle(context, tool, args),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 16,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: _text(context, '关闭', 'Close'),
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              Divider(height: 1, color: palette.borderSubtle),
-              Expanded(
-                child: ListView(
-                  controller: controller,
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-                  children: [
-                    if (beforeStateId.isNotEmpty ||
-                        afterStateId.isNotEmpty) ...[
-                      Text(
-                        _text(context, '动作证据', 'Action evidence'),
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
+                          ],
                         ),
                       ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 8,
-                        runSpacing: 8,
-                        children: [
-                          OutlinedButton.icon(
-                            onPressed: () => onShowState(
-                              beforeStateId.isNotEmpty
-                                  ? beforeStateId
-                                  : afterStateId,
-                              action,
+                      IconButton(
+                        tooltip: _text(context, '关闭', 'Close'),
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded),
+                      ),
+                    ],
+                  ),
+                ),
+                Divider(height: 1, color: palette.borderSubtle),
+                Expanded(
+                  child: ListView(
+                    controller: controller,
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                    children: [
+                      if (beforeStateId.isNotEmpty ||
+                          afterStateId.isNotEmpty) ...[
+                        Text(
+                          _text(context, '动作证据', 'Action evidence'),
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => onShowState(
+                                beforeStateId.isNotEmpty
+                                    ? beforeStateId
+                                    : afterStateId,
+                                action,
+                              ),
+                              icon: const Icon(Icons.image_outlined, size: 17),
+                              label: Text(
+                                _text(context, '动作截图', 'Action screenshot'),
+                              ),
                             ),
-                            icon: const Icon(Icons.image_outlined, size: 17),
-                            label: Text(
-                              _text(context, '动作截图', 'Action screenshot'),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      if (summary.isNotEmpty) ...[
+                        Text(
+                          _text(context, '决策', 'Decision'),
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: palette.surfacePrimary,
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: palette.borderSubtle),
+                          ),
+                          child: Text(
+                            summary,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: 13,
+                              height: 1.4,
                             ),
                           ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    if (summary.isNotEmpty) ...[
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      if (thinking.isNotEmpty) ...[
+                        Material(
+                          color: palette.surfacePrimary,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10),
+                            side: BorderSide(color: palette.borderSubtle),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: ExpansionTile(
+                            key: const ValueKey('run-log-step-thinking'),
+                            tilePadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                            ),
+                            childrenPadding: const EdgeInsets.fromLTRB(
+                              12,
+                              0,
+                              12,
+                              12,
+                            ),
+                            title: Text(
+                              _text(
+                                context,
+                                '模型思考（可选）',
+                                'Raw reasoning (optional)',
+                              ),
+                              style: TextStyle(
+                                color: palette.textSecondary,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            children: [
+                              Align(
+                                alignment: Alignment.centerLeft,
+                                child: SelectableText(
+                                  thinking,
+                                  style: TextStyle(
+                                    color: palette.textSecondary,
+                                    fontSize: 12,
+                                    height: 1.4,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+                      if (usage?.hasUsage == true) ...[
+                        Text(
+                          _text(context, '模型用量', 'Model usage'),
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: [
+                            if (usage?.totalTokens != null)
+                              _MetricPill(
+                                label: _text(context, '总计', 'Total'),
+                                value: formatRunLogTokens(usage!.totalTokens!),
+                                emphasis: true,
+                              ),
+                            if (usage?.promptTokens != null)
+                              _MetricPill(
+                                label: _text(context, '输入', 'Prompt'),
+                                value: formatRunLogTokens(usage!.promptTokens!),
+                              ),
+                            if (usage?.completionTokens != null)
+                              _MetricPill(
+                                label: _text(context, '输出', 'Completion'),
+                                value: formatRunLogTokens(
+                                  usage!.completionTokens!,
+                                ),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       Text(
-                        _text(context, '决策', 'Decision'),
+                        _text(context, '动作详情', 'Action details'),
                         style: TextStyle(
                           color: palette.textSecondary,
                           fontSize: 12,
@@ -488,132 +605,21 @@ class RunLogStepDetailSheet extends StatelessWidget {
                           borderRadius: BorderRadius.circular(10),
                           border: Border.all(color: palette.borderSubtle),
                         ),
-                        child: Text(
-                          summary,
+                        child: SelectableText(
+                          actionJson,
                           style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 13,
+                            color: palette.textSecondary,
+                            fontSize: 12,
                             height: 1.4,
+                            fontFamily: 'monospace',
                           ),
                         ),
                       ),
-                      const SizedBox(height: 16),
                     ],
-                    if (thinking.isNotEmpty) ...[
-                      Material(
-                        color: palette.surfacePrimary,
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          side: BorderSide(color: palette.borderSubtle),
-                        ),
-                        clipBehavior: Clip.antiAlias,
-                        child: ExpansionTile(
-                          key: const ValueKey('run-log-step-thinking'),
-                          tilePadding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                          ),
-                          childrenPadding: const EdgeInsets.fromLTRB(
-                            12,
-                            0,
-                            12,
-                            12,
-                          ),
-                          title: Text(
-                            _text(
-                              context,
-                              '模型思考（可选）',
-                              'Raw reasoning (optional)',
-                            ),
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          children: [
-                            Align(
-                              alignment: Alignment.centerLeft,
-                              child: SelectableText(
-                                thinking,
-                                style: TextStyle(
-                                  color: palette.textSecondary,
-                                  fontSize: 12,
-                                  height: 1.4,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    if (usage?.hasUsage == true) ...[
-                      Text(
-                        _text(context, '模型用量', 'Model usage'),
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Wrap(
-                        spacing: 7,
-                        runSpacing: 7,
-                        children: [
-                          if (usage?.totalTokens != null)
-                            _MetricPill(
-                              label: _text(context, '总计', 'Total'),
-                              value: formatRunLogTokens(usage!.totalTokens!),
-                              emphasis: true,
-                            ),
-                          if (usage?.promptTokens != null)
-                            _MetricPill(
-                              label: _text(context, '输入', 'Prompt'),
-                              value: formatRunLogTokens(usage!.promptTokens!),
-                            ),
-                          if (usage?.completionTokens != null)
-                            _MetricPill(
-                              label: _text(context, '输出', 'Completion'),
-                              value: formatRunLogTokens(
-                                usage!.completionTokens!,
-                              ),
-                            ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                    ],
-                    Text(
-                      _text(context, '动作详情', 'Action details'),
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: palette.surfacePrimary,
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: palette.borderSubtle),
-                      ),
-                      child: SelectableText(
-                        actionJson,
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 12,
-                          height: 1.4,
-                          fontFamily: 'monospace',
-                        ),
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

@@ -1,0 +1,1939 @@
+{
+  "date": "2026-10-29",
+  "baseline_commit": "9844da4c9fb27774911fb9b7f776895c8142b897",
+  "metric": "am start -W TotalTime to first displayed activity; process cold; existing app data and OS caches retained",
+  "device": {
+    "model": "PJD110",
+    "android_sdk": 36
+  },
+  "source_file_count": 828,
+  "source_tree_hashes": {
+    "after": "4eac32d91c47fbf2df00f48bf2a8076716ef70f3f81a73f4bf2e24f5d5f898b7",
+    "before": "bcb281a5edfb3661112bffe210ec4c956f1250ecc47b9becbd4d1c7e62c20efc"
+  },
+  "changed_sources": {
+    "app/src/main/java/cn/com/omnimind/bot/App.kt": {
+      "after": "2b005a36bb95d43f889bcf52205cbb36862a0c36d3c02801c36bed0f5789cb25",
+      "before": "31ccfc68add9d8e7060f5681a32f762c6a36a0d4b27d0e03ccb99f188fc2b638"
+    },
+    "app/src/main/java/cn/com/omnimind/bot/plugin/runtime/RemoteRuntimeBundleCatalogStore.kt": {
+      "after": "63da6405f0bd46bd34576532a7a3dcc34d30b5b281c19899f84f1e2e5764b562",
+      "before": "949867814a8b71204016f43f71cab80ab6de3c438995929a5986f417c634c55b"
+    },
+    "baselib/src/main/java/cn/com/omnimind/baselib/account/AccountApiClient.kt": {
+      "after": "3eccb4bdd0631d616d8b4cd04bd51075648f14fb8f0a7e91e2f5ca43d8e2e12d",
+      "before": "9a8c29c0f8bedde175c786fda398ffc5f7e6b14667b8a0c15741c1dbe0ce8f98"
+    },
+    "baselib/src/main/java/cn/com/omnimind/baselib/account/PlatformModelApiClient.kt": {
+      "after": "81549b8d5f1f9cb63eb89a83dd8f8ac48696ebbbb50e0288ede92f3edeaae32d",
+      "before": "d670e3590b5114d46d411bf9859c6922fa40d15abe50b67a3792ab7e700fb9e7"
+    },
+    "baselib/src/main/java/cn/com/omnimind/baselib/llm/ModelProviderSecretStore.kt": {
+      "after": "1c195915cc28b3c2f2221e0e8aa62fc016bed26724cfa50373a97be96b89a578",
+      "before": "147d13cfafb2da8e3414527fa66783f142287b0f4676ba11d8a425e5652783c4"
+    },
+    "baselib/src/main/java/cn/com/omnimind/baselib/llm/chatgpt/ChatGptOAuthRemote.kt": {
+      "after": "17bd0bc53bcfcfdd1ddc0a7a407b19b395fd519e52f3ff158dc5124b6c7ca59f",
+      "before": "736cfbfc126a368bc692b717a74cf8869225d61bd32cd94c493c7b37c2ab2a81"
+    },
+    "ui/lib/theme/app_theme.dart": {
+      "after": "a5d5286b12358a08b99600c791a2a6e69396a41dda3c275fefc06f35c94ef837",
+      "before": "534006d2a69577cf7eb13dbbad093e033dccc0b3bd12d81e56bbfde4e1e82cba"
+    },
+    "ui/lib/widgets/flclash/liquid_glass.dart": {
+      "after": "06bbb47d8fe785a35322e40fc435c82aa350c7205a2086c76c670e66e66f9bf2",
+      "before": "1270ad6de8dfc9aa2ed52365c90f914977ff218d0a1562d06b399c1aa145465f"
+    },
+    "app/src/main/java/cn/com/omnimind/bot/manager/AssistsCoreManager.kt": {
+      "after": "573cfe36c87db43729aa84d923cbd62545180d0d81f74d3e3071a50a41778961",
+      "before": "864a811fafca2e4e5b4e25ff665963da2fc2b3c4aa3d4806235c89f86a57898e"
+    },
+    "baselib/src/main/java/cn/com/omnimind/baselib/util/AppSecretStore.kt": {
+      "after": "f4e292b305f8a2514a38645bae93a7987b5e18dbf75fe7b9e3de4e18b627cf95",
+      "before": "cb89e6cd4402f1af5eaa2a52db0c494d73a09e2d62e47da5164cc599bf7b209c"
+    },
+    "baselib/src/main/java/cn/com/omnimind/baselib/llm/SceneVoiceConfigStore.kt": {
+      "after": "de1365e720b6594794bfa75d9adfa60acabdfe71430a63bb0f97f3221865adc1",
+      "before": "2e23f42546435cc27540bac98cd11ea66dc5057e5a1fd326d060c41010e38028"
+    },
+    "ui/lib/app_bootstrap.dart": {
+      "after": "229b3fc9839287bc9a7d408a27410b83d61dc90b85ad19ebb7983d965927d97b",
+      "before": "0f8e1f587d289e4fff8e3ea7cbd8fb38e3675bc03f3d7ef14b9ab16943ddb4c9"
+    }
+  },
+  "modes": {
+    "debug": {
+      "before": {
+        "summary": {
+          "samples_ms": [
+            2551,
+            2553,
+            2572,
+            2611,
+            2560,
+            2665,
+            2793,
+            2661,
+            2665,
+            2698
+          ],
+          "n": 10,
+          "median_ms": 2636.0,
+          "mean_ms": 2632.9,
+          "range_ms": [
+            2551,
+            2793
+          ],
+          "stage_medians_ms": {
+            "Startup theme and locale cost": 10.0,
+            "Credentials and providers cost": 284.5,
+            "Workspace and built-in skills cost": 14.5,
+            "App onCreate total cost": 340.5,
+            "MainActivity onCreate total cost": 368.5,
+            "Bootstrap to first rasterized frame": 1039.0,
+            "Main engine created, cost": 333
+          }
+        },
+        "runs": [
+          {
+            "label": "before-frozen",
+            "mode": "debug",
+            "apk_sha256": "47bf6d01d0b9fe689470e065214106b40609fcb2912b8cbbb1f844f0f7f8c2ac",
+            "apk_bytes": 179968366,
+            "device": "PJD110",
+            "android_sdk": "36",
+            "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+            "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+            "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+            "started_at": "2026-10-29T01:15:57+0800",
+            "environment_before": {
+              "battery_temperature_tenths_c": [
+                "311"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            },
+            "trials": [
+              {
+                "index": 0,
+                "warmup": true,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "3372",
+                  "WaitTime": "3383"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 280ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 337ms",
+                  "MainActivity onCreate total cost: 860ms",
+                  "Bootstrap to first rasterized frame: 1243ms"
+                ]
+              },
+              {
+                "index": 1,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2551",
+                  "WaitTime": "2558"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 11ms",
+                  "Credentials and providers cost: 271ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 326ms",
+                  "MainActivity onCreate total cost: 368ms",
+                  "Bootstrap to first rasterized frame: 994ms"
+                ]
+              },
+              {
+                "index": 2,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2553",
+                  "WaitTime": "2561"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 285ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 341ms",
+                  "MainActivity onCreate total cost: 365ms",
+                  "Bootstrap to first rasterized frame: 994ms"
+                ]
+              },
+              {
+                "index": 3,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2572",
+                  "WaitTime": "2577"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 280ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 336ms",
+                  "MainActivity onCreate total cost: 367ms",
+                  "Bootstrap to first rasterized frame: 990ms"
+                ]
+              },
+              {
+                "index": 4,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2611",
+                  "WaitTime": "2619"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 285ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 339ms",
+                  "MainActivity onCreate total cost: 375ms",
+                  "Bootstrap to first rasterized frame: 1014ms"
+                ]
+              },
+              {
+                "index": 5,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2560",
+                  "WaitTime": "2565"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 278ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 335ms",
+                  "MainActivity onCreate total cost: 369ms",
+                  "Bootstrap to first rasterized frame: 987ms"
+                ]
+              }
+            ],
+            "summary_ms": {
+              "samples": [
+                2551,
+                2553,
+                2572,
+                2611,
+                2560
+              ],
+              "median": 2560,
+              "min": 2551,
+              "max": 2611,
+              "mean": 2569.4
+            },
+            "environment_after": {
+              "battery_temperature_tenths_c": [
+                "311"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            }
+          },
+          {
+            "label": "before-frozen-repeat",
+            "mode": "debug",
+            "apk_sha256": "47bf6d01d0b9fe689470e065214106b40609fcb2912b8cbbb1f844f0f7f8c2ac",
+            "apk_bytes": 179968366,
+            "device": "PJD110",
+            "android_sdk": "36",
+            "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+            "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+            "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+            "started_at": "2026-10-29T01:22:04+0800",
+            "environment_before": {
+              "battery_temperature_tenths_c": [
+                "320"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            },
+            "trials": [
+              {
+                "index": 0,
+                "warmup": true,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "3450",
+                  "WaitTime": "3455"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 281ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 337ms",
+                  "Main engine created, cost: 836ms",
+                  "MainActivity onCreate total cost: 871ms",
+                  "Bootstrap to first rasterized frame: 1309ms"
+                ]
+              },
+              {
+                "index": 1,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2665",
+                  "WaitTime": "2671"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 282ms",
+                  "Workspace and built-in skills cost: 16ms",
+                  "App onCreate total cost: 344ms",
+                  "Main engine created, cost: 328ms",
+                  "MainActivity onCreate total cost: 362ms",
+                  "Bootstrap to first rasterized frame: 1064ms"
+                ]
+              },
+              {
+                "index": 2,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2793",
+                  "WaitTime": "2805"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 294ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 351ms",
+                  "Main engine created, cost: 356ms",
+                  "MainActivity onCreate total cost: 394ms",
+                  "Bootstrap to first rasterized frame: 1102ms"
+                ]
+              },
+              {
+                "index": 3,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2661",
+                  "WaitTime": "2673"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 290ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 351ms",
+                  "Main engine created, cost: 333ms",
+                  "MainActivity onCreate total cost: 369ms",
+                  "Bootstrap to first rasterized frame: 1075ms"
+                ]
+              },
+              {
+                "index": 4,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2665",
+                  "WaitTime": "2675"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 290ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 343ms",
+                  "Main engine created, cost: 327ms",
+                  "MainActivity onCreate total cost: 363ms",
+                  "Bootstrap to first rasterized frame: 1090ms"
+                ]
+              },
+              {
+                "index": 5,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2698",
+                  "WaitTime": "2710"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 284ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 340ms",
+                  "Main engine created, cost: 336ms",
+                  "MainActivity onCreate total cost: 371ms",
+                  "Bootstrap to first rasterized frame: 1085ms"
+                ]
+              }
+            ],
+            "summary_ms": {
+              "samples": [
+                2665,
+                2793,
+                2661,
+                2665,
+                2698
+              ],
+              "median": 2665,
+              "min": 2661,
+              "max": 2793,
+              "mean": 2696.4
+            },
+            "environment_after": {
+              "battery_temperature_tenths_c": [
+                "320"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            }
+          }
+        ]
+      },
+      "after": {
+        "summary": {
+          "samples_ms": [
+            2499,
+            2554,
+            2430,
+            2494,
+            2571,
+            2507,
+            2490,
+            2495,
+            2476,
+            2477
+          ],
+          "n": 10,
+          "median_ms": 2494.5,
+          "mean_ms": 2499.3,
+          "range_ms": [
+            2430,
+            2571
+          ],
+          "stage_medians_ms": {
+            "Startup theme and locale cost": 9.0,
+            "Credentials and providers cost": 201.5,
+            "Workspace and built-in skills cost": 14.0,
+            "App onCreate total cost": 262.0,
+            "Main engine created, cost": 330.5,
+            "MainActivity onCreate total cost": 369.0,
+            "Bootstrap to first rasterized frame": 986.0
+          }
+        },
+        "runs": [
+          {
+            "label": "final",
+            "mode": "debug",
+            "apk_sha256": "5eb81c4a25993ec5ffa4f8bdee30ddc885d97ad817cbcd307d47494204f1156d",
+            "apk_bytes": 179972190,
+            "device": "PJD110",
+            "android_sdk": "36",
+            "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+            "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+            "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+            "started_at": "2026-10-29T01:28:19+0800",
+            "environment_before": {
+              "battery_temperature_tenths_c": [
+                "327"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            },
+            "trials": [
+              {
+                "index": 0,
+                "warmup": true,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "3299",
+                  "WaitTime": "3301"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 216ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 276ms",
+                  "Main engine created, cost: 901ms",
+                  "MainActivity onCreate total cost: 936ms",
+                  "Bootstrap to first rasterized frame: 1262ms"
+                ]
+              },
+              {
+                "index": 1,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2499",
+                  "WaitTime": "2506"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 205ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 262ms",
+                  "Main engine created, cost: 322ms",
+                  "MainActivity onCreate total cost: 359ms",
+                  "Bootstrap to first rasterized frame: 989ms"
+                ]
+              },
+              {
+                "index": 2,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2554",
+                  "WaitTime": "2559"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 11ms",
+                  "Credentials and providers cost: 208ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 272ms",
+                  "Main engine created, cost: 340ms",
+                  "MainActivity onCreate total cost: 376ms",
+                  "Bootstrap to first rasterized frame: 1002ms"
+                ]
+              },
+              {
+                "index": 3,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2430",
+                  "WaitTime": "2434"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 196ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 254ms",
+                  "Main engine created, cost: 332ms",
+                  "MainActivity onCreate total cost: 368ms",
+                  "Bootstrap to first rasterized frame: 951ms"
+                ]
+              },
+              {
+                "index": 4,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2494",
+                  "WaitTime": "2497"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 202ms",
+                  "Workspace and built-in skills cost: 13ms",
+                  "App onCreate total cost: 265ms",
+                  "Main engine created, cost: 346ms",
+                  "MainActivity onCreate total cost: 380ms",
+                  "Bootstrap to first rasterized frame: 978ms"
+                ]
+              },
+              {
+                "index": 5,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2571",
+                  "WaitTime": "2575"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 201ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 266ms",
+                  "Main engine created, cost: 328ms",
+                  "MainActivity onCreate total cost: 364ms",
+                  "Bootstrap to first rasterized frame: 1027ms"
+                ]
+              },
+              {
+                "index": 6,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2507",
+                  "WaitTime": "2514"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 202ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 262ms",
+                  "Main engine created, cost: 351ms",
+                  "MainActivity onCreate total cost: 387ms",
+                  "Bootstrap to first rasterized frame: 1004ms"
+                ]
+              },
+              {
+                "index": 7,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2490",
+                  "WaitTime": "2497"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 201ms",
+                  "Workspace and built-in skills cost: 13ms",
+                  "App onCreate total cost: 262ms",
+                  "Main engine created, cost: 323ms",
+                  "MainActivity onCreate total cost: 358ms",
+                  "Bootstrap to first rasterized frame: 963ms"
+                ]
+              },
+              {
+                "index": 8,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2495",
+                  "WaitTime": "2499"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 220ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 281ms",
+                  "Main engine created, cost: 327ms",
+                  "MainActivity onCreate total cost: 363ms",
+                  "Bootstrap to first rasterized frame: 992ms"
+                ]
+              },
+              {
+                "index": 9,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2476",
+                  "WaitTime": "2483"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 201ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 261ms",
+                  "Main engine created, cost: 329ms",
+                  "MainActivity onCreate total cost: 370ms",
+                  "Bootstrap to first rasterized frame: 959ms"
+                ]
+              },
+              {
+                "index": 10,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "2477",
+                  "WaitTime": "2481"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 201ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 260ms",
+                  "Main engine created, cost: 334ms",
+                  "MainActivity onCreate total cost: 371ms",
+                  "Bootstrap to first rasterized frame: 983ms"
+                ]
+              }
+            ],
+            "summary_ms": {
+              "samples": [
+                2499,
+                2554,
+                2430,
+                2494,
+                2571,
+                2507,
+                2490,
+                2495,
+                2476,
+                2477
+              ],
+              "median": 2494.5,
+              "min": 2430,
+              "max": 2571,
+              "mean": 2499.3
+            },
+            "environment_after": {
+              "battery_temperature_tenths_c": [
+                "328"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            }
+          }
+        ]
+      },
+      "median_reduction_percent": 5.367981790591806
+    },
+    "profile": {
+      "before": {
+        "summary": {
+          "samples_ms": [
+            1384,
+            1347,
+            1368,
+            1334,
+            1367,
+            1358,
+            1406,
+            1337,
+            1403,
+            1330
+          ],
+          "n": 10,
+          "median_ms": 1362.5,
+          "mean_ms": 1363.4,
+          "range_ms": [
+            1330,
+            1406
+          ],
+          "stage_medians_ms": {
+            "Startup theme and locale cost": 9.5,
+            "Credentials and providers cost": 284.5,
+            "Workspace and built-in skills cost": 14.5,
+            "App onCreate total cost": 340.5,
+            "Main engine created, cost": 59.5,
+            "MainActivity onCreate total cost": 90.5,
+            "Bootstrap to first rasterized frame": 133.0
+          }
+        },
+        "runs": [
+          {
+            "label": "before-frozen",
+            "mode": "profile",
+            "apk_sha256": "491b9556f64b5ad5990cd62facc19a4d8b1adc186bce20ea0d196e4e0351cb09",
+            "apk_bytes": 86668432,
+            "device": "PJD110",
+            "android_sdk": "36",
+            "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+            "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+            "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+            "started_at": "2026-10-29T01:17:10+0800",
+            "environment_before": {
+              "battery_temperature_tenths_c": [
+                "311"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            },
+            "trials": [
+              {
+                "index": 0,
+                "warmup": true,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1330",
+                  "WaitTime": "1341"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 273ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 325ms",
+                  "Main engine created, cost: 63ms",
+                  "MainActivity onCreate total cost: 94ms",
+                  "Bootstrap to first rasterized frame: 144ms"
+                ]
+              },
+              {
+                "index": 1,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1384",
+                  "WaitTime": "1395"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 287ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 343ms",
+                  "Main engine created, cost: 66ms",
+                  "MainActivity onCreate total cost: 108ms",
+                  "Bootstrap to first rasterized frame: 132ms"
+                ]
+              },
+              {
+                "index": 2,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1347",
+                  "WaitTime": "1353"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 283ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 339ms",
+                  "Main engine created, cost: 56ms",
+                  "MainActivity onCreate total cost: 87ms",
+                  "Bootstrap to first rasterized frame: 129ms"
+                ]
+              },
+              {
+                "index": 3,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1368",
+                  "WaitTime": "1380"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 283ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 340ms",
+                  "Main engine created, cost: 57ms",
+                  "MainActivity onCreate total cost: 89ms",
+                  "Bootstrap to first rasterized frame: 143ms"
+                ]
+              },
+              {
+                "index": 4,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1334",
+                  "WaitTime": "1343"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 281ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 334ms",
+                  "Main engine created, cost: 59ms",
+                  "MainActivity onCreate total cost: 93ms",
+                  "Bootstrap to first rasterized frame: 134ms"
+                ]
+              },
+              {
+                "index": 5,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1367",
+                  "WaitTime": "1379"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 284ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 342ms",
+                  "Main engine created, cost: 62ms",
+                  "MainActivity onCreate total cost: 92ms",
+                  "Bootstrap to first rasterized frame: 116ms"
+                ]
+              }
+            ],
+            "summary_ms": {
+              "samples": [
+                1384,
+                1347,
+                1368,
+                1334,
+                1367
+              ],
+              "median": 1367,
+              "min": 1334,
+              "max": 1384,
+              "mean": 1360
+            },
+            "environment_after": {
+              "battery_temperature_tenths_c": [
+                "311"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            }
+          },
+          {
+            "label": "before-frozen-repeat",
+            "mode": "profile",
+            "apk_sha256": "491b9556f64b5ad5990cd62facc19a4d8b1adc186bce20ea0d196e4e0351cb09",
+            "apk_bytes": 86668432,
+            "device": "PJD110",
+            "android_sdk": "36",
+            "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+            "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+            "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+            "started_at": "2026-10-29T01:24:50+0800",
+            "environment_before": {
+              "battery_temperature_tenths_c": [
+                "323"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            },
+            "trials": [
+              {
+                "index": 0,
+                "warmup": true,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1351",
+                  "WaitTime": "1365"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 7ms",
+                  "Credentials and providers cost: 278ms",
+                  "Workspace and built-in skills cost: 16ms",
+                  "App onCreate total cost: 337ms",
+                  "Main engine created, cost: 60ms",
+                  "MainActivity onCreate total cost: 95ms",
+                  "Bootstrap to first rasterized frame: 117ms"
+                ]
+              },
+              {
+                "index": 1,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1358",
+                  "WaitTime": "1362"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 285ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 341ms",
+                  "Main engine created, cost: 59ms",
+                  "MainActivity onCreate total cost: 90ms",
+                  "Bootstrap to first rasterized frame: 127ms"
+                ]
+              },
+              {
+                "index": 2,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1406",
+                  "WaitTime": "1411"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 288ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 342ms",
+                  "Main engine created, cost: 60ms",
+                  "MainActivity onCreate total cost: 90ms",
+                  "Bootstrap to first rasterized frame: 146ms"
+                ]
+              },
+              {
+                "index": 3,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1337",
+                  "WaitTime": "1349"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 285ms",
+                  "Workspace and built-in skills cost: 13ms",
+                  "App onCreate total cost: 339ms",
+                  "Main engine created, cost: 68ms",
+                  "MainActivity onCreate total cost: 98ms",
+                  "Bootstrap to first rasterized frame: 131ms"
+                ]
+              },
+              {
+                "index": 4,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1403",
+                  "WaitTime": "1413"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 297ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 354ms",
+                  "Main engine created, cost: 57ms",
+                  "MainActivity onCreate total cost: 89ms",
+                  "Bootstrap to first rasterized frame: 155ms"
+                ]
+              },
+              {
+                "index": 5,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1330",
+                  "WaitTime": "1339"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 11ms",
+                  "Credentials and providers cost: 273ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 330ms",
+                  "Main engine created, cost: 60ms",
+                  "MainActivity onCreate total cost: 91ms",
+                  "Bootstrap to first rasterized frame: 135ms"
+                ]
+              }
+            ],
+            "summary_ms": {
+              "samples": [
+                1358,
+                1406,
+                1337,
+                1403,
+                1330
+              ],
+              "median": 1358,
+              "min": 1330,
+              "max": 1406,
+              "mean": 1366.8
+            },
+            "environment_after": {
+              "battery_temperature_tenths_c": [
+                "323"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            }
+          }
+        ]
+      },
+      "after": {
+        "summary": {
+          "samples_ms": [
+            1250,
+            1279,
+            1301,
+            1294,
+            1271,
+            1256,
+            1306,
+            1247,
+            1308,
+            1296
+          ],
+          "n": 10,
+          "median_ms": 1286.5,
+          "mean_ms": 1280.8,
+          "range_ms": [
+            1247,
+            1308
+          ],
+          "stage_medians_ms": {
+            "Startup theme and locale cost": 9.5,
+            "Credentials and providers cost": 206.0,
+            "Workspace and built-in skills cost": 14.0,
+            "App onCreate total cost": 268.0,
+            "Main engine created, cost": 62.0,
+            "MainActivity onCreate total cost": 94.5,
+            "Bootstrap to first rasterized frame": 131.0
+          }
+        },
+        "runs": [
+          {
+            "label": "final",
+            "mode": "profile",
+            "apk_sha256": "593cf263503090330c27c93b87d16bc4d4a2039bb8a9d6f437a8a22d49ec3a88",
+            "apk_bytes": 86670231,
+            "device": "PJD110",
+            "android_sdk": "36",
+            "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+            "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+            "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+            "started_at": "2026-10-29T01:26:13+0800",
+            "environment_before": {
+              "battery_temperature_tenths_c": [
+                "324"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            },
+            "trials": [
+              {
+                "index": 0,
+                "warmup": true,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1307",
+                  "WaitTime": "1320"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 201ms",
+                  "Workspace and built-in skills cost: 13ms",
+                  "App onCreate total cost: 258ms",
+                  "Main engine created, cost: 67ms",
+                  "MainActivity onCreate total cost: 102ms",
+                  "Bootstrap to first rasterized frame: 138ms"
+                ]
+              },
+              {
+                "index": 1,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1250",
+                  "WaitTime": "1259"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 11ms",
+                  "Credentials and providers cost: 207ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 268ms",
+                  "Main engine created, cost: 62ms",
+                  "MainActivity onCreate total cost: 94ms",
+                  "Bootstrap to first rasterized frame: 132ms"
+                ]
+              },
+              {
+                "index": 2,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1279",
+                  "WaitTime": "1286"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 204ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 263ms",
+                  "Main engine created, cost: 61ms",
+                  "MainActivity onCreate total cost: 93ms",
+                  "Bootstrap to first rasterized frame: 129ms"
+                ]
+              },
+              {
+                "index": 3,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1301",
+                  "WaitTime": "1312"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 11ms",
+                  "Credentials and providers cost: 206ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 272ms",
+                  "Main engine created, cost: 65ms",
+                  "MainActivity onCreate total cost: 104ms",
+                  "Bootstrap to first rasterized frame: 130ms"
+                ]
+              },
+              {
+                "index": 4,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1294",
+                  "WaitTime": "1301"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 8ms",
+                  "Credentials and providers cost: 209ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 268ms",
+                  "Main engine created, cost: 64ms",
+                  "MainActivity onCreate total cost: 95ms",
+                  "Bootstrap to first rasterized frame: 136ms"
+                ]
+              },
+              {
+                "index": 5,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1271",
+                  "WaitTime": "1282"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 206ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 269ms",
+                  "Main engine created, cost: 58ms",
+                  "MainActivity onCreate total cost: 89ms",
+                  "Bootstrap to first rasterized frame: 123ms"
+                ]
+              },
+              {
+                "index": 6,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1256",
+                  "WaitTime": "1262"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 201ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 266ms",
+                  "Main engine created, cost: 59ms",
+                  "MainActivity onCreate total cost: 92ms",
+                  "Bootstrap to first rasterized frame: 98ms"
+                ]
+              },
+              {
+                "index": 7,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1306",
+                  "WaitTime": "1311"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 10ms",
+                  "Credentials and providers cost: 200ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 261ms",
+                  "Main engine created, cost: 60ms",
+                  "MainActivity onCreate total cost: 93ms",
+                  "Bootstrap to first rasterized frame: 139ms"
+                ]
+              },
+              {
+                "index": 8,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1247",
+                  "WaitTime": "1256"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 211ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 269ms",
+                  "Main engine created, cost: 68ms",
+                  "MainActivity onCreate total cost: 100ms",
+                  "Bootstrap to first rasterized frame: 122ms"
+                ]
+              },
+              {
+                "index": 9,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1308",
+                  "WaitTime": "1318"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 11ms",
+                  "Credentials and providers cost: 206ms",
+                  "Workspace and built-in skills cost: 15ms",
+                  "App onCreate total cost: 270ms",
+                  "Main engine created, cost: 67ms",
+                  "MainActivity onCreate total cost: 111ms",
+                  "Bootstrap to first rasterized frame: 162ms"
+                ]
+              },
+              {
+                "index": 10,
+                "warmup": false,
+                "launch": {
+                  "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+                  "Status": "ok",
+                  "LaunchState": "COLD",
+                  "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+                  "TotalTime": "1296",
+                  "WaitTime": "1303"
+                },
+                "timings": [
+                  "Startup theme and locale cost: 9ms",
+                  "Credentials and providers cost: 196ms",
+                  "Workspace and built-in skills cost: 14ms",
+                  "App onCreate total cost: 255ms",
+                  "Main engine created, cost: 62ms",
+                  "MainActivity onCreate total cost: 98ms",
+                  "Bootstrap to first rasterized frame: 145ms"
+                ]
+              }
+            ],
+            "summary_ms": {
+              "samples": [
+                1250,
+                1279,
+                1301,
+                1294,
+                1271,
+                1256,
+                1306,
+                1247,
+                1308,
+                1296
+              ],
+              "median": 1286.5,
+              "min": 1247,
+              "max": 1308,
+              "mean": 1280.8
+            },
+            "environment_after": {
+              "battery_temperature_tenths_c": [
+                "326"
+              ],
+              "thermal_status": [
+                "0"
+              ]
+            }
+          }
+        ]
+      },
+      "median_reduction_percent": 5.577981651376147
+    }
+  },
+  "exploratory_runs": {
+    "first_candidate_debug": {
+      "label": "after-frozen",
+      "mode": "debug",
+      "apk_sha256": "b2eccd90d51fa2ed7fdadb4b594f2c4bc758ce6adfee8bda6e571674f4a4f472",
+      "apk_bytes": 179968109,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:19:51+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "316"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "3390",
+            "WaitTime": "3399"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 256ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 312ms",
+            "Main engine created, cost: 896ms",
+            "MainActivity onCreate total cost: 931ms",
+            "Bootstrap to first rasterized frame: 1249ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "2607",
+            "WaitTime": "2611"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 271ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 329ms",
+            "Main engine created, cost: 331ms",
+            "MainActivity onCreate total cost: 367ms",
+            "Bootstrap to first rasterized frame: 1038ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "2596",
+            "WaitTime": "2604"
+          },
+          "timings": [
+            "Startup theme and locale cost: 8ms",
+            "Credentials and providers cost: 273ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 335ms",
+            "Main engine created, cost: 327ms",
+            "MainActivity onCreate total cost: 362ms",
+            "Bootstrap to first rasterized frame: 1019ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "2662",
+            "WaitTime": "2668"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 288ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 349ms",
+            "Main engine created, cost: 329ms",
+            "MainActivity onCreate total cost: 362ms",
+            "Bootstrap to first rasterized frame: 1019ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "2672",
+            "WaitTime": "2678"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 274ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 335ms",
+            "Main engine created, cost: 333ms",
+            "MainActivity onCreate total cost: 367ms",
+            "Bootstrap to first rasterized frame: 1076ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "2649",
+            "WaitTime": "2652"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 273ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 332ms",
+            "Main engine created, cost: 335ms",
+            "MainActivity onCreate total cost: 368ms",
+            "Bootstrap to first rasterized frame: 1045ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          2607,
+          2596,
+          2662,
+          2672,
+          2649
+        ],
+        "median": 2649,
+        "min": 2596,
+        "max": 2672,
+        "mean": 2637.2
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "317"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "first_candidate_profile": {
+      "label": "after-frozen",
+      "mode": "profile",
+      "apk_sha256": "8febde2cb05ef54755283be78fa9e1daf3a2f1d7118c5b631fb8a027a6883b55",
+      "apk_bytes": 86669823,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.LauncherActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:18:01+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "313"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1391",
+            "WaitTime": "1403"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 254ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 312ms",
+            "Main engine created, cost: 57ms",
+            "MainActivity onCreate total cost: 88ms",
+            "Bootstrap to first rasterized frame: 145ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1352",
+            "WaitTime": "1366"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 293ms",
+            "Workspace and built-in skills cost: 16ms",
+            "App onCreate total cost: 351ms",
+            "Main engine created, cost: 58ms",
+            "MainActivity onCreate total cost: 91ms",
+            "Bootstrap to first rasterized frame: 117ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1320",
+            "WaitTime": "1322"
+          },
+          "timings": [
+            "Startup theme and locale cost: 8ms",
+            "Credentials and providers cost: 290ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 348ms",
+            "Main engine created, cost: 60ms",
+            "MainActivity onCreate total cost: 94ms",
+            "Bootstrap to first rasterized frame: 105ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1315",
+            "WaitTime": "1320"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 276ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 341ms",
+            "Main engine created, cost: 60ms",
+            "MainActivity onCreate total cost: 92ms",
+            "Bootstrap to first rasterized frame: 130ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1298",
+            "WaitTime": "1336"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 275ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 335ms",
+            "Main engine created, cost: 59ms",
+            "MainActivity onCreate total cost: 90ms",
+            "Bootstrap to first rasterized frame: 127ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.LauncherActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1342",
+            "WaitTime": "1347"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 270ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 330ms",
+            "Main engine created, cost: 58ms",
+            "MainActivity onCreate total cost: 91ms",
+            "Bootstrap to first rasterized frame: 122ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1352,
+          1320,
+          1315,
+          1298,
+          1342
+        ],
+        "median": 1320,
+        "min": 1298,
+        "max": 1352,
+        "mean": 1325.4
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "313"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    },
+    "direct_main_profile": {
+      "label": "probe-direct-main",
+      "mode": "profile",
+      "apk_sha256": "134cd4f8171503d5d73cfa377e8ad552ad4b14b25a52d94be54d549383d6165d",
+      "apk_bytes": 76672797,
+      "device": "PJD110",
+      "android_sdk": "36",
+      "build_fingerprint": "OnePlus/PJD110/OP5929L1:16/BP2A.250605.015/U.fb5f63_156f6fc_156f378:user/release-keys",
+      "component": "cn.com.omnimind.bot/.activity.MainActivity",
+      "metric": "am start -W TotalTime; process cold, existing app data and OS disk caches retained",
+      "started_at": "2026-10-29T01:07:25+0800",
+      "environment_before": {
+        "battery_temperature_tenths_c": [
+          "309"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      },
+      "trials": [
+        {
+          "index": 0,
+          "warmup": true,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.MainActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1215",
+            "WaitTime": "1218"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 281ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 337ms",
+            "MainActivity onCreate total cost: 100ms",
+            "Bootstrap to first rasterized frame: 84ms"
+          ]
+        },
+        {
+          "index": 1,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.MainActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1232",
+            "WaitTime": "1238"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 271ms",
+            "Workspace and built-in skills cost: 13ms",
+            "App onCreate total cost: 328ms",
+            "MainActivity onCreate total cost: 99ms",
+            "Bootstrap to first rasterized frame: 72ms"
+          ]
+        },
+        {
+          "index": 2,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.MainActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1290",
+            "WaitTime": "1293"
+          },
+          "timings": [
+            "Startup theme and locale cost: 9ms",
+            "Credentials and providers cost: 283ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 341ms",
+            "MainActivity onCreate total cost: 125ms",
+            "Bootstrap to first rasterized frame: 90ms"
+          ]
+        },
+        {
+          "index": 3,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.MainActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1233",
+            "WaitTime": "1236"
+          },
+          "timings": [
+            "Startup theme and locale cost: 11ms",
+            "Credentials and providers cost: 291ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 349ms",
+            "MainActivity onCreate total cost: 103ms",
+            "Bootstrap to first rasterized frame: 91ms"
+          ]
+        },
+        {
+          "index": 4,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.MainActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1230",
+            "WaitTime": "1236"
+          },
+          "timings": [
+            "Startup theme and locale cost: 8ms",
+            "Credentials and providers cost: 282ms",
+            "Workspace and built-in skills cost: 15ms",
+            "App onCreate total cost: 336ms",
+            "MainActivity onCreate total cost: 116ms",
+            "Bootstrap to first rasterized frame: 91ms"
+          ]
+        },
+        {
+          "index": 5,
+          "warmup": false,
+          "launch": {
+            "Starting": "Intent { cmp=cn.com.omnimind.bot/.activity.MainActivity }",
+            "Status": "ok",
+            "LaunchState": "COLD",
+            "Activity": "cn.com.omnimind.bot/.activity.MainActivity",
+            "TotalTime": "1261",
+            "WaitTime": "1269"
+          },
+          "timings": [
+            "Startup theme and locale cost: 10ms",
+            "Credentials and providers cost: 289ms",
+            "Workspace and built-in skills cost: 14ms",
+            "App onCreate total cost: 345ms",
+            "MainActivity onCreate total cost: 112ms",
+            "Bootstrap to first rasterized frame: 78ms"
+          ]
+        }
+      ],
+      "summary_ms": {
+        "samples": [
+          1232,
+          1290,
+          1233,
+          1230,
+          1261
+        ],
+        "median": 1233,
+        "min": 1230,
+        "max": 1290,
+        "mean": 1249.2
+      },
+      "environment_after": {
+        "battery_temperature_tenths_c": [
+          "310"
+        ],
+        "thermal_status": [
+          "0"
+        ]
+      }
+    }
+  }
+}

@@ -19,6 +19,35 @@ class AgentHistoryDisplayProjectionTest {
         createdAt = id, updatedAt = id,
     )
 
+    @Test fun `tool fields share an encoded UTF8 budget and retain trailing identities`() = runBlocking {
+        val payload = linkedMapOf<String, Any?>()
+        listOf("argsJson", "resultPreviewJson", "rawResultJson", "terminalOutput", "summary",
+            "question", "reasoningContent", "reasoning_content", "progress", "subagentStatusText").forEach {
+            payload[it] = "中".repeat(8000)
+        }
+        payload["toolCallId"] = "call-final"
+        payload["sessionId"] = "session-final"
+        payload["turnId"] = "turn-final"
+        val projected = AgentHistoryDisplayProjection.readPayload(StringReader(gson.toJson(payload)))
+        assertTrue(gson.toJson(projected).toByteArray(Charsets.UTF_8).size < 66 * 1024)
+        assertEquals("call-final", projected["toolCallId"]!!.asString)
+        assertEquals("session-final", projected["sessionId"]!!.asString)
+        assertEquals("turn-final", projected["turnId"]!!.asString)
+    }
+
+    @Test fun `oversized tool identities require fallback instead of being omitted or changed`() = runBlocking {
+        val payloads = listOf(
+            mapOf("toolCallId" to "x".repeat(9000)),
+            mapOf("toolCallId" to "中".repeat(8000), "sessionId" to "中".repeat(8000)),
+        )
+        for (payload in payloads) {
+            try {
+                AgentHistoryDisplayProjection.readPayload(StringReader(gson.toJson(payload)))
+                fail("Oversized tool identities must use the complete-record fallback")
+            } catch (_: HistoryDisplayMetadataTooLarge) { }
+        }
+    }
+
     @Test fun `small fields preserve escaped strings nested values and Unicode`() = runBlocking {
         val expected = mapOf(
             "toolCallId" to "工具🌊", "rawResultJson" to "{\"a\":\"escaped \\\"quote\"}",
@@ -128,6 +157,76 @@ class AgentHistoryDisplayProjectionTest {
         val result = AgentHistoryDisplayProjection.readPayload(StringReader(raw))
         assertFalse(result.containsKey("artifacts"))
         assertEquals("call-after-depth", result["toolCallId"]!!.asString)
+    }
+
+    @Test fun `large text and thinking records are streamed to full artifacts with bounded envelopes`() = runBlocking {
+        withDirectory { directory ->
+            val chunk = ByteArray(32768) { 'x'.code.toByte() }
+            val projected = (1L..4L).map { id ->
+                val thinking = id % 2L == 0L
+                val source = entry(id).copy(entryType = if (thinking) "ui_card" else "assistant_message")
+                val prefix = if (thinking) "{\"content\":{\"cardData\":{\"thinkingContent\":\""
+                    else "{\"content\":{\"text\":\""
+                val suffix = if (thinking) "\",\"type\":\"deep_thinking\",\"taskID\":\"turn-$id\",\"stage\":4}},"
+                    else "\"},"
+                val result = AgentHistoryDisplayProjection.offload(source, directory) { output ->
+                    output.write(prefix.toByteArray())
+                    // 128 MiB of source records, with no giant source String.
+                    repeat(1024) { output.write(chunk) }
+                    output.write((suffix + "\"id\":\"item-$id\",\"streamMeta\":{\"sessionId\":\"session-$id\",\"turnId\":\"turn-$id\"}}").toByteArray())
+                }
+                assertEquals("", source.payloadJson)
+                assertTrue(result.fullPayloadFile!!.length() > 32 * 1024 * 1024)
+                assertTrue(result.entry.payloadJson.length < 12 * 1024)
+                val payload = gson.fromJson(result.entry.payloadJson, com.google.gson.JsonObject::class.java)
+                assertEquals("session-$id", payload.getAsJsonObject("streamMeta")["sessionId"].asString)
+                result
+            }
+            assertTrue(projected.sumOf { it.entry.payloadJson.length } < 48 * 1024)
+        }
+    }
+
+    @Test fun `full record attachment marks display copies without modifying canonical messages`() {
+        val original = mapOf<String, Any?>(
+            "id" to "thinking-1", "streamMeta" to mapOf("sessionId" to "s", "turnId" to "t"),
+            "content" to mapOf("id" to "thinking-1", "cardData" to mapOf("type" to "deep_thinking", "stage" to 4)),
+        )
+        val artifact = mapOf<String, Any?>("androidPath" to "/full.json", "previewKind" to "file")
+        val displayed = AgentHistoryDisplayProjection.attachCompleteRecord(original, artifact)
+        assertFalse(AgentHistoryDisplayProjection.isOffloadedMessage(original))
+        assertTrue(AgentHistoryDisplayProjection.isOffloadedMessage(displayed))
+        assertEquals(original["id"], displayed["id"])
+        assertEquals(original["streamMeta"], displayed["streamMeta"])
+        val content = displayed["content"] as Map<*, *>
+        assertEquals(listOf(artifact), content["attachments"])
+        assertEquals(true, (content["cardData"] as Map<*, *>)[AgentHistoryDisplayProjection.OFFLOADED_MARKER])
+        assertEquals(4, (content["cardData"] as Map<*, *>)["stage"])
+    }
+
+    @Test fun `oversized nested identities fall back to the same canonical item and complete file`() = runBlocking {
+        withDirectory { directory ->
+            val source = entry().copy(entryType = "ui_card")
+            val largeId = "中".repeat(8190)
+            val raw = gson.toJson(mapOf("id" to largeId, "content" to mapOf("id" to largeId)))
+            val projected = AgentHistoryDisplayProjection.offload(source, directory) { it.write(raw.toByteArray()) }
+            val payload = gson.fromJson(projected.entry.payloadJson, Map::class.java)
+            assertEquals(source.entryId, payload["id"])
+            assertTrue(projected.entry.payloadJson.toByteArray().size < 1024)
+            assertEquals(raw, projected.fullPayloadFile!!.readText())
+            assertEquals("", source.payloadJson)
+        }
+    }
+
+    @Test fun `offloaded ui card echo never reloads or replaces the canonical record`() = runBlocking {
+        val context = org.mockito.Mockito.mock(android.content.Context::class.java)
+        val repository = AgentConversationHistoryRepository(context)
+        // Reaching DatabaseHelper here would require an initialized Android DB.
+        // The display echo is rejected before any canonical lookup or JSON merge.
+        repository.upsertUiCard(1, "agent", "thinking-1", mapOf(
+            "type" to "deep_thinking", "thinkingContent" to "preview",
+            AgentHistoryDisplayProjection.OFFLOADED_MARKER to true,
+        ))
+        org.mockito.Mockito.verifyNoInteractions(context)
     }
 
     private suspend fun withDirectory(block: suspend (File) -> Unit) {

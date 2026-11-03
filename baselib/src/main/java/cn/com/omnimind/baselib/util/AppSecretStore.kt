@@ -13,19 +13,12 @@ data class SecretReadResult(
 /** Keystore-backed storage for small AI credentials. Never falls back to plaintext. */
 object AppSecretStore {
     private const val FILE_NAME = "omni_app_credentials"
+    private val preferencesOwner = LazySecretPreferences()
 
-    @Volatile
-    private var preferences: SharedPreferences? = null
-
-    @Volatile
-    private var initializationAttempted = false
-
-    @Synchronized
-    fun initialize(context: Context): Boolean {
-        if (initializationAttempted) return preferences != null
-        initializationAttempted = true
-        preferences = runCatching {
-            val applicationContext = context.applicationContext
+    /** Registers the application context without opening the optional TTS credential file. */
+    fun prepare(context: Context) {
+        val applicationContext = context.applicationContext
+        preferencesOwner.prepare {
             val masterKey = MasterKey.Builder(applicationContext)
                 .setKeyScheme(MasterKey.KeyScheme.AES256_GCM)
                 .build()
@@ -35,12 +28,18 @@ object AppSecretStore {
                 masterKey,
                 EncryptedSharedPreferences.PrefKeyEncryptionScheme.AES256_SIV,
                 EncryptedSharedPreferences.PrefValueEncryptionScheme.AES256_GCM,
-            ).also { it.all }
-        }.getOrNull()
-        return preferences != null
+            )
+        }
     }
 
-    fun isAvailable(): Boolean = preferences != null
+    /** Explicit initialization still opens and validates the file immediately. */
+    @Synchronized
+    fun initialize(context: Context): Boolean = runCatching {
+        prepare(context)
+        preferencesOwner.getOrNull() != null
+    }.getOrDefault(false)
+
+    fun isAvailable(): Boolean = preferencesOwner.getOrNull() != null
 
     @Synchronized
     fun read(key: String): String? = readWithStatus(key).value
@@ -49,7 +48,7 @@ object AppSecretStore {
     @Synchronized
     fun readWithStatus(key: String): SecretReadResult {
         val safeKey = validateKey(key) ?: return SecretReadResult(false, null)
-        val store = preferences ?: return SecretReadResult(false, null)
+        val store = preferencesOwner.getOrNull() ?: return SecretReadResult(false, null)
         return runCatching {
             store.getString(safeKey, null)?.takeIf(String::isNotEmpty)
         }.fold(
@@ -62,7 +61,7 @@ object AppSecretStore {
     @Synchronized
     fun write(key: String, value: String): Boolean {
         val safeKey = validateKey(key) ?: return false
-        val store = preferences ?: return false
+        val store = preferencesOwner.getOrNull() ?: return false
         if (value.isEmpty()) return delete(safeKey)
         return runCatching {
             store.edit().putString(safeKey, value).commit() &&
@@ -73,7 +72,7 @@ object AppSecretStore {
     @Synchronized
     fun delete(key: String): Boolean {
         val safeKey = validateKey(key) ?: return false
-        val store = preferences ?: return false
+        val store = preferencesOwner.getOrNull() ?: return false
         return runCatching {
             store.edit().remove(safeKey).commit() && !store.contains(safeKey)
         }.getOrDefault(false)
@@ -82,7 +81,7 @@ object AppSecretStore {
     @Synchronized
     fun deletePrefix(prefix: String): Boolean {
         val safePrefix = validateKey(prefix) ?: return false
-        val store = preferences ?: return false
+        val store = preferencesOwner.getOrNull() ?: return false
         return runCatching {
             val keys = store.all.keys.filter { it.startsWith(safePrefix) }
             if (keys.isEmpty()) return@runCatching true
@@ -94,4 +93,29 @@ object AppSecretStore {
 
     private fun validateKey(key: String): String? = key.trim()
         .takeIf { it.isNotEmpty() && it.length <= 512 }
+}
+
+/** Opens at most once, publishing preferences only after every stored value validates. */
+internal class LazySecretPreferences {
+    private var open: (() -> SharedPreferences)? = null
+    private var initializationAttempted = false
+    private var preferences: SharedPreferences? = null
+
+    @Synchronized
+    fun prepare(open: () -> SharedPreferences) {
+        if (this.open == null && !initializationAttempted) {
+            this.open = open
+        }
+    }
+
+    @Synchronized
+    fun getOrNull(): SharedPreferences? {
+        if (initializationAttempted) return preferences
+        // An access before App.prepare must not consume the one real attempt.
+        val opener = open ?: return null
+        initializationAttempted = true
+        preferences = runCatching { opener().also { it.all } }.getOrNull()
+        open = null
+        return preferences
+    }
 }

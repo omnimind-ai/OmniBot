@@ -1,0 +1,40 @@
+// Opt-in only. Never installs or changes the production application.
+gradle.beforeProject { p ->
+    if (p.path == ':flutter') {
+        // Registered before Flutter's own afterEvaluate/variant callbacks.
+        p.afterEvaluate {
+            def source = p.findProperty('keyboardPerfSource')
+            if (source == null) throw new GradleException('Pass -PkeyboardPerfSource=/absolute/snapshot/ui')
+            def snapshot = new File(source.toString()).canonicalFile
+            if (!new File(snapshot, '.keyboard-perf-snapshot').isFile()) {
+                throw new GradleException('Not a prepared keyboard performance source snapshot')
+            }
+            p.extensions.getByName('flutter').source = snapshot.absolutePath
+        }
+    }
+    p.plugins.withId('com.android.application') {
+        if (p.path == ':app') {
+            p.extensions.getByName('androidComponents').finalizeDsl { android ->
+                android.defaultConfig.applicationId = 'cn.com.omnimind.bot.keyboardperf'
+                android.productFlavors.all { flavor ->
+                    flavor.applicationId = 'cn.com.omnimind.bot.keyboardperf'
+                    flavor.applicationIdSuffix = ''
+                }
+                def profile = android.buildTypes.maybeCreate('profile')
+                profile.initWith(android.buildTypes.getByName('debug'))
+                profile.applicationIdSuffix = ''
+                profile.matchingFallbacks = ['debug']
+                profile.debuggable = true
+                profile.minifyEnabled = false
+                profile.shrinkResources = false
+                [android.buildTypes.getByName('debug'), profile].each { measurementType ->
+                    measurementType.applicationIdSuffix = ''
+                    measurementType.buildConfigField('boolean', 'ENABLE_LLMTHU_BOOTSTRAP', 'false')
+                    ['DEBUG_LLMTHU_API_KEY', 'DEBUG_LLMTHU_API_BASE', 'DEBUG_LLMTHU_MODEL'].each {
+                        measurementType.buildConfigField('String', it, '""')
+                    }
+                }
+            }
+        }
+    }
+}

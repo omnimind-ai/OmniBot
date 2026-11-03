@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/mcp_server_service.dart';
@@ -10,18 +11,23 @@ import 'package:ui/services/storage_service.dart';
 import 'package:ui/services/workspace_memory_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
-import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_root_toolbar.dart';
+import 'package:ui/widgets/navigation/open_container.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:ui/widgets/settings_detail_sheet.dart';
 import 'package:ui/widgets/settings_ui.dart';
 
 class SettingsPage extends StatefulWidget {
-  const SettingsPage({super.key});
+  const SettingsPage({super.key, this.embedded = false, this.active = true});
+
+  final bool embedded;
+  final bool active;
 
   @override
   State<SettingsPage> createState() => _SettingsPageState();
 }
 
-class _SettingsPageState extends State<SettingsPage> {
+class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
   bool _mcpEnabled = false;
   bool _mcpBusy = false;
   McpServerInfo? _mcpInfo;
@@ -41,10 +47,22 @@ class _SettingsPageState extends State<SettingsPage> {
     _loadWorkspaceMemoryState();
   }
 
-  Future<void> _loadMcpServerState() async {
+  @override
+  void didUpdateWidget(SettingsPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.active && !oldWidget.active) {
+      _loadMcpServerState();
+      _loadWorkspaceMemoryState();
+    }
+  }
+
+  Future<void> _loadMcpServerState() =>
+      runPageLoad(#mcpState, _readMcpServerState, revalidate: true);
+
+  Future<void> _readMcpServerState() async {
     try {
       final info = await McpServerService.getState();
-      if (!mounted) return;
+      if (!await waitForPageReady() || !pageLoadIsCurrent(#mcpState)) return;
       final enabled = info?.enabled == true;
       setState(() {
         _mcpInfo = info;
@@ -60,13 +78,22 @@ class _SettingsPageState extends State<SettingsPage> {
     }
   }
 
-  Future<void> _loadWorkspaceMemoryState() async {
+  Future<void> _loadWorkspaceMemoryState() => runPageLoad(
+    #workspaceMemoryState,
+    _readWorkspaceMemoryState,
+    revalidate: true,
+  );
+
+  Future<void> _readWorkspaceMemoryState() async {
     try {
       final results = await Future.wait([
         WorkspaceMemoryService.getEmbeddingConfig(),
         WorkspaceMemoryService.getRollupStatus(),
       ]);
-      if (!mounted) return;
+      if (!await waitForPageReady() ||
+          !pageLoadIsCurrent(#workspaceMemoryState)) {
+        return;
+      }
       final config = results[0] as WorkspaceMemoryEmbeddingConfig;
       setState(() {
         _workspaceMemoryConfigured = config.configured;
@@ -85,6 +112,7 @@ class _SettingsPageState extends State<SettingsPage> {
 
   Future<void> _toggleMcpServer(bool enable) async {
     if (_mcpBusy) return;
+    final previousEnabled = _mcpEnabled;
     setState(() {
       _mcpBusy = true;
       _mcpEnabled = enable;
@@ -106,7 +134,13 @@ class _SettingsPageState extends State<SettingsPage> {
       );
       if (enable) {
         final endpoint = info?.endpoint ?? '';
-        if (endpoint.isNotEmpty) {
+        if (info?.isLoopbackOnly == true) {
+          showToast(
+            Localizations.localeOf(context).languageCode == 'en'
+                ? 'Service is available on this device only. Connect to a local network to share it.'
+                : '服务当前仅在此设备可用，连接局域网后可供电脑访问。',
+          );
+        } else if (endpoint.isNotEmpty) {
           showToast(
             context.l10n.settingsMcpEnabledToast(endpoint),
             type: ToastType.success,
@@ -122,13 +156,13 @@ class _SettingsPageState extends State<SettingsPage> {
         type: ToastType.error,
       );
       setState(() {
-        _mcpEnabled = !enable;
+        _mcpEnabled = previousEnabled;
       });
     } catch (e) {
       if (!mounted) return;
       showToast(context.l10n.settingsMcpToggleFailed, type: ToastType.error);
       setState(() {
-        _mcpEnabled = !enable;
+        _mcpEnabled = previousEnabled;
       });
     } finally {
       if (mounted) {
@@ -143,6 +177,7 @@ class _SettingsPageState extends State<SettingsPage> {
     final info = _mcpInfo;
     if (info == null || info.endpoint.isEmpty) return;
     final l10n = context.l10n;
+    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
 
     showSettingsDetailSheet<void>(
       context: context,
@@ -186,6 +221,15 @@ class _SettingsPageState extends State<SettingsPage> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              if (info.isLoopbackOnly) ...[
+                Text(
+                  isEnglish
+                      ? 'This address works only on this device. To use the WebUI or MCP from a computer, connect to a local network and enable local network access.'
+                      : '此地址仅能在当前设备访问。电脑访问 WebUI 或 MCP 前，请连接局域网并开启局域网访问。',
+                  style: valueStyle,
+                ),
+                const SizedBox(height: 12),
+              ],
               buildInfoBox(l10n.settingsMcpAddress, info.endpoint),
               const SizedBox(height: 8),
               buildInfoBox(
@@ -196,6 +240,18 @@ class _SettingsPageState extends State<SettingsPage> {
           ),
           actionsKey: const ValueKey('local-service-actions'),
           actions: [
+            if (info.isLoopbackOnly)
+              TextButton(
+                key: const ValueKey('local-service-enable-lan'),
+                style: actionStyle,
+                onPressed: () {
+                  Navigator.of(sheetContext).pop();
+                  _toggleMcpServer(true);
+                },
+                child: Text(
+                  isEnglish ? 'Enable local network access' : '开启局域网访问',
+                ),
+              ),
             TextButton(
               style: actionStyle,
               onPressed: () {
@@ -236,7 +292,11 @@ class _SettingsPageState extends State<SettingsPage> {
             ),
           ],
           footer: Text(
-            l10n.settingsMcpSecurityNotice,
+            info.isLoopbackOnly
+                ? (isEnglish
+                      ? 'The local service remains available to agents on this device.'
+                      : '本机 Agent 仍可使用本地服务。')
+                : l10n.settingsMcpSecurityNotice,
             style: TextStyle(fontSize: 12, color: sheetPalette.textSecondary),
           ),
         );
@@ -254,20 +314,26 @@ class _SettingsPageState extends State<SettingsPage> {
 
     return Scaffold(
       backgroundColor: palette.pageBackground,
-      appBar: CommonAppBar(title: context.l10n.settingsTitle, primary: true),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: ListView.separated(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(22, 10, 22, 32),
+      appBar: OmniRootToolbar(
+        title: context.l10n.settingsTitle,
+        primary: true,
+        showBackButton: !widget.embedded,
+      ),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: ListView.separated(
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(22, 10, 22, 32),
+            ),
+            itemCount: sections.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 26),
+            itemBuilder: (context, index) {
+              return _buildSettingsSection(sections[index]);
+            },
           ),
-          itemCount: sections.length,
-          separatorBuilder: (_, _) => const SizedBox(height: 26),
-          itemBuilder: (context, index) {
-            return _buildSettingsSection(sections[index]);
-          },
         ),
       ),
     );
@@ -286,9 +352,7 @@ class _SettingsPageState extends State<SettingsPage> {
             subtitle: isEnglish
                 ? 'Sign in, view platform quota'
                 : '注册登录、查看平台额度',
-            onTap: () {
-              GoRouterManager.push('/my/account');
-            },
+            route: '/my/account',
           ),
         ],
       ),
@@ -299,17 +363,13 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: LucideIcons.box,
             title: context.l10n.settingsModelProviderTitle,
             subtitle: context.l10n.settingsModelProviderSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/model_provider_setting');
-            },
+            route: '/home/model_provider_setting',
           ),
           _SettingItem(
             icon: LucideIcons.fileBox,
             title: context.l10n.settingsSceneModelTitle,
             subtitle: context.l10n.settingsSceneModelSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/scene_model_setting');
-            },
+            route: '/home/scene_model_setting',
           ),
           _SettingItem(
             icon: LucideIcons.database,
@@ -318,12 +378,8 @@ class _SettingsPageState extends State<SettingsPage> {
             trailingText: _workspaceMemoryConfigured
                 ? (isEnglish ? 'Configured' : '已配置')
                 : null,
-            onTap: () async {
-              await GoRouterManager.pushForResult(
-                '/home/workspace_memory_setting',
-              );
-              _loadWorkspaceMemoryState();
-            },
+            route: '/home/workspace_memory_setting',
+            onReturned: _loadWorkspaceMemoryState,
           ),
         ],
       ),
@@ -331,33 +387,27 @@ class _SettingsPageState extends State<SettingsPage> {
         label: context.l10n.settingsSectionServiceEnvironment,
         items: [
           _SettingItem(
-            icon: LucideIcons.bot,
-            title: context.trLegacy('Agent 模式'),
-            subtitle: context.trLegacy('管理 ACP Agent、可用状态与统一模型绑定'),
-            onTap: () {
-              GoRouterManager.push('/home/agent_mode_setting');
-            },
-          ),
-          _SettingItem(
             icon: LucideIcons.wrench,
             title: isEnglish ? 'Tools' : '工具',
             subtitle: isEnglish
                 ? 'Explore tools available to agents'
                 : '查看 Agent 可调用的工具',
-            onTap: () => GoRouterManager.push('/home/tools'),
+            route: '/home/tools',
           ),
           _SettingItem(
             icon: LucideIcons.squareTerminal,
             title: context.l10n.settingsAlpineTitle,
             subtitle: context.l10n.settingsAlpineSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/termux_setting');
-            },
+            route: '/home/termux_setting',
           ),
           _SettingItem(
             icon: LucideIcons.monitorSmartphone,
             title: context.l10n.settingsLocalServiceTitle,
-            subtitle: context.l10n.settingsLocalServiceSubtitle,
+            subtitle: _mcpInfo?.isLoopbackOnly == true
+                ? (isEnglish
+                      ? 'Available on this device only; tap to enable local network access'
+                      : '当前仅本机可用，点击开启局域网访问')
+                : context.l10n.settingsLocalServiceSubtitle,
             trailing: OmniSettingsSwitch(
               value: _mcpEnabled,
               enabled: !_mcpBusy,
@@ -371,9 +421,7 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: LucideIcons.hammer,
             title: context.l10n.settingsMcpToolsTitle,
             subtitle: context.l10n.settingsMcpToolsSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/mcp_tools');
-            },
+            route: '/home/mcp_tools',
           ),
         ],
       ),
@@ -384,17 +432,13 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: LucideIcons.palette,
             title: context.l10n.settingsAppearanceTitle,
             subtitle: context.l10n.settingsAppearanceSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/background_setting');
-            },
+            route: '/home/background_setting',
           ),
           _SettingItem(
             icon: LucideIcons.settings2,
             title: context.trLegacy('杂项'),
             subtitle: context.trLegacy('首页、后台隐藏、闹钟、振动与打开方式'),
-            onTap: () {
-              GoRouterManager.push('/home/experience_misc_setting');
-            },
+            route: '/home/experience_misc_setting',
           ),
         ],
       ),
@@ -405,24 +449,18 @@ class _SettingsPageState extends State<SettingsPage> {
             icon: LucideIcons.shieldCheck,
             title: context.l10n.authorizePageTitle,
             subtitle: context.trLegacy('查看并配置悬浮窗、后台运行、Shizuku 等权限'),
-            onTap: () {
-              GoRouterManager.push('/home/authorize_setting');
-            },
+            route: '/home/authorize_setting',
           ),
           _SettingItem(
             icon: LucideIcons.hardDrive,
             title: context.l10n.storageUsageTitle,
             subtitle: context.l10n.storageUsageSubtitle,
-            onTap: () {
-              GoRouterManager.push('/home/storage_usage');
-            },
+            route: '/home/storage_usage',
           ),
           _SettingItem(
             icon: LucideIcons.info,
             title: context.l10n.settingsAboutTitle,
-            onTap: () {
-              GoRouterManager.push('/my/about');
-            },
+            route: '/my/about',
           ),
         ],
       ),
@@ -434,23 +472,54 @@ class _SettingsPageState extends State<SettingsPage> {
       title: section.isAccount ? null : section.label,
       translateTitle: false,
       children: [
-        for (final item in section.items)
-          Semantics(
-            hint: item.subtitle,
-            child: OmniSettingsTile(
-              icon: item.icon,
-              title: item.title,
-              trailingText: item.trailingText,
-              trailing: item.trailing,
-              onTap: item.onTap,
-              translateText: false,
-              padding: EdgeInsets.symmetric(
-                horizontal: 18,
-                vertical: section.isAccount ? 22 : 16,
-              ),
-            ),
-          ),
+        for (final item in section.items) _buildSettingsItem(item, section),
       ],
+    );
+  }
+
+  Widget _buildSettingsItem(_SettingItem item, _SettingSection section) {
+    Widget buildTile(VoidCallback? onTap) => Semantics(
+      hint: item.subtitle,
+      child: OmniSettingsTile(
+        icon: item.icon,
+        title: item.title,
+        trailingText: item.trailingText,
+        trailing: item.trailing,
+        onTap: onTap,
+        translateText: false,
+        padding: EdgeInsets.symmetric(
+          horizontal: 18,
+          vertical: section.isAccount ? 22 : 16,
+        ),
+      ),
+    );
+    final route = item.route;
+    if (route == null) return buildTile(item.onTap);
+    // Carry the row surface and group corners into the destination; the
+    // parent OmniSettingsGroup stays behind. Keep the container defaults:
+    // the expanding rectangle has page color, with the shaped row inside it.
+    final index = section.items.indexOf(item);
+    final rowShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: index == 0 ? const Radius.circular(22) : Radius.zero,
+        bottom: index == section.items.length - 1
+            ? const Radius.circular(22)
+            : Radius.zero,
+      ),
+    );
+    return OmniOpenContainer(
+      key: ValueKey('settings-open-$route'),
+      closedBuilder: (rowContext, open) => Material(
+        color: rowContext.omniPalette.surfacePrimary,
+        shape: rowShape,
+        clipBehavior: Clip.antiAlias,
+        child: buildTile(open),
+      ),
+      onOpen: (source) => GoRouterManager.pushForResult<Object?>(
+        route,
+        extra: {omniContainerExtraKey: source},
+      ),
+      onClosed: (_) => item.onReturned?.call(),
     );
   }
 }
@@ -474,6 +543,8 @@ class _SettingItem {
   final String? trailingText;
   final Widget? trailing;
   final VoidCallback? onTap;
+  final String? route;
+  final VoidCallback? onReturned;
 
   const _SettingItem({
     this.icon,
@@ -482,5 +553,7 @@ class _SettingItem {
     this.trailingText,
     this.trailing,
     this.onTap,
+    this.route,
+    this.onReturned,
   });
 }

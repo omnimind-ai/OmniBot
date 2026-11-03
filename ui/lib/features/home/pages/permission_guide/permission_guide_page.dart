@@ -8,6 +8,7 @@ import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 class PermissionGuidePage extends StatefulWidget {
   final String? initialBrand;
@@ -58,30 +59,32 @@ class _PermissionGuidePageState extends State<PermissionGuidePage> {
       body: SafeArea(
         top: false,
         bottom: false,
-        child: ListView(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(16, 8, 16, 24),
-          ),
-          children: [
-            _buildHeroCard(brandInfo),
-            const SizedBox(height: 16),
-            _buildBrandSelector(),
-            const SizedBox(height: 20),
-            Text(
-              '根据当前品牌推荐的权限指南',
-              style: TextStyle(
-                color: AppColors.text70,
-                fontSize: 12,
-                fontWeight: FontWeight.w500,
-              ),
+        child: OmniContentWidth(
+          child: ListView(
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(16, 8, 16, 24),
             ),
-            const SizedBox(height: 8),
-            for (final topic in topics) ...[
-              _buildTopicCard(topic, brandInfo.id),
-              const SizedBox(height: 10),
+            children: [
+              _buildHeroCard(brandInfo),
+              const SizedBox(height: 16),
+              _buildBrandSelector(),
+              const SizedBox(height: 20),
+              Text(
+                '根据当前品牌推荐的权限指南',
+                style: TextStyle(
+                  color: AppColors.text70,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+              const SizedBox(height: 8),
+              for (final topic in topics) ...[
+                _buildTopicCard(topic, brandInfo.id),
+                const SizedBox(height: 10),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

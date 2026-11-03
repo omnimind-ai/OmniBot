@@ -1,0 +1,32 @@
+// Opt-in measurement only: same package, data, signing and native debug settings.
+// Profile changes the Flutter compiler to AOT; it is compared only to Profile.
+gradle.beforeProject { p ->
+    def snapshotProperty = p.findProperty('startupSnapshot')
+    if (snapshotProperty == null) throw new GradleException('Pass -PstartupSnapshot=/absolute/frozen/variant')
+    def snapshot = new File(snapshotProperty.toString()).canonicalFile
+    if (!new File(snapshot, '.startup-snapshot').isFile()) throw new GradleException('Not a startup snapshot')
+    if (p.path == ':flutter') {
+        p.afterEvaluate {
+            p.extensions.getByName('flutter').source = new File(snapshot, 'ui').absolutePath
+        }
+    }
+    ['com.android.application', 'com.android.library'].each { pluginId ->
+        p.plugins.withId(pluginId) {
+            if (p.path in [':app', ':baselib']) {
+                p.extensions.getByName('androidComponents').finalizeDsl { android ->
+                    android.sourceSets.getByName('main').java.setSrcDirs([
+                        new File(snapshot, p.name + '/src/main/java').absolutePath
+                    ])
+                    if (p.path == ':app') {
+                        def profile = android.buildTypes.maybeCreate('profile')
+                        profile.initWith(android.buildTypes.getByName('debug'))
+                        profile.matchingFallbacks = ['debug']
+                        profile.debuggable = true
+                        profile.minifyEnabled = false
+                        profile.shrinkResources = false
+                    }
+                }
+            }
+        }
+    }
+}

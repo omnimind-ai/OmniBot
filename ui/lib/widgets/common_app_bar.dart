@@ -5,6 +5,7 @@ import 'package:ui/l10n/l10n.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/ai_generated_badge.dart';
 import 'package:ui/widgets/omni_circle_button.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 /// 通用 AppBar 组件
 ///
@@ -98,48 +99,51 @@ class CommonAppBar extends StatelessWidget implements PreferredSizeWidget {
                   onPressed: onBackPressed ?? () => GoRouterManager.pop(),
                   foregroundColor: resolvedBackIconColor,
                   size: height < 56 ? 36 : 40,
-                  iconSize: 24,
                 ),
               )
             : null);
 
     final resolvedActions = actions ?? (trailing == null ? null : [trailing!]);
 
-    return AppBar(
-      primary: primary,
-      automaticallyImplyLeading: false,
-      toolbarHeight: height,
-      backgroundColor: resolvedBackgroundColor,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      surfaceTintColor: resolvedBackgroundColor,
-      shadowColor: Colors.transparent,
-      leadingWidth: resolvedLeading == null ? leadingWidth : leadingWidth ?? 72,
-      leading: resolvedLeading,
-      centerTitle: centerTitle,
-      title:
-          titleWidget ??
-          (title == null
-              ? null
-              : Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      context.trLegacy(title!),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          titleStyle ??
-                          TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.w600,
-                            color: palette.textPrimary,
-                          ),
-                    ),
-                    if (showAiBadge) const AiGeneratedBadge(),
-                  ],
-                )),
-      actions: resolvedActions,
+    return OmniContentWidth(
+      child: AppBar(
+        primary: primary,
+        automaticallyImplyLeading: false,
+        toolbarHeight: height,
+        backgroundColor: resolvedBackgroundColor,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        surfaceTintColor: resolvedBackgroundColor,
+        shadowColor: Colors.transparent,
+        leadingWidth: resolvedLeading == null
+            ? leadingWidth
+            : leadingWidth ?? 72,
+        leading: resolvedLeading,
+        centerTitle: centerTitle,
+        title:
+            titleWidget ??
+            (title == null
+                ? null
+                : Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
+                        context.trLegacy(title!),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            titleStyle ??
+                            TextStyle(
+                              fontSize: 17,
+                              fontWeight: FontWeight.w600,
+                              color: palette.textPrimary,
+                            ),
+                      ),
+                      if (showAiBadge) const AiGeneratedBadge(),
+                    ],
+                  )),
+        actions: resolvedActions,
+      ),
     );
   }
 }

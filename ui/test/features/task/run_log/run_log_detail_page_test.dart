@@ -96,6 +96,38 @@ void main() {
         .setMockMethodCallHandler(assistChannel, null);
   });
 
+  testWidgets('Pad timeline and action align to a readable safe column', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewPadding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewPadding);
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('en'),
+        home: RunLogDetailPage(runId: 'run-1'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final timeline = find.byType(ListView);
+    final bounds = tester.getRect(timeline);
+    expect(bounds.width, 840);
+    expect(bounds.center.dx, 600);
+    final action = tester.getRect(
+      find.byKey(const ValueKey('run-log-view-function')),
+    );
+    expect(action.right, closeTo(bounds.right - 16, 1));
+    expect(action.bottom, lessThanOrEqualTo(700 - 34));
+    expect(
+      (tester.widget<ListView>(timeline).padding! as EdgeInsets).bottom,
+      134,
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'uses compact vlm-core timeline components for canonical RunLog',
     (tester) async {

@@ -11,11 +11,11 @@ void main() {
   const channel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
   const events = MethodChannel('cn.com.omnimind.bot/AgentRuntimeEvents');
   final messenger = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-  Widget page() => MaterialApp(
+  Widget page({String agentId = 'codex-remote'}) => MaterialApp(
     theme: AppTheme.lightTheme,
     localizationsDelegates: AppLocalizations.localizationsDelegates,
     supportedLocales: AppLocalizations.supportedLocales,
-    home: const AgentSessionsPage(),
+    home: AgentSessionsPage(agentId: agentId),
   );
   setUp(() { messenger.setMockMethodCallHandler(events, (_) async => null); });
   tearDown(() {
@@ -26,6 +26,7 @@ void main() {
     var active = true;
     var reads = 0;
     messenger.setMockMethodCallHandler(channel, (call) async {
+      expect((call.arguments as Map)['agentId'], 'xiaowan-acp');
       if (call.method == 'status') return {'ready':true,'connected':true,'runtime':'local'};
       if (call.method == 'session/list') {
         reads++;
@@ -33,7 +34,7 @@ void main() {
       }
       return <String,dynamic>{};
     });
-    await tester.pumpWidget(page());
+    await tester.pumpWidget(page(agentId: 'xiaowan-acp'));
     await tester.pumpAndSettle();
     expect(find.text('Still running'), findsOneWidget);
     for (var cycle = 0; cycle < 20; cycle++) {

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/theme/theme_context.dart';
 
 class FunctionDetailSheet extends StatefulWidget {
@@ -93,203 +94,217 @@ class _FunctionDetailSheetState extends State<FunctionDetailSheet> {
         : _text(context, '智能体可见', 'Agent access on');
     return SafeArea(
       top: false,
+      bottom: false,
       child: DraggableScrollableSheet(
         key: const ValueKey('function-detail-sheet'),
         expand: false,
         initialChildSize: 0.82,
         minChildSize: 0.48,
         maxChildSize: 0.96,
-        builder: (context, controller) => Material(
-          color: palette.pageBackground,
+        builder: (context, controller) => OmniGlassSheet(
+          backgroundColor: palette.pageBackground,
           borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              const SizedBox(height: 9),
-              Container(
-                width: 38,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: palette.borderStrong,
-                  borderRadius: BorderRadius.circular(99),
+          child: SafeArea(
+            top: false,
+            left: false,
+            right: false,
+            child: Column(
+              children: [
+                const SizedBox(height: 9),
+                Container(
+                  width: 38,
+                  height: 4,
+                  decoration: BoxDecoration(
+                    color: palette.borderStrong,
+                    borderRadius: BorderRadius.circular(99),
+                  ),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            _text(context, '复用指令详情', 'Function Details'),
-                            style: TextStyle(
-                              color: palette.textSecondary,
-                              fontSize: 11,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          Text(
-                            name,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 17,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: _text(context, '关闭', 'Close'),
-                      onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-              ),
-              if (_loading)
-                LinearProgressIndicator(
-                  minHeight: 2,
-                  color: palette.accentPrimary,
-                  backgroundColor: palette.borderSubtle,
-                )
-              else
-                Divider(height: 1, color: palette.borderSubtle),
-              Expanded(
-                child: ListView(
-                  controller: controller,
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
-                  children: [
-                    if (description.isNotEmpty) ...[
-                      Text(
-                        description,
-                        style: TextStyle(
-                          color: palette.textSecondary,
-                          fontSize: 13,
-                          height: 1.45,
-                        ),
-                      ),
-                      const SizedBox(height: 7),
-                    ],
-                    SelectableText(
-                      functionId,
-                      style: TextStyle(
-                        color: palette.textTertiary,
-                        fontSize: 11,
-                        fontFamily: 'monospace',
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      _text(
-                        context,
-                        '${steps.length} 个步骤 · ${properties.length} 个参数 · $agentAccess',
-                        '${steps.length} steps · ${properties.length} parameters · $agentAccess',
-                      ),
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 11,
-                      ),
-                    ),
-                    if (_loadFailed) ...[
-                      const SizedBox(height: 10),
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.info_outline_rounded,
-                            size: 16,
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                          const SizedBox(width: 7),
-                          Expanded(
-                            child: Text(
-                              _text(
-                                context,
-                                '详情同步失败，当前显示缓存内容。',
-                                'Details could not sync. Showing cached content.',
-                              ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _text(context, '复用指令详情', 'Function Details'),
                               style: TextStyle(
                                 color: palette.textSecondary,
                                 fontSize: 11,
+                                fontWeight: FontWeight.w600,
                               ),
                             ),
-                          ),
-                          TextButton(
-                            onPressed: _load,
-                            child: Text(_text(context, '重试', 'Retry')),
-                          ),
-                        ],
+                            const SizedBox(height: 3),
+                            Text(
+                              name,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 17,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: _text(context, '关闭', 'Close'),
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(Icons.close_rounded),
                       ),
                     ],
-                    const SizedBox(height: 20),
-                    _sectionTitle(context, _text(context, '参数', 'Parameters')),
-                    if (properties.isEmpty)
-                      _emptyText(
-                        context,
-                        _text(context, '无需参数', 'No parameters'),
-                      )
-                    else
-                      for (final entry in properties.entries)
-                        _parameterRow(
-                          context,
-                          entry.key,
-                          _map(entry.value),
-                          requiredNames.contains(entry.key),
+                  ),
+                ),
+                if (_loading)
+                  LinearProgressIndicator(
+                    minHeight: 2,
+                    color: palette.accentPrimary,
+                    backgroundColor: palette.borderSubtle,
+                  )
+                else
+                  Divider(height: 1, color: palette.borderSubtle),
+                Expanded(
+                  child: ListView(
+                    controller: controller,
+                    padding: const EdgeInsets.fromLTRB(16, 14, 16, 24),
+                    children: [
+                      if (description.isNotEmpty) ...[
+                        Text(
+                          description,
+                          style: TextStyle(
+                            color: palette.textSecondary,
+                            fontSize: 13,
+                            height: 1.45,
+                          ),
                         ),
-                    const SizedBox(height: 16),
-                    _sectionTitle(context, _text(context, '步骤', 'Steps')),
-                    if (steps.isEmpty)
-                      _emptyText(context, _text(context, '暂无步骤', 'No steps'))
-                    else
-                      for (var index = 0; index < steps.length; index++)
-                        _stepRow(context, steps[index], index),
-                  ],
+                        const SizedBox(height: 7),
+                      ],
+                      SelectableText(
+                        functionId,
+                        style: TextStyle(
+                          color: palette.textTertiary,
+                          fontSize: 11,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _text(
+                          context,
+                          '${steps.length} 个步骤 · ${properties.length} 个参数 · $agentAccess',
+                          '${steps.length} steps · ${properties.length} parameters · $agentAccess',
+                        ),
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 11,
+                        ),
+                      ),
+                      if (_loadFailed) ...[
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.info_outline_rounded,
+                              size: 16,
+                              color: Theme.of(context).colorScheme.error,
+                            ),
+                            const SizedBox(width: 7),
+                            Expanded(
+                              child: Text(
+                                _text(
+                                  context,
+                                  '详情同步失败，当前显示缓存内容。',
+                                  'Details could not sync. Showing cached content.',
+                                ),
+                                style: TextStyle(
+                                  color: palette.textSecondary,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: _load,
+                              child: Text(_text(context, '重试', 'Retry')),
+                            ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 20),
+                      _sectionTitle(
+                        context,
+                        _text(context, '参数', 'Parameters'),
+                      ),
+                      if (properties.isEmpty)
+                        _emptyText(
+                          context,
+                          _text(context, '无需参数', 'No parameters'),
+                        )
+                      else
+                        for (final entry in properties.entries)
+                          _parameterRow(
+                            context,
+                            entry.key,
+                            _map(entry.value),
+                            requiredNames.contains(entry.key),
+                          ),
+                      const SizedBox(height: 16),
+                      _sectionTitle(context, _text(context, '步骤', 'Steps')),
+                      if (steps.isEmpty)
+                        _emptyText(context, _text(context, '暂无步骤', 'No steps'))
+                      else
+                        for (var index = 0; index < steps.length; index++)
+                          _stepRow(context, steps[index], index),
+                    ],
+                  ),
                 ),
-              ),
-              Divider(height: 1, color: palette.borderSubtle),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
-                child: Row(
-                  children: [
-                    IconButton.outlined(
-                      key: const ValueKey('function-detail-delete'),
-                      onPressed: functionId.isEmpty
-                          ? null
-                          : () => _closeAndRun(widget.onDelete),
-                      tooltip: _text(context, '删除', 'Delete'),
-                      icon: const Icon(Icons.delete_outline_rounded, size: 18),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        key: const ValueKey('function-detail-enhance'),
+                Divider(height: 1, color: palette.borderSubtle),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+                  child: Row(
+                    children: [
+                      IconButton.outlined(
+                        key: const ValueKey('function-detail-delete'),
                         onPressed: functionId.isEmpty
                             ? null
-                            : () => _closeAndRun(widget.onEnhance),
-                        icon: const Icon(Icons.auto_fix_high_rounded, size: 18),
-                        label: Text(_text(context, '增强', 'Enhance')),
+                            : () => _closeAndRun(widget.onDelete),
+                        tooltip: _text(context, '删除', 'Delete'),
+                        icon: const Icon(
+                          Icons.delete_outline_rounded,
+                          size: 18,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: FilledButton.icon(
-                        key: const ValueKey('function-detail-run'),
-                        onPressed: functionId.isEmpty
-                            ? null
-                            : () => _closeAndRun(widget.onReplay),
-                        icon: const Icon(Icons.play_arrow_rounded, size: 19),
-                        label: Text(_text(context, '执行', 'Run')),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          key: const ValueKey('function-detail-enhance'),
+                          onPressed: functionId.isEmpty
+                              ? null
+                              : () => _closeAndRun(widget.onEnhance),
+                          icon: const Icon(
+                            Icons.auto_fix_high_rounded,
+                            size: 18,
+                          ),
+                          label: Text(_text(context, '增强', 'Enhance')),
+                        ),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: FilledButton.icon(
+                          key: const ValueKey('function-detail-run'),
+                          onPressed: functionId.isEmpty
+                              ? null
+                              : () => _closeAndRun(widget.onReplay),
+                          icon: const Icon(Icons.play_arrow_rounded, size: 19),
+                          label: Text(_text(context, '执行', 'Run')),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),

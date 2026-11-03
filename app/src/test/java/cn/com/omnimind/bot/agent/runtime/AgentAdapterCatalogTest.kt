@@ -10,6 +10,14 @@ import org.junit.Test
 class AgentAdapterCatalogTest {
     @Test
     fun everyShippedHarnessHasAnExplicitConfigurationOwner() {
+        val evidenceDirectory = File("build/reports/harness-adapters")
+        evidenceDirectory.mkdirs()
+        // This owner publishes a complete snapshot. Retired adapters must not
+        // survive in old reports consumed by the installed-Harness verifiers.
+        evidenceDirectory.listFiles { file -> file.isFile && file.extension == "json" }
+            .orEmpty().forEach { file ->
+                check(file.delete()) { "Unable to remove stale adapter report: ${file.name}" }
+            }
         val profiles = AcpAgentCatalog.parse(File("src/main/assets/acp/agents.json").readText()) {
             File("src/main/assets/$it").readText()
         }.agents
@@ -52,8 +60,7 @@ class AgentAdapterCatalogTest {
                 val files = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, catalog, "{}")
                 val refreshFiles = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping,
                     catalog + ProviderModelOption(id = "org/new-model"), "{}")
-                val evidence = File("build/reports/harness-adapters/${adapter.configAdapterId}-$protocol-$wire.json")
-                evidence.parentFile.mkdirs()
+                val evidence = File(evidenceDirectory, "${adapter.configAdapterId}-$protocol-$wire.json")
                 evidence.writeText(com.google.gson.Gson().toJson(mapOf(
                     "harness" to adapter.configAdapterId, "protocol" to protocol, "wire" to wire,
                     "environment" to mapping.environment, "files" to files, "refreshFiles" to refreshFiles,
@@ -68,11 +75,11 @@ class AgentAdapterCatalogTest {
                 when (adapter.configAdapterId) {
                     "open-code" -> {
                         val sdk = JsonParser.parseString(files.single().content).asJsonObject
-                            .getAsJsonObject("provider").getAsJsonObject("omnibot")["npm"].asString
+                            .getAsJsonObject("providers").getAsJsonObject("omnibot")["package"].asString
                         assertEquals(when {
-                            protocol == "anthropic" -> "@ai-sdk/anthropic"
-                            wire == "responses" -> "@ai-sdk/openai"
-                            else -> "@ai-sdk/openai-compatible"
+                            protocol == "anthropic" -> "@opencode/ai/providers/anthropic-compatible"
+                            wire == "responses" -> "@opencode/ai/providers/openai-compatible/responses"
+                            else -> "@opencode/ai/providers/openai-compatible"
                         }, sdk)
                     }
                     "kimi-code" -> {
@@ -86,7 +93,7 @@ class AgentAdapterCatalogTest {
                     }
                     "claude-code" -> assertEquals("fixture-key", mapping.environment["ANTHROPIC_API_KEY"])
                     "codex" -> assertEquals("responses", mapping.codexWireApi)
-                    "deepseek-harness" -> assertTrue(files.single().content.contains(when {
+                    "pi" -> assertTrue(files.single().content.contains(when {
                         protocol == "anthropic" -> "anthropic-messages"
                         wire == "responses" -> "openai-responses"
                         else -> "openai-completions"

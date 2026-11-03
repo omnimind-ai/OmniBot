@@ -30,14 +30,21 @@ import java.io.File
 import java.util.Collections
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -125,6 +132,10 @@ class SceneVoicePlaybackManager(
         },
     )
     private val lock = Any()
+    private val foregroundOwner = Any()
+    private var foregroundLease: SceneVoiceForegroundLeases.Lease? = null
+    @Volatile
+    private var currentPlaybackLease: SceneVoiceForegroundLeases.Lease? = null
     private val queue = ArrayDeque<VoicePlaybackQueueItem>()
     private val replayableKeysByMessageId = mutableMapOf<String, MutableSet<String>>()
     private val cache = object : LinkedHashMap<String, VoiceCacheEntry>(16, 0.75f, true) {
@@ -186,6 +197,16 @@ class SceneVoicePlaybackManager(
             ?: return false
 
         synchronized(lock) {
+            if (foregroundLease == null) {
+                try {
+                    foregroundLease = SceneVoicePlaybackService.acquire(
+                        appContext, foregroundOwner, ::onForegroundStopped,
+                    )
+                } catch (error: Exception) {
+                    emitState(messageId, "error", error = error.message ?: "无法开始后台朗读")
+                    return false
+                }
+            }
             if (!enqueue) {
                 queue.clear()
                 stopCurrentPlaybackLocked()
@@ -208,7 +229,7 @@ class SceneVoicePlaybackManager(
         )
     }
 
-    fun pause(messageId: String?): Boolean {
+    fun pause(messageId: String?): Boolean = synchronized(lock) {
         val currentId = currentMessageId ?: return false
         if (!messageId.isNullOrBlank() && messageId.trim() != currentId) {
             return false
@@ -219,11 +240,12 @@ class SceneVoicePlaybackManager(
         return true
     }
 
-    fun resume(messageId: String?): Boolean {
+    fun resume(messageId: String?): Boolean = synchronized(lock) {
         val currentId = currentMessageId ?: return false
         if (!messageId.isNullOrBlank() && messageId.trim() != currentId) {
             return false
         }
+        if (currentPlaybackLease?.isReady != true) return false
         currentAudioTrack?.play()
         currentMediaPlayer?.start()
         emitState(currentId, "playing", canReplay = hasReplayableCache(currentId))
@@ -241,6 +263,11 @@ class SceneVoicePlaybackManager(
             if (normalizedId.isEmpty() || currentMessageId == normalizedId) {
                 stopCurrentPlaybackLocked()
             }
+            if (queue.isEmpty() && (normalizedId.isEmpty() || currentMessageId == normalizedId)) {
+                releaseForegroundLeaseLocked()
+            } else if (queue.isNotEmpty()) {
+                ensureProcessorLocked()
+            }
         }
         if (normalizedId.isNotEmpty()) {
             emitState(normalizedId, "idle", canReplay = hasReplayableCache(normalizedId))
@@ -253,7 +280,7 @@ class SceneVoicePlaybackManager(
             queue.clear()
             stopCurrentPlaybackLocked()
             processorJob?.cancel()
-            processorJob = null
+            releaseForegroundLeaseLocked()
             cache.values.forEach { entry ->
                 entry.wavFile?.takeIf { it.exists() }?.delete()
             }
@@ -362,26 +389,54 @@ class SceneVoicePlaybackManager(
         )
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     private fun ensureProcessorLocked() {
         if (processorJob?.isActive == true) {
             return
         }
-        processorJob = scope.launch {
-            processLoop()
+        // A replacement waits for the cancelled processor to finish releasing
+        // its players. Its finally block must not release the replacement lease.
+        val previous = processorJob
+        processorJob = scope.launch(start = CoroutineStart.ATOMIC) {
+            val currentProcessor = currentCoroutineContext()[Job]
+            try {
+                withContext(NonCancellable) { previous?.join() }
+                currentCoroutineContext().ensureActive()
+                processLoop()
+            } finally {
+                synchronized(lock) {
+                    if (processorJob === currentProcessor) {
+                        processorJob = null
+                        releaseForegroundLeaseLocked()
+                    }
+                }
+            }
         }
     }
 
     private suspend fun processLoop() {
         while (true) {
             val item = synchronized(lock) {
-                queue.removeFirstOrNull()?.also {
+                val next = queue.removeFirstOrNull()
+                if (next == null) {
+                    processorJob = null
+                    releaseForegroundLeaseLocked()
+                }
+                next?.also {
                     currentMessageId = it.messageId
                     currentStopRequested = false
+                    currentPlaybackLease = foregroundLease
                 }
             } ?: break
             try {
+                val lease = currentPlaybackLease ?: throw CancellationException("Voice playback stopped")
+                lease.awaitReady()
+                requireCurrentPlayback()
                 processItem(item)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
             } catch (t: Throwable) {
+                currentCoroutineContext().ensureActive()
                 OmniLog.e(TAG, "voice playback failed type=${t.javaClass.simpleName}")
                 val safeError = if (t is PlatformGatewayException) {
                     t.message
@@ -394,11 +449,9 @@ class SceneVoicePlaybackManager(
                 synchronized(lock) {
                     currentMessageId = null
                     currentStopRequested = false
+                    currentPlaybackLease = null
                 }
             }
-        }
-        synchronized(lock) {
-            processorJob = null
         }
     }
 
@@ -441,6 +494,8 @@ class SceneVoicePlaybackManager(
         }
         if (item.preferStreaming) {
             val streamed = synthesizeStreaming(item)
+            currentCoroutineContext().ensureActive()
+            requireCurrentPlayback()
             if (streamed != null) {
                 synchronized(lock) {
                     cache[item.cacheKey] = streamed
@@ -521,6 +576,9 @@ class SceneVoicePlaybackManager(
         var parseFailed = false
         var sawAudio = false
         var failureType: String? = null
+        val streamActive = AtomicBoolean(true)
+        val streamJob = currentCoroutineContext()[Job]!!
+        val streamLease = currentPlaybackLease
 
         val listener = object : EventSourceListener() {
             override fun onEvent(
@@ -529,6 +587,9 @@ class SceneVoicePlaybackManager(
                 type: String?,
                 data: String
             ) {
+                if (!streamActive.get() || !streamJob.isActive ||
+                    currentStopRequested || currentPlaybackLease?.isReady != true
+                ) return
                 if (data.trim() == "[DONE]") {
                     latch.countDown()
                     return
@@ -551,14 +612,24 @@ class SceneVoicePlaybackManager(
                     latch.countDown()
                     return
                 }
-                sawAudio = true
-                val track = currentAudioTrack ?: createAudioTrack(minBufferSize).also {
-                    currentAudioTrack = it
-                    emitState(item.messageId, "playing", canReplay = true)
-                    it.play()
+                val track = synchronized(lock) {
+                    if (!streamActive.get() || !streamJob.isActive || currentStopRequested ||
+                        currentPlaybackLease !== streamLease || streamLease?.isReady != true
+                    ) return
+                    currentAudioTrack ?: createAudioTrack(minBufferSize).also {
+                        currentAudioTrack = it
+                        it.play()
+                        emitState(item.messageId, "playing", canReplay = true)
+                    }
                 }
+                sawAudio = true
                 output.write(bytes)
-                track.write(bytes, 0, bytes.size)
+                val written = runCatching { track.write(bytes, 0, bytes.size) }.getOrDefault(-1)
+                if (written < 0 && streamActive.get() && streamJob.isActive) {
+                    parseFailed = true
+                    failureType = "audio_write_failed"
+                    latch.countDown()
+                }
             }
 
             override fun onClosed(eventSource: EventSource) {
@@ -580,13 +651,14 @@ class SceneVoicePlaybackManager(
             allowInsecureLoopback = CredentialEndpointSecurity.isDebugLoopbackAllowed(),
         )
         currentEventSource = source
-        withContext(Dispatchers.IO) {
-            latch.await(90, TimeUnit.SECONDS)
+        try {
+            runInterruptible(Dispatchers.IO) { latch.await(90, TimeUnit.SECONDS) }
+        } finally {
+            streamActive.set(false)
+            source.cancel()
+            currentEventSource = null
         }
-        currentEventSource = null
-        if (currentStopRequested) {
-            return null
-        }
+        requireCurrentPlayback()
         if (!sawAudio || parseFailed) {
             OmniLog.w(TAG, "streaming tts fallback type=${failureType ?: "no_audio"}")
             releaseCurrentPlaybackResources()
@@ -751,6 +823,8 @@ class SceneVoicePlaybackManager(
     }
 
     private suspend fun playCachedEntry(item: VoicePlaybackQueueItem, entry: VoiceCacheEntry) {
+        currentCoroutineContext().ensureActive()
+        requireCurrentPlayback()
         when {
             entry.pcmBytes != null -> playPcmBytes(item.messageId, entry.pcmBytes)
             entry.wavFile != null -> playWavFile(item.messageId, entry.wavFile)
@@ -767,11 +841,16 @@ class SceneVoicePlaybackManager(
             AudioFormat.CHANNEL_OUT_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         ).coerceAtLeast(4096)
-        val track = createAudioTrack(minBufferSize)
-        currentAudioTrack = track
-        emitState(messageId, "playing", canReplay = true)
-        track.play()
-        track.write(bytes, 0, bytes.size)
+        val track = synchronized(lock) {
+            createAudioTrack(minBufferSize).also {
+                currentAudioTrack = it
+                it.play()
+                emitState(messageId, "playing", canReplay = true)
+            }
+        }
+        val written = track.write(bytes, 0, bytes.size)
+        currentCoroutineContext().ensureActive()
+        check(written >= 0) { "Audio write failed ($written)" }
         waitForPcmPlayback(bytes.size)
         emitState(messageId, "completed", canReplay = true)
     }
@@ -781,8 +860,10 @@ class SceneVoicePlaybackManager(
             throw IllegalStateException("wav file does not exist")
         }
         val latch = CountDownLatch(1)
-        val mediaPlayer = MediaPlayer()
-        currentMediaPlayer = mediaPlayer
+        val mediaPlayer = synchronized(lock) {
+            requireCurrentPlayback()
+            MediaPlayer().also { currentMediaPlayer = it }
+        }
         mediaPlayer.setAudioStreamType(AudioManager.STREAM_MUSIC)
         mediaPlayer.setDataSource(file.absolutePath)
         mediaPlayer.setOnCompletionListener {
@@ -793,9 +874,13 @@ class SceneVoicePlaybackManager(
             true
         }
         mediaPlayer.prepare()
-        emitState(messageId, "playing", canReplay = true)
-        mediaPlayer.start()
-        withContext(Dispatchers.IO) {
+        currentCoroutineContext().ensureActive()
+        synchronized(lock) {
+            requireCurrentPlayback()
+            mediaPlayer.start()
+            emitState(messageId, "playing", canReplay = true)
+        }
+        runInterruptible(Dispatchers.IO) {
             latch.await(120, TimeUnit.SECONDS)
         }
         emitState(messageId, "completed", canReplay = true)
@@ -818,6 +903,7 @@ class SceneVoicePlaybackManager(
     }
 
     private fun createAudioTrack(bufferSize: Int): AudioTrack {
+        requireCurrentPlayback()
         return AudioTrack(
             AudioAttributes.Builder()
                 .setUsage(AudioAttributes.USAGE_MEDIA)
@@ -893,6 +979,7 @@ class SceneVoicePlaybackManager(
 
     private fun stopCurrentPlaybackLocked() {
         currentStopRequested = true
+        processorJob?.cancel()
         currentEventSource?.cancel()
         currentEventSource = null
         currentPlatformCall?.cancel()
@@ -900,7 +987,33 @@ class SceneVoicePlaybackManager(
         releaseCurrentPlaybackResources()
     }
 
-    private fun releaseCurrentPlaybackResources() {
+    private fun requireCurrentPlayback() {
+        if (currentStopRequested || currentPlaybackLease?.isReady != true) {
+            throw CancellationException("Voice playback stopped")
+        }
+    }
+
+    private fun releaseForegroundLeaseLocked() {
+        foregroundLease?.let(SceneVoicePlaybackService.leases::release)
+        foregroundLease = null
+    }
+
+    private fun onForegroundStopped(lease: SceneVoiceForegroundLeases.Lease, error: String?) {
+        val affected = synchronized(lock) {
+            if (foregroundLease !== lease) return
+            val ids = queue.map { it.messageId }.toMutableSet()
+            currentMessageId?.let(ids::add)
+            queue.clear()
+            stopCurrentPlaybackLocked()
+            foregroundLease = null
+            ids
+        }
+        affected.forEach { id ->
+            emitState(id, if (error == null) "idle" else "error", error = error)
+        }
+    }
+
+    private fun releaseCurrentPlaybackResources() = synchronized(lock) {
         currentAudioTrack?.runCatching {
             pause()
             flush()

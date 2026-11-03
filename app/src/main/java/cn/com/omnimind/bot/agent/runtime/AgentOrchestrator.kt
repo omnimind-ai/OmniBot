@@ -113,6 +113,10 @@ class AgentOrchestrator(
         // de-duplication contract used by tool-choice recovery.
         var outputKind = AgentOutputKind.NONE
         var hasUserFacingOutput = false
+        // This belongs to the logical prompt, not an individual HTTP round.
+        // Tool intent and reasoning are visible even when a tool result does
+        // not count as the final user-facing answer.
+        var hasVisibleModelOutput = false
         var lastAssistantContent = ""
         var accumulatedAssistantContent = ""
         var lastFinishReason: String? = null
@@ -201,11 +205,14 @@ class AgentOrchestrator(
                             // keeps the shared ACP loop free of a local policy.
                             parallelToolCalls = null
                         ),
-                        assistantContentPrefix = assistantContentPrefix
+                        assistantContentPrefix = assistantContentPrefix,
+                        allowTransportRetry = !hasVisibleModelOutput,
+                        onVisibleOutput = { hasVisibleModelOutput = true },
                     )
                 } catch (error: AgentStreamRequestException) {
                     if (
                         !contextOverflowRecoveryAttempted &&
+                        !hasVisibleModelOutput &&
                         !error.responseStarted &&
                         input.contextCompactor != null &&
                         AgentContextOverflow.isOverflow(error)
@@ -245,6 +252,11 @@ class AgentOrchestrator(
                     content = rawAssistantContent
                 )
                 val toolCalls = turn.message.toolCalls.orEmpty()
+                if (rawAssistantContent.isNotBlank() || turn.reasoning.isNotBlank() || toolCalls.isNotEmpty()) {
+                    // Also covers adapters that return a completed tool call
+                    // without first emitting its streamed input callback.
+                    hasVisibleModelOutput = true
+                }
                 logInfo(
                     tag,
                     "round=$round parsed_tool_calls=${toolCalls.size} finish_reason=${lastFinishReason.orEmpty()} assistant_content_len=${lastAssistantContent.length}"
@@ -483,7 +495,8 @@ class AgentOrchestrator(
             // this result to PromptResponse(CANCELLED).
             return AgentResult.Error("Agent execution cancelled", e)
         } catch (e: Exception) {
-            // A retry is always an explicit new user send.  Do not infer a
+            // After safe transport attempts are exhausted, retry is an
+            // explicit new user send. Do not infer a
             // different UI action from provider-specific status codes or
             // error strings: that turns transport heuristics into a private
             // lifecycle policy and prevents the user from retrying after
@@ -541,7 +554,9 @@ class AgentOrchestrator(
     private suspend fun streamTurn(
         callback: AgentCallback,
         request: ChatCompletionRequest,
-        assistantContentPrefix: String
+        assistantContentPrefix: String,
+        allowTransportRetry: Boolean,
+        onVisibleOutput: () -> Unit,
     ): ChatCompletionTurn {
         // AgentLlmClient is the sole owner of transport retries. Retrying
         // this method would replay the complete logical round, including
@@ -551,14 +566,17 @@ class AgentOrchestrator(
             request = request,
             onReasoningUpdate = { reasoning ->
                 if (reasoning.isNotBlank()) {
+                    onVisibleOutput()
                     callback.onThinkingUpdate(normalizeThinkingText(reasoning))
                 }
             },
             onToolCallInput = { call ->
+                onVisibleOutput()
                 callback.onToolCallInput(call, toolRegistry.runtimeDescriptor(call.function.name).toolType)
             },
             onContentUpdate = { content ->
                 if (content.isNotBlank()) {
+                    onVisibleOutput()
                     callback.onChatMessage(
                         combineContinuationContent(
                             prefix = assistantContentPrefix,
@@ -567,7 +585,8 @@ class AgentOrchestrator(
                         false
                     )
                 }
-            }
+            },
+            allowTransportRetry = allowTransportRetry,
         )
     }
 

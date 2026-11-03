@@ -1,0 +1,111 @@
+{
+  "schema_version": 1,
+  "audit_stage": "pre_reflection_fix_artifact",
+  "audited_release": {
+    "sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe",
+    "bytes": 38512421,
+    "mib": 36.72830677032471
+  },
+  "comparison_profile": {
+    "sha256": "f344fb4a599816c76f7538c7cfe3de2c84c78f805a34b124b62113ab1d51fa8a"
+  },
+  "result": "No proven removal regression found within the Flutter plugin, JNI, packaged asset, manifest component and dynamic resource boundaries inspected here. This does not cover or invalidate the separately confirmed Gson reflection regressions.",
+  "flutter_plugins": {
+    "generated_count": 14,
+    "all_classes_and_noarg_constructors_retained": true,
+    "registrant_registerWith_retained": true
+  },
+  "assets": {
+    "profile_count": 351,
+    "all_profile_asset_payloads_identical_in_release": true,
+    "added_only": [
+      "assets/dexopt/baseline.prof",
+      "assets/dexopt/baseline.profm"
+    ]
+  },
+  "components": {
+    "count_each": 50,
+    "component_names_identical": true,
+    "local_component_classes_retained": 49,
+    "excluded_metadata_service": "com.google.android.gms.metadata.ModuleDependencies, enabled=false and absent in both APKs"
+  },
+  "native": {
+    "critical_methods": {
+      "Lcom/termux/terminal/JNI;": {
+        "before_count": 4,
+        "release_count": 4,
+        "equal": true
+      },
+      "Lio/flutter/embedding/engine/FlutterJNI;": {
+        "before_count": 42,
+        "release_count": 42,
+        "equal": true
+      },
+      "Lcom/tencent/mmkv/MMKV;": {
+        "before_count": 82,
+        "release_count": 82,
+        "equal": true
+      },
+      "Lcom/google/android/libraries/barhopper/BarhopperV3;": {
+        "before_count": 8,
+        "release_count": 8,
+        "equal": true
+      }
+    },
+    "dartjni_java_exports_identical": true,
+    "dartjni_java_export_count": 6,
+    "only_removed_so": "libvmservice_snapshot.so (Profile-only)",
+    "other_so_changes": [
+      "libapp.so",
+      "libflutter.so",
+      "libdartjni.so"
+    ],
+    "all_other_nine_so_payloads_identical": true,
+    "unused_removed_native_classes": [
+      "androidx.camera.core.impl.utils.SurfaceUtil",
+      "androidx.datastore.core.NativeSharedCounter",
+      "com.google.android.gms.tasks.NativeOnCompleteListener",
+      "unused Jansi native members/classes"
+    ],
+    "unused_class_removal_reason": "SurfaceUtil and NativeSharedCounter descriptors do not remain in Release DEX; SharedPreferences uses preferencesDataStore and retained SingleProcessCoordinator. Other removed native members are unused dependency APIs; no concrete missing required entry was identified. Unused JNI exports alone do not make a required Java entry."
+  },
+  "dynamic_resources": {
+    "direct_getIdentifier_invocations_in_release": 12,
+    "app_terminal_specific_calls": "DisplayGeometryChannel and inlined terminal radius lookup target android framework dimen resources",
+    "remaining_generic_lookups": "AndroidX/Media3/Glide/Google services/Flutter localization; no concrete missing app resource target identified",
+    "normal_class_merging": "io.flutter.plugin.localization.LocalizationPlugin$1.getStringResource mapped into io.ktor.events.Events; verified in R8 mapping, not disappearance",
+    "legacy_unused_terminal_reflection": "launchInternalTerminal old xededitor target is absent in both APKs and its unused caller is removed; not a new R8 regression"
+  },
+  "boundaries": [
+    "No builds or device/UI actions performed",
+    "No user credential data read",
+    "Does not prove real scanning, media playback, terminal execution or network flows work",
+    "Pre-fix static artifact comparison only; rebuilt APK requires separate verification",
+    "Separate reflection audit identified class/generic/default-constructor regressions despite this asset/plugin audit passing"
+  ],
+  "rebuilt_release_payload_comparison": {
+    "status": "payload_comparison_passed",
+    "before": {
+      "bytes": 38512421,
+      "sha256": "e48f8130e054cae47a1f4317c55f73d3bdceb59d34520d9c4a31592e1adf21fe"
+    },
+    "after": {
+      "bytes": 38522525,
+      "sha256": "7f1c2ad5c213ca90e45774c809365f746557c2f7da0cb3cbf6ef0a7f6f3fd4a4",
+      "dex_uncompressed_bytes": 15243080,
+      "dex_compressed_bytes": 6631771
+    },
+    "delta_bytes": 10104,
+    "identical_resource_asset_library_payloads": true,
+    "changed_entries": [
+      "META-INF/version-control-info.textproto",
+      "assets/dexopt/baseline.prof",
+      "assets/dexopt/baseline.profm",
+      "classes.dex",
+      "classes2.dex"
+    ],
+    "added_entries": [],
+    "deleted_entries": []
+  },
+  "runtime_validation_record": "release-shrinking-validation-2026-10-29.json"
+}

@@ -429,16 +429,20 @@ extension _HomeDrawerActions on HomeDrawerState {
   Future<void> _showConversationContextMenu(
     BuildContext rowContext,
     ConversationModel conversation, {
+    required Offset pressPosition,
     bool includePinAction = true,
+    String? previewOverride,
+    bool showArchivedBadge = false,
   }) async {
-    if (_busyConversationKeys.contains(conversation.threadKey)) {
+    if (_busyConversationKeys.contains(conversation.threadKey) ||
+        _activeContextMenuThreadKey != null) {
       return;
     }
-    performOmniSelectionHaptic();
+    unawaited(Feedback.forLongPress(rowContext));
 
     final box = rowContext.findRenderObject() as RenderBox?;
-    final overlay =
-        Overlay.maybeOf(rowContext)?.context.findRenderObject() as RenderBox?;
+    final navigator = Navigator.of(rowContext, rootNavigator: true);
+    final overlay = navigator.overlay?.context.findRenderObject() as RenderBox?;
     if (box == null || !box.hasSize || overlay == null || !overlay.hasSize) {
       return;
     }
@@ -448,18 +452,13 @@ extension _HomeDrawerActions on HomeDrawerState {
       box.size.bottomRight(Offset.zero),
       ancestor: overlay,
     );
-    setState(() {
-      _activeContextMenuThreadKey = conversation.threadKey;
-    });
-
-    final route = RawDialogRoute<_ConversationContextAction>(
-      barrierDismissible: true,
+    if (widget.homePage) {
+      setState(() => _activeContextMenuThreadKey = conversation.threadKey);
+    }
+    final route = ConversationContextMenuRoute<_ConversationContextAction>(
+      reduceMotion: MediaQuery.disableAnimationsOf(rowContext),
       barrierLabel: MaterialLocalizations.of(rowContext)
           .modalBarrierDismissLabel,
-      barrierColor: Colors.transparent,
-      transitionDuration: MediaQuery.disableAnimationsOf(rowContext)
-          ? Duration.zero
-          : const Duration(milliseconds: 320),
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         final isEnglish =
             Localizations.localeOf(dialogContext).languageCode == 'en';
@@ -468,7 +467,23 @@ extension _HomeDrawerActions on HomeDrawerState {
           animation: animation,
           onDismiss: () => Navigator.of(dialogContext).pop(),
           anchor: Rect.fromPoints(rowTopLeft, rowBottomRight),
-          title: _resolveConversationTitle(conversation),
+          origin: overlay.globalToLocal(pressPosition),
+          preview: widget.homePage
+              ? Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: HomeConversationTileContent(
+                    conversation: conversation,
+                    avatarColorIndex:
+                        _homeAvatarColorIndices[conversation.threadKey],
+                    title: _resolveConversationTitle(conversation),
+                    previewOverride: previewOverride,
+                    badge: showArchivedBadge ? _buildArchivedBadge() : null,
+                    isExecuting: _runtimeCoordinator.isAgentConversationActive(
+                      conversation.id,
+                    ),
+                  ),
+                )
+              : null,
           actions: [
             if (includePinAction)
               _buildConversationMenuOption(
@@ -520,25 +535,35 @@ extension _HomeDrawerActions on HomeDrawerState {
           ],
         );
       },
-      transitionBuilder: (_, animation, _, child) => AbsorbPointer(
-        absorbing: animation.status == AnimationStatus.reverse,
-        child: child,
-      ),
     );
-    final selectedAction = await Navigator.of(
-      rowContext,
-      rootNavigator: true,
-    ).push<_ConversationContextAction>(route);
-    // push completes when pop starts. Keep the original row hidden until the
-    // focused preview has returned to its anchor and its overlay is removed.
-    await route.completed;
+    var sourceRestored = false;
+    void restoreSource() {
+      if (sourceRestored) return;
+      sourceRestored = true;
+      if (mounted && _activeContextMenuThreadKey == conversation.threadKey) {
+        setState(() => _activeContextMenuThreadKey = null);
+      }
+    }
 
-    if (mounted) {
-      setState(() {
-        if (_activeContextMenuThreadKey == conversation.threadKey) {
-          _activeContextMenuThreadKey = null;
-        }
-      });
+    final selection = navigator.push(route);
+    final animation = route.animation!;
+    void restoreWhenReturned() {
+      if (animation.value == 0 && animation.status != AnimationStatus.forward) {
+        restoreSource();
+      }
+    }
+
+    // Restore before the closing animation's final paint so the row never
+    // disappears between its focused preview and the original list position.
+    animation.addListener(restoreWhenReturned);
+    _ConversationContextAction? selectedAction;
+    try {
+      selectedAction = await selection;
+      // A menu action starts only after both focused row and menu are removed.
+      await route.completed;
+    } finally {
+      animation.removeListener(restoreWhenReturned);
+      restoreSource();
     }
 
     if (!mounted || selectedAction == null) return;
@@ -572,52 +597,16 @@ extension _HomeDrawerActions on HomeDrawerState {
     required String label,
     bool isDestructive = false,
   }) {
-    final palette = dialogContext.omniPalette;
-    final color = isDestructive
-        ? Theme.of(dialogContext).colorScheme.error
-        : palette.textPrimary;
-    final iconColor = isDestructive
-        ? Theme.of(dialogContext).colorScheme.error
-        : palette.textPrimary;
-
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        key: ValueKey('home-drawer-context-${action.name}'),
-        borderRadius: BorderRadius.circular(18),
-        onTap: () {
-          if (ModalRoute.of(dialogContext)?.isCurrent != true) return;
-          performOmniSelectionHaptic();
-          Navigator.of(dialogContext).pop(action);
-        },
-        splashColor: color.withValues(alpha: 0.08),
-        highlightColor: color.withValues(alpha: 0.04),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(minHeight: 48),
-          child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-            child: Row(
-              children: [
-                Icon(icon, size: 20, color: iconColor),
-                const SizedBox(width: 14),
-                Expanded(
-                  child: Text(
-                    label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w400,
-                      color: color,
-                      height: 1.25,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
+    return OmniMenuItem(
+      key: ValueKey('home-drawer-context-${action.name}'),
+      label: label,
+      leading: Icon(icon),
+      destructive: isDestructive,
+      onTap: () {
+        if (ModalRoute.of(dialogContext)?.isCurrent != true) return;
+        performOmniSelectionHaptic();
+        Navigator.of(dialogContext).pop(action);
+      },
     );
   }
 

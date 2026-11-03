@@ -1,10 +1,12 @@
+import 'package:ui/widgets/flclash/popup.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_switch/flutter_switch.dart';
+import 'package:ui/widgets/flclash/common_switch.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/glass_popup.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
 import 'package:ui/widgets/omni_menu.dart';
 
 /// Triggers a crisp toggle haptic feedback.
@@ -274,6 +276,21 @@ class OmniSettingsTile extends StatelessWidget {
   final bool isDestructive;
   final EdgeInsetsGeometry padding;
 
+  void _triggerDescendantSwitch(BuildContext context) {
+    _OmniSwitchTapTarget? target;
+    void visit(Element element) {
+      if (target != null) return;
+      if (element is StatefulElement && element.state is _OmniSwitchTapTarget) {
+        target = element.state as _OmniSwitchTapTarget;
+        return;
+      }
+      element.visitChildren(visit);
+    }
+
+    context.visitChildElements(visit);
+    if (target?.canToggle ?? false) target!.triggerToggle();
+  }
+
   void _triggerDescendantDropdown(BuildContext context) {
     _OmniDropdownTapTarget? target;
     void visit(Element element) {
@@ -311,7 +328,11 @@ class OmniSettingsTile extends StatelessWidget {
             }
             onTap!();
           }
-        : (trailing is OmniSettingsDropdown
+        : (trailing is OmniSettingsSwitch
+              ? (trailing as OmniSettingsSwitch).enabled
+                    ? () => _triggerDescendantSwitch(context)
+                    : null
+              : trailing is OmniSettingsDropdown
               ? () => _triggerDescendantDropdown(context)
               : null);
 
@@ -450,18 +471,14 @@ abstract interface class _OmniSwitchTapTarget {
   void triggerToggle();
 }
 
-/// Unified toggle switch for settings rows.
-///
-/// Features balanced 7:4 capsule proportions (44x25 track, 18px thumb, 3.5px
-/// uniform inset), 1.127x thumb press/drag scale spring, damped horizontal
-/// drag gesture, and tactile haptic feedback on toggle.
+/// Settings adapter for the shared FlClash solid and liquid-glass switch.
 class OmniSettingsSwitch extends StatefulWidget {
   const OmniSettingsSwitch({
     super.key,
     required this.value,
     required this.onToggle,
     this.enabled = true,
-    this.duration = const Duration(milliseconds: 200),
+    this.duration = const Duration(milliseconds: 300),
   });
 
   final bool value;
@@ -475,208 +492,24 @@ class OmniSettingsSwitch extends StatefulWidget {
 
 class _OmniSettingsSwitchState extends State<OmniSettingsSwitch>
     implements _OmniSwitchTapTarget {
-  static const double _kTrackWidth = 44.0;
-  static const double _kTrackHeight = 25.0;
-  static const double _kThumbSize = 18.0;
-  static const double _kInset = 3.5;
-  static const double _kMaxTravel =
-      _kTrackWidth - _kInset * 2 - _kThumbSize; // 19.0
-
-  bool _isPressed = false;
-  bool _isDragging = false;
-  bool _hasVibrated = false;
-  bool _hasVibratedOnce = false;
-  double _rawDragOffset = 0.0;
-  double _dragOffset = 0.0;
-
   @override
   bool get canToggle => widget.enabled;
 
-  @override
-  void triggerToggle() {
-    if (!widget.enabled) return;
-    final next = !widget.value;
+  void _toggle(bool next) {
+    if (!canToggle) return;
     performOmniSwitchHaptic(next);
     widget.onToggle(next);
   }
 
-  void _handleTap() {
-    triggerToggle();
-  }
-
-  void _handleDragStart(DragStartDetails details) {
-    if (!widget.enabled) return;
-    setState(() {
-      _isDragging = true;
-      _hasVibrated = true;
-      _hasVibratedOnce = false;
-      _rawDragOffset = 0.0;
-      _dragOffset = 0.0;
-    });
-  }
-
-  void _handleDragUpdate(DragUpdateDetails details) {
-    if (!widget.enabled) return;
-    setState(() {
-      _rawDragOffset += details.delta.dx / 2.0;
-      _dragOffset = widget.value
-          ? _rawDragOffset.clamp(-_kMaxTravel, 0.0)
-          : _rawDragOffset.clamp(0.0, _kMaxTravel);
-
-      const midLow = _kMaxTravel * 0.45;
-      const midHigh = _kMaxTravel * 0.55;
-      if ((_dragOffset >= -midHigh && _dragOffset <= -midLow) ||
-          (_dragOffset >= midLow && _dragOffset <= midHigh)) {
-        _hasVibratedOnce = false;
-      } else if ((_dragOffset > -_kMaxTravel && _dragOffset < 0.0) ||
-          (_dragOffset > 0.0 && _dragOffset < _kMaxTravel)) {
-        _hasVibrated = false;
-      } else if (!_hasVibrated) {
-        if ((widget.value && _dragOffset <= -_kMaxTravel) ||
-            (!widget.value && _dragOffset == 0.0)) {
-          performOmniSwitchHaptic(false);
-          _hasVibrated = true;
-          _hasVibratedOnce = true;
-        } else if ((widget.value && _dragOffset == 0.0) ||
-            (!widget.value && _dragOffset >= _kMaxTravel)) {
-          performOmniSwitchHaptic(true);
-          _hasVibrated = true;
-          _hasVibratedOnce = true;
-        }
-      }
-    });
-  }
-
-  void _handleDragEnd(DragEndDetails details) {
-    if (!widget.enabled) return;
-    final shouldToggle = _dragOffset.abs() > _kMaxTravel / 2.0;
-    if (!_hasVibratedOnce && _dragOffset.abs() >= 1.0) {
-      final next = shouldToggle ? !widget.value : widget.value;
-      performOmniSwitchHaptic(next);
-    }
-    setState(() {
-      _isDragging = false;
-      _isPressed = false;
-      _dragOffset = 0.0;
-      _rawDragOffset = 0.0;
-    });
-    if (shouldToggle) {
-      widget.onToggle(!widget.value);
-    }
-  }
+  @override
+  void triggerToggle() => _toggle(!widget.value);
 
   @override
-  Widget build(BuildContext context) {
-    final palette = context.omniPalette;
-    final isDark = context.isDarkTheme;
-    final activeTrackColor = palette.accentPrimary;
-    final inactiveTrackColor = palette.borderStrong;
-    final thumbColor = widget.value
-        ? Theme.of(context).colorScheme.onPrimary
-        : Colors.white;
-    final trackColor = widget.value ? activeTrackColor : inactiveTrackColor;
-    final thumbLeft =
-        _kInset + (widget.value ? _kMaxTravel : 0.0) + _dragOffset;
-    final thumbScale = !widget.enabled
-        ? 1.0
-        : (_isPressed || _isDragging)
-        ? 1.127
-        : 1.0;
-    final effectiveDuration = _isDragging ? Duration.zero : widget.duration;
-
-    return Semantics(
-      toggled: widget.value,
-      enabled: widget.enabled,
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTapDown: widget.enabled
-            ? (_) => setState(() => _isPressed = true)
-            : null,
-        onTapCancel: widget.enabled
-            ? () => setState(() => _isPressed = false)
-            : null,
-        onTapUp: widget.enabled
-            ? (_) => setState(() => _isPressed = false)
-            : null,
-        onTap: widget.enabled ? _handleTap : null,
-        onHorizontalDragStart: widget.enabled ? _handleDragStart : null,
-        onHorizontalDragUpdate: widget.enabled ? _handleDragUpdate : null,
-        onHorizontalDragEnd: widget.enabled ? _handleDragEnd : null,
-        child: Opacity(
-          opacity: widget.enabled ? 1.0 : 0.45,
-          child: SizedBox(
-            width: _kTrackWidth,
-            height: _kTrackHeight,
-            child: Stack(
-              alignment: Alignment.centerLeft,
-              children: [
-                // Invisible FlutterSwitch preserves compatibility with existing widget tests.
-                Opacity(
-                  opacity: 0,
-                  child: IgnorePointer(
-                    child: FlutterSwitch(
-                      width: _kTrackWidth,
-                      height: _kTrackHeight,
-                      toggleSize: _kThumbSize,
-                      padding: _kInset,
-                      activeColor: activeTrackColor,
-                      inactiveColor: inactiveTrackColor,
-                      toggleColor: thumbColor,
-                      borderRadius: 999,
-                      duration: widget.duration,
-                      value: widget.value,
-                      onToggle: (next) {
-                        performOmniSwitchHaptic(next);
-                        widget.onToggle(next);
-                      },
-                    ),
-                  ),
-                ),
-                AnimatedContainer(
-                  duration: effectiveDuration,
-                  curve: Curves.easeOutCubic,
-                  width: _kTrackWidth,
-                  height: _kTrackHeight,
-                  decoration: BoxDecoration(
-                    color: trackColor,
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                ),
-                AnimatedPositioned(
-                  duration: effectiveDuration,
-                  curve: Curves.easeOutBack,
-                  left: thumbLeft.clamp(_kInset, _kInset + _kMaxTravel),
-                  top: _kInset,
-                  width: _kThumbSize,
-                  height: _kThumbSize,
-                  child: AnimatedScale(
-                    duration: const Duration(milliseconds: 160),
-                    curve: Curves.easeOutBack,
-                    scale: thumbScale,
-                    child: DecoratedBox(
-                      decoration: BoxDecoration(
-                        color: thumbColor,
-                        shape: BoxShape.circle,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(
-                              alpha: isDark ? 0.22 : 0.08,
-                            ),
-                            blurRadius: 3,
-                            offset: const Offset(0, 1),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => CommonSwitch(
+    value: widget.value,
+    onChanged: widget.enabled ? _toggle : null,
+    duration: widget.duration,
+  );
 }
 
 /// Minimalist status indicator: a 6px colored dot followed by a 12sp label.
@@ -790,6 +623,8 @@ class OmniSettingsDropdown<T> extends StatefulWidget {
 
 class _OmniSettingsDropdownState<T> extends State<OmniSettingsDropdown<T>>
     implements _OmniDropdownTapTarget {
+  final _sourceKey = GlobalKey();
+  final _fieldContentKey = GlobalKey();
   bool _fieldFocused = false;
   bool _opening = false;
 
@@ -803,23 +638,31 @@ class _OmniSettingsDropdownState<T> extends State<OmniSettingsDropdown<T>>
 
   @override
   void openPopover() {
-    _openPopover(context);
+    final anchorContext = _sourceKey.currentContext;
+    if (anchorContext != null) _openPopover(anchorContext);
   }
 
   Future<void> _openPopover(BuildContext anchorContext) async {
     if (!canOpenPopover) return;
+    final sourceRoute = ModalRoute.of(anchorContext);
+    bool sourceIsCurrent() =>
+        mounted &&
+        anchorContext.mounted &&
+        (sourceRoute == null ||
+            (sourceRoute.isActive && sourceRoute.isCurrent));
     _opening = true;
     try {
       final beforeOpen = widget.onBeforeOpen;
       if (beforeOpen != null) {
         await beforeOpen();
-        if (!mounted || !anchorContext.mounted) return;
+        if (!sourceIsCurrent()) return;
         // A caller may have setState in the async callback. Wait for that
         // rebuild so this route receives the refreshed options and callback.
         await WidgetsBinding.instance.endOfFrame;
       }
       if (!mounted ||
           !anchorContext.mounted ||
+          !sourceIsCurrent() ||
           widget.onChanged == null ||
           (widget.options.isEmpty && widget.searchHint == null)) {
         return;
@@ -838,6 +681,7 @@ class _OmniSettingsDropdownState<T> extends State<OmniSettingsDropdown<T>>
 
     final selected = await showGlassPopup<T>(
       context: anchorContext,
+      sourceContext: anchorContext,
       anchor: anchor,
       screenPadding: const EdgeInsets.all(16),
       child: LayoutBuilder(
@@ -875,8 +719,52 @@ class _OmniSettingsDropdownState<T> extends State<OmniSettingsDropdown<T>>
     }
   }
 
+  Rect? _fieldCaptureRect(BuildContext sourceContext) =>
+      glassPopupInputContainerRect(
+        sourceContext,
+        _fieldContentKey.currentContext,
+      );
+
   @override
   Widget build(BuildContext context) {
+    final palette = context.omniPalette;
+    final decoration = widget.decoration?.applyDefaults(
+      Theme.of(context).inputDecorationTheme,
+    );
+    final border = decoration == null
+        ? null
+        : widget.onChanged == null
+        ? decoration.disabledBorder ?? decoration.border
+        : _fieldFocused
+        ? decoration.focusedBorder ?? decoration.border
+        : decoration.enabledBorder ?? decoration.border;
+    return FlClashPopupSource(
+      glass: false,
+      shape: decoration == null
+          ? const RoundedRectangleBorder(
+              borderRadius: OmniMenuStyle.panelRadius,
+            )
+          : border ??
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
+      color: decoration == null
+          ? palette.surfaceSecondary.withValues(
+              alpha: context.isDarkTheme ? 0.72 : 0.8,
+            )
+          : decoration.filled == true
+          ? decoration.fillColor ?? Colors.transparent
+          : Colors.transparent,
+      captureRect: decoration == null ? null : _fieldCaptureRect,
+      captureOverflow: decoration == null
+          ? null
+          : (sourceContext) => glassPopupInputLabelRects(
+              sourceContext,
+              _fieldContentKey.currentContext,
+            ),
+      builder: (_) => Builder(key: _sourceKey, builder: _buildControl),
+    );
+  }
+
+  Widget _buildControl(BuildContext context) {
     final palette = context.omniPalette;
     final isDark = context.isDarkTheme;
     final enabled = widget.onChanged != null;
@@ -928,34 +816,37 @@ class _OmniSettingsDropdownState<T> extends State<OmniSettingsDropdown<T>>
               ),
               isEmpty: label.isEmpty,
               isFocused: _fieldFocused,
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style:
-                          (widget.style ??
-                                  Theme.of(context).textTheme.titleMedium)
-                              ?.copyWith(
-                                color: fieldEnabled
-                                    ? selectedOption == null
-                                          ? palette.textTertiary
-                                          : widget.style?.color ??
-                                                palette.textPrimary
-                                    : Theme.of(context).disabledColor,
-                              ),
+              child: Builder(
+                key: _fieldContentKey,
+                builder: (context) => Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style:
+                            (widget.style ??
+                                    Theme.of(context).textTheme.titleMedium)
+                                ?.copyWith(
+                                  color: fieldEnabled
+                                      ? selectedOption == null
+                                            ? palette.textTertiary
+                                            : widget.style?.color ??
+                                                  palette.textPrimary
+                                      : Theme.of(context).disabledColor,
+                                ),
+                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  Icon(
-                    Icons.arrow_drop_down,
-                    color: fieldEnabled
-                        ? palette.textSecondary
-                        : Theme.of(context).disabledColor,
-                  ),
-                ],
+                    const SizedBox(width: 8),
+                    Icon(
+                      Icons.arrow_drop_down,
+                      color: fieldEnabled
+                          ? palette.textSecondary
+                          : Theme.of(context).disabledColor,
+                    ),
+                  ],
+                ),
               ),
             ),
           ),
@@ -969,16 +860,19 @@ class _OmniSettingsDropdownState<T> extends State<OmniSettingsDropdown<T>>
         color: Colors.transparent,
         child: InkWell(
           key: widget.dropdownKey,
-          borderRadius: BorderRadius.circular(9.5),
+          borderRadius: OmniMenuStyle.panelRadius,
           onTap: enabled ? () => _openPopover(context) : null,
           child: Container(
-            constraints: BoxConstraints(maxWidth: widget.maxWidth),
+            constraints: BoxConstraints(
+              minHeight: OmniMenuStyle.panelRadius.topLeft.x * 2,
+              maxWidth: widget.maxWidth,
+            ),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
             decoration: BoxDecoration(
               color: palette.surfaceSecondary.withValues(
                 alpha: isDark ? 0.72 : 0.8,
               ),
-              borderRadius: BorderRadius.circular(9.5),
+              borderRadius: OmniMenuStyle.panelRadius,
               border: Border.all(
                 color: palette.borderSubtle.withValues(
                   alpha: isDark ? 0.55 : 0.75,
@@ -1161,114 +1055,154 @@ class _OmniSettingsPopoverCardState<T>
   }
 }
 
-/// Clean, theme-consistent search input field for settings and catalog pages.
-class OmniSettingsSearchField extends StatelessWidget {
+/// FlClash's bar search geometry on the shared settings glass surface.
+/// Text selection keeps the TextField's native gesture and focus ownership.
+class OmniSettingsSearchField extends StatefulWidget {
   const OmniSettingsSearchField({
     super.key,
     required this.controller,
     this.focusNode,
     required this.hintText,
     this.onChanged,
+    this.onSubmitted,
+    this.autofocus = false,
+    this.height = 44,
   });
 
   final TextEditingController controller;
   final FocusNode? focusNode;
   final String hintText;
   final ValueChanged<String>? onChanged;
+  final ValueChanged<String>? onSubmitted;
+  final bool autofocus;
+  final double height;
+
+  @override
+  State<OmniSettingsSearchField> createState() =>
+      _OmniSettingsSearchFieldState();
+}
+
+class _OmniSettingsSearchFieldState extends State<OmniSettingsSearchField> {
+  FocusNode? _ownedFocusNode;
+
+  FocusNode get _focusNode =>
+      widget.focusNode ?? (_ownedFocusNode ??= FocusNode());
+
+  @override
+  void initState() {
+    super.initState();
+    FocusManager.instance.addHighlightModeListener(_highlightModeChanged);
+  }
+
+  void _highlightModeChanged(FocusHighlightMode _) {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  void dispose() {
+    FocusManager.instance.removeHighlightModeListener(_highlightModeChanged);
+    _ownedFocusNode?.dispose();
+    super.dispose();
+  }
+
+  void _clear() {
+    widget.controller.clear();
+    widget.onChanged?.call('');
+    _focusNode.requestFocus();
+  }
 
   @override
   Widget build(BuildContext context) {
-    final listenable = focusNode != null
-        ? Listenable.merge([controller, focusNode!])
-        : controller;
     return ListenableBuilder(
-      listenable: listenable,
+      listenable: Listenable.merge([widget.controller, _focusNode]),
       builder: (context, _) {
         final palette = context.omniPalette;
-        final isDark = context.isDarkTheme;
-        final hasFocus = focusNode?.hasFocus ?? false;
-        final hasQuery = controller.text.trim().isNotEmpty;
+        final glass = LiquidGlassScope.of(context);
+        final showFocusRing =
+            FocusManager.instance.highlightMode ==
+            FocusHighlightMode.traditional;
+        final hasQuery = widget.controller.text.isNotEmpty;
+        const border = OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(1000)),
+          borderSide: BorderSide.none,
+        );
 
-        return AnimatedContainer(
-          duration: const Duration(milliseconds: 160),
-          curve: Curves.easeOutCubic,
-          height: 40,
-          decoration: BoxDecoration(
-            color: palette.surfacePrimary,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: hasFocus
-                  ? palette.accentPrimary.withValues(alpha: 0.65)
-                  : palette.borderSubtle.withValues(
-                      alpha: isDark ? 0.65 : 0.85,
-                    ),
-              width: hasFocus ? 1.1 : 0.75,
-            ),
+        final field = TextField(
+          controller: widget.controller,
+          focusNode: _focusNode,
+          autofocus: widget.autofocus,
+          maxLines: 1,
+          onChanged: widget.onChanged,
+          onSubmitted: widget.onSubmitted,
+          onTapOutside: (_) => _focusNode.unfocus(),
+          textInputAction: TextInputAction.search,
+          textAlignVertical: TextAlignVertical.center,
+          style: TextStyle(
+            fontSize: 16,
+            color: palette.textPrimary,
+            fontWeight: FontWeight.w400,
+            height: 1.25,
           ),
-          child: TextField(
-            controller: controller,
-            focusNode: focusNode,
-            onChanged: onChanged,
-            onTapOutside: (_) {
-              if (focusNode != null) {
-                focusNode!.unfocus();
-              } else {
-                FocusScope.of(context).unfocus();
-              }
-            },
-            textInputAction: TextInputAction.search,
-            style: TextStyle(
-              fontSize: 13.5,
-              color: palette.textPrimary,
+          cursorColor: palette.accentPrimary,
+          decoration: InputDecoration(
+            constraints: BoxConstraints.tightFor(height: widget.height),
+            floatingLabelBehavior: FloatingLabelBehavior.never,
+            hintText: widget.hintText,
+            hintStyle: TextStyle(
+              fontSize: 16,
+              color: palette.textTertiary,
               fontWeight: FontWeight.w400,
-              height: 1.25,
             ),
-            cursorColor: palette.accentPrimary,
-            decoration: InputDecoration(
-              hintText: hintText,
-              hintStyle: TextStyle(
-                fontSize: 13,
-                color: palette.textTertiary,
-                fontWeight: FontWeight.w400,
-              ),
-              border: InputBorder.none,
-              enabledBorder: InputBorder.none,
-              focusedBorder: InputBorder.none,
-              disabledBorder: InputBorder.none,
-              errorBorder: InputBorder.none,
-              focusedErrorBorder: InputBorder.none,
-              filled: false,
-              isDense: true,
-              contentPadding: const EdgeInsets.symmetric(vertical: 10),
-              prefixIconConstraints: const BoxConstraints(
-                minWidth: 38,
-                minHeight: 40,
-              ),
-              suffixIconConstraints: const BoxConstraints(
-                minWidth: 36,
-                minHeight: 40,
-              ),
-              prefixIcon: Icon(
-                LucideIcons.search,
-                size: 16.5,
-                color: hasFocus ? palette.accentPrimary : palette.textTertiary,
-              ),
-              suffixIcon: hasQuery
-                  ? IconButton(
-                      padding: EdgeInsets.zero,
-                      splashRadius: 16,
-                      onPressed: () {
-                        controller.clear();
-                        onChanged?.call('');
-                      },
-                      icon: Icon(
-                        LucideIcons.x,
-                        size: 15,
-                        color: palette.textTertiary,
-                      ),
+            border: border,
+            enabledBorder: border,
+            focusedBorder: border.copyWith(
+              borderSide: showFocusRing
+                  ? BorderSide(
+                      color: palette.accentPrimary.withValues(alpha: 0.65),
                     )
-                  : null,
+                  : BorderSide.none,
             ),
+            filled: !glass,
+            fillColor: palette.surfacePrimary,
+            isDense: false,
+            contentPadding: EdgeInsetsDirectional.only(end: hasQuery ? 0 : 12),
+            prefixIconConstraints: const BoxConstraints.tightFor(width: 41),
+            suffixIconConstraints: const BoxConstraints(),
+            prefixIcon: Padding(
+              padding: const EdgeInsetsDirectional.only(start: 12),
+              child: Align(
+                alignment: AlignmentDirectional.centerStart,
+                child: Icon(
+                  LucideIcons.search,
+                  size: 20,
+                  color: palette.textSecondary,
+                ),
+              ),
+            ),
+            suffixIcon: hasQuery
+                ? SizedBox(
+                    width: 49,
+                    child: IconButton(
+                      tooltip: context.l10n.homeDrawerClearSearch,
+                      onPressed: _clear,
+                      style: IconButton.styleFrom(
+                        foregroundColor: palette.textSecondary,
+                        overlayColor: Colors.transparent,
+                        splashFactory: NoSplash.splashFactory,
+                      ),
+                      icon: const Icon(LucideIcons.circleX, size: 24),
+                    ),
+                  )
+                : null,
+          ),
+        );
+        if (!glass) return field;
+        return LiquidGlass(
+          style: LiquidGlassStyle.regular(Theme.of(context).colorScheme),
+          // A null radius uses the analytical capsule shader path.
+          child: ClipRRect(
+            borderRadius: const BorderRadius.all(Radius.circular(1000)),
+            child: field,
           ),
         );
       },

@@ -11,6 +11,147 @@ import org.junit.Test
 import java.time.Instant
 
 class AccountRepositoryTest {
+    @Test fun foregroundRefreshKeepsRotatedCredentialsWhenLegacyIdentityIsVerifiedInFlight() = runBlocking {
+        val store = FakeTokenStore(session("old-access", "old-refresh").tokens.copy(
+            accessExpiresAt = "2026-08-31T12:00:20Z",
+        ))
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val fresh = session("fresh-access", "rotated-refresh")
+        val remote = FakeAccountRemote().apply {
+            userHandler = { fresh.user }
+            refreshHandler = { started.complete(Unit); finish.await(); fresh }
+        }
+        val repository = AccountRepository(remote, store)
+        val refresh = async { runCatching {
+            repository.refreshSessionIfNeeded(now = Instant.parse("2026-08-31T12:00:00Z"))
+        } }
+        started.await()
+        assertEquals(fresh.user, repository.currentUser())
+        assertEquals(fresh.user.id, store.tokens?.localUserId)
+        finish.complete(Unit)
+
+        assertEquals(true, refresh.await().getOrThrow())
+        assertEquals("fresh-access", store.tokens?.accessToken)
+        assertEquals("rotated-refresh", store.tokens?.refreshToken)
+        assertEquals(fresh.user.id, repository.cachedCloudUserId())
+        assertEquals(1, remote.refreshTokens.size)
+    }
+
+    @Test fun currentUserResponseSurvivesConcurrentRefreshOfTheSameLogin() = runBlocking {
+        val previous = session("old-access", "old-refresh")
+        val store = FakeTokenStore(previous.tokens)
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val fresh = session("fresh-access", "rotated-refresh").let {
+            it.copy(
+                user = it.user.copy(email = "updated@example.test"),
+                tokens = it.tokens.copy(accessExpiresAt = "2099-01-01T00:00:00Z"),
+            )
+        }
+        val remote = FakeAccountRemote().apply {
+            userHandler = { started.complete(Unit); finish.await(); previous.user }
+            refreshHandler = { fresh }
+        }
+        val repository = AccountRepository(remote, store)
+        val user = async { runCatching { repository.currentUser() } }
+        started.await()
+        repository.refreshSession()
+        finish.complete(Unit)
+
+        assertEquals(previous.user, user.await().getOrThrow())
+        assertTrue(repository.isSignedIn())
+        assertEquals("rotated-refresh", store.tokens?.refreshToken)
+        assertEquals(fresh.user.id, repository.cachedCloudUserId())
+        assertEquals(fresh.user, repository.withCloudAccessToken { verified, _ -> verified })
+    }
+
+    @Test fun logoutRejectsLateCurrentUserWithoutRestoringItsIdentity() = runBlocking {
+        val store = FakeTokenStore(session("old-access", "old-refresh").tokens)
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val remote = FakeAccountRemote().apply {
+            userHandler = { started.complete(Unit); finish.await(); session("old-access", "old-refresh").user }
+            logoutHandler = { }
+        }
+        val repository = AccountRepository(remote, store)
+        val user = async { runCatching { repository.currentUser() } }
+        started.await()
+        repository.logout()
+        finish.complete(Unit)
+
+        assertTrue(user.await().exceptionOrNull() is AccountNotAuthenticatedException)
+        assertNull(store.tokens)
+        assertNull(repository.localUserId.value)
+    }
+
+    @Test fun replacementLoginRejectsLateCurrentUserEvenWhenItsAccessTokenIsReused() = runBlocking {
+        val previous = session("shared-access", "shared-refresh")
+        val replacement = previous.copy(user = previous.user.copy(id = "user-2"))
+        val store = FakeTokenStore(previous.tokens)
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val remote = FakeAccountRemote().apply {
+            userHandler = { started.complete(Unit); finish.await(); previous.user }
+            loginHandler = { _, _ -> replacement }
+        }
+        val repository = AccountRepository(remote, store)
+        val user = async { runCatching { repository.currentUser() } }
+        started.await()
+        val signedIn = repository.login("another@example.test", "test-password")
+        finish.complete(Unit)
+
+        assertTrue(user.await().exceptionOrNull() is AccountNotAuthenticatedException)
+        assertEquals(signedIn.tokens, store.tokens)
+        assertEquals("user-2", repository.localUserId.value)
+    }
+
+    @Test fun replacementLoginRejectsLateRefreshEvenWhenItsCredentialsAreReused() = runBlocking {
+        val previous = session("shared-access", "shared-refresh")
+        val store = FakeTokenStore(previous.tokens.copy(localUserId = previous.user.id))
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val remote = FakeAccountRemote().apply {
+            refreshHandler = { started.complete(Unit); finish.await(); session("late-access", "late-refresh") }
+            loginHandler = { _, _ -> previous }
+        }
+        val repository = AccountRepository(remote, store)
+        val refresh = async { runCatching { repository.refreshSession() } }
+        started.await()
+        val signedIn = repository.login("learner@example.com", "test-password")
+        finish.complete(Unit)
+
+        assertTrue(refresh.await().exceptionOrNull() is AccountNotAuthenticatedException)
+        assertEquals(signedIn.tokens, store.tokens)
+        assertEquals(previous.user.id, repository.localUserId.value)
+    }
+
+    @Test fun lateUnauthorizedUserResponseCannotRefreshAReplacementLogin() = runBlocking {
+        val previous = session("old-access", "old-refresh")
+        val replacement = session("replacement-access", "replacement-refresh")
+            .copy(user = previous.user.copy(id = "user-2"))
+        val store = FakeTokenStore(previous.tokens)
+        val started = CompletableDeferred<Unit>()
+        val finish = CompletableDeferred<Unit>()
+        val remote = FakeAccountRemote().apply {
+            userHandler = {
+                started.complete(Unit)
+                finish.await()
+                throw AccountApiException(401, "invalid_access_token", "expired")
+            }
+            loginHandler = { _, _ -> replacement }
+        }
+        val repository = AccountRepository(remote, store)
+        val user = async { runCatching { repository.currentUser() } }
+        started.await()
+        val signedIn = repository.login("another@example.test", "test-password")
+        finish.complete(Unit)
+
+        assertTrue(user.await().exceptionOrNull() is AccountNotAuthenticatedException)
+        assertTrue(remote.refreshTokens.isEmpty())
+        assertEquals(signedIn.tokens, store.tokens)
+    }
+
     @Test fun cloudReadsRefreshOnceAndWritesAreNeverReplayed() = runBlocking {
         val initial = session("old", "refresh").tokens.copy(accessExpiresAt = "2099-01-01T00:00:00Z")
         val store = FakeTokenStore(initial)

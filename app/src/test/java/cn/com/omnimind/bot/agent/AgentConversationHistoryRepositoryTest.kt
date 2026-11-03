@@ -4,12 +4,36 @@ import cn.com.omnimind.baselib.database.AgentConversationEntry
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import cn.com.omnimind.baselib.llm.*
 import kotlinx.serialization.json.*
 import kotlinx.serialization.encodeToString
 import org.junit.Test
 
 class AgentConversationHistoryRepositoryTest {
+    @Test
+    fun historyRemovalRequiresExplicitDisjointMessageIdentities() {
+        val retained = listOf(mapOf<String, Any?>("id" to "retained"))
+        assertThrows(IllegalArgumentException::class.java) {
+            AgentConversationHistoryRepository.explicitHistoryRemovalIds(retained, true, null)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AgentConversationHistoryRepository.explicitHistoryRemovalIds(retained, true, listOf("retained"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AgentConversationHistoryRepository.explicitHistoryRemovalIds(retained, false, listOf("old-answer"))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            AgentConversationHistoryRepository.explicitHistoryRemovalIds(retained, true, listOf(" "))
+        }
+        assertEquals(listOf("old-answer"), AgentConversationHistoryRepository.explicitHistoryRemovalIds(
+            retained, true, listOf("old-answer", "old-answer"),
+        ))
+        assertEquals(emptyList<String>(), AgentConversationHistoryRepository.explicitHistoryRemovalIds(
+            retained, false, null,
+        ))
+    }
+
     @Test
     fun emptyPresentationPlaceholdersDoNotEraseLaterCanonicalToolMessages() {
         val keys = listOf("toolCallId", "sessionId", "turnId", "modelToolCallId",

@@ -23,7 +23,7 @@ class AgentSessionMissingConversationTest {
         databaseField.set(null, database)
         try {
             try {
-                AgentSessionBindingRepository(context).ensureBinding("late-session", conversationId = 42L)
+                AgentSessionBindingRepository(context).ensureBinding("late-session", "xiaowan-acp", conversationId = 42L)
                 fail("A deleted Conversation must not be replaced by a new empty row")
             } catch (error: IllegalArgumentException) {
                 assertEquals("Conversation 42 no longer exists.", error.message)

@@ -9,7 +9,9 @@ import 'package:ui/constants/storage_keys.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_spotlight_tour.dart';
 import 'package:ui/features/welcome/pages/onboarding/onboarding_choice_page.dart';
+import 'package:ui/features/welcome/pages/onboarding/onboarding_definitions.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
+import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/widgets/provider_vendor_icon.dart';
@@ -26,6 +28,9 @@ void main() {
   late List<String> requestedPackageIds;
   late Map<String, dynamic> terminalSnapshot;
   Completer<void>? prepareGate;
+  late bool accountSignedIn;
+  late int loginCalls;
+  late int cancelRequests;
 
   Map<String, dynamic> profilePayload({
     String apiKey = '',
@@ -108,6 +113,9 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
+    ModelsDevCatalogService.setCatalogForTesting(
+      const ModelsDevCatalog(providers: {}),
+    );
     savedDistribution = '';
     requestedPackageIds = <String>[];
     terminalSnapshot = <String, dynamic>{
@@ -119,6 +127,9 @@ void main() {
       'logLines': <String>[],
     };
     prepareGate = null;
+    accountSignedIn = false;
+    loginCalls = 0;
+    cancelRequests = 0;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(terminalChannel, (call) async {
@@ -136,12 +147,22 @@ void main() {
           savedDistribution = (call.arguments as Map)['distribution']
               .toString();
           return savedDistribution;
+        case 'cancelEmbeddedTerminalInit':
+          cancelRequests++;
+          prepareGate?.complete();
+          return true;
         case 'prepareTermuxLiveWrapper':
           requestedPackageIds = ((call.arguments as Map)['packageIds'] as List)
               .map((item) => item.toString())
               .toList(growable: false);
           if (prepareGate != null) {
             await prepareGate!.future;
+          }
+          if (cancelRequests > 0) {
+            return <String, dynamic>{
+              'success': false,
+              'message': '安装已取消，下载进度已保留',
+            };
           }
           return <String, dynamic>{
             'success': true,
@@ -190,14 +211,46 @@ void main() {
       return null;
     });
     messenger.setMockMethodCallHandler(accountChannel, (call) async {
+      if (call.method == 'login') {
+        accountSignedIn = true;
+        loginCalls += 1;
+        return <String, Object?>{
+          'id': 'learner',
+          'email': 'learner@example.com',
+        };
+      }
+      if (call.method == 'requestRegistrationCode') {
+        return <String, Object?>{
+          'requestId': 'test-registration-code',
+          'expiresInSeconds': 300,
+        };
+      }
+      if (call.method == 'getOverview') {
+        return <String, Object?>{
+          'user': <String, Object?>{
+            'id': 'learner',
+            'email': 'learner@example.com',
+            'role': 'user',
+            'status': 'active',
+          },
+          'settings': <String, Object?>{
+            'mode': 'platform',
+            'platformAvailable': true,
+          },
+        };
+      }
       if (call.method == 'getSessionState') {
-        return <String, Object?>{'configured': true, 'signedIn': false};
+        return <String, Object?>{
+          'configured': true,
+          'signedIn': accountSignedIn,
+        };
       }
       return null;
     });
   });
 
   tearDown(() {
+    ModelsDevCatalogService.resetForTesting();
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(terminalChannel, null);
@@ -205,10 +258,34 @@ void main() {
     messenger.setMockMethodCallHandler(accountChannel, null);
   });
 
+  testWidgets('Pi selection uses the shared terminal installer', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(390, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(buildTestApp());
+    await tester.pump(const Duration(milliseconds: 50));
+    await openToolsPage(tester);
+    final pi = find.byKey(const ValueKey('tutorial-tool-pi'));
+    await showFinder(tester, pi);
+    await tester.tap(pi);
+    await tester.pump();
+    final start = find.byKey(const ValueKey('tutorial-environment-primary'));
+    await showFinder(tester, start);
+    await tester.tap(start);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(requestedPackageIds, contains('pi'));
+    expect(requestedPackageIds, isNot(contains('codex')));
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
   testWidgets(
     'environment setup uses short pages and a circular progress page',
     (tester) async {
-      tester.view.physicalSize = const Size(390, 700);
+      tester.view.physicalSize = const Size(390, 600);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
@@ -262,6 +339,16 @@ void main() {
       await tester.pump();
       expect(find.text('Agent / 工具: Codex CLI'), findsOneWidget);
 
+      final backArrow = find.byKey(const ValueKey('tutorial-bottom-back'));
+      final initialBackRect = tester.getRect(backArrow);
+      final initialNextRect = tester.getRect(
+        find.byKey(const ValueKey('tutorial-skip-environment')),
+      );
+      void expectStableNavigation(String nextKey) {
+        expect(tester.getRect(backArrow), initialBackRect);
+        expect(tester.getRect(find.byKey(ValueKey(nextKey))), initialNextRect);
+      }
+
       final startSetup = find.byKey(
         const ValueKey('tutorial-environment-primary'),
       );
@@ -277,6 +364,14 @@ void main() {
       await tester.pump(const Duration(milliseconds: 420));
       await tester.pump();
 
+      expectStableNavigation('tutorial-environment-continue');
+      final cancel = find.byKey(const ValueKey('tutorial-environment-cancel'));
+      expect(cancel.hitTestable(), findsOneWidget);
+      expect(tester.getCenter(cancel).dy, initialBackRect.center.dy);
+      expect(
+        find.ancestor(of: cancel, matching: find.byType(Scrollable)),
+        findsNothing,
+      );
       expect(find.text('正在准备 Ubuntu 系统'), findsOneWidget);
       expect(find.byIcon(LucideIcons.loaderCircle), findsNothing);
       final activeMilestone = find.byKey(
@@ -334,6 +429,19 @@ void main() {
           )
           .value!;
       expect(secondProgress, greaterThan(firstProgress));
+      expectStableNavigation('tutorial-environment-continue');
+      final progressScroll = find.descendant(
+        of: find.byKey(const ValueKey('tutorial-environment-progress')),
+        matching: find.byType(Scrollable),
+      );
+      await tester.drag(progressScroll, const Offset(0, -260));
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(
+        tester.state<ScrollableState>(progressScroll).position.pixels,
+        greaterThan(0),
+      );
+      expectStableNavigation('tutorial-environment-continue');
+      expect(cancel.hitTestable(), findsOneWidget);
 
       prepareGate!.complete();
       await tester.pump(const Duration(milliseconds: 700));
@@ -362,6 +470,67 @@ void main() {
             )
             .onPressed,
         isNotNull,
+      );
+      expectStableNavigation('tutorial-environment-continue');
+      expect(cancel, findsNothing);
+      await tester.tap(
+        find.byKey(const ValueKey('tutorial-environment-continue')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('开启应用权限'), findsOneWidget);
+      expectStableNavigation('tutorial-permissions-next');
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'cancelling setup keeps navigation fixed through the failure state',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 700);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(buildTestApp());
+      await tester.pump(const Duration(milliseconds: 50));
+      await openToolsPage(tester);
+      final back = find.byKey(const ValueKey('tutorial-bottom-back'));
+      final backRect = tester.getRect(back);
+      final nextRect = tester.getRect(
+        find.byKey(const ValueKey('tutorial-skip-environment')),
+      );
+      prepareGate = Completer<void>();
+      await tester.tap(
+        find.byKey(const ValueKey('tutorial-environment-primary')),
+      );
+      await tester.pump(const Duration(milliseconds: 420));
+      final cancel = find.byKey(const ValueKey('tutorial-environment-cancel'));
+      expect(tester.getRect(back), backRect);
+      expect(
+        tester.getRect(
+          find.byKey(const ValueKey('tutorial-environment-continue')),
+        ),
+        nextRect,
+      );
+      await tester.tap(cancel);
+      await tester.pumpAndSettle();
+      expect(cancelRequests, 1);
+      expect(cancel, findsNothing);
+      expect(
+        find.byKey(const ValueKey('tutorial-environment-retry')),
+        findsOneWidget,
+      );
+      final skip = find.byKey(
+        const ValueKey('tutorial-skip-environment-progress'),
+      );
+      expect(tester.getRect(back), backRect);
+      expect(tester.getRect(skip), nextRect);
+      await tester.tap(skip);
+      await tester.pumpAndSettle();
+      expect(find.text('开启应用权限'), findsOneWidget);
+      expect(tester.getRect(back), backRect);
+      expect(
+        tester.getRect(find.byKey(const ValueKey('tutorial-permissions-next'))),
+        nextRect,
       );
       expect(tester.takeException(), isNull);
     },
@@ -414,7 +583,7 @@ void main() {
             .onPressed,
         isNull,
       );
-      for (var index = 0; index < 9; index += 1) {
+      for (var index = 0; index < tutorialNavigationPages.length; index += 1) {
         expect(
           find.byKey(ValueKey<String>('tutorial-page-dot-$index')),
           findsOneWidget,
@@ -518,7 +687,7 @@ void main() {
   });
 
   testWidgets(
-    'later setup pages use pagination back and provider brand icons',
+    'account form is inline and custom models open provider selection first',
     (tester) async {
       tester.view.physicalSize = const Size(430, 900);
       tester.view.devicePixelRatio = 1;
@@ -527,72 +696,79 @@ void main() {
 
       await tester.pumpWidget(buildTestApp());
       await tester.pump(const Duration(milliseconds: 50));
-
       await openProviderPage(tester);
 
-      expect(find.text('模型配置（可选）'), findsOneWidget);
-      final accountEntry = find.byKey(
-        const ValueKey('tutorial-provider-account-auth'),
-      );
-      expect(accountEntry, findsOneWidget);
+      expect(find.text('登录与注册'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('tutorial-provider-deepseek')),
-        findsOne,
+        find.byKey(const ValueKey('tutorial-inline-account-auth')),
+        findsOneWidget,
       );
-      expect(
-        tester.getTopLeft(accountEntry).dy,
-        lessThan(
-          tester
-              .getTopLeft(
-                find.byKey(const ValueKey('tutorial-provider-deepseek')),
-              )
-              .dy,
-        ),
-      );
-      await tester.tap(accountEntry);
-      await tester.pumpAndSettle();
       expect(
         find.byKey(const ValueKey('standalone-account-auth-page')),
-        findsOneWidget,
+        findsNothing,
       );
-      expect(find.text('登录与注册'), findsOneWidget);
       expect(find.text('账号与 AI 服务'), findsNothing);
-      expect(
-        find.byKey(const ValueKey('account-auth-only-surface')),
-        findsOneWidget,
+      expect(find.byKey(const ValueKey('account-login-email')), findsOneWidget);
+      expect(find.byKey(const ValueKey('submit-auth')), findsOneWidget);
+      expect(find.byType(ProviderVendorIcon), findsNothing);
+
+      await tester.enterText(
+        find.byKey(const ValueKey('account-login-email')),
+        'learner@example.com',
       );
-      expect(find.byKey(const Key('submit-auth')), findsOneWidget);
-      Navigator.of(
-        tester.element(
-          find.byKey(const ValueKey('standalone-account-auth-page')),
-        ),
-      ).pop();
+      await tester.tap(
+        find.byKey(const ValueKey('account-auth-mode-register')),
+      );
       await tester.pumpAndSettle();
-      expect(find.text('模型配置（可选）'), findsOneWidget);
-      expect(find.byKey(const ValueKey('tutorial-back-button')), findsNothing);
       expect(
-        find.byKey(const ValueKey('tutorial-bottom-back')),
+        find.byKey(const ValueKey('auth-confirm-password-field')),
         findsOneWidget,
       );
-      expect(find.text('跳过模型配置，查看聊天指南'), findsOneWidget);
-      expect(find.text('可选：配置自己的模型'), findsOneWidget);
       expect(
         tester
-            .widget<IconButton>(
-              find.byKey(const ValueKey('tutorial-skip-models')),
+            .widget<TextFormField>(
+              find.byKey(const ValueKey('account-register-email')),
             )
-            .onPressed,
-        isNotNull,
+            .controller!
+            .text,
+        'learner@example.com',
       );
-      final providerPrimary = find.byKey(
-        const ValueKey('tutorial-provider-next'),
+      expect(find.byType(ChatPage), findsNothing);
+
+      // A form swipe switches authentication modes, not tutorial pages.
+      await tester.drag(
+        find.byKey(const Key('account-auth-page-view')),
+        const Offset(300, 0),
       );
-      final providerNavigation = find.byKey(
-        const ValueKey('tutorial-pagination-navigation'),
-      );
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('account-login-email')), findsOneWidget);
+      expect(find.text('登录与注册'), findsOneWidget);
+      expect(find.text('下一步：了解聊天界面'), findsNothing);
       expect(
-        tester.getRect(providerPrimary).bottom,
-        lessThan(tester.getRect(providerNavigation).top),
+        find.byKey(const ValueKey('tutorial-skip-models-visible')),
+        findsNothing,
+      );
+      expect(find.text('可选：配置自己的模型'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('account-auth-mode-register')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('account-register-password')),
+        'draft-password',
+      );
+      await tester.ensureVisible(find.text('发送'));
+      await tester.tap(find.text('发送'));
+      await tester.pumpAndSettle();
+      expect(find.text('重新发送'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('tutorial-provider-next')));
+      await tester.pumpAndSettle();
+      expect(find.text('选择模型服务商'), findsOneWidget);
+      expect(find.byKey(const ValueKey('account-login-email')), findsNothing);
+      expect(
+        find.byKey(const ValueKey('tutorial-provider-api-key')),
+        findsNothing,
       );
       for (final id in <String>[
         'deepseek',
@@ -609,21 +785,128 @@ void main() {
       }
       expect(find.byType(ProviderVendorIcon), findsNWidgets(5));
 
-      final bottomBack = find.byKey(const ValueKey('tutorial-bottom-back'));
-      await showFinder(tester, bottomBack);
-      await tester.tap(bottomBack);
+      await tester.tap(
+        find.byKey(const ValueKey('tutorial-provider-moonshot')),
+      );
       await tester.pumpAndSettle();
-
-      expect(find.text('开启应用权限'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('tutorial-bottom-back')));
-      await tester.pumpAndSettle();
-
-      expect(find.text('配置 Agent 与连接工具'), findsOneWidget);
-      expect(find.byKey(const ValueKey('tutorial-back-button')), findsNothing);
+      expect(find.text('连接 Kimi'), findsOneWidget);
       expect(
-        find.byKey(const ValueKey('tutorial-bottom-back')),
+        tester
+            .widget<TextField>(
+              find.byKey(const ValueKey('tutorial-provider-base-url')),
+            )
+            .controller!
+            .text,
+        'https://api.moonshot.cn/v1',
+      );
+      expect(
+        find.byKey(const ValueKey('tutorial-provider-api-key')),
         findsOneWidget,
       );
+
+      await tester.tap(find.byKey(const ValueKey('tutorial-bottom-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('选择模型服务商'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('tutorial-bottom-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('登录与注册'), findsOneWidget);
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey('account-register-email')),
+            )
+            .controller!
+            .text,
+        'learner@example.com',
+      );
+      expect(
+        tester
+            .widget<TextFormField>(
+              find.byKey(const ValueKey('account-register-password')),
+            )
+            .controller!
+            .text,
+        'draft-password',
+      );
+      expect(find.text('重新发送'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('tutorial-bottom-back')));
+      await tester.pumpAndSettle();
+      expect(find.text('开启应用权限'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('signing in stays in the tutorial and shows the account state', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(430, 900);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await tester.pumpWidget(buildTestApp());
+    await tester.pump(const Duration(milliseconds: 50));
+    await openProviderPage(tester);
+    await tester.enterText(
+      find.byKey(const ValueKey('account-login-email')),
+      'learner@example.com',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('account-login-password')),
+      'password',
+    );
+    await tester.tap(find.byKey(const ValueKey('submit-auth')));
+    await tester.pumpAndSettle();
+    expect(loginCalls, 1);
+    expect(find.text('当前账号已登录'), findsOneWidget);
+    expect(find.text('learner@example.com'), findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('tutorial-inline-account-auth')),
+      findsOneWidget,
+    );
+    expect(find.byType(ChatPage), findsNothing);
+    expect(find.text('账号与 AI 服务'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'inline registration stays usable with a keyboard on a narrow phone',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 640);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpWidget(buildTestApp());
+      await tester.pump(const Duration(milliseconds: 50));
+      await openProviderPage(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-auth-mode-register')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('account-register-email')),
+        'learner@example.com',
+      );
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('tutorial-inline-account-auth')),
+        findsOneWidget,
+      );
+      expect(find.byType(ChatPage), findsNothing);
+      final submit = find.byKey(const ValueKey('account-register-submit'));
+      await tester.scrollUntilVisible(
+        submit,
+        120,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const PageStorageKey('account-register-page')),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
+      await tester.pumpAndSettle();
+      expect(submit.hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
@@ -673,7 +956,7 @@ void main() {
     await tester.tap(permissionsNext);
     await tester.pumpAndSettle();
 
-    expect(find.text('模型配置（可选）'), findsOneWidget);
+    expect(find.text('登录与注册'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -689,9 +972,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
 
     await openProviderPage(tester);
-    final skipModels = find.byKey(
-      const ValueKey('tutorial-skip-models-visible'),
-    );
+    final skipModels = find.byKey(const ValueKey('tutorial-skip-models'));
     await showFinder(tester, skipModels);
     await tester.tap(skipModels);
     for (var frame = 0; frame < 15; frame += 1) {
@@ -719,6 +1000,8 @@ void main() {
     final providerNext = find.byKey(const ValueKey('tutorial-provider-next'));
     await showFinder(tester, providerNext);
     await tester.tap(providerNext);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('tutorial-provider-deepseek')));
     await tester.pumpAndSettle();
 
     await tester.enterText(

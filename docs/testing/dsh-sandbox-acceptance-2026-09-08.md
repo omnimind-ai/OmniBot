@@ -1,5 +1,7 @@
 # DSH 默认沙箱验收：不通过
 
+> 历史归档：本文记录旧版本 DeepSeek Harness 的验证结果。2026-10-29 起已移除该 Harness 的内置支持及专用验证脚本，以下安装与测试步骤不再适用于当前版本。
+
 2026-09-08，emulator-5560 / OobCleanInstall20260907（Alpine，Android 13 ARM64）；App 0.6.1 (11)，官方 DSH 0.1.2-rc.1。安装 APK SHA-256 为 22ac0030d9e308be998cad4496c2b6f2f55b54b99e12a19b4f7f3b0d334df4c1，与此前记忆验证包一致。未更改生产配置、权限或安装依赖。
 
 ## 执行与结果

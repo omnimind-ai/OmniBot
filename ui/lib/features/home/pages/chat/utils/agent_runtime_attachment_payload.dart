@@ -7,6 +7,7 @@ List<Map<String, dynamic>> buildAgentRuntimeAttachmentsFromMessageContent(
   }
   return raw
       .whereType<Map>()
+      .where((item) => item['historyPayloadOffloaded'] != true)
       .map((item) => item.map((key, value) => MapEntry(key.toString(), value)))
       .toList();
 }

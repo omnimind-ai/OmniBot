@@ -41,6 +41,19 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
         ? SafeArea(top: false, child: _buildMinimalComposer())
         : switch ((widget.useLargeComposerStyle, widget.useFrostedGlass)) {
             (true, _) => SafeArea(child: _buildLargeComposerShell()),
+            (false, _) when LiquidGlassScope.of(context) => SafeArea(
+              child: ChatComposerSurface(
+                expanded: false,
+                duration: _compactAnimationDuration,
+                child: SizedBox(
+                  height: 44,
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 12, 0),
+                    child: _buildInputContent(),
+                  ),
+                ),
+              ),
+            ),
             (false, _) => SafeArea(
               child: Container(
                 decoration: BoxDecoration(
@@ -446,6 +459,32 @@ mixin _ChatInputAreaComposerMixin on _ChatInputAreaStateBase {
           const contentPadding = EdgeInsets.fromLTRB(14, 8, 12, 8);
           final shouldGlowStrong = focused || hovered;
           final innerBorderColor = palette.borderSubtle;
+
+          if (LiquidGlassScope.of(context)) {
+            return ChatComposerSurface(
+              // Multiline drafts and attachment rows keep their full content
+              // area even when an auxiliary control temporarily owns focus.
+              expanded:
+                  focused ||
+                  composerState.hasText ||
+                  widget.attachments.isNotEmpty,
+              duration: _compactAnimationDuration,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(minHeight: minShellHeight),
+                child: Padding(
+                  padding: contentPadding + const EdgeInsets.all(borderInset),
+                  child: _compactAnimationDuration == Duration.zero
+                      ? child
+                      : AnimatedSize(
+                          duration: _compactAnimationDuration,
+                          curve: Curves.easeOutCubic,
+                          alignment: Alignment.bottomCenter,
+                          child: child,
+                        ),
+                ),
+              ),
+            );
+          }
 
           return AnimatedContainer(
             duration: const Duration(milliseconds: 220),

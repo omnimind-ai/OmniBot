@@ -27,7 +27,7 @@ for (const file of files) {
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
   const rewrite = value => value.replaceAll('https://fixture.invalid', `http://127.0.0.1:${server.address().port}`).replaceAll('/root', home);
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(KIMI|OPENAI|ANTHROPIC|CLAUDE|CODEX|DEEPSEEK|DSH|OPENCODE)/.test(key)));
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(KIMI|OPENAI|ANTHROPIC|CLAUDE|CODEX|DEEPSEEK|OPENCODE)/.test(key)));
   Object.assign(env, {HOME: home}, Object.fromEntries(Object.entries(fixture.environment).map(([k, v]) => [k, rewrite(v)])));
   const writeConfigs = async files => {
     for (const file of files) {
@@ -41,11 +41,10 @@ for (const file of files) {
     PATH: resolve(cliDirectory, 'node_modules/.bin') + ':' + env.PATH});
   const commands = {
     'kimi-code': ['kimi', 'acp'], 'claude-code': ['claude-agent-acp'], 'codex': ['codex-acp'],
-    'open-code': ['opencode', 'acp'], 'deepseek-harness': ['dsh', '--profile', 'acp', '--patch', rewrite(fixture.files[0]?.path ?? "")],
+    'open-code': ['opencode', 'acp'],
   };
   const [command, ...args] = commands[fixture.harness];
   if (fixture.harness === 'open-code') env.OPENCODE_CONFIG = rewrite(fixture.files[0].path);
-  if (fixture.harness === 'deepseek-harness') env.DSH_HOME = join(home, '.dsh');
   const start = () => {
     const child = spawn(resolve(cliDirectory, 'node_modules/.bin', command), args, {cwd: home, env, stdio: ['pipe', 'pipe', 'pipe']});
     let next = 0, buffer = '', stderr = '';

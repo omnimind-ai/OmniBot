@@ -17,6 +17,7 @@ object AgentRuntimeFeatureFlags {
 
 interface AgentExecutionEnvironment {
     val agentRunId: String
+    val acpSessionId: String? get() = null
     val userMessage: String
     val runtimeContextRepository: AgentRuntimeContextRepository
     val workspaceDescriptor: AgentWorkspaceDescriptor
@@ -56,6 +57,7 @@ data class DefaultAgentExecutionEnvironment(
     override val runControl: AgentRunControl = NoOpAgentRunControl,
     override val permissionRequester: AgentPermissionRequester? = null,
     override val longTermMemoryIndex: LongTermMemoryIndex? = null,
+    override val acpSessionId: String? = null,
 ) : AgentExecutionEnvironment
 
 fun interface AgentPermissionRequester {

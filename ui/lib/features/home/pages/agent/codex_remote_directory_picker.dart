@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/agent_runtime_service.dart';
@@ -12,7 +14,7 @@ Future<String?> showCodexRemoteDirectoryPicker({
   required String remoteBridgeToken,
   String initialPath = '',
 }) {
-  return showModalBottomSheet<String>(
+  return showOmniGlassBottomSheet<String>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
@@ -67,6 +69,7 @@ class _CodexRemoteDirectoryPickerSheetState
     });
     try {
       final listing = await AgentRuntimeService.listRemoteDirectories(
+        agentId: 'codex-remote',
         remoteBridgeUrl: widget.remoteBridgeUrl,
         remoteBridgeToken: widget.remoteBridgeToken,
         remoteCwd: widget.initialPath,
@@ -107,172 +110,174 @@ class _CodexRemoteDirectoryPickerSheetState
         .toList(growable: false);
     final maxHeight = MediaQuery.sizeOf(context).height * 0.76;
 
-    return Container(
+    return ConstrainedBox(
       constraints: BoxConstraints(maxHeight: maxHeight),
-      decoration: BoxDecoration(
-        color: palette.surfacePrimary,
+      child: OmniGlassSheet(
         borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 10),
-            Container(
-              width: 36,
-              height: 4,
-              decoration: BoxDecoration(
-                color: palette.borderStrong,
-                borderRadius: BorderRadius.circular(99),
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 10),
+              Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: palette.borderStrong,
+                  borderRadius: BorderRadius.circular(99),
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _isEnglish ? 'Remote Workspace' : '远程工作目录',
-                      style: TextStyle(
-                        color: palette.textPrimary,
-                        fontSize: 17,
-                        fontWeight: FontWeight.w600,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 14, 10, 8),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _isEnglish ? 'Remote Workspace' : '远程工作目录',
+                        style: TextStyle(
+                          color: palette.textPrimary,
+                          fontSize: 17,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: _isEnglish ? 'Close' : '关闭',
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: Icon(
-                      LucideIcons.x,
-                      size: 20,
-                      color: palette.textSecondary,
+                    OmniCircleButton(
+                      tooltip: _isEnglish ? 'Close' : '关闭',
+                      onPressed: () => Navigator.of(context).pop(),
+                      icon: LucideIcons.x,
+                      foregroundColor: palette.textSecondary,
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      _currentPath.isEmpty
-                          ? (_isEnglish ? 'Bridge default' : 'Bridge 默认目录')
-                          : _currentPath,
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 0, 18, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _currentPath.isEmpty
+                            ? (_isEnglish ? 'Bridge default' : 'Bridge 默认目录')
+                            : _currentPath,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: palette.textSecondary,
+                          fontSize: 12,
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    OmniCircleButton(
+                      tooltip: _isEnglish ? 'Home' : '主目录',
+                      onPressed: (_listing?.home ?? '').isEmpty || _isLoading
+                          ? null
+                          : () => unawaited(_loadDirectory(_listing!.home!)),
+                      icon: LucideIcons.house,
+                    ),
+                    OmniCircleButton(
+                      tooltip: _isEnglish ? 'Parent' : '上级目录',
+                      onPressed: (_listing?.parent ?? '').isEmpty || _isLoading
+                          ? null
+                          : () => unawaited(_loadDirectory(_listing!.parent!)),
+                      icon: LucideIcons.arrowUp,
+                    ),
+                    OmniCircleButton(
+                      tooltip: _isEnglish ? 'Reload' : '刷新',
+                      onPressed: _isLoading
+                          ? null
+                          : () => unawaited(_loadDirectory(_currentPath)),
+                      icon: LucideIcons.refreshCw,
+                      iconWidget: _isLoading
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
+              Divider(height: 1, color: palette.borderSubtle),
+              Flexible(
+                child: _isLoading
+                    ? const Center(child: CircularProgressIndicator.adaptive())
+                    : _error != null
+                    ? _DirectoryError(
+                        message: _error!,
+                        onRetry: () => unawaited(_loadDirectory(_currentPath)),
+                      )
+                    : directoryEntries.isEmpty
+                    ? _DirectoryEmpty(
+                        message: _isEnglish ? 'No subdirectories' : '没有子目录',
+                      )
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        itemCount: directoryEntries.length,
+                        separatorBuilder: (_, __) =>
+                            Divider(height: 1, color: palette.borderSubtle),
+                        itemBuilder: (context, index) {
+                          final entry = directoryEntries[index];
+                          return ListTile(
+                            dense: true,
+                            leading: Icon(
+                              LucideIcons.folder,
+                              size: 20,
+                              color: palette.accentPrimary,
+                            ),
+                            title: Text(
+                              entry.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 14,
+                              ),
+                            ),
+                            subtitle: Text(
+                              entry.path,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textTertiary,
+                                fontSize: 11,
+                              ),
+                            ),
+                            trailing: Icon(
+                              LucideIcons.chevronRight,
+                              color: palette.textTertiary,
+                            ),
+                            onTap: () => unawaited(_loadDirectory(entry.path)),
+                          );
+                        },
+                      ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
+                child: SizedBox(
+                  width: double.infinity,
+                  height: 44,
+                  child: FilledButton.icon(
+                    onPressed:
+                        _isLoading ||
+                            _error != null ||
+                            _currentPath.trim().isEmpty
+                        ? null
+                        : _selectCurrentDirectory,
+                    icon: const Icon(LucideIcons.check, size: 18),
+                    label: Text(
+                      LegacyTextLocalizer.localize('选择此目录'),
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: palette.textSecondary,
-                        fontSize: 12,
-                        height: 1.4,
-                      ),
                     ),
-                  ),
-                  const SizedBox(width: 8),
-                  IconButton(
-                    tooltip: _isEnglish ? 'Home' : '主目录',
-                    onPressed: (_listing?.home ?? '').isEmpty || _isLoading
-                        ? null
-                        : () => unawaited(_loadDirectory(_listing!.home!)),
-                    icon: const Icon(LucideIcons.house, size: 19),
-                  ),
-                  IconButton(
-                    tooltip: _isEnglish ? 'Parent' : '上级目录',
-                    onPressed: (_listing?.parent ?? '').isEmpty || _isLoading
-                        ? null
-                        : () => unawaited(_loadDirectory(_listing!.parent!)),
-                    icon: const Icon(LucideIcons.arrowUp, size: 19),
-                  ),
-                  IconButton(
-                    tooltip: _isEnglish ? 'Reload' : '刷新',
-                    onPressed: _isLoading
-                        ? null
-                        : () => unawaited(_loadDirectory(_currentPath)),
-                    icon: const Icon(LucideIcons.refreshCw, size: 19),
-                  ),
-                ],
-              ),
-            ),
-            Divider(height: 1, color: palette.borderSubtle),
-            Flexible(
-              child: _isLoading
-                  ? const Center(child: CircularProgressIndicator.adaptive())
-                  : _error != null
-                  ? _DirectoryError(
-                      message: _error!,
-                      onRetry: () => unawaited(_loadDirectory(_currentPath)),
-                    )
-                  : directoryEntries.isEmpty
-                  ? _DirectoryEmpty(
-                      message: _isEnglish ? 'No subdirectories' : '没有子目录',
-                    )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      itemCount: directoryEntries.length,
-                      separatorBuilder: (_, __) =>
-                          Divider(height: 1, color: palette.borderSubtle),
-                      itemBuilder: (context, index) {
-                        final entry = directoryEntries[index];
-                        return ListTile(
-                          dense: true,
-                          leading: Icon(
-                            LucideIcons.folder,
-                            size: 20,
-                            color: palette.accentPrimary,
-                          ),
-                          title: Text(
-                            entry.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textPrimary,
-                              fontSize: 14,
-                            ),
-                          ),
-                          subtitle: Text(
-                            entry.path,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              color: palette.textTertiary,
-                              fontSize: 11,
-                            ),
-                          ),
-                          trailing: Icon(
-                            LucideIcons.chevronRight,
-                            color: palette.textTertiary,
-                          ),
-                          onTap: () => unawaited(_loadDirectory(entry.path)),
-                        );
-                      },
-                    ),
-            ),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(18, 10, 18, 16),
-              child: SizedBox(
-                width: double.infinity,
-                height: 44,
-                child: FilledButton.icon(
-                  onPressed:
-                      _isLoading ||
-                          _error != null ||
-                          _currentPath.trim().isEmpty
-                      ? null
-                      : _selectCurrentDirectory,
-                  icon: const Icon(LucideIcons.check, size: 18),
-                  label: Text(
-                    LegacyTextLocalizer.localize('选择此目录'),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

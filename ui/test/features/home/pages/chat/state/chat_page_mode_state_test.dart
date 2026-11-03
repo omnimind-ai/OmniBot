@@ -86,6 +86,9 @@ void main() {
       ..isDeepThinking = true
       ..currentDispatchTurnId = 'task'
       ..currentThinkingStage = 2
+      ..hasMoreMessages = true
+      ..messageOffset = 37
+      ..isLoadingMore = true
       ..currentConversationId = 42
       ..currentConversation = ConversationModel(
         id: 42,
@@ -102,6 +105,9 @@ void main() {
     expect(state.messages, isEmpty);
     expect(state.pendingAttachments, isEmpty);
     expect(state.currentAiMessages, isEmpty);
+    expect(state.hasMoreMessages, isFalse);
+    expect(state.messageOffset, 0);
+    expect(state.isLoadingMore, isFalse);
     expect(state.draftMessage, isEmpty);
     expect(state.chatIslandDisplayLayer, ChatIslandDisplayLayer.mode);
     expect(state.lastAgentToolType, isNull);

@@ -1,6 +1,7 @@
 package cn.com.omnimind.baselib.database
 
 import androidx.room.Room
+import androidx.room.withTransaction
 import androidx.test.core.app.ApplicationProvider
 import android.content.Context
 import kotlinx.coroutines.runBlocking
@@ -9,6 +10,64 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class ConversationCheckpointTest {
+    @Test fun partialDisplayPageCannotReplaceCanonicalHistoryMetadata() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val dao = db.conversationDao()
+            val id = dao.insert(Conversation(
+                title = "full conversation", messageCount = 500,
+                lastMessage = "latest canonical message", createdAt = 10, updatedAt = 1000,
+            ))
+            val snapshot = dao.getById(id)!!
+            dao.updatePreservingCheckpoint(
+                snapshot.copy(messageCount = 12, lastMessage = "display preview", updatedAt = 9000),
+                preserveLatestMetadata = true,
+            )
+            val stored = dao.getById(id)!!
+            assertEquals(500, stored.messageCount)
+            assertEquals("latest canonical message", stored.lastMessage)
+            assertEquals(1000L, stored.updatedAt)
+        } finally { db.close() }
+    }
+
+    @Test fun canonicalDeletionCanReduceMetadataAndLateUiPageCannotRestoreIt() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java).build()
+        try {
+            val dao = db.conversationDao()
+            val id = dao.insert(Conversation(
+                title = "conversation before deletion", messageCount = 50,
+                lastMessage = "message 50", createdAt = 1, updatedAt = 5000,
+            ))
+            val entries = db.agentConversationEntryDao()
+            fun entry(index: Int) = AgentConversationEntry(
+                conversationId = id, conversationMode = "agent", entryId = "message-$index",
+                entryType = "assistant_message", status = "success", summary = "message $index",
+                payloadJson = "{}", createdAt = index.toLong(), updatedAt = index * 100L,
+            )
+            for (index in 1..50) entries.upsert(entry(index))
+            val stalePage = dao.getById(id)!!
+            db.withTransaction {
+                assertEquals(50, entries.deleteConversationEntries(id))
+                for (index in 1..3) entries.upsert(entry(index))
+                val last = entries.getLatestConversationEntryHeader(id)!!
+                // Exercise the repository's authoritative header/count refresh
+                // after a real canonical replacement, rather than max(old,new).
+                dao.updatePreservingCheckpoint(stalePage.copy(
+                    messageCount = entries.countConversationEntries(id),
+                    lastMessage = last.summary,
+                    updatedAt = last.updatedAt,
+                ))
+            }
+            dao.updatePreservingCheckpoint(stalePage, preserveLatestMetadata = true)
+            val stored = dao.getById(id)!!
+            assertEquals(3, stored.messageCount)
+            assertEquals("message 3", stored.lastMessage)
+            assertEquals(300L, stored.updatedAt)
+        } finally { db.close() }
+    }
+
     @Test fun lateSnapshotCannotResurrectExplicitlyClearedCheckpoint() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "checkpoint-clear-${System.nanoTime()}.db"

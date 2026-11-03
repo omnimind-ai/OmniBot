@@ -278,6 +278,25 @@ interface AgentConversationEntryDao {
         conversationMode: String
     ): Int
 
+    @Query("""
+        DELETE FROM agent_conversation_entries
+        WHERE conversationId = :conversationId AND conversationMode IN (:modes)
+          AND entryType != 'stream_event' AND entryId IN (:entryIds)
+    """)
+    suspend fun deleteVisibleEntriesById(
+        conversationId: Long, modes: List<String>, entryIds: List<String>
+    ): Int
+
+    @Query("""
+        SELECT EXISTS(SELECT 1 FROM agent_conversation_entries
+        WHERE conversationId = :conversationId AND conversationMode IN (:modes)
+          AND entryType != 'stream_event' AND entryId IN (:entryIds)
+          AND id <= :cutoffEntryDbId)
+    """)
+    suspend fun hasEntriesInContextPrefix(
+        conversationId: Long, modes: List<String>, entryIds: List<String>, cutoffEntryDbId: Long
+    ): Boolean
+
     @Query(
         """
         DELETE FROM agent_conversation_entries

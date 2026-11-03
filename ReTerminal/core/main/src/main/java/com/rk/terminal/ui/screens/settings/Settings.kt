@@ -21,7 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.nav.core.NavController
+import androidx.navigation.NavHostController
 import com.rk.components.compose.preferences.base.LocalOmniPaletteExtras
 import com.rk.components.compose.preferences.base.PreferenceGroup
 import com.rk.components.compose.preferences.base.PreferenceLayout
@@ -87,7 +87,7 @@ object InputMode {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActivity: MainActivity) {
+fun Settings(modifier: Modifier = Modifier,navController: NavHostController,mainActivity: MainActivity) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var selectedOption by remember { mutableIntStateOf(Settings.working_Mode) }
@@ -334,8 +334,8 @@ fun Settings(modifier: Modifier = Modifier,navController: NavController,mainActi
                 showSwitch = false,
                 default = false,
                 sideEffect = {
-                   if (navController.backStack.lastOrNull() != MainActivityRoutes.Customization) {
-                       navController.push(MainActivityRoutes.Customization)
+                   navController.navigate(MainActivityRoutes.Customization) {
+                       launchSingleTop = true
                    }
             }, endWidget = {
                 Icon(

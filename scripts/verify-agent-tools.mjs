@@ -23,7 +23,7 @@ const quote = s => `'${s.replaceAll("'", "'\\''")}'`;
 const probe = healthCommand
   ? `if ( ${healthCommand} ); then echo OOB_HEALTH:passed; else echo OOB_HEALTH:failed; fi`
   : 'export PATH=/root/.local/bin:/root/.npm-global/bin:$PATH; ' +
-  'for tool in node npm python3 pip3 uv kimi dsh codex-acp claude-agent-acp opencode; do ' +
+  'for tool in node npm python3 pip3 uv kimi codex-acp claude-agent-acp opencode; do ' +
   'if command -v "$tool" >/dev/null 2>&1; then echo "OOB_TOOL:$tool:present"; ' +
   'else echo "OOB_TOOL:$tool:missing"; fi; done';
 const shell = `set -eu
@@ -48,7 +48,7 @@ try {
   } else {
   const statuses = [...output.matchAll(/^OOB_TOOL:([^:]+):(present|missing)$/gm)]
     .map(([,tool,status]) => ({tool,status}));
-  assert.equal(statuses.length, 10, 'Incomplete inventory response');
+  assert.equal(statuses.length, 9, 'Incomplete inventory response');
   console.log(JSON.stringify({serial, statuses, conversationAcceptance:'not tested'}));
   if (statuses.some(s => s.status === 'missing')) process.exitCode = 1;
   }

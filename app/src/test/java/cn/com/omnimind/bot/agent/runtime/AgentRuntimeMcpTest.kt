@@ -7,8 +7,6 @@ import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.mcp.McpServerState
 import cn.com.omnimind.bot.mcp.RemoteMcpServerConfig
 import com.agentclientprotocol.model.McpServer
-import kotlinx.serialization.json.jsonObject
-import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,7 +38,7 @@ class AgentRuntimeMcpTest {
     }
 
     @Test
-    fun deepSeekHarnessUsesOfficialSessionMcpDeclaration() {
+    fun httpCapableHarnessUsesOfficialSessionMcpDeclaration() {
         val servers = buildLocalAgentAcpMcpServers(
             supportsHttp = true,
             state = runningState,
@@ -112,14 +110,7 @@ class AgentRuntimeMcpTest {
     }
 
     @Test
-    fun deepSeekCordisAndNativeTerminalCapabilitiesAreNegotiated() {
-        assertEquals(
-            "0",
-            ACP_CLIENT_CAPABILITY_META["dsh"]!!
-                .jsonObject["cordis"]!!
-                .jsonObject["protocol"]!!
-                .jsonPrimitive.content,
-        )
+    fun nativeTerminalCapabilitiesAreNegotiated() {
         assertEquals("true", ACP_CLIENT_CAPABILITY_META["terminal_output"]!!.toString())
     }
 
@@ -177,45 +168,6 @@ class AgentRuntimeMcpTest {
                 modelId = "deepseek-v4",
             ),
             migrated,
-        )
-    }
-
-    @Test
-    fun conversationHarnessOwnerWinsOverAConflictingRequestedHarness() {
-        assertEquals(
-            "codex-acp",
-            resolveConversationHarnessId(
-                chatOnly = false,
-                requestedAgentId = "deepseek-harness",
-                conversationAgentId = "codex-acp",
-                conversationBindingAgentId = null,
-                sessionAgentId = null,
-                selectedAgentId = "xiaowan",
-            ),
-        )
-        assertEquals(
-            "deepseek-harness",
-            resolveConversationHarnessId(
-                chatOnly = false,
-                requestedAgentId = "deepseek-harness",
-                conversationAgentId = null,
-                conversationBindingAgentId = null,
-                // A new conversation may briefly carry the previous page's
-                // session id. The explicit new Harness must win over it.
-                sessionAgentId = "codex-acp",
-                selectedAgentId = "xiaowan",
-            ),
-        )
-        assertEquals(
-            AcpAgentProfileStore.XIAOWAN_AGENT_ID,
-            resolveConversationHarnessId(
-                chatOnly = true,
-                requestedAgentId = "deepseek-harness",
-                conversationAgentId = "codex-acp",
-                conversationBindingAgentId = null,
-                sessionAgentId = null,
-                selectedAgentId = "deepseek-harness",
-            ),
         )
     }
 

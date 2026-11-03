@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/core/mixins/page_lifecycle_mixin.dart';
@@ -25,6 +27,7 @@ import 'package:ui/theme/app_text_styles.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
 
 /// 记忆建议的前三条记录ID存储key
 const String kMemorySuggestionTopThreeIdsKey =
@@ -728,24 +731,27 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
                   // ),
                   SafeArea(
                     top: false,
-                    child: Column(
-                      children: [
-                        // 主内容
-                        Expanded(
-                          child: _isLoading
-                              ? _buildLoadingIndicator()
-                              : localMemoryCards.isEmpty && !hasMem0Section
-                              ? _buildEmptyState()
-                              : _buildContent(filteredCards),
-                        ),
-                        // 选择模式下的底部删除按钮栏
-                        SelectionBottomBar(
-                          isActive: _isSelectionMode,
-                          onDeletePressed: _selectedCardIds.isNotEmpty
-                              ? _batchDeleteSelectedCards
-                              : null,
-                        ),
-                      ],
+                    child: OmniContentWidth(
+                      key: const ValueKey('memory-content-column'),
+                      child: Column(
+                        children: [
+                          // 主内容
+                          Expanded(
+                            child: _isLoading
+                                ? _buildLoadingIndicator()
+                                : localMemoryCards.isEmpty && !hasMem0Section
+                                ? _buildEmptyState()
+                                : _buildContent(filteredCards),
+                          ),
+                          // 选择模式下的底部删除按钮栏
+                          SelectionBottomBar(
+                            isActive: _isSelectionMode,
+                            onDeletePressed: _selectedCardIds.isNotEmpty
+                                ? _batchDeleteSelectedCards
+                                : null,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
@@ -926,88 +932,24 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
     );
   }
 
-  Widget _buildMemoryTabSwitcher() {
-    final palette = context.omniPalette;
-    final isDark = context.isDarkTheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      child: Container(
-        height: 44,
-        padding: const EdgeInsets.all(3),
-        decoration: BoxDecoration(
-          color: isDark ? palette.segmentTrack : palette.surfacePrimary,
-          borderRadius: BorderRadius.circular(999),
-          border: Border.all(color: palette.borderSubtle),
+  Widget _buildMemoryTabSwitcher() => Padding(
+    padding: const EdgeInsets.symmetric(horizontal: 16),
+    child: OmniSegmentedSlider<int>(
+      value: _currentMemoryTab,
+      keyPrefix: 'memory-view',
+      options: [
+        OmniSegmentedOption(
+          value: _localMemoryTab,
+          label: LegacyTextLocalizer.localize('短期记忆'),
         ),
-        child: Stack(
-          children: [
-            AnimatedAlign(
-              duration: const Duration(milliseconds: 280),
-              curve: Curves.easeOutCubic,
-              alignment: _currentMemoryTab == _localMemoryTab
-                  ? Alignment.centerLeft
-                  : Alignment.centerRight,
-              child: FractionallySizedBox(
-                widthFactor: 0.5,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(horizontal: 1),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(999),
-                    color: palette.textPrimary,
-                  ),
-                ),
-              ),
-            ),
-            Row(
-              children: [
-                _buildMemoryTabButton(
-                  label: LegacyTextLocalizer.localize('短期记忆'),
-                  tabIndex: _localMemoryTab,
-                ),
-                _buildMemoryTabButton(
-                  label: LegacyTextLocalizer.localize('长期记忆'),
-                  tabIndex: _cloudMemoryTab,
-                ),
-              ],
-            ),
-          ],
+        OmniSegmentedOption(
+          value: _cloudMemoryTab,
+          label: LegacyTextLocalizer.localize('长期记忆'),
         ),
-      ),
-    );
-  }
-
-  Widget _buildMemoryTabButton({required String label, required int tabIndex}) {
-    final palette = context.omniPalette;
-    final selected = _currentMemoryTab == tabIndex;
-
-    return Expanded(
-      child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
-        onTap: _isSelectionMode ? null : () => _switchMemoryTab(tabIndex),
-        child: Center(
-          child: AnimatedScale(
-            duration: const Duration(milliseconds: 220),
-            curve: Curves.easeOutCubic,
-            scale: selected ? 1 : 0.97,
-            child: AnimatedDefaultTextStyle(
-              duration: const Duration(milliseconds: 220),
-              curve: Curves.easeOutCubic,
-              style: TextStyle(
-                color: selected
-                    ? palette.pageBackground
-                    : palette.textSecondary,
-                fontSize: 15,
-                fontWeight: selected
-                    ? AppTextStyles.fontWeightSemiBold
-                    : AppTextStyles.fontWeightMedium,
-              ),
-              child: Text(label),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+      ],
+      onChanged: _isSelectionMode ? null : _switchMemoryTab,
+    ),
+  );
 
   Widget _buildLocalMemoryPage(
     List<MemoryCardModel> filteredCards,
@@ -1279,7 +1221,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   }
 
   void _showMem0MemoryDetail(Mem0MemoryItem item) {
-    showModalBottomSheet(
+    showOmniGlassBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -1290,148 +1232,155 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
             .where((entry) => entry.value != null)
             .toList();
 
-        return Container(
+        return ConstrainedBox(
           constraints: BoxConstraints(
             maxHeight: MediaQuery.of(context).size.height * 0.78,
           ),
-          decoration: BoxDecoration(
-            color: palette.surfacePrimary,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              const SizedBox(height: 12),
-              Container(
-                width: 42,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: palette.borderStrong,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        LegacyTextLocalizer.localize('长期记忆'),
-                        style: TextStyle(
-                          color: palette.accentPrimary,
-                          fontSize: AppTextStyles.fontSizeSmall,
-                          fontWeight: AppTextStyles.fontWeightMedium,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      Text(
-                        item.memory,
-                        style: TextStyle(
-                          color: palette.textPrimary,
-                          fontSize: AppTextStyles.fontSizeH3,
-                          fontWeight: AppTextStyles.fontWeightSemiBold,
-                          height: AppTextStyles.lineHeightH2,
-                        ),
-                      ),
-                      const SizedBox(height: 14),
-                      Wrap(
-                        spacing: 10,
-                        runSpacing: 10,
+          child: OmniGlassSheet(
+            child: SafeArea(
+              top: false,
+              child: Column(
+                children: [
+                  const SizedBox(height: 12),
+                  Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: palette.borderStrong,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 28),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          OutlinedButton.icon(
-                            onPressed: _isMem0Mutating
-                                ? null
-                                : () async {
-                                    Navigator.of(context).pop();
-                                    await Future<void>.delayed(
-                                      const Duration(milliseconds: 120),
-                                    );
-                                    await _editMem0Memory(item);
-                                  },
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: palette.accentPrimary,
-                              side: BorderSide(color: palette.borderStrong),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(12),
+                          Text(
+                            LegacyTextLocalizer.localize('长期记忆'),
+                            style: TextStyle(
+                              color: palette.accentPrimary,
+                              fontSize: AppTextStyles.fontSizeSmall,
+                              fontWeight: AppTextStyles.fontWeightMedium,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Text(
+                            item.memory,
+                            style: TextStyle(
+                              color: palette.textPrimary,
+                              fontSize: AppTextStyles.fontSizeH3,
+                              fontWeight: AppTextStyles.fontWeightSemiBold,
+                              height: AppTextStyles.lineHeightH2,
+                            ),
+                          ),
+                          const SizedBox(height: 14),
+                          Wrap(
+                            spacing: 10,
+                            runSpacing: 10,
+                            children: [
+                              OutlinedButton.icon(
+                                onPressed: _isMem0Mutating
+                                    ? null
+                                    : () async {
+                                        Navigator.of(context).pop();
+                                        await Future<void>.delayed(
+                                          const Duration(milliseconds: 120),
+                                        );
+                                        await _editMem0Memory(item);
+                                      },
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: palette.accentPrimary,
+                                  side: BorderSide(color: palette.borderStrong),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 12,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                icon: const Icon(Icons.edit_outlined, size: 16),
+                                label: Text(context.l10n.memoryEditTitle),
                               ),
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 8,
+                              TextButton.icon(
+                                onPressed: _isMem0Mutating
+                                    ? null
+                                    : () async {
+                                        Navigator.of(context).pop();
+                                        await Future<void>.delayed(
+                                          const Duration(milliseconds: 120),
+                                        );
+                                        await _deleteMem0Memory(item);
+                                      },
+                                style: TextButton.styleFrom(
+                                  foregroundColor: AppColors.alertRed,
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 6,
+                                    vertical: 8,
+                                  ),
+                                ),
+                                icon: const Icon(
+                                  Icons.delete_outline,
+                                  size: 16,
+                                ),
+                                label: Text(context.trLegacy('删除')),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 14),
+                          if (item.categories.isNotEmpty)
+                            Wrap(
+                              spacing: 8,
+                              runSpacing: 8,
+                              children: item.categories
+                                  .map(_buildMem0DetailPill)
+                                  .toList(),
+                            ),
+                          if (item.categories.isNotEmpty)
+                            const SizedBox(height: 18),
+                          _buildMem0DetailRow(
+                            context.l10n.memoryIdLabel,
+                            item.id,
+                          ),
+                          if ((item.userId ?? '').isNotEmpty)
+                            _buildMem0DetailRow(
+                              context.l10n.skillUser,
+                              item.userId!,
+                            ),
+                          if ((item.agentId ?? '').isNotEmpty)
+                            _buildMem0DetailRow('Agent', item.agentId!),
+                          if (item.score != null)
+                            _buildMem0DetailRow(
+                              context.l10n.memoryMatchScore,
+                              '${(item.score! * 100).round()}%',
+                            ),
+                          if (metadataEntries.isNotEmpty) ...[
+                            const SizedBox(height: 18),
+                            Text(
+                              context.l10n.memoryAdditionalInfo,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 15,
+                                fontWeight: AppTextStyles.fontWeightSemiBold,
                               ),
                             ),
-                            icon: const Icon(Icons.edit_outlined, size: 16),
-                            label: Text(context.l10n.memoryEditTitle),
-                          ),
-                          TextButton.icon(
-                            onPressed: _isMem0Mutating
-                                ? null
-                                : () async {
-                                    Navigator.of(context).pop();
-                                    await Future<void>.delayed(
-                                      const Duration(milliseconds: 120),
-                                    );
-                                    await _deleteMem0Memory(item);
-                                  },
-                            style: TextButton.styleFrom(
-                              foregroundColor: AppColors.alertRed,
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 8,
-                              ),
-                            ),
-                            icon: const Icon(Icons.delete_outline, size: 16),
-                            label: Text(context.trLegacy('删除')),
-                          ),
+                            const SizedBox(height: 10),
+                            ...metadataEntries.map((entry) {
+                              final value =
+                                  entry.value is List || entry.value is Map
+                                  ? entry.value.toString()
+                                  : '${entry.value}';
+                              return _buildMem0DetailRow(entry.key, value);
+                            }),
+                          ],
                         ],
                       ),
-                      const SizedBox(height: 14),
-                      if (item.categories.isNotEmpty)
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: item.categories
-                              .map(_buildMem0DetailPill)
-                              .toList(),
-                        ),
-                      if (item.categories.isNotEmpty)
-                        const SizedBox(height: 18),
-                      _buildMem0DetailRow(context.l10n.memoryIdLabel, item.id),
-                      if ((item.userId ?? '').isNotEmpty)
-                        _buildMem0DetailRow(
-                          context.l10n.skillUser,
-                          item.userId!,
-                        ),
-                      if ((item.agentId ?? '').isNotEmpty)
-                        _buildMem0DetailRow('Agent', item.agentId!),
-                      if (item.score != null)
-                        _buildMem0DetailRow(
-                          context.l10n.memoryMatchScore,
-                          '${(item.score! * 100).round()}%',
-                        ),
-                      if (metadataEntries.isNotEmpty) ...[
-                        const SizedBox(height: 18),
-                        Text(
-                          context.l10n.memoryAdditionalInfo,
-                          style: TextStyle(
-                            color: palette.textPrimary,
-                            fontSize: 15,
-                            fontWeight: AppTextStyles.fontWeightSemiBold,
-                          ),
-                        ),
-                        const SizedBox(height: 10),
-                        ...metadataEntries.map((entry) {
-                          final value =
-                              entry.value is List || entry.value is Map
-                              ? entry.value.toString()
-                              : '${entry.value}';
-                          return _buildMem0DetailRow(entry.key, value);
-                        }),
-                      ],
-                    ],
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
+            ),
           ),
         );
       },
@@ -1462,7 +1411,7 @@ class MemoryCenterPageState extends State<MemoryCenterPage>
   Future<Mem0MemoryEditorResult?> _showMem0MemoryEditor({
     Mem0MemoryItem? initialItem,
   }) async {
-    return showModalBottomSheet<Mem0MemoryEditorResult>(
+    return showOmniGlassBottomSheet<Mem0MemoryEditorResult>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,

@@ -1,12 +1,184 @@
 import 'dart:async';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/widgets/omni_menu.dart';
 import 'package:ui/widgets/settings_ui.dart';
+import 'package:ui/widgets/flclash/popup.dart';
+import 'package:ui/theme/theme_context.dart';
 
 void main() {
+  testWidgets('selection keeps the source value until its return finishes', (
+    tester,
+  ) async {
+    var selected = 'first';
+    var changes = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: StatefulBuilder(
+            builder: (context, setState) => Center(
+              child: OmniSettingsDropdown<String>(
+                dropdownKey: const ValueKey('return-source'),
+                value: selected,
+                options: const [
+                  OmniSettingsOption(value: 'first', label: 'First'),
+                  OmniSettingsOption(value: 'second', label: 'Second'),
+                ],
+                onChanged: (value) => setState(() {
+                  selected = value!;
+                  changes++;
+                }),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    final control = find.byKey(const ValueKey('return-source'));
+    final bounds = tester.getRect(control);
+    await tester.tap(control);
+    await tester.pumpAndSettle();
+    final transition = tester.widget<FlClashPopupTransition>(
+      find.byType(FlClashPopupTransition),
+    );
+    expect(transition.anchor, bounds);
+    expect(
+      transition.source!.color,
+      tester
+          .element(control)
+          .omniPalette
+          .surfaceSecondary
+          .withValues(alpha: .8),
+    );
+    await tester.tap(find.text('Second'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(selected, 'first');
+    expect(changes, 0);
+    expect(find.byType(FlClashPopupTransition), findsOneWidget);
+    expect(tester.getRect(control), bounds);
+    await tester.pumpAndSettle();
+    expect(selected, 'second');
+    expect(changes, 1);
+    expect(find.byType(FlClashPopupTransition), findsNothing);
+  });
+
+  testWidgets('field source excludes its helper and keeps the actual outline', (
+    tester,
+  ) async {
+    const fill = Color(0xFFBBDDEE);
+    const outline = OutlineInputBorder(
+      borderRadius: BorderRadius.all(Radius.circular(12)),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Padding(
+            padding: const EdgeInsets.all(24),
+            child: OmniSettingsDropdown<String>(
+              value: 'first',
+              decoration: const InputDecoration(
+                labelText: 'Model',
+                filled: true,
+                fillColor: fill,
+                border: outline,
+                enabledBorder: outline,
+                focusedBorder: outline,
+                helperText: 'Explanation stays outside the source',
+              ),
+              options: const [
+                OmniSettingsOption(value: 'first', label: 'First'),
+                OmniSettingsOption(value: 'second', label: 'Second'),
+              ],
+              onChanged: (_) {},
+            ),
+          ),
+        ),
+      ),
+    );
+    final label = find.text('First');
+    final box = InputDecorator.containerOf(tester.element(label))!;
+    final fieldBounds = box.localToGlobal(Offset.zero) & box.size;
+    final labelBox = tester.renderObject<RenderBox>(find.text('Model'));
+    final labelBounds = MatrixUtils.transformRect(
+      labelBox.getTransformTo(null),
+      labelBox.paintBounds,
+    );
+    expect(labelBounds.top, lessThan(fieldBounds.top));
+    await tester.tap(label);
+    await tester.pumpAndSettle();
+    final transition = tester.widget<FlClashPopupTransition>(
+      find.byType(FlClashPopupTransition),
+    );
+    expect(transition.anchor, fieldBounds);
+    expect(transition.source!.color, fill);
+    final pixelRatio = tester.view.devicePixelRatio;
+    final snapshot = transition.source!.image.value!;
+    expect(snapshot.height / pixelRatio, greaterThan(fieldBounds.height));
+    final bytes = await tester.runAsync(
+      () => snapshot.toByteData(format: ui.ImageByteFormat.rawRgba),
+    );
+    final upperRows = ((fieldBounds.top - labelBounds.top) * pixelRatio)
+        .floor();
+    var paintedLabelPixels = 0;
+    for (var y = 0; y < upperRows; y++) {
+      for (var x = 0; x < snapshot.width; x++) {
+        if (bytes!.getUint8((y * snapshot.width + x) * 4 + 3) != 0) {
+          paintedLabelPixels++;
+        }
+      }
+    }
+    expect(
+      paintedLabelPixels,
+      greaterThan(0),
+      reason: 'the label above the outline must remain in the source snapshot',
+    );
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    expect(find.text('Explanation stays outside the source'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a covered page cannot open its prepared selector late', (
+    tester,
+  ) async {
+    final gate = Completer<void>();
+    final navigator = GlobalKey<NavigatorState>();
+    await tester.pumpWidget(
+      MaterialApp(
+        navigatorKey: navigator,
+        home: Scaffold(
+          body: OmniSettingsDropdown<String>(
+            value: 'first',
+            options: const [
+              OmniSettingsOption(value: 'first', label: 'First'),
+              OmniSettingsOption(value: 'second', label: 'Second'),
+            ],
+            onBeforeOpen: () => gate.future,
+            onChanged: (_) => fail('Covered page changed selection'),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('First'));
+    unawaited(
+      navigator.currentState!.push(
+        MaterialPageRoute<void>(
+          builder: (_) => const Scaffold(body: Text('Another page')),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('Another page'), findsOneWidget);
+    expect(find.byType(FlClashPopupTransition), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final alignment in [
     Alignment.topLeft,
     Alignment.topRight,

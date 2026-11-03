@@ -6,6 +6,7 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -20,15 +21,14 @@ class AgentConversationModePolicyTest {
     fun normalConversationAlwaysUsesXiaowanAndRejectsHarnessSwitch() {
         val resolution = AgentConversationModePolicy.resolveHarness(
             conversationMode = AgentConversationModePolicy.NORMAL_MODE,
-            requestedAgentId = "dsh",
+            requestedAgentId = "opencode-acp",
             conversationAgentId = "xiaowan-acp",
             sessionAgentId = "xiaowan-acp",
-            selectedAgentId = "dsh",
             xiaowanAgentId = "xiaowan-acp",
         )
 
         assertEquals("xiaowan-acp", resolution.agentId)
-        assertEquals("dsh", resolution.conflictWithAgentId)
+        assertEquals("xiaowan-acp", resolution.conflictWithAgentId)
     }
 
     @Test
@@ -36,13 +36,12 @@ class AgentConversationModePolicyTest {
         val resolution = AgentConversationModePolicy.resolveHarness(
             conversationMode = "agent",
             requestedAgentId = null,
-            conversationAgentId = "dsh",
-            sessionAgentId = "xiaowan-acp",
-            selectedAgentId = "codex",
+            conversationAgentId = "opencode-acp",
+            sessionAgentId = "opencode-acp",
             xiaowanAgentId = "xiaowan-acp",
         )
 
-        assertEquals("dsh", resolution.agentId)
+        assertEquals("opencode-acp", resolution.agentId)
         assertNull(resolution.conflictWithAgentId)
     }
 
@@ -51,14 +50,13 @@ class AgentConversationModePolicyTest {
         val resolution = AgentConversationModePolicy.resolveHarness(
             conversationMode = "agent",
             requestedAgentId = "codex",
-            conversationAgentId = "dsh",
+            conversationAgentId = "opencode-acp",
             sessionAgentId = null,
-            selectedAgentId = "codex",
             xiaowanAgentId = "xiaowan-acp",
         )
 
-        assertEquals("dsh", resolution.agentId)
-        assertEquals("dsh", resolution.conflictWithAgentId)
+        assertEquals("opencode-acp", resolution.agentId)
+        assertEquals("opencode-acp", resolution.conflictWithAgentId)
     }
 
     @Test
@@ -68,12 +66,91 @@ class AgentConversationModePolicyTest {
             requestedAgentId = "codex",
             conversationAgentId = null,
             sessionAgentId = null,
-            selectedAgentId = "dsh",
             xiaowanAgentId = "xiaowan-acp",
         )
 
         assertEquals("codex", resolution.agentId)
         assertNull(resolution.conflictWithAgentId)
+    }
+
+    @Test
+    fun newAgentRequestsRequireAnExplicitOwner() {
+        for (mode in listOf(null, "agent", "codex", "acp", "coding", "subagent")) {
+            val error = assertThrows(IllegalArgumentException::class.java) {
+                AgentConversationModePolicy.resolveHarness(
+                    conversationMode = mode,
+                    requestedAgentId = " ",
+                    conversationAgentId = null,
+                    sessionAgentId = null,
+                    xiaowanAgentId = "xiaowan-acp",
+                )
+            }
+            assertTrue(error.message.orEmpty().startsWith("agent_identity_required:"))
+        }
+    }
+
+    @Test
+    fun sessionOwnerRecoversAnOlderConversationWithoutChoosingAnotherAgent() {
+        val resolution = AgentConversationModePolicy.resolveHarness(
+            conversationMode = "agent",
+            requestedAgentId = null,
+            conversationAgentId = null,
+            sessionAgentId = " codex-remote ",
+            xiaowanAgentId = "xiaowan-acp",
+        )
+        assertEquals("codex-remote", resolution.agentId)
+        assertNull(resolution.conflictWithAgentId)
+    }
+
+    @Test
+    fun conflictingConversationAndSessionOwnersAreRejected() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            AgentConversationModePolicy.resolveHarness(
+                conversationMode = "agent",
+                requestedAgentId = null,
+                conversationAgentId = "xiaowan-acp",
+                sessionAgentId = "opencode-acp",
+                xiaowanAgentId = "xiaowan-acp",
+            )
+        }
+        assertTrue(error.message.orEmpty().startsWith("agent_owner_conflict:"))
+    }
+
+    @Test
+    fun explicitProductModesSelectXiaowanWithoutAGlobalPreference() {
+        for (mode in listOf("normal", "chat_only")) {
+            val resolution = AgentConversationModePolicy.resolveHarness(
+                conversationMode = mode,
+                requestedAgentId = null,
+                conversationAgentId = null,
+                sessionAgentId = null,
+                xiaowanAgentId = "xiaowan-acp",
+            )
+            assertEquals("xiaowan-acp", resolution.agentId)
+            assertNull(resolution.conflictWithAgentId)
+        }
+    }
+
+    @Test
+    fun explicitProductModesCannotReplaceExistingOwners() {
+        for (mode in listOf("normal", "chat_only")) {
+            for ((conversationOwner, sessionOwner) in listOf(
+                "opencode-acp" to null,
+                null to "codex-remote",
+                "xiaowan-acp" to "opencode-acp",
+            )) {
+                val error = assertThrows(IllegalArgumentException::class.java) {
+                    AgentConversationModePolicy.resolveHarness(
+                        conversationMode = mode,
+                        requestedAgentId = "xiaowan-acp",
+                        conversationAgentId = conversationOwner,
+                        sessionAgentId = sessionOwner,
+                        xiaowanAgentId = "xiaowan-acp",
+                    )
+                }
+                assertTrue(error.message.orEmpty().startsWith("agent_owner_conflict:"))
+            }
+        }
     }
 
     @Test

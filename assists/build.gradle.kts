@@ -29,6 +29,9 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 kotlin {
@@ -45,4 +48,5 @@ dependencies {
     implementation(libs.androidx.core.ktx)
     implementation(libs.bouncycastle)
     testImplementation(libs.junit)
+    testImplementation(libs.okhttp.mockwebserver)
 }

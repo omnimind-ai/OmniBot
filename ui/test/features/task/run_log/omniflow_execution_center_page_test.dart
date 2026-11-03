@@ -175,6 +175,36 @@ void main() {
         .setMockMethodCallHandler(specialPermissionChannel, null);
   });
 
+  testWidgets('Pad execution tabs and lists share the header content column', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 700);
+    tester.view.devicePixelRatio = 1;
+    tester.view.viewPadding = const FakeViewPadding(bottom: 34);
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetViewPadding);
+    await tester.pumpWidget(
+      const MaterialApp(
+        locale: Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: OmniFlowExecutionCenterPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final tabs = tester.getRect(find.byType(TabBar));
+    final list = find.byType(ListView);
+    expect(tabs.width, 840);
+    expect(tabs.center.dx, 600);
+    expect(tester.getRect(list).width, tabs.width);
+    expect((tester.widget<ListView>(list).padding! as EdgeInsets).bottom, 40);
+    await tester.tap(find.text('运行记录'));
+    await tester.pumpAndSettle();
+    expect(find.text('完成演示'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('loads only the active tab with a small first page', (
     tester,
   ) async {

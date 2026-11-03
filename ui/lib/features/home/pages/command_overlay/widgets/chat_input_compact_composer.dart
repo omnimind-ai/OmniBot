@@ -6,36 +6,21 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
   /// Only padding and the space below it animate; IME composition, selection
   /// and the controller remain owned by the same TextField element.
   Widget _buildMinimalComposer() {
-    final palette = context.omniPalette;
     return ValueListenableBuilder<ChatComposerState>(
       valueListenable: _composerStateMachine,
       builder: (context, state, _) {
         final expanded = state.hasFocus || _compactExpansionHeld;
         final duration = _compactAnimationDuration;
-        return DecoratedBox(
+        final surface = ChatComposerSurface(
           key: const ValueKey('chat-minimal-composer'),
-          decoration: BoxDecoration(
-            color: palette.surfacePrimary,
-            borderRadius: BorderRadius.circular(25),
-            boxShadow: [
-              BoxShadow(
-                color: palette.shadowColor.withValues(
-                  alpha: context.isDarkTheme ? 0.18 : 0.07,
-                ),
-                blurRadius: 20,
-                offset: const Offset(0, 6),
-              ),
-            ],
-          ),
+          expanded: expanded,
+          duration: duration,
           child: Padding(
+            key: _compactComposerSurfaceKey,
             padding: const EdgeInsets.all(7),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (widget.attachments.isNotEmpty) ...[
-                  _buildAttachmentPreview(),
-                  const SizedBox(height: 8),
-                ],
                 if ((widget.selectedModelOverrideId ?? '').trim().isNotEmpty)
                   IgnorePointer(
                     ignoring: !expanded,
@@ -155,6 +140,19 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
               ],
             ),
           ),
+        );
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (widget.attachments.isNotEmpty) ...[
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 7),
+                child: _buildAttachmentPreview(),
+              ),
+              const SizedBox(height: 8),
+            ],
+            surface,
+          ],
         );
       },
     );

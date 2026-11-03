@@ -63,6 +63,21 @@ void main() {
     }
   }
 
+  Future<void> finishDialogTransition(WidgetTester tester) async {
+    // The memory page has a repeating background animation. Wait only for
+    // the confirmation route so unrelated animation cannot stall this test.
+    await tester.pump();
+    final route = ModalRoute.of(tester.element(find.text('Delete').last))!;
+    for (
+      var frame = 0;
+      frame < 20 && route.animation?.status != AnimationStatus.completed;
+      frame++
+    ) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    expect(route.animation?.status, AnimationStatus.completed);
+  }
+
   for (final batch in [false, true]) {
     testWidgets(
       '${batch ? 'batch' : 'single'} deletion confirms and refreshes persisted list',
@@ -77,7 +92,7 @@ void main() {
         tester
             .widget<SelectionBottomBar>(find.byType(SelectionBottomBar))
             .onDeletePressed!();
-        await tester.pump(const Duration(milliseconds: 300));
+        await finishDialogTransition(tester);
         expect(deletes, isEmpty);
         expect(find.text('删除短期记忆？'), findsOneWidget);
         await tester.tap(find.text('Delete').last);
@@ -116,9 +131,12 @@ void main() {
       tester
           .widget<SelectionBottomBar>(find.byType(SelectionBottomBar))
           .onDeletePressed!();
-      await tester.pump(const Duration(milliseconds: 300));
+      await finishDialogTransition(tester);
       await tester.tap(find.text('Cancel').last);
-      await tester.pump(const Duration(milliseconds: 300));
+      for (var frame = 0; frame < 10; frame++) {
+        await tester.pump(const Duration(milliseconds: 100));
+      }
+      expect(find.text('删除短期记忆？'), findsNothing);
       expect(deletes, isEmpty);
       expect(entries.length, 2);
       await tester.pumpWidget(const SizedBox());
@@ -135,7 +153,7 @@ void main() {
     tester
         .widget<SelectionBottomBar>(find.byType(SelectionBottomBar))
         .onDeletePressed!();
-    await tester.pump(const Duration(milliseconds: 300));
+    await finishDialogTransition(tester);
     await tester.tap(find.text('Delete').last);
     for (var i = 0; i < 6; i++) {
       await tester.pump(const Duration(milliseconds: 100));
@@ -146,6 +164,33 @@ void main() {
       tester.widget<MemoryCardList>(find.byType(MemoryCardList)).cards.length,
       2,
     );
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('tablet memory selection stays aligned and survives resize', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1366, 1024);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await mount(tester);
+    final state = tester.state(find.byType(MemoryCenterPage));
+    expect(tester.getSize(find.byType(PageView)).width, 840);
+    expect(tester.getSize(find.byType(Scaffold)).width, 1366);
+    await tester.longPress(find.text('Memory a'));
+    await tester.pump();
+    final selectionBar = find.byType(SelectionBottomBar);
+    expect(tester.widget<SelectionBottomBar>(selectionBar).isActive, isTrue);
+    expect(tester.getSize(selectionBar).width, 840);
+    tester.view.physicalSize = const Size(600, 900);
+    await tester.pump();
+    expect(tester.state(find.byType(MemoryCenterPage)), same(state));
+    expect(tester.widget<SelectionBottomBar>(selectionBar).isActive, isTrue);
+    expect(tester.getSize(find.byType(PageView)).width, 600);
+    expect(tester.getSize(selectionBar).width, 600);
+    expect(deletes, isEmpty);
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());
   });
 }

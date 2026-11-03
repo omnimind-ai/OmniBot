@@ -45,6 +45,10 @@ class ChatMessageList extends StatefulWidget {
   final bool hasMore;
   final Set<String> activeAgentTurnIds;
   final bool useAcpPresentation;
+
+  /// Pure chat keeps reasoning and answers while hiding execution UI. Apply
+  /// this at the timeline cache boundary so the observable source stays live.
+  final bool hideToolCards;
   final String? activeAcpAgentId;
   final AppBackgroundVisualProfile visualProfile;
   final AppBackgroundConfig appearanceConfig;
@@ -74,6 +78,7 @@ class ChatMessageList extends StatefulWidget {
     this.hasMore = false,
     this.activeAgentTurnIds = const <String>{},
     this.useAcpPresentation = false,
+    this.hideToolCards = false,
     this.activeAcpAgentId,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
     this.appearanceConfig = AppBackgroundConfig.defaults,
@@ -144,6 +149,8 @@ class _ChatMessageListState extends State<ChatMessageList> {
   int _timelineCacheStructureRevision = -1;
   Set<String>? _timelineCacheActiveTaskIds;
   String? _timelineCacheAgentId;
+  bool? _timelineCacheHideToolCards;
+  bool _timelineHasVisibleMessages = false;
   final Map<String, GlobalKey> _entryRowKeys = <String, GlobalKey>{};
   int _navigatorJumpSerial = 0;
   bool _navigatorJumpUserInterrupted = false;
@@ -270,6 +277,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
     }
     _observableMessages?.removeListener(_handleObservableMessagesChanged);
     _observableMessages = nextObservable;
+    _timelineEntriesCache = null;
     _observableMessages?.addListener(_handleObservableMessagesChanged);
   }
 
@@ -552,34 +560,46 @@ class _ChatMessageListState extends State<ChatMessageList> {
   List<AgentRunTimelineEntry> _resolveTimelineEntries(
     List<ChatMessageModel> messageSource,
   ) {
+    List<AgentRunTimelineEntry> buildEntries() {
+      final visibleMessages = widget.hideToolCards
+          ? messageSource
+                .where((message) {
+                  final type = message.cardData?['type']?.toString();
+                  return type != 'agent_tool_summary' &&
+                      type != 'agent_request';
+                })
+                .toList(growable: false)
+          : List<ChatMessageModel>.from(messageSource);
+      _timelineHasVisibleMessages = visibleMessages.isNotEmpty;
+      return buildAgentRunTimelineEntries(
+        visibleMessages,
+        activeTaskIds: widget.activeAgentTurnIds,
+        conversationAgentId: widget.activeAcpAgentId,
+      );
+    }
+
     final observable = messageSource is ObservableChatMessageList
         ? messageSource
         : null;
     if (observable == null) {
-      return buildAgentRunTimelineEntries(
-        List<ChatMessageModel>.from(messageSource),
-        activeTaskIds: widget.activeAgentTurnIds,
-        conversationAgentId: widget.activeAcpAgentId,
-      );
+      return buildEntries();
     }
     final cached = _timelineEntriesCache;
     if (cached != null &&
         identical(_timelineCacheSource, observable) &&
         _timelineCacheStructureRevision == observable.structureRevision &&
         setEquals(_timelineCacheActiveTaskIds, widget.activeAgentTurnIds) &&
-        _timelineCacheAgentId == widget.activeAcpAgentId) {
+        _timelineCacheAgentId == widget.activeAcpAgentId &&
+        _timelineCacheHideToolCards == widget.hideToolCards) {
       return cached;
     }
-    final entries = buildAgentRunTimelineEntries(
-      List<ChatMessageModel>.from(observable),
-      activeTaskIds: widget.activeAgentTurnIds,
-      conversationAgentId: widget.activeAcpAgentId,
-    );
+    final entries = buildEntries();
     _timelineEntriesCache = entries;
     _timelineCacheSource = observable;
     _timelineCacheStructureRevision = observable.structureRevision;
     _timelineCacheActiveTaskIds = Set<String>.from(widget.activeAgentTurnIds);
     _timelineCacheAgentId = widget.activeAcpAgentId;
+    _timelineCacheHideToolCards = widget.hideToolCards;
     return entries;
   }
 
@@ -668,68 +688,67 @@ class _ChatMessageListState extends State<ChatMessageList> {
 
   @override
   Widget build(BuildContext context) {
-    final reservedBottomInset = widget.bottomOverlayInset
-        .clamp(0.0, double.infinity)
-        .toDouble();
     final pageBackgroundColor =
         !widget.appearanceConfig.isActive && context.isDarkTheme
         ? context.omniPalette.pageBackground
         : null;
 
+    final messageSource = _observableMessages ?? widget.messages;
+    final timelineEntries = _resolveTimelineEntries(messageSource);
     final Widget content;
-    if (widget.messages.isEmpty) {
+    if (!_timelineHasVisibleMessages) {
       _historyAnchorEntryKey = null;
       final usePaletteText =
           !widget.appearanceConfig.isActive &&
           widget.appearanceConfig.chatTextColorMode !=
               AppBackgroundTextColorMode.custom;
+      final greeting = ChatEmptyGreeting(
+        primaryTextColor: usePaletteText
+            ? context.omniPalette.textPrimary
+            : widget.visualProfile.primaryTextColor,
+        secondaryTextColor: usePaletteText
+            ? context.omniPalette.textSecondary
+            : widget.visualProfile.secondaryTextColor,
+        accentColor: context.omniPalette.accentPrimary,
+        quickPrompts: widget.emptyGreetingQuickPrompts,
+        pinnedQuickPromptIds: widget.emptyGreetingPinnedQuickPromptIds,
+        onQuickPromptSelected: widget.onQuickPromptSelected,
+        agentName: widget.emptyGreetingAgentName,
+        agentWorkspaceName: widget.emptyGreetingAgentWorkspaceName,
+        onAgentWorkspaceTap: widget.onEmptyGreetingAgentWorkspaceTap,
+      );
       content = widget.showEmptyGreeting
           ? GestureDetector(
               onVerticalDragUpdate: (_) {},
               behavior: HitTestBehavior.opaque,
-              child: AnimatedAlign(
-                duration: const Duration(milliseconds: 280),
-                curve: Curves.easeInOutCubic,
-                alignment: widget.liftEmptyGreeting
-                    ? const Alignment(-1, -1)
-                    : const Alignment(0, -0.18),
-                child: ChatEmptyGreeting(
-                  primaryTextColor: usePaletteText
-                      ? context.omniPalette.textPrimary
-                      : widget.visualProfile.primaryTextColor,
-                  secondaryTextColor: usePaletteText
-                      ? context.omniPalette.textSecondary
-                      : widget.visualProfile.secondaryTextColor,
-                  accentColor: context.omniPalette.accentPrimary,
-                  quickPrompts: widget.emptyGreetingQuickPrompts,
-                  pinnedQuickPromptIds:
-                      widget.emptyGreetingPinnedQuickPromptIds,
-                  onQuickPromptSelected: widget.onQuickPromptSelected,
-                  agentName: widget.emptyGreetingAgentName,
-                  agentWorkspaceName: widget.emptyGreetingAgentWorkspaceName,
-                  onAgentWorkspaceTap: widget.onEmptyGreetingAgentWorkspaceTap,
+              child: Builder(
+                builder: (context) => AnimatedAlign(
+                  duration: const Duration(milliseconds: 280),
+                  curve: Curves.easeInOutCubic,
+                  alignment:
+                      (ChatMessageViewport.maybeOf(context)
+                              ?.liftEmptyGreeting ??
+                          widget.liftEmptyGreeting)
+                      ? const Alignment(-1, -1)
+                      : const Alignment(0, -0.18),
+                  // A landscape Pad with an IME can leave less than one
+                  // greeting's height above the composer. Keep every prompt
+                  // reachable without overflowing or reducing text size.
+                  child: SingleChildScrollView(primary: false, child: greeting),
                 ),
               ),
             )
           : const SizedBox.expand();
       if (pageBackgroundColor == null) {
-        return Padding(
-          padding: EdgeInsets.only(bottom: reservedBottomInset),
-          child: content,
-        );
+        return _padForViewport(content);
       }
       return ColoredBox(
         color: pageBackgroundColor,
-        child: Padding(
-          padding: EdgeInsets.only(bottom: reservedBottomInset),
-          child: content,
-        ),
+        child: _padForViewport(content),
       );
     }
 
     String? latestUserMessageId;
-    final messageSource = _observableMessages ?? widget.messages;
-    final timelineEntries = _resolveTimelineEntries(messageSource);
     final rowIndices = <String, int>{
       for (var index = 0; index < timelineEntries.length; index++)
         timelineEntries[index].key: index,
@@ -798,8 +817,7 @@ class _ChatMessageListState extends State<ChatMessageList> {
       center: _forwardSliverKey,
       semanticChildCount: timelineEntries.length,
       physics: _ChatLatestEdgeScrollPhysics(
-        shouldStickToLatest: () =>
-            _autoStickToLatest,
+        shouldStickToLatest: () => _autoStickToLatest,
       ),
       clipBehavior: Clip.hardEdge,
       slivers: [
@@ -836,16 +854,26 @@ class _ChatMessageListState extends State<ChatMessageList> {
       onFocusChange: widget.onInternalInputFocusChanged,
       child: content,
     );
-    final paddedContent = Padding(
-      padding: EdgeInsets.only(bottom: reservedBottomInset),
-      child: focusedContent,
-    );
+    final paddedContent = _padForViewport(focusedContent);
 
     if (pageBackgroundColor == null) {
       return paddedContent;
     }
     return ColoredBox(color: pageBackgroundColor, child: paddedContent);
   }
+
+  Widget _padForViewport(Widget child) => Builder(
+    builder: (context) => Padding(
+      padding: EdgeInsets.only(
+        bottom:
+            (ChatMessageViewport.maybeOf(context)?.bottomOverlayInset ??
+                    widget.bottomOverlayInset)
+                .clamp(0.0, double.infinity)
+                .toDouble(),
+      ),
+      child: child,
+    ),
+  );
 }
 
 class _ChatTimelineListRow extends StatelessWidget {

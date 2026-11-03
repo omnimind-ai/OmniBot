@@ -30,7 +30,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.material3.BasicAlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DrawerValue
@@ -72,7 +71,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.zIndex
 import androidx.core.view.WindowCompat
 import androidx.core.widget.doOnTextChanged
-import top.yukonga.miuix.kmp.nav.core.NavController
+import androidx.navigation.NavHostController
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.res.vectorResource
 import com.rk.components.compose.preferences.base.PreferenceGroup
@@ -86,6 +85,7 @@ import com.rk.libcommons.pendingCommand
 import com.rk.libcommons.isOmnibotSetupSessionId
 import com.rk.settings.Settings
 import com.rk.terminal.ui.activities.terminal.MainActivity
+import com.rk.terminal.ui.components.OmniModalSheet
 import com.rk.terminal.ui.routes.MainActivityRoutes
 import com.rk.terminal.ui.screens.settings.SettingsCard
 import com.rk.terminal.ui.screens.settings.WorkingMode
@@ -163,7 +163,7 @@ var showHorizontalToolbar = mutableStateOf(Settings.toolbar)
 fun TerminalScreen(
     modifier: Modifier = Modifier,
     mainActivityActivity: MainActivity,
-    navController: NavController
+    navController: NavHostController
 ) {
     val context = LocalContext.current
     val isDarkMode = isSystemInDarkTheme()
@@ -233,7 +233,7 @@ fun TerminalScreen(
         }
 
         if (showAddDialog){
-            BasicAlertDialog(
+            OmniModalSheet(
                 onDismissRequest = {
                     showAddDialog = false
                 }
@@ -263,7 +263,7 @@ fun TerminalScreen(
                 }
 
 
-                PreferenceGroup {
+                PreferenceGroup(modifier = Modifier.padding(start = 18.dp, end = 18.dp, bottom = 24.dp)) {
                     SettingsCard(
                         title = { Text("Alpine") },
                         description = {Text(stringResource(strings.alpine_desc))},
@@ -317,8 +317,8 @@ fun TerminalScreen(
                             Row {
                                 val keyboardController = LocalSoftwareKeyboardController.current
                                 IconButton(onClick = {
-                                    if (navController.backStack.lastOrNull() != MainActivityRoutes.Settings) {
-                                        navController.push(MainActivityRoutes.Settings)
+                                    navController.navigate(MainActivityRoutes.Settings) {
+                                        launchSingleTop = true
                                     }
                                     keyboardController?.hide()
                                 }) {
@@ -745,8 +745,9 @@ private fun attachSessionToTerminalView(
     targetView.setTypeface(font)
     targetView.post {
         targetView.keepScreenOn = true
-        targetView.requestFocus()
         targetView.isFocusableInTouchMode = true
+        targetView.requestFocus()
+        mainActivity.restoreTerminalKeyboard(targetView)
 
         applyTerminalPalette(targetView)
 

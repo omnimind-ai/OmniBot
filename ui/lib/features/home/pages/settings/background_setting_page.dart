@@ -6,6 +6,9 @@ import 'dart:ui' as ui;
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart' show rootBundle;
 import 'package:flutter_svg/flutter_svg.dart';
@@ -21,10 +24,13 @@ import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
+import 'package:ui/widgets/flclash/liquid_glass.dart';
+import 'package:ui/theme/liquid_glass_controller.dart';
 import 'package:ui/widgets/omni_segmented_slider.dart';
-import 'package:ui/widgets/settings_section_title.dart';
 import 'package:ui/widgets/settings_ui.dart';
-import 'package:ui/widgets/theme_mode_setting_card.dart';
+import 'package:ui/theme/app_theme_controller.dart';
+import 'package:ui/theme/app_theme_mode.dart';
 
 const bool _showPetAppearanceSettings = true;
 
@@ -99,7 +105,8 @@ class BackgroundSettingPage extends StatefulWidget {
   State<BackgroundSettingPage> createState() => _BackgroundSettingPageState();
 }
 
-class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
+class _BackgroundSettingPageState extends State<BackgroundSettingPage>
+    with FlClashPageLoadMixin {
   final TextEditingController _remoteUrlController = TextEditingController();
   final TextEditingController _textColorController = TextEditingController();
 
@@ -500,53 +507,236 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(title: context.l10n.appearanceTitle, primary: true),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: SingleChildScrollView(
-          padding: edgeToEdgeScrollPadding(
-            context,
-            const EdgeInsets.fromLTRB(22, 12, 22, 24),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 12),
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: ListView.builder(
+            scrollCacheExtent: const ScrollCacheExtent.pixels(0),
+            padding: edgeToEdgeScrollPadding(
+              context,
+              const EdgeInsets.fromLTRB(16, 16, 16, 24),
+            ),
+            itemCount: _showPetAppearanceSettings ? 6 : 5,
+            itemBuilder: (context, index) => switch (index) {
+              0 => _buildInterfaceSettings(),
+              1 => Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(18, 28, 18, 16),
+                    child: Text(
+                      context.l10n.appearanceBackgroundSource,
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w400,
+                        color: palette.textTertiary,
+                        height: 1.35,
+                      ),
+                    ),
+                  ),
+                  _buildBackgroundSection(
+                    child: _buildSourceCard(),
+                    first: true,
+                  ),
+                ],
+              ),
+              2 => _buildBackgroundSection(child: _buildPreviewCard()),
+              3 => _buildBackgroundSection(
+                child: _buildAdjustCard(),
+                last: true,
+              ),
+              4 => Padding(
+                padding: const EdgeInsets.fromLTRB(6, 8, 6, 0),
                 child: Text(
                   context.trLegacy(_autoSaveHint),
                   style: TextStyle(
                     fontSize: 12,
-                    color: palette.textSecondary,
-                    fontWeight: FontWeight.w500,
+                    color: palette.textTertiary,
+                    height: 1.45,
                   ),
                 ),
               ),
-              const ThemeModeSettingCard(),
-              const SizedBox(height: 18),
-              _buildLanguageSettingCard(),
-              const SizedBox(height: 18),
-              SettingsSectionTitle(
-                label: context.l10n.appearanceBackgroundSource,
+              _ => Padding(
+                padding: const EdgeInsets.only(top: 28),
+                child: _buildPetCard(),
               ),
-              _buildSourceCard(),
-              const SizedBox(height: 18),
-              SettingsSectionTitle(label: context.l10n.appearancePreview),
-              _buildPreviewCard(),
-              const SizedBox(height: 18),
-              SettingsSectionTitle(label: context.l10n.appearanceAdjustments),
-              _buildAdjustCard(),
-              if (_showPetAppearanceSettings) ...[
-                const SizedBox(height: 18),
-                SettingsSectionTitle(label: '宠物'),
-                _buildPetCard(),
-              ],
-            ],
+            },
           ),
         ),
       ),
     );
   }
+
+  // Build the long background form in visible sections while retaining one
+  // continuous grouped surface and the page's existing state owner.
+  Widget _buildBackgroundSection({
+    required Widget child,
+    bool first = false,
+    bool last = false,
+  }) {
+    final palette = context.omniPalette;
+    return Material(
+      color: palette.surfacePrimary,
+      borderRadius: BorderRadius.vertical(
+        top: first ? const Radius.circular(22) : Radius.zero,
+        bottom: last ? const Radius.circular(22) : Radius.zero,
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        children: [
+          if (!first)
+            Divider(
+              height: 1,
+              thickness: 0.65,
+              indent: 18,
+              endIndent: 18,
+              color: palette.borderSubtle.withValues(
+                alpha: context.isDarkTheme ? 0.55 : 0.75,
+              ),
+            ),
+          child,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInterfaceSettings() {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    return Consumer(
+      builder: (context, ref, _) {
+        final glass = ref.watch(liquidGlassSettingsProvider);
+        final notifier = ref.read(liquidGlassSettingsProvider.notifier);
+        return OmniSettingsGroup(
+          title: english ? 'Interface' : '界面',
+          children: [
+            _buildThemeSettingCard(),
+            _buildLanguageSettingCard(),
+            OmniSettingsTile(
+              icon: LucideIcons.droplets,
+              title: english ? 'Liquid glass' : '液态玻璃',
+              subtitle: english
+                  ? 'Translucent surfaces with flowing light'
+                  : '通透的表面与流动的光影',
+              translateText: false,
+              onTap: () => notifier.setEnabled(!glass.enabled),
+              trailing: OmniSettingsSwitch(
+                key: const ValueKey('appearance-liquid-glass-switch'),
+                value: glass.enabled,
+                onToggle: notifier.setEnabled,
+              ),
+            ),
+            OmniSettingsTile(
+              icon: LucideIcons.sparkles,
+              title: english ? 'Effect quality' : '效果质量',
+              translateText: false,
+              trailing: OmniSettingsDropdown<LiquidGlassQuality>(
+                dropdownKey: const ValueKey('appearance-liquid-glass-quality'),
+                value: glass.quality,
+                options: [
+                  OmniSettingsOption(
+                    value: LiquidGlassQuality.standard,
+                    label: english ? 'Standard' : '标准',
+                  ),
+                  OmniSettingsOption(
+                    value: LiquidGlassQuality.ultra,
+                    label: english ? 'Ultra' : '极致',
+                  ),
+                ],
+                onChanged: glass.enabled
+                    ? (value) {
+                        if (value != null) notifier.setQuality(value);
+                      }
+                    : null,
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildThemeSettingCard() => Consumer(
+    builder: (context, ref, _) {
+      final mode = ref.watch(appThemeModeProvider);
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          OmniSettingsTile(
+            icon: LucideIcons.sunMoon,
+            title: context.l10n.themeModeTitle,
+            subtitle: context.l10n.themeModeSubtitle,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                if (constraints.maxWidth <
+                    290 * MediaQuery.textScalerOf(context).scale(1)) {
+                  return Align(
+                    alignment: Alignment.centerLeft,
+                    child: OmniSettingsDropdown<AppThemeMode>(
+                      dropdownKey: const ValueKey('appearance-theme-dropdown'),
+                      value: mode,
+                      options: [
+                        OmniSettingsOption(
+                          value: AppThemeMode.system,
+                          label: context.l10n.themeModeSystem,
+                        ),
+                        OmniSettingsOption(
+                          value: AppThemeMode.light,
+                          label: context.l10n.themeModeLight,
+                        ),
+                        OmniSettingsOption(
+                          value: AppThemeMode.dark,
+                          label: context.l10n.themeModeDark,
+                        ),
+                      ],
+                      onChanged: (value) {
+                        if (value != null) {
+                          ref
+                              .read(appThemeModeProvider.notifier)
+                              .setThemeMode(value);
+                        }
+                      },
+                    ),
+                  );
+                }
+                return OmniSegmentedSlider<AppThemeMode>(
+                  key: const ValueKey('theme-mode-slider'),
+                  value: mode,
+                  keyPrefix: 'theme-mode-option',
+                  options: [
+                    OmniSegmentedOption(
+                      value: AppThemeMode.system,
+                      label: context.l10n.themeModeSystem,
+                      icon: LucideIcons.sunMoon,
+                      id: 'system',
+                    ),
+                    OmniSegmentedOption(
+                      value: AppThemeMode.light,
+                      label: context.l10n.themeModeLight,
+                      icon: LucideIcons.sun,
+                      id: 'light',
+                    ),
+                    OmniSegmentedOption(
+                      value: AppThemeMode.dark,
+                      label: context.l10n.themeModeDark,
+                      icon: LucideIcons.moon,
+                      id: 'dark',
+                    ),
+                  ],
+                  onChanged: (value) => ref
+                      .read(appThemeModeProvider.notifier)
+                      .setThemeMode(value),
+                );
+              },
+            ),
+          ),
+        ],
+      );
+    },
+  );
 
   Widget _buildChoicePill({
     required Key key,
@@ -603,20 +793,26 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
             }).toList(),
           ),
           const SizedBox(height: 12),
-          AppBackgroundPreview(
-            config: _previewConfig,
-            kind: _previewKind,
-            visualProfile: _draftVisualProfile,
-            showDragHint: true,
-            onViewportChanged: (offset, imageScale) {
-              _applyDraftConfig(
-                _draftConfig.copyWith(
-                  focalX: offset.dx,
-                  focalY: offset.dy,
-                  imageScale: imageScale,
-                ),
-              );
-            },
+          // The miniature is a fixed-scale canvas; its own chat-size control
+          // scales the preview without enlarging its fixed-height bubbles.
+          MediaQuery(
+            data: MediaQuery.of(context)
+                .copyWith(textScaler: TextScaler.noScaling),
+            child: AppBackgroundPreview(
+              config: _previewConfig,
+              kind: _previewKind,
+              visualProfile: _draftVisualProfile,
+              showDragHint: true,
+              onViewportChanged: (offset, imageScale) {
+                _applyDraftConfig(
+                  _draftConfig.copyWith(
+                    focalX: offset.dx,
+                    focalY: offset.dy,
+                    imageScale: imageScale,
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -630,40 +826,77 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            SettingsSectionTitle(
-              label: context.l10n.languageTitle,
+            OmniSettingsTile(
+              icon: LucideIcons.languages,
+              title: context.l10n.languageTitle,
               subtitle: context.l10n.languageSubtitle,
-              bottomPadding: 10,
             ),
-            OmniSegmentedSlider<AppLanguageMode>(
-              key: const ValueKey('language-mode-slider'),
-              value: mode,
-              keyPrefix: 'language-mode-option',
-              options: [
-                OmniSegmentedOption<AppLanguageMode>(
-                  value: AppLanguageMode.system,
-                  label: context.l10n.languageFollowSystem,
-                  icon: LucideIcons.smartphone,
-                  id: 'system',
-                ),
-                OmniSegmentedOption<AppLanguageMode>(
-                  value: AppLanguageMode.zhHans,
-                  label: context.l10n.languageZhHans,
-                  icon: LucideIcons.languages,
-                  id: 'zhHans',
-                ),
-                OmniSegmentedOption<AppLanguageMode>(
-                  value: AppLanguageMode.en,
-                  label: context.l10n.languageEnglish,
-                  icon: LucideIcons.languages,
-                  id: 'en',
-                ),
-              ],
-              onChanged: (nextMode) {
-                ref
-                    .read(appLanguageModeProvider.notifier)
-                    .setLanguageMode(nextMode);
-              },
+            Padding(
+              padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  if (constraints.maxWidth <
+                      290 * MediaQuery.textScalerOf(context).scale(1)) {
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: OmniSettingsDropdown<AppLanguageMode>(
+                        dropdownKey: const ValueKey(
+                          'appearance-language-dropdown',
+                        ),
+                        value: mode,
+                        options: [
+                          OmniSettingsOption(
+                            value: AppLanguageMode.system,
+                            label: context.l10n.languageFollowSystem,
+                          ),
+                          OmniSettingsOption(
+                            value: AppLanguageMode.zhHans,
+                            label: context.l10n.languageZhHans,
+                          ),
+                          OmniSettingsOption(
+                            value: AppLanguageMode.en,
+                            label: context.l10n.languageEnglish,
+                          ),
+                        ],
+                        onChanged: (value) {
+                          if (value != null) {
+                            ref
+                                .read(appLanguageModeProvider.notifier)
+                                .setLanguageMode(value);
+                          }
+                        },
+                      ),
+                    );
+                  }
+                  return OmniSegmentedSlider<AppLanguageMode>(
+                    key: const ValueKey('language-mode-slider'),
+                    value: mode,
+                    keyPrefix: 'language-mode-option',
+                    options: [
+                      OmniSegmentedOption<AppLanguageMode>(
+                        value: AppLanguageMode.system,
+                        label: context.l10n.languageFollowSystem,
+                        id: 'system',
+                      ),
+                      OmniSegmentedOption<AppLanguageMode>(
+                        value: AppLanguageMode.zhHans,
+                        label: context.l10n.languageZhHans,
+                        id: 'zhHans',
+                      ),
+                      OmniSegmentedOption<AppLanguageMode>(
+                        value: AppLanguageMode.en,
+                        label: context.l10n.languageEnglish,
+                        id: 'en',
+                      ),
+                    ],
+                    onChanged: (nextMode) {
+                      ref
+                          .read(appLanguageModeProvider.notifier)
+                          .setLanguageMode(nextMode);
+                    },
+                  );
+                },
+              ),
             ),
           ],
         );
@@ -869,7 +1102,10 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     );
   }
 
-  Future<void> _loadPetSettings() async {
+  Future<void> _loadPetSettings({bool revalidate = false}) =>
+      runPageLoad(#appearancePets, _readPetSettings, revalidate: revalidate);
+
+  Future<void> _readPetSettings() async {
     final nativeState = await OverlayService.getPetOverlayState();
     final nativeSelectedPath = nativeState['selectedPath']?.toString() ?? '';
     final workspaceRoot =
@@ -891,7 +1127,9 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
       workspaceRoot: workspaceRoot,
       selectedPath: selectedPath,
     );
-    if (!mounted) return;
+    if (!await waitForPageReady() || !pageLoadIsCurrent(#appearancePets)) {
+      return;
+    }
     setState(() {
       _petsDirectoryPath = petsDirectoryPath;
       _selectedPetId = _resolveSelectedPetId(
@@ -2089,8 +2327,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
         archiveBytes: bytes,
         petsRootPath: _petsDirectoryPath,
       );
-      await _loadPetSettings();
-      if (!mounted) return;
+      await _loadPetSettings(revalidate: true);
+      if (!await waitForPageReady() || !mounted) return;
       final installedPath = _normalizePath(installed.spritesheetFile.path);
       _OverlayPetOption? installedOption;
       for (final option in _petOptions) {
@@ -2122,8 +2360,8 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   }
 
   Future<void> _refreshPetOptions() async {
-    await _loadPetSettings();
-    if (!mounted) return;
+    await _loadPetSettings(revalidate: true);
+    if (!await waitForPageReady() || !mounted) return;
     final selectedOption = _petOptions.firstWhere(
       (option) => option.id == _selectedPetId,
       orElse: () => _petOptions.first,
@@ -2222,13 +2460,11 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
                       ),
                     ),
                     const SizedBox(width: 8),
-                    Tooltip(
-                      message: context.trLegacy('刷新'),
-                      child: IconButton(
-                        onPressed: _petBusy ? null : _refreshPetOptions,
-                        icon: const Icon(LucideIcons.refreshCw, size: 18),
-                        color: palette.textSecondary,
-                      ),
+                    OmniCircleButton(
+                      tooltip: context.trLegacy('刷新'),
+                      onPressed: _petBusy ? null : _refreshPetOptions,
+                      icon: LucideIcons.refreshCw,
+                      foregroundColor: palette.textSecondary,
                     ),
                     const SizedBox(width: 2),
                     Icon(
@@ -2426,15 +2662,17 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
         children: [
           Row(
             children: [
-              Text(
-                context.trLegacy(label),
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  color: palette.textPrimary,
+              Expanded(
+                child: Text(
+                  context.trLegacy(label),
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w500,
+                    color: palette.textPrimary,
+                  ),
                 ),
               ),
-              const Spacer(),
+              const SizedBox(width: 12),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
@@ -2573,7 +2811,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
   }
 
   Widget _buildCard({required Widget child}) {
-    return OmniSettingsCard(child: child);
+    return Padding(padding: const EdgeInsets.all(18), child: child);
   }
 
   void _scheduleDraftVisualProfileRefresh() {
@@ -2599,10 +2837,11 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage> {
     int token,
     AppBackgroundConfig previewConfig,
   ) async {
+    if (!await waitForPageReady() || token != _previewProfileToken) return;
     final analyzed = await AppBackgroundService.analyzeVisualProfile(
       previewConfig,
     );
-    if (!mounted || token != _previewProfileToken) {
+    if (!await waitForPageReady() || token != _previewProfileToken) {
       return;
     }
     setState(() {

@@ -34,6 +34,9 @@ android {
     buildFeatures {
         aidl = true
     }
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 kotlin {
@@ -75,6 +78,7 @@ dependencies {
     implementation(libs.shizuku.api)
 
     testImplementation(libs.junit)
+    testImplementation("org.robolectric:robolectric:4.17")
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
 }

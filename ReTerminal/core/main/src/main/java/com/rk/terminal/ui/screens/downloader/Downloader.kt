@@ -11,7 +11,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import top.yukonga.miuix.kmp.nav.core.NavController
+import androidx.navigation.NavHostController
 import com.rk.libcommons.*
 import com.rk.resources.strings
 import com.rk.terminal.runtime.EmbeddedRuntimeInstaller
@@ -26,7 +26,7 @@ import kotlinx.coroutines.withContext
 fun Downloader(
     modifier: Modifier = Modifier,
     mainActivity: MainActivity,
-    navController: NavController
+    navController: NavHostController
 ) {
     val context = LocalContext.current
     var progress by remember { mutableFloatStateOf(0f) }

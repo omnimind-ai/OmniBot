@@ -27,6 +27,28 @@ class ModelProviderSecretStoreFailClosedTest {
             store.writeLegacy("legacy", "replacement")
         }
     }
+
+    @Test
+    fun writeFailureDisablesSecretsAndRejectsFurtherMutations() {
+        val delegate = object : ModelProviderSecretStore by ThrowingSecretStore() {
+            override fun readProfile(profileId: String) = ModelProviderSecrets(apiKey = "existing")
+
+            override fun writeProfile(profileId: String, secrets: ModelProviderSecrets) {
+                error("simulated encrypted write failure")
+            }
+        }
+        val store = FailClosedModelProviderSecretStore(delegate)
+
+        assertThrows(IllegalStateException::class.java) {
+            store.writeProfile("profile-1", ModelProviderSecrets(apiKey = "replacement"))
+        }
+
+        assertFalse(store.isAvailable())
+        assertNull(store.readProfile("profile-1"))
+        assertThrows(IllegalStateException::class.java) {
+            store.deleteProfile("profile-1")
+        }
+    }
 }
 
 private class ThrowingSecretStore : ModelProviderSecretStore {

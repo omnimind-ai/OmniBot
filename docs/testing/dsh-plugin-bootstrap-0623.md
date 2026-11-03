@@ -1,5 +1,7 @@
 # DSH 首次插件发现
 
+> 历史归档：本文记录旧版本 DeepSeek Harness 的验证结果。2026-10-29 起已移除该 Harness 的内置支持及专用验证脚本，以下安装与测试步骤不再适用于当前版本。
+
 用户反馈：全新启动 DSH 不知道自己的插件机制，将 DSH 插件解释为 OmniFlow 函数。
 安装包版本 0.1.2-rc.1，自带 dsh-tool-cordis 与 dsh-cordis-host-runner，但官方 ACP/base profile 未挂载这两个组件。官方工具包 README 明确说明没有 shipped bundle 挂载该工具集，且动态定义是进程内临时对象，不在重启后保留。
 

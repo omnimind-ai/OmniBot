@@ -17,6 +17,7 @@ import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 import 'package:ui/widgets/omni_glass.dart';
 
 const Color _kTimeoutStatusColor = Color(0xFFFF8A3D);
@@ -42,17 +43,23 @@ class AgentToolTranscript {
   final bool isTerminal;
 }
 
-/// Tool details for the neutral run sheet, using the same persisted transcript
-/// and resource actions as the standalone terminal detail surface.
+/// Shared tool details for the run sheet and standalone glass detail sheet.
+/// Text surfaces own their contrast independently of the glass behind them.
 class AgentToolDetailBody extends StatelessWidget {
   const AgentToolDetailBody({
     super.key,
     required this.cardData,
     this.scrollController,
+    this.showCopyButton = true,
+    this.showActions = true,
+    this.padding = const EdgeInsets.fromLTRB(22, 4, 22, 24),
   });
 
   final Map<String, dynamic> cardData;
   final ScrollController? scrollController;
+  final bool showCopyButton;
+  final bool showActions;
+  final EdgeInsetsGeometry padding;
 
   @override
   Widget build(BuildContext context) {
@@ -64,16 +71,13 @@ class AgentToolDetailBody extends StatelessWidget {
     final copyText = _agentToolCopyText(
       cardData,
       transcript,
-      isDiffView:
-          isDiffView && (cardData['diffText'] ?? '').toString().isNotEmpty,
+      isDiffView: isDiffView,
     );
     final textStyle = TextStyle(
-      color: Color.alphaBlend(
-        palette.textPrimary.withValues(alpha: 0.72),
-        palette.surfacePrimary,
-      ),
-      fontSize: 15,
-      height: 1.55,
+      color: palette.textPrimary,
+      fontSize: transcript.isTerminal ? 13 : 14,
+      fontFamily: transcript.isTerminal ? 'monospace' : null,
+      height: 1.6,
     );
     // ANSI colors belong to the terminal surface. Keep the same output text
     // readable on both neutral light and dark surfaces.
@@ -84,7 +88,7 @@ class AgentToolDetailBody extends StatelessWidget {
 
     return SingleChildScrollView(
       controller: scrollController,
-      padding: const EdgeInsets.fromLTRB(22, 4, 22, 24),
+      padding: padding,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -97,22 +101,29 @@ class AgentToolDetailBody extends StatelessWidget {
                       : (LegacyTextLocalizer.isEnglish ? 'Input' : '输入'),
                 ),
               ),
-              IconButton(
-                tooltip: LegacyTextLocalizer.isEnglish
-                    ? 'Copy details'
-                    : '复制详情',
-                icon: const Icon(LucideIcons.copy, size: 18),
-                color: palette.textSecondary,
-                onPressed: copyText.isEmpty
-                    ? null
-                    : () => unawaited(_copyAgentToolDetails(copyText)),
-              ),
+              if (showCopyButton)
+                OmniCircleButton(
+                  tooltip: LegacyTextLocalizer.isEnglish
+                      ? 'Copy details'
+                      : '复制详情',
+                  icon: LucideIcons.copy,
+                  size: 40,
+                  iconSize: 18,
+                  tapTargetSize: MaterialTapTargetSize.padded,
+                  onPressed: copyText.isEmpty
+                      ? null
+                      : () => unawaited(_copyAgentToolDetails(copyText)),
+                ),
             ],
           ),
+          const SizedBox(height: 10),
           _AgentToolNeutralSurface(
-            child: SelectableText(transcript.promptLine, style: textStyle),
+            child: SelectableText(
+              transcript.promptLine,
+              style: textStyle.copyWith(fontFamily: 'monospace', fontSize: 13),
+            ),
           ),
-          const SizedBox(height: 24),
+          const SizedBox(height: 20),
           _AgentToolSectionLabel(
             label: LegacyTextLocalizer.isEnglish ? 'Output' : '输出',
           ),
@@ -128,13 +139,18 @@ class AgentToolDetailBody extends StatelessWidget {
               child: outputText.isEmpty
                   ? Text(
                       LegacyTextLocalizer.isEnglish ? 'No output' : '暂无输出',
-                      style: textStyle.copyWith(color: palette.textSecondary),
+                      style: textStyle.copyWith(
+                        color: Color.alphaBlend(
+                          palette.textPrimary.withValues(alpha: 0.72),
+                          palette.surfaceSecondary,
+                        ),
+                      ),
                     )
                   : SelectableText(outputText, style: textStyle),
             ),
-          if (actions.isNotEmpty) ...[
+          if (showActions && actions.isNotEmpty) ...[
             const SizedBox(height: 20),
-            _AgentToolActionBar(actions: actions, neutral: true),
+            _AgentToolActionBar(actions: actions),
           ],
         ],
       ),
@@ -152,8 +168,11 @@ class _AgentToolSectionLabel extends StatelessWidget {
     return Text(
       label,
       style: TextStyle(
-        color: context.omniPalette.textSecondary,
-        fontSize: 14,
+        color: Color.alphaBlend(
+          context.omniPalette.textPrimary.withValues(alpha: 0.72),
+          context.omniPalette.surfacePrimary,
+        ),
+        fontSize: 12,
         fontWeight: FontWeight.w500,
       ),
     );
@@ -171,7 +190,7 @@ class _AgentToolNeutralSurface extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: palette.surfacePrimary,
+        color: palette.surfaceSecondary,
         border: Border.all(color: palette.borderSubtle),
         borderRadius: BorderRadius.circular(14),
       ),
@@ -223,33 +242,16 @@ Future<void> showAgentToolDetailDialog(
   BuildContext context, {
   required Map<String, dynamic> cardData,
 }) {
-  return showDialog<void>(
+  return showOmniGlassCardSheet<void>(
     context: context,
     useRootNavigator: false,
     builder: (dialogContext) {
-      return Dialog(
-        elevation: 0,
-        backgroundColor: Colors.transparent,
-        insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 30),
-        child: Container(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(dialogContext).size.height * 0.76,
-            maxWidth: 520,
-          ),
-          decoration: BoxDecoration(
-            color: kTerminalSurfaceBlack,
-            borderRadius: BorderRadius.circular(24),
-            boxShadow: const [
-              BoxShadow(
-                color: kTerminalSurfaceShadow,
-                blurRadius: 32,
-                offset: Offset(0, 20),
-              ),
-            ],
-          ),
+      return OmniGlassCardBody(
+        child: SizedBox(
+          height: MediaQuery.sizeOf(dialogContext).height * 0.5,
           child: _AgentToolDetailContent(
             cardData: cardData,
-            headerPadding: const EdgeInsets.fromLTRB(18, 14, 18, 10),
+            headerPadding: const EdgeInsets.fromLTRB(18, 4, 18, 10),
             scrollPadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
           ),
         ),
@@ -262,14 +264,13 @@ Future<void> showAgentToolDetailSheet(
   BuildContext context, {
   required Map<String, dynamic> cardData,
 }) {
-  return showModalBottomSheet<void>(
+  return showOmniGlassBottomSheet<void>(
     context: context,
     useRootNavigator: true,
     isScrollControlled: true,
     isDismissible: true,
     enableDrag: false,
     backgroundColor: Colors.transparent,
-    barrierColor: Colors.black.withValues(alpha: 0.28),
     builder: (sheetContext) {
       return _AgentToolDetailSheetFrame(cardData: cardData);
     },
@@ -338,30 +339,6 @@ IconData resolveAgentToolStatusIcon(String status, String toolType) {
     return LucideIcons.puzzle;
   }
   return LucideIcons.circleCheck;
-}
-
-TextSpan _buildDetailTextSpan(AgentToolTranscript transcript) {
-  final promptStyle = const TextStyle(
-    color: Color(0xFFF4F7FB),
-    fontSize: 12,
-    fontFamily: 'monospace',
-    fontWeight: FontWeight.w600,
-    height: 1.45,
-  );
-  final outputStyle = const TextStyle(
-    color: Color(0xFFB9F7C9),
-    fontSize: 12,
-    fontFamily: 'monospace',
-    height: 1.45,
-  );
-  final children = <InlineSpan>[
-    TextSpan(text: transcript.promptLine, style: promptStyle),
-  ];
-  if (transcript.outputText.trim().isNotEmpty) {
-    children.add(const TextSpan(text: '\n'));
-    children.add(AnsiTextSpanBuilder.build(transcript.outputText, outputStyle));
-  }
-  return TextSpan(children: children);
 }
 
 String _buildTerminalPromptLine(Map<String, dynamic> cardData) {
@@ -988,32 +965,6 @@ String _formatBytes(int value) {
   return '$value B';
 }
 
-class _TerminalTrafficLights extends StatelessWidget {
-  const _TerminalTrafficLights();
-
-  @override
-  Widget build(BuildContext context) {
-    Widget dot(Color color) {
-      return Container(
-        width: 8,
-        height: 8,
-        decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-      );
-    }
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        dot(const Color(0xFFFF5F57)),
-        const SizedBox(width: 5),
-        dot(const Color(0xFFFEBB2E)),
-        const SizedBox(width: 5),
-        dot(const Color(0xFF28C840)),
-      ],
-    );
-  }
-}
-
 class _AgentToolDetailSheetFrame extends StatefulWidget {
   const _AgentToolDetailSheetFrame({required this.cardData});
 
@@ -1088,48 +1039,55 @@ class _AgentToolDetailSheetFrameState
 
     return SafeArea(
       top: false,
+      bottom: false,
       child: AnimatedPadding(
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
         padding: EdgeInsets.only(bottom: mediaQuery.viewInsets.bottom),
         child: OmniGlassPanel(
           key: kAgentToolDetailSheetKey,
-          height: availableHeight * heightFactor,
+          // Keep the content height while painting the same pane behind the
+          // gesture bar. An outer bottom SafeArea exposes the modal scrim.
+          height: availableHeight * heightFactor + mediaQuery.padding.bottom,
           width: double.infinity,
           borderRadius: borderRadius,
-          forceDark: true,
           child: Material(
             color: Colors.transparent,
-            child: Column(
-              children: [
-                GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onVerticalDragUpdate: (details) =>
-                      _handleDragUpdate(details, availableHeight),
-                  onVerticalDragEnd: (_) => _persistHeightFactor(),
-                  child: SizedBox(
-                    height: 22,
-                    width: double.infinity,
-                    child: Center(
-                      child: Container(
-                        width: 42,
-                        height: 4,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.34),
-                          borderRadius: BorderRadius.circular(999),
+            child: SafeArea(
+              top: false,
+              left: false,
+              right: false,
+              child: Column(
+                children: [
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onVerticalDragUpdate: (details) =>
+                        _handleDragUpdate(details, availableHeight),
+                    onVerticalDragEnd: (_) => _persistHeightFactor(),
+                    child: SizedBox(
+                      height: 28,
+                      width: double.infinity,
+                      child: Center(
+                        child: Container(
+                          width: 32,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: context.omniPalette.borderStrong,
+                            borderRadius: BorderRadius.circular(999),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                Expanded(
-                  child: _AgentToolDetailContent(
-                    cardData: widget.cardData,
-                    headerPadding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
-                    scrollPadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                  Expanded(
+                    child: _AgentToolDetailContent(
+                      cardData: widget.cardData,
+                      headerPadding: const EdgeInsets.fromLTRB(18, 0, 18, 10),
+                      scrollPadding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           ),
         ),
@@ -1163,19 +1121,15 @@ class _AgentToolDetailContent extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final transcript = buildAgentToolTranscript(
-      cardData,
-      maxPreviewLines: 4,
-      maxPreviewChars: 420,
-    );
+    final palette = context.omniPalette;
+    final transcript = buildAgentToolTranscript(cardData);
     final title = resolveAgentToolTitle(cardData);
     final typeLabel = resolveAgentToolTypeLabel(cardData);
     final status = (cardData['status'] ?? 'running').toString();
     final statusLabel = resolveAgentToolStatusLabel(cardData);
+    final actions = _resolveAgentToolActions(cardData);
     final diffSummary = _resolveDiffSummary(cardData);
     final isDiffView = diffSummary?.files.isNotEmpty == true;
-    final detailSpan = isDiffView ? null : _buildDetailTextSpan(transcript);
-    final actions = _resolveAgentToolActions(cardData);
     final copyText = _agentToolCopyText(
       cardData,
       transcript,
@@ -1187,71 +1141,85 @@ class _AgentToolDetailContent extends StatelessWidget {
         Padding(
           padding: headerPadding,
           child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const _TerminalTrafficLights(),
-              const SizedBox(width: 12),
               Expanded(
-                child: Text(
-                  title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    color: Color(0xFFF2F7FF),
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w600,
+                child: Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.only(top: 2),
+                            child: Icon(
+                              resolveAgentToolStatusIcon(
+                                status,
+                                (cardData['toolType'] ?? '').toString(),
+                              ),
+                              size: 20,
+                              color: palette.textPrimary,
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              title,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: palette.textPrimary,
+                                fontSize: 16,
+                                height: 1.35,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      Wrap(
+                        spacing: 8,
+                        runSpacing: 6,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        children: [
+                          _DialogMetaTag(label: typeLabel),
+                          _DialogStatusTag(status: status, label: statusLabel),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
               ),
-              const SizedBox(width: 10),
-              _DialogMetaTag(label: typeLabel),
               const SizedBox(width: 6),
-              _DialogStatusTag(status: status, label: statusLabel),
-              const SizedBox(width: 2),
-              IconButton(
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints.tightFor(
-                  width: 28,
-                  height: 28,
-                ),
-                splashRadius: 14,
+              OmniCircleButton(
+                size: 40,
+                iconSize: 18,
+                tapTargetSize: MaterialTapTargetSize.padded,
                 tooltip: LegacyTextLocalizer.isEnglish
                     ? 'Copy details'
                     : '复制详情',
                 onPressed: copyText.isEmpty
                     ? null
-                    : () async {
-                        final copied =
-                            await AssistsMessageService.copyToClipboard(
-                              copyText,
-                            );
-                        showToast(
-                          copied
-                              ? (LegacyTextLocalizer.isEnglish
-                                    ? 'Copied'
-                                    : '已复制')
-                              : (LegacyTextLocalizer.isEnglish
-                                    ? 'Copy failed'
-                                    : '复制失败'),
-                          type: copied ? ToastType.success : ToastType.error,
-                        );
-                      },
-                icon: const Icon(LucideIcons.copy, size: 15),
+                    : () => unawaited(_copyAgentToolDetails(copyText)),
+                icon: LucideIcons.copy,
               ),
             ],
           ),
         ),
         Expanded(
-          child: isDiffView
-              ? AgentDiffViewer(summary: diffSummary!, padding: scrollPadding)
-              : SingleChildScrollView(
-                  padding: scrollPadding,
-                  child: SelectableText.rich(detailSpan!),
-                ),
+          child: AgentToolDetailBody(
+            cardData: cardData,
+            showCopyButton: false,
+            showActions: false,
+            padding: scrollPadding.add(const EdgeInsets.only(top: 12)),
+          ),
         ),
         if (actions.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 0, 18, 14),
+            padding: const EdgeInsets.fromLTRB(18, 8, 18, 14),
             child: _AgentToolActionBar(actions: actions),
           ),
       ],
@@ -1264,8 +1232,9 @@ String _agentToolCopyText(
   AgentToolTranscript transcript, {
   required bool isDiffView,
 }) {
-  final body = isDiffView
-      ? (cardData['diffText'] ?? '').toString()
+  final diffText = (cardData['diffText'] ?? '').toString();
+  final body = isDiffView && diffText.isNotEmpty
+      ? diffText
       : transcript.outputText;
   final prompt = transcript.promptLine.trimRight();
   final output = body.trimRight();
@@ -1285,6 +1254,29 @@ List<Map<String, dynamic>> _resolveAgentToolActions(
         (item) => item.map((key, value) => MapEntry(key.toString(), value)),
       ),
     );
+  }
+  final artifacts = cardData['artifacts'];
+  if (artifacts is List) {
+    for (final artifact in artifacts.whereType<Map>()) {
+      if (artifact['historyPayloadOffloaded'] != true) continue;
+      final path = (artifact['androidPath'] ?? artifact['path'] ?? '')
+          .toString()
+          .trim();
+      if (path.isEmpty) continue;
+      actions.add({
+        'type': 'open',
+        'label': (artifact['title'] ?? artifact['fileName'] ?? '完整工具记录')
+            .toString(),
+        'target': artifact['uri'],
+        'payload': {
+          'path': path,
+          'shellPath': artifact['workspacePath'],
+          'title': artifact['title'],
+          'mimeType': artifact['mimeType'],
+          'previewKind': 'file',
+        },
+      });
+    }
   }
   final workspaceId = (cardData['workspaceId'] ?? '').toString().trim();
   final hasWorkspaceAction = actions.any(
@@ -1320,10 +1312,9 @@ List<Map<String, dynamic>> _resolveAgentToolActions(
 }
 
 class _AgentToolActionBar extends StatelessWidget {
-  const _AgentToolActionBar({required this.actions, this.neutral = false});
+  const _AgentToolActionBar({required this.actions});
 
   final List<Map<String, dynamic>> actions;
-  final bool neutral;
 
   @override
   Widget build(BuildContext context) {
@@ -1338,26 +1329,18 @@ class _AgentToolActionBar extends StatelessWidget {
               key: ValueKey('agent-tool-action-$index'),
               onPressed: () => unawaited(_runAgentToolAction(actions[index])),
               style: OutlinedButton.styleFrom(
-                foregroundColor: neutral
-                    ? context.omniPalette.textPrimary
-                    : const Color(0xFFDDE8F7),
-                side: BorderSide(
-                  color: neutral
-                      ? context.omniPalette.borderStrong
-                      : const Color(0xFF34445E),
-                ),
+                foregroundColor: context.omniPalette.textPrimary,
+                side: BorderSide(color: context.omniPalette.borderStrong),
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
                   vertical: 8,
                 ),
-                minimumSize: Size(0, neutral ? 44 : 34),
-                tapTargetSize: neutral
-                    ? MaterialTapTargetSize.padded
-                    : MaterialTapTargetSize.shrinkWrap,
+                minimumSize: const Size(0, 44),
+                tapTargetSize: MaterialTapTargetSize.padded,
               ),
               child: Text(
                 actions[index]['label'].toString(),
-                style: TextStyle(fontSize: neutral ? 13 : 11.5),
+                style: const TextStyle(fontSize: 13),
               ),
             ),
         ],
@@ -1449,21 +1432,20 @@ class _DialogMetaTag extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: const Color(0xFF152133),
+        color: context.omniPalette.surfaceSecondary,
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: const Color(0xFF273752)),
       ),
       child: Text(
         label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: const TextStyle(
-          color: Color(0xFF9FB1C8),
-          fontSize: 9.2,
-          fontWeight: FontWeight.w700,
-          height: 1,
+        style: TextStyle(
+          color: context.omniPalette.textPrimary,
+          fontSize: 11,
+          fontWeight: FontWeight.w500,
+          height: 1.2,
         ),
       ),
     );
@@ -1478,23 +1460,35 @@ class _DialogStatusTag extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = resolveAgentToolStatusColor(status);
+    final palette = context.omniPalette;
+    final semanticColor = status == 'running' || status == 'pending'
+        ? palette.brandPrimary
+        : resolveAgentToolStatusColor(status);
+    // The old terminal colors were chosen for black. Blend toward the theme's
+    // foreground so all status labels also remain readable on a light pane.
+    final color = Color.lerp(
+      semanticColor,
+      palette.textPrimary,
+      context.isDarkTheme ? 0.35 : 0.5,
+    )!;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
       decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.15),
+        color: Color.alphaBlend(
+          semanticColor.withValues(alpha: 0.08),
+          palette.surfacePrimary,
+        ),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: color.withValues(alpha: 0.32)),
       ),
       child: Text(
         label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
         style: TextStyle(
-          color: color.withValues(alpha: 0.96),
-          fontSize: 9.2,
-          fontWeight: FontWeight.w700,
-          height: 1,
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          height: 1.2,
         ),
       ),
     );

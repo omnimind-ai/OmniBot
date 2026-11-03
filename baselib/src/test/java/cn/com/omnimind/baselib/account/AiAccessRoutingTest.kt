@@ -60,7 +60,36 @@ class AiAccessRoutingTest {
         assertEquals(AiAccessMode.PLATFORM, access.mode)
         assertTrue(!access.usesPlatform)
         assertEquals("upgrade required", access.unavailableReason)
+        assertEquals("https://brand.example/ai", access.platformGatewayUrl)
         assertEquals(null, access.bearerToken)
+    }
+
+    @Test
+    fun unknownCloudPolicyPreservesOnlySafeProviderMetadata() {
+        for (gateway in listOf(
+            "https://brand.example/ai/",
+            "http://gateway.example/ai",
+            "https://user:password@brand.example/ai",
+            "https://brand.example/ai?token=secret",
+        )) {
+            val access = AiRequestAccessResolver.resolve(
+                accountConfigured = true,
+                signedIn = true,
+                cachedMode = null,
+                platformGatewayUrl = gateway,
+                accessToken = "must-not-be-exposed",
+                cloudServiceAccess = CloudServiceAccessState(allowed = false, policyKnown = false),
+            )
+
+            assertEquals(AiAccessMode.PLATFORM, access.mode)
+            assertTrue(!access.usesPlatform)
+            assertEquals(null, access.bearerToken)
+            assertEquals(
+                if (gateway == "https://brand.example/ai/") "https://brand.example/ai" else null,
+                access.platformGatewayUrl,
+            )
+            assertTrue(!access.unavailableReason.isNullOrBlank())
+        }
     }
 
     @Test

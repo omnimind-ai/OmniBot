@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="OmniOverlayBottomSheetAnimation" parent="android:style/Animation">
+        <item name="android:windowEnterAnimation">@anim/omni_overlay_sheet_enter</item>
+        <item name="android:windowExitAnimation">@anim/omni_overlay_sheet_exit</item>
+    </style>
+</resources>

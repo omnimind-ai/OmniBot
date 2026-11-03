@@ -10,7 +10,12 @@ import android.provider.Settings
 import androidx.core.content.ContextCompat
 import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.baselib.permission.PermissionRequest
+import cn.com.omnimind.baselib.permission.LocalNetworkPermission
 import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
+import cn.com.omnimind.baselib.privileged.PrivilegedCapabilityManager
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.CancellationException
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
@@ -40,6 +45,39 @@ class SpecialPermissionManager(private val context: Context) {
     private val embeddedTerminalSetupManager = EmbeddedTerminalSetupManager(context)
     private val embeddedTerminalAutoStartManager = EmbeddedTerminalAutoStartManager(context)
     private val shizukuCapabilityManager = ShizukuCapabilityManager.get(context)
+
+    private var rootSettingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+
+    fun closeRootSettings() {
+        rootSettingsScope.cancel()
+        rootSettingsScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    }
+
+    fun getRootStatus(result: MethodChannel.Result) {
+        result.success(PrivilegedCapabilityManager.get(context).rootStatus().toMap())
+    }
+
+    fun setRootEnabled(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled")
+        if (enabled == null) { result.error("INVALID_ARGUMENT", "enabled must be a boolean", null); return }
+        rootSettingsAction(result) { PrivilegedCapabilityManager.get(context).setRootEnabled(enabled).toMap() }
+    }
+
+    fun requestRootAccess(result: MethodChannel.Result) {
+        rootSettingsAction(result) { PrivilegedCapabilityManager.get(context).requestRootAccess().toMap() }
+    }
+
+    private fun rootSettingsAction(result: MethodChannel.Result, action: suspend () -> Map<String, Any>) {
+        rootSettingsScope.launch {
+            try {
+                result.success(withContext(Dispatchers.IO) { action() })
+            } catch (_: CancellationException) {
+                result.success(PrivilegedCapabilityManager.get(context).rootStatus().toMap())
+            } catch (error: Exception) {
+                result.error("ROOT_ACCESS_FAILED", "Could not update root access.", null)
+            }
+        }
+    }
 
     fun isIgnoringBatteryOptimizations(result: MethodChannel.Result) {
         try {
@@ -361,6 +399,27 @@ class SpecialPermissionManager(private val context: Context) {
                 "Failed to request notification permission.",
                 e.message
             )
+        }
+    }
+
+    fun isLocalNetworkPermissionGranted(result: MethodChannel.Result) {
+        result.success(LocalNetworkPermission.isGranted(context))
+    }
+
+    fun getLocalNetworkPermissionStatus(result: MethodChannel.Result) {
+        result.success(mapOf(
+            "required" to (Build.VERSION.SDK_INT >= 37),
+            "granted" to LocalNetworkPermission.isGranted(context),
+        ))
+    }
+
+    fun requestLocalNetworkPermission(result: MethodChannel.Result) {
+        rootSettingsScope.launch {
+            try {
+                result.success(LocalNetworkPermission.request(context))
+            } catch (error: Exception) {
+                result.error("LOCAL_NETWORK_PERMISSION_FAILED", error.message, null)
+            }
         }
     }
 

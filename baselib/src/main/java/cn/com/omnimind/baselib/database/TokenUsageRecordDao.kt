@@ -13,11 +13,13 @@ interface TokenUsageRecordDao {
     @Query("SELECT * FROM token_usage_records WHERE createdAt >= :since ORDER BY createdAt ASC")
     suspend fun getRecordsSince(since: Long): List<TokenUsageRecord>
 
+    // Prompt usage already includes cache reads/writes. Details are fallbacks,
+    // not extra charges or a replacement for a more complete output total.
     @Query("""
         SELECT model, CAST((createdAt - :since) / 604800000 AS INTEGER) AS weekIndex,
-            SUM(MAX(CASE WHEN reasoningTokens + textTokens > 0
-                THEN reasoningTokens + textTokens ELSE completionTokens END, 0)) AS tokens,
-            SUM(cachedTokens) AS cachedTokens
+            SUM(MAX(promptTokens, MAX(cachedTokens, 0) + MAX(cacheCreationTokens, 0), 0)
+                + MAX(completionTokens, MAX(reasoningTokens, 0) + MAX(textTokens, 0), 0)) AS tokens,
+            SUM(MAX(cachedTokens, 0)) AS cachedTokens
         FROM token_usage_records
         WHERE createdAt >= :since AND createdAt < :until
         GROUP BY model, weekIndex

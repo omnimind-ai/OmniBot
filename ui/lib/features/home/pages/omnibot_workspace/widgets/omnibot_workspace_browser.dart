@@ -7,6 +7,7 @@ import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/workspace_mount_service.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/widgets/omni_menu.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/app_background_widgets.dart';
@@ -1303,12 +1304,10 @@ class OmnibotWorkspaceBrowserState extends State<OmnibotWorkspaceBrowser> {
     final name = _entryNameFromPath(entry.path);
     final mountEntry = _workspaceMountEntryFor(entry);
     final editable = _canEditEntry(entry);
-    final action = await showModalBottomSheet<_WorkspaceEntryAction>(
+    final action = await showOmniGlassModalBottomSheet<_WorkspaceEntryAction>(
       context: context,
       backgroundColor: palette.surfacePrimary,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
       builder: (sheetContext) {
         return SafeArea(
           child: SingleChildScrollView(

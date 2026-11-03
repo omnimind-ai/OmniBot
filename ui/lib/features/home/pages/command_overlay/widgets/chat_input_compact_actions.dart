@@ -3,13 +3,34 @@ part of 'chat_input_area.dart';
 enum _CompactComposerAction { images, files, permissions }
 
 extension _CompactComposerActions on _ChatInputAreaStateBase {
+  Rect? _compactActionsAnchor(BuildContext buttonContext) {
+    final surfaceContext = _compactComposerSurfaceKey.currentContext;
+    final surface = surfaceContext == null
+        ? null
+        : glassPopupAnchorFromContext(surfaceContext);
+    if (surface == null) return glassPopupAnchorFromContext(buttonContext);
+
+    // The button is inset inside the composer. Both menus grow from the
+    // composer's outside corner, so their left/bottom edges share its outline.
+    final diameter = OmniMenuStyle.panelRadius.bottomLeft.x * 2;
+    return Rect.fromLTWH(
+      surface.left,
+      surface.bottom - diameter,
+      diameter,
+      diameter,
+    );
+  }
+
   Widget _buildCompactAddButton() {
     final english = Localizations.localeOf(context).languageCode == 'en';
     final canOpen =
         widget.onPickImages != null ||
         widget.onPickAttachment != null ||
         _shouldShowAgentPermissionSelector;
-    return Builder(
+    return FlClashPopupSource(
+      glass: false,
+      color: Colors.transparent,
+      shape: const CircleBorder(),
       builder: (anchor) => IconButton(
         key: const ValueKey('chat-input-add-or-cancel-edit-button'),
         padding: EdgeInsets.zero,
@@ -43,7 +64,7 @@ extension _CompactComposerActions on _ChatInputAreaStateBase {
         )) {
       return;
     }
-    final anchor = glassPopupAnchorFromContext(anchorContext);
+    final anchor = _compactActionsAnchor(anchorContext);
     if (anchor == null) {
       _composerStateMachine.popupClosed(ChatComposerPopup.compactActions);
       return;
@@ -51,7 +72,9 @@ extension _CompactComposerActions on _ChatInputAreaStateBase {
     final english = Localizations.localeOf(context).languageCode == 'en';
     final handle = showOverlayGlassPopup<_CompactComposerAction>(
       context: context,
+      sourceContext: anchorContext,
       anchor: anchor,
+      placementAnchor: anchor,
       preferBelow: false,
       builder: (handle) => TextFieldTapRegion(
         child: OmniMenuSurface(
@@ -91,6 +114,7 @@ extension _CompactComposerActions on _ChatInputAreaStateBase {
     _composerStateMachine.popupOpened(ChatComposerPopup.compactActions);
     try {
       final action = await handle.future;
+      await handle.closed;
       if (!mounted || !anchorContext.mounted) return;
       // Hold the layout through the native picker or the existing permission
       // popup. A handoff must not briefly collapse the focused text editor.
@@ -100,7 +124,11 @@ extension _CompactComposerActions on _ChatInputAreaStateBase {
         case _CompactComposerAction.files:
           await widget.onPickAttachment?.call();
         case _CompactComposerAction.permissions:
-          await _openAgentPermissionMenu(anchorContext, preferBelow: false);
+          await _openAgentPermissionMenu(
+            anchorContext,
+            preferBelow: false,
+            anchorOverride: _compactActionsAnchor(anchorContext),
+          );
         case null:
           break;
       }

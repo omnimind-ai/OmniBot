@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/services/agent_runtime_service.dart';
@@ -46,6 +48,79 @@ void main() {
   });
 
   test(
+    'update check is read only and retains native version results',
+    () async {
+      final calls = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call.method);
+        return {
+          'agents': [
+            {
+              'id': 'opencode-acp',
+              'name': 'OpenCode',
+              'command': 'opencode',
+              'packageVersion': {
+                'installedVersion': '1.18.29',
+                'latestVersion': '2.0.32',
+                'targetVersion': '2.0.32',
+                'checkedAt': 42,
+                'updateAvailable': true,
+              },
+            },
+          ],
+        };
+      });
+      final catalog = await AgentRuntimeService.checkAgentUpdates();
+      expect(calls, ['agent/checkUpdates']);
+      expect(catalog.agents.single.packageVersion?.installedVersion, '1.18.29');
+      expect(catalog.agents.single.packageVersion?.updateAvailable, isTrue);
+    },
+  );
+
+  test(
+    'background upgrades are serialized and a failure does not stop the queue',
+    () async {
+      final first = Completer<Map<String, dynamic>>();
+      final second = Completer<Map<String, dynamic>>();
+      final calls = <String>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'agent/prepare');
+        final id = (call.arguments as Map)['agentId'] as String;
+        calls.add(id);
+        return id == 'first' ? first.future : second.future;
+      });
+      final firstTask = AgentRuntimeService.prepareAgentInBackground(
+        'first',
+        force: true,
+      );
+      final failed = expectLater(firstTask, throwsA(isA<PlatformException>()));
+      final secondTask = AgentRuntimeService.prepareAgentInBackground(
+        'second',
+        force: true,
+      );
+      expect(
+        identical(
+          secondTask,
+          AgentRuntimeService.prepareAgentInBackground('second', force: true),
+        ),
+        isTrue,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, ['first']);
+      expect(AgentRuntimeService.queuedAgentIds, {'second'});
+      first.completeError(PlatformException(code: 'INSTALL_FAILED'));
+      await failed;
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, ['first', 'second']);
+      second.complete({'ok': true});
+      await secondTask;
+      await Future<void>.delayed(Duration.zero);
+      expect(AgentRuntimeService.preparingAgentIds, isEmpty);
+      expect(AgentRuntimeService.queuedAgentIds, isEmpty);
+    },
+  );
+
+  test(
     'explicit reinstall reaches the installer with force, ordinary preparation does not',
     () async {
       final calls = <MethodCall>[];
@@ -64,6 +139,226 @@ void main() {
       ]);
       expect(calls.first.arguments, {'agentId': 'codex-acp'});
       expect(calls.last.arguments, {'agentId': 'codex-acp', 'force': true});
+    },
+  );
+
+  test('uninstall sends only the agent and captured distribution', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return {
+        'ok': true,
+        'agent': {'id': 'pi-acp', 'installed': false},
+      };
+    });
+    final result = await AgentRuntimeService.uninstallAgent(
+      ' pi-acp ',
+      distributionId: ' alpine ',
+    );
+    expect(result['ok'], isTrue);
+    expect(calls.single.method, 'agent/uninstall');
+    expect(calls.single.arguments, {
+      'agentId': 'pi-acp',
+      'distributionId': 'alpine',
+    });
+    await expectLater(
+      AgentRuntimeService.uninstallAgent('pi-acp', distributionId: ' '),
+      throwsArgumentError,
+    );
+    await expectLater(
+      AgentRuntimeService.uninstallAgentInBackground(
+        '',
+        distributionId: 'alpine',
+      ),
+      throwsArgumentError,
+    );
+    expect(calls, hasLength(1));
+    expect(AgentRuntimeService.agentPackageOperations, isEmpty);
+  });
+
+  test(
+    'install and uninstall share a queue and publish their operation types',
+    () async {
+      final install = Completer<Map<String, dynamic>>();
+      final uninstall = Completer<Map<String, dynamic>>();
+      addTearDown(() {
+        if (!install.isCompleted) install.complete({'ok': false});
+        if (!uninstall.isCompleted) uninstall.complete({'ok': false});
+      });
+      final calls = <MethodCall>[];
+      final states = <Map<String, AgentPackageOperation>>[];
+      final installStates = <Set<String>>[];
+      final subscription = AgentRuntimeService.agentPackageOperationChanges
+          .listen(states.add);
+      final installationSubscription = AgentRuntimeService
+          .agentPreparationChanges
+          .listen(installStates.add);
+      addTearDown(subscription.cancel);
+      addTearDown(installationSubscription.cancel);
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return call.method == 'agent/prepare'
+            ? install.future
+            : uninstall.future;
+      });
+
+      final installTask = AgentRuntimeService.prepareAgentInBackground(
+        'codex-acp',
+        force: true,
+        distributionId: 'ubuntu',
+      );
+      final uninstallTask = AgentRuntimeService.uninstallAgentInBackground(
+        'pi-acp',
+        distributionId: 'ubuntu',
+      );
+      expect(AgentRuntimeService.agentPackageOperations, {
+        'codex-acp': AgentPackageOperation.install,
+        'pi-acp': AgentPackageOperation.uninstall,
+      });
+      expect(AgentRuntimeService.preparingAgentIds, {'codex-acp'});
+      expect(
+        identical(
+          uninstallTask,
+          AgentRuntimeService.uninstallAgentInBackground(
+            ' pi-acp ',
+            distributionId: 'ubuntu',
+          ),
+        ),
+        isTrue,
+      );
+      final snapshot = AgentRuntimeService.agentPackageOperations;
+      expect(() => snapshot.clear(), throwsUnsupportedError);
+
+      await Future<void>.delayed(Duration.zero);
+      expect(calls.map((call) => call.method), ['agent/prepare']);
+      expect(AgentRuntimeService.queuedAgentIds, {'pi-acp'});
+      install.complete({'ok': true});
+      await installTask;
+      await Future<void>.delayed(Duration.zero);
+      expect(calls.map((call) => call.method), [
+        'agent/prepare',
+        'agent/uninstall',
+      ]);
+      expect(calls.last.arguments, {
+        'agentId': 'pi-acp',
+        'distributionId': 'ubuntu',
+      });
+      expect(AgentRuntimeService.preparingAgentIds, isEmpty);
+      expect(AgentRuntimeService.queuedAgentIds, isEmpty);
+      expect(AgentRuntimeService.agentPackageOperations, {
+        'pi-acp': AgentPackageOperation.uninstall,
+      });
+      expect(snapshot, hasLength(2));
+      uninstall.complete({'ok': true});
+      await uninstallTask;
+      await Future<void>.delayed(Duration.zero);
+      expect(AgentRuntimeService.agentPackageOperations, isEmpty);
+      expect(
+        states.any(
+          (state) => state['pi-acp'] == AgentPackageOperation.uninstall,
+        ),
+        isTrue,
+      );
+      expect(states.last, isEmpty);
+      expect(installStates.expand((state) => state), isNot(contains('pi-acp')));
+    },
+  );
+
+  test(
+    'a conflicting operation or distribution never reuses the active task',
+    () async {
+      final gate = Completer<Map<String, dynamic>>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete({'ok': false});
+      });
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return gate.future;
+      });
+      final task = AgentRuntimeService.prepareAgentInBackground(
+        'pi-acp',
+        force: true,
+        distributionId: 'alpine',
+      );
+      for (final conflict in [
+        () => AgentRuntimeService.uninstallAgentInBackground(
+          'pi-acp',
+          distributionId: 'alpine',
+        ),
+        () => AgentRuntimeService.prepareAgentInBackground(
+          'pi-acp',
+          force: true,
+          distributionId: 'ubuntu',
+        ),
+        () => AgentRuntimeService.prepareAgentInBackground(
+          'pi-acp',
+          distributionId: 'alpine',
+        ),
+      ]) {
+        await expectLater(conflict(), throwsStateError);
+      }
+      await Future<void>.delayed(Duration.zero);
+      expect(calls, hasLength(1));
+      expect(AgentRuntimeService.agentPackageOperations, {
+        'pi-acp': AgentPackageOperation.install,
+      });
+      gate.complete({'ok': true});
+      await task;
+      await Future<void>.delayed(Duration.zero);
+      expect(AgentRuntimeService.agentPackageOperations, isEmpty);
+    },
+  );
+
+  test(
+    'failed uninstall releases its task and allows queued work and retry',
+    () async {
+      final gate = Completer<Map<String, dynamic>>();
+      addTearDown(() {
+        if (!gate.isCompleted) gate.complete({'ok': false});
+      });
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        return calls.length == 1 ? gate.future : {'ok': true};
+      });
+      final uninstallTask = AgentRuntimeService.uninstallAgentInBackground(
+        'pi-acp',
+        distributionId: 'alpine',
+      );
+      final failed = expectLater(
+        uninstallTask,
+        throwsA(isA<PlatformException>()),
+      );
+      final queuedInstall = AgentRuntimeService.prepareAgentInBackground(
+        'kimi-code-acp',
+        distributionId: 'alpine',
+      );
+      await expectLater(
+        AgentRuntimeService.uninstallAgentInBackground(
+          'pi-acp',
+          distributionId: 'ubuntu',
+        ),
+        throwsStateError,
+      );
+      await Future<void>.delayed(Duration.zero);
+      gate.completeError(PlatformException(code: 'UNINSTALL_FAILED'));
+      await failed;
+      await queuedInstall;
+      await Future<void>.delayed(Duration.zero);
+      final retried = await AgentRuntimeService.uninstallAgentInBackground(
+        'pi-acp',
+        distributionId: 'alpine',
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(retried['ok'], isTrue);
+      expect(calls.map((call) => call.method), [
+        'agent/uninstall',
+        'agent/prepare',
+        'agent/uninstall',
+      ]);
+      expect(AgentRuntimeService.agentPackageOperations, isEmpty);
+      expect(AgentRuntimeService.queuedAgentIds, isEmpty);
     },
   );
 
@@ -108,12 +403,84 @@ void main() {
         return <String, dynamic>{'sessions': <Map<String, dynamic>>[]};
       });
 
-      await AgentRuntimeService.listSessions();
+      await AgentRuntimeService.listSessions(agentId: 'codex-remote');
 
       expect(capturedCall?.method, 'session/list');
-      expect(capturedCall?.arguments, isEmpty);
+      expect(capturedCall?.arguments, {'agentId': 'codex-remote'});
     },
   );
+
+  test('runtime control requests always carry their explicit owner', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return {'ready': true, 'connected': false};
+    });
+    await AgentRuntimeService.status(agentId: 'xiaowan-acp');
+    await AgentRuntimeService.status(agentId: 'codex-remote');
+    await AgentRuntimeService.initialize(agentId: 'na-cloud');
+    await AgentRuntimeService.disconnect(agentId: 'custom-agent');
+    expect(calls.map((call) => (call.arguments as Map)['agentId']), [
+      'xiaowan-acp', 'codex-remote', 'na-cloud', 'custom-agent',
+    ]);
+    expect(calls.map((call) => call.method), ['status', 'status', 'initialize', 'disconnect']);
+    await expectLater(AgentRuntimeService.status(agentId: '  '), throwsArgumentError);
+    expect(() => AgentRuntimeService.initialize(agentId: ''), throwsArgumentError);
+    expect(calls, hasLength(4));
+  });
+
+  test('extensions preserve vendor params inside one explicit owner envelope', () async {
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return <String, dynamic>{};
+    });
+    const vendorMap = <String, dynamic>{
+      'agentId': 'vendor-agent',
+      'nested': {'agentId': 'nested-vendor-agent', 'value': 1},
+    };
+    await AgentRuntimeService.callAcpExtension(
+      agentId: 'custom-agent',
+      method: '_custom/read',
+      params: vendorMap,
+    );
+    expect(calls.single.arguments, {
+      'agentId': 'custom-agent',
+      'params': vendorMap,
+    });
+    expect(calls.single.method, '_custom/read');
+
+    for (final params in <Object?>[
+      vendorMap,
+      [vendorMap, 7, null],
+      'vendor text',
+      42,
+      true,
+      null,
+    ]) {
+      await AgentRuntimeService.callAcpExtensionValue(
+        agentId: 'custom-agent',
+        method: '_custom/value',
+        params: params,
+      );
+      expect(calls.last.method, '_custom/value');
+      expect(calls.last.arguments, {'agentId': 'custom-agent', 'params': params});
+      expect((calls.last.arguments as Map).containsKey('params'), isTrue);
+
+      await AgentRuntimeService.notifyAcpExtension(
+        agentId: 'custom-agent',
+        method: '_custom/update',
+        params: params,
+      );
+      expect(calls.last.method, 'notifyAcpExtension');
+      expect(calls.last.arguments, {
+        'agentId': 'custom-agent',
+        'method': '_custom/update',
+        'params': params,
+      });
+      expect((calls.last.arguments as Map).containsKey('params'), isTrue);
+    }
+  });
 
   test('ensureSession reserves a session before a new prompt', () async {
     final calls = <MethodCall>[];
@@ -124,6 +491,7 @@ void main() {
 
     final sessionId = await AgentRuntimeService.ensureSession(
       conversationId: 42,
+      agentId: 'xiaowan-acp',
       model: 'model-1',
       conversationMode: 'agent',
     );
@@ -132,6 +500,7 @@ void main() {
     expect(calls.map((call) => call.method), ['session/new']);
     expect((calls.single.arguments as Map)['conversationId'], 42);
     expect((calls.single.arguments as Map)['model'], 'model-1');
+    expect((calls.single.arguments as Map)['agentId'], 'xiaowan-acp');
   });
 
   test(
@@ -174,9 +543,70 @@ void main() {
     });
   });
 
-  test('parses the live status bundled with an agent switch response', () {
+  test('Harness compatibility failures point to Agent maintenance', () {
+    const expected = '当前助手运行环境需要升级，请在助手设置中升级或重新安装。';
+    final errors = [
+      PlatformException(
+        code: 'runtime_error',
+        message: 'Internal compatibility check failed',
+        details: {'failureKind': 'harness_upgrade_required'},
+      ),
+      'OpenCode runtime needs an upgrade before continuing.',
+      PlatformException(code: 'runtime_error', message: 'OpenCode runtime needs an upgrade'),
+    ];
+    for (final error in errors) {
+      expect(formatAgentRuntimeErrorForUser(error), expected);
+      expect(formatAgentRuntimeErrorForUser(error, english: true), contains('Agent settings'));
+    }
+    expect(formatAgentRuntimeErrorForUser(expected), expected);
+  });
+
+  test('retired catalog identities cannot become selectable custom agents', () {
+    final catalog = AcpAgentCatalog.fromMap({
+      'retiredAgentIds': ['deepseek-harness-acp'],
+      'agents': [
+        {'id': 'deepseek-harness-acp', 'name': 'Old Agent'},
+        {'id': 'codex-acp', 'name': 'Codex'},
+        {'id': 'custom-agent', 'name': 'Custom Agent'},
+      ],
+    });
+    expect(catalog.agents.map((agent) => agent.id), [
+      'codex-acp',
+      'custom-agent',
+    ]);
+    expect(catalog.isRetired('deepseek-harness-acp'), isTrue);
+    expect(catalog.isRetired('custom-agent'), isFalse);
+    expect(catalog.isRetired(null), isFalse);
+    expect(catalog.agents.first.id, 'codex-acp');
+  });
+
+  test(
+    'retired agent errors preserve history guidance without model retries',
+    () {
+      const message = '此助手已停止支持。历史记录仍可查看，请新建其他助手的对话。';
+      for (final error in [
+        'agent_retired: deepseek-harness-acp',
+        PlatformException(
+          code: 'runtime_error',
+          message: 'agent_retired: old-agent',
+        ),
+        PlatformException(
+          code: 'runtime_error',
+          details: {'failureKind': 'agent_retired'},
+        ),
+      ]) {
+        expect(formatAgentRuntimeErrorForUser(error), message);
+      }
+      expect(formatAgentRuntimeErrorForUser(message), message);
+      expect(
+        formatAgentRuntimeErrorForUser(message, english: true),
+        contains('view its history'),
+      );
+    },
+  );
+
+  test('catalog ignores obsolete selected runtime fields and preserves directory order', () {
     final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
-      'selectedAgentId': 'claude-code',
       'connected': true,
       'ready': true,
       'runtime': 'local',
@@ -192,9 +622,7 @@ void main() {
       ],
     });
 
-    expect(catalog.runtimeStatus?.connected, isTrue);
-    expect(catalog.runtimeStatus?.ready, isTrue);
-    expect(catalog.runtimeStatus?.activeAgentId, 'claude-code');
+    expect(catalog.agents.single.id, 'claude-code');
   });
 
   test(
@@ -294,16 +722,16 @@ void main() {
     });
   });
 
-  test('startReview forwards codex review payload', () async {
+  test('reviewSession forwards the owned review payload', () async {
     MethodCall? capturedCall;
     messenger.setMockMethodCallHandler(channel, (call) async {
       capturedCall = call;
       return <String, dynamic>{'ok': true};
     });
 
-    await AgentRuntimeService.startReview(
+    await AgentRuntimeService.reviewSession(
       conversationId: 42,
-      threadId: 'thread-1',
+      sessionId: 'thread-1',
       approvalPolicy: 'on-request',
       approvalsReviewer: 'auto_review',
       model: 'gpt-5-codex',
@@ -316,7 +744,7 @@ void main() {
       (capturedCall?.arguments as Map).cast<String, dynamic>(),
     );
     expect(args['conversationId'], 42);
-    expect(args['threadId'], 'thread-1');
+    expect(args['sessionId'], 'thread-1');
     expect(args['approvalPolicy'], 'on-request');
     expect(args['approvalsReviewer'], 'auto_review');
     expect(args['target'], const <String, dynamic>{
@@ -347,7 +775,7 @@ void main() {
   });
 
   test(
-    'pure chat remains canonical ACP without selecting a Harness agent',
+    'pure chat declares its in-process owner on canonical ACP',
     () async {
       MethodCall? capturedCall;
       messenger.setMockMethodCallHandler(channel, (call) async {
@@ -360,6 +788,7 @@ void main() {
 
       await AgentRuntimeService.promptSession(
         conversationId: 42,
+        agentId: 'xiaowan-acp',
         text: 'hello',
         conversationMode: 'chat_only',
         model: 'selected-provider-model',
@@ -371,7 +800,7 @@ void main() {
       );
       expect(args['conversationMode'], 'chat_only');
       expect(args['model'], 'selected-provider-model');
-      expect(args.containsKey('agentId'), isFalse);
+      expect(args['agentId'], 'xiaowan-acp');
     },
   );
 
@@ -384,10 +813,10 @@ void main() {
         return <String, dynamic>{'ok': true};
       });
 
-      await AgentRuntimeService.listModels();
-      await AgentRuntimeService.listCollaborationModes();
-      await AgentRuntimeService.readConfig();
-      await AgentRuntimeService.listLoadedSessions();
+      await AgentRuntimeService.listModels(agentId: 'codex-remote');
+      await AgentRuntimeService.listCollaborationModes(agentId: 'codex-remote');
+      await AgentRuntimeService.readConfig(agentId: 'codex-remote');
+      await AgentRuntimeService.listLoadedSessions(agentId: 'codex-remote');
 
       expect(calls.map((call) => call.method), [
         'model/list',
@@ -395,7 +824,9 @@ void main() {
         'config/read',
         'session/list',
       ]);
-      expect(calls.first.arguments, isEmpty);
+      for (final call in calls) {
+        expect(call.arguments, {'agentId': 'codex-remote'});
+      }
     },
   );
 
@@ -406,15 +837,15 @@ void main() {
       return <String, dynamic>{'ok': true};
     });
 
-    await AgentRuntimeService.setConfigOption(
-      threadId: 'thread-1',
+    await AgentRuntimeService.setSessionConfigOption(
+      sessionId: 'thread-1',
       configId: 'mode',
       value: 'agent-full-access',
     );
 
     expect(capturedCall?.method, 'session/set_config_option');
     expect(capturedCall?.arguments, {
-      'threadId': 'thread-1',
+      'sessionId': 'thread-1',
       'configId': 'mode',
       'value': 'agent-full-access',
     });
@@ -601,8 +1032,6 @@ void main() {
       await AgentRuntimeService.writeAgentConfig(
         'claude-code-acp',
         content: ' {\n  "env": {}\n}\n ',
-        reasoningEffort: 'high',
-        permissionMode: 'workspace-write',
       );
 
       expect(calls.map((call) => call.method), [
@@ -613,8 +1042,6 @@ void main() {
       expect(calls.last.arguments, {
         'agentId': 'claude-code-acp',
         'content': ' {\n  "env": {}\n}\n ',
-        'reasoningEffort': 'high',
-        'permissionMode': 'workspace-write',
       });
     },
   );
@@ -683,16 +1110,16 @@ void main() {
       requestId: 'request-1',
       questionId: 'answer',
       answers: <String>['继续'],
-      sessionId: 'dsh-session-1',
-      agentId: 'deepseek-harness-acp',
+      sessionId: 'kimi-session-1',
+      agentId: 'kimi-code-acp',
       conversationId: 42,
     );
 
     expect(capturedCall?.arguments, {
       'requestId': 'request-1',
-      'agentId': 'deepseek-harness-acp',
+      'agentId': 'kimi-code-acp',
       'conversationId': 42,
-      'sessionId': 'dsh-session-1',
+      'sessionId': 'kimi-session-1',
       'response': {
         'answers': {
           'answer': {
@@ -777,16 +1204,17 @@ void main() {
     });
 
     await AgentRuntimeService.startLogin(
+      agentId: 'codex-remote',
       type: CodexLoginType.chatgptDeviceCode,
     );
-    await AgentRuntimeService.cancelLogin(loginId: 'login-1');
+    await AgentRuntimeService.cancelLogin(agentId: 'codex-remote', loginId: 'login-1');
 
     expect(calls.map((call) => call.method), [
       'account/login/start',
       'account/login/cancel',
     ]);
-    expect(calls[0].arguments, {'type': 'chatgptDeviceCode'});
-    expect(calls[1].arguments, {'loginId': 'login-1'});
+    expect(calls[0].arguments, {'agentId': 'codex-remote', 'type': 'chatgptDeviceCode'});
+    expect(calls[1].arguments, {'agentId': 'codex-remote', 'loginId': 'login-1'});
   });
 
   test('ACP agent model picker uses initialize config options', () async {
@@ -796,41 +1224,11 @@ void main() {
       return <String, dynamic>{'models': <dynamic>[]};
     });
 
-    await AgentRuntimeService.listModelsForStatus(
-      const AgentRuntimeStatus(
-        connected: true,
-        ready: true,
-        runtime: 'local',
-        activeAgentId: 'custom-agent',
-      ),
-    );
+    await AgentRuntimeService.listModels(agentId: 'custom-agent');
 
     expect(calls.map((call) => call.method), ['model/list']);
   });
 
-  test('keeps Codex model sources separate', () {
-    expect(
-      agentModelSourceKey(
-        const AgentRuntimeStatus(
-          connected: true,
-          ready: true,
-          runtime: 'remote',
-        ),
-      ),
-      'remote',
-    );
-    expect(
-      agentModelSourceKey(
-        const AgentRuntimeStatus(
-          connected: true,
-          ready: true,
-          runtime: 'local',
-          activeAgentId: 'codex-acp',
-        ),
-      ),
-      'local-codex-acp',
-    );
-  });
 
   test('parses ACP identity and capability payload from status', () {
     final status = AgentRuntimeStatus.fromMap(<String, dynamic>{
@@ -852,7 +1250,7 @@ void main() {
     expect(status.activeAgentId, 'custom-agent');
     expect(status.activeAgentName, 'Custom Agent');
     expect(status.capabilities['loadSession'], true);
-    expect(agentModelSourceKey(status), 'local-custom-agent');
+    expect(status.activeAgentId, 'custom-agent');
   });
 
   test('parses managed ACP adapter discovery metadata', () {
@@ -862,12 +1260,39 @@ void main() {
       'command': 'codex-acp',
       'discoveryCommand': 'codex',
       'managedAdapter': true,
+      'uninstallable': true,
       'status': 'unchecked',
     });
 
     expect(agent.discoveryCommand, 'codex');
     expect(agent.managedAdapter, isTrue);
+    expect(agent.uninstallable, isTrue);
+    expect(agent.toMap(), isNot(contains('uninstallable')));
   });
+
+  test(
+    'uninstall capability defaults to false and requires a native boolean',
+    () {
+      for (final value in [null, false, 'true', 1]) {
+        final agent = AcpAgentProfile.fromMap({
+          'id': 'custom-agent',
+          'name': 'Custom',
+          'command': 'custom',
+          'managedAdapter': true,
+          'uninstallable': ?value,
+        });
+        expect(agent.uninstallable, isFalse);
+      }
+      expect(
+        const AcpAgentProfile(
+          id: 'pi-acp',
+          name: 'Pi',
+          command: 'pi',
+        ).uninstallable,
+        isFalse,
+      );
+    },
+  );
 
   test('Na configuration requires explicit native development capability', () {
     final managed = AcpAgentProfile.fromMap({
@@ -893,7 +1318,6 @@ void main() {
 
   test('deduplicates legacy Xiaowan Bot entries in the ACP catalog', () {
     final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
-      'selectedAgentId': 'xiaowan-acp',
       'agents': <Map<String, dynamic>>[
         <String, dynamic>{
           'id': 'xiaowan-acp',
@@ -918,7 +1342,7 @@ void main() {
       'xiaowan-acp',
       'codex-acp',
     ]);
-    expect(catalog.selectedAgent?.name, '小万');
+    expect(catalog.agents.first.name, '小万');
   });
 
   for (final custom in <Map<String, dynamic>>[
@@ -938,7 +1362,6 @@ void main() {
   ]) {
     test('custom ACP profile remains selectable: ${custom['command']}', () {
       final catalog = AcpAgentCatalog.fromMap(<String, dynamic>{
-        'selectedAgentId': custom['id'],
         'agents': <Map<String, dynamic>>[
           {
             'id': 'xiaowan-acp',
@@ -953,17 +1376,12 @@ void main() {
         'xiaowan-acp',
         'user-adapter',
       ]);
-      expect(catalog.selectedAgent?.id, 'user-adapter');
+      expect(catalog.agents.last.id, 'user-adapter');
     });
   }
 
   test('local Agent requests use the selected ACP model', () {
     final model = selectAgentRequestModel(
-      status: const AgentRuntimeStatus(
-        connected: true,
-        ready: true,
-        runtime: 'local',
-      ),
       overrideModel: null,
       activeModel: 'input-selected',
       activeModelSourceMatches: true,
@@ -974,11 +1392,6 @@ void main() {
 
   test('shared Agent requests use the verified active Provider model', () {
     final model = selectAgentRequestModel(
-      status: const AgentRuntimeStatus(
-        connected: true,
-        ready: true,
-        runtime: 'local',
-      ),
       overrideModel: null,
       activeModel: 'DeepSeek-V4-Pro',
       activeModelSourceMatches: true,
@@ -1216,13 +1629,57 @@ void main() {
     expect(message, isNot(contains('Harness preparation is already running')));
   });
 
+  test('uninstall failure kinds override model diagnostics without exposing them', () {
+    const cases = <String, ({String zh, String en})>{
+      'agent_uninstall_failed': (
+        zh: '卸载未完成，请重试。',
+        en: 'Uninstall did not finish. Try again.',
+      ),
+      'agent_uninstall_external_installation': (
+        zh: '检测到其他安装或无法安全移除的文件，请在终端中检查该助手的安装位置。',
+        en: 'Another installation or files that could not be safely removed remain. Check the assistant\'s installation in the terminal.',
+      ),
+      'agent_uninstall_invalid_request': (
+        zh: '卸载请求无效，请刷新助手列表后重试。',
+        en: 'The uninstall request is invalid. Refresh the assistant list and try again.',
+      ),
+      'agent_uninstall_distribution_changed': (
+        zh: '终端环境已切换，请刷新助手列表后重试。',
+        en: 'The terminal environment changed. Refresh the assistant list and try again.',
+      ),
+      'agent_uninstall_terminal_unavailable': (
+        zh: '终端环境不可用，请恢复终端环境后重试卸载。',
+        en: 'The terminal environment is unavailable. Restore it before trying to uninstall again.',
+      ),
+      'agent_package_operation_in_progress': (
+        zh: '助手正在安装或卸载，请等待完成后再试。',
+        en: 'An assistant is being installed or uninstalled. Try again when it finishes.',
+      ),
+    };
+    for (final entry in cases.entries) {
+      final error = PlatformException(
+        code: 'agent_uninstall_failed',
+        message: 'Timeout, authentication failed, /private/secret-path',
+        details: {'failureKind': entry.key},
+      );
+      final message = formatAgentRuntimeErrorForUser(error);
+      expect(message, entry.value.zh);
+      expect(
+        formatAgentRuntimeErrorForUser(error, english: true),
+        entry.value.en,
+      );
+      expect(formatAgentRuntimeErrorForUser(message), message);
+      expect(
+        formatAgentRuntimeErrorForUser(entry.value.en),
+        entry.value.zh,
+      );
+      expect(message, isNot(contains('secret-path')));
+      expect(message, isNot(contains('更换模型')));
+    }
+  });
+
   test('local Agent requests do not read a separate Codex API model', () {
     final model = selectAgentRequestModel(
-      status: const AgentRuntimeStatus(
-        connected: true,
-        ready: true,
-        runtime: 'local',
-      ),
       overrideModel: null,
       activeModel: null,
       activeModelSourceMatches: true,

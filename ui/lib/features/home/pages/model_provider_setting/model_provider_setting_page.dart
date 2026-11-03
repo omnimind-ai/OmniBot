@@ -1,7 +1,11 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/flclash/popup.dart';
+import 'package:ui/widgets/glass_popup.dart';
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
@@ -13,8 +17,10 @@ import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/omni_menu.dart';
+import 'package:ui/widgets/omni_circle_button.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:ui/widgets/provider_vendor_icon.dart';
 import 'package:ui/widgets/settings_section_title.dart';
 import 'package:ui/widgets/settings_ui.dart';
@@ -166,7 +172,8 @@ class ModelProviderSettingPage extends StatefulWidget {
       _ModelProviderSettingPageState();
 }
 
-class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
+class _ModelProviderSettingPageState extends State<ModelProviderSettingPage>
+    with FlClashPageLoadMixin {
   static List<ModelProviderProfileSummary> _byokProfiles(
     List<ModelProviderProfileSummary> profiles,
   ) => profiles
@@ -179,6 +186,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
   final FocusNode _nameFocusNode = FocusNode();
   final FocusNode _baseUrlFocusNode = FocusNode();
   final FocusNode _apiKeyFocusNode = FocusNode();
+  final _wireApiContentKey = GlobalKey();
 
   static const Duration _autoSaveDebounce = Duration(milliseconds: 600);
   static const Duration _modelGroupToggleDuration = Duration(milliseconds: 240);
@@ -640,11 +648,18 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     return true;
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadData() =>
+      runPageLoad(#providerInitial, _readData, revalidate: true);
+
+  Future<void> _readData() async {
     setState(() => _isLoading = true);
     try {
       final payload = await ModelProviderConfigService.listProfiles();
-      if (!mounted) return;
+      if (!await waitForPageReady() ||
+          !mounted ||
+          !pageLoadIsCurrent(#providerInitial)) {
+        return;
+      }
       final profiles = _byokProfiles(payload.profiles);
       if (profiles.isEmpty) {
         // The native store may contain only the read-only official profile on
@@ -694,7 +709,11 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         ),
         _loadRemoteModelsForProfile(editingProfile, enrichMetadata: false),
       ]);
-      if (!mounted) return;
+      if (!await waitForPageReady() ||
+          !mounted ||
+          !pageLoadIsCurrent(#providerInitial)) {
+        return;
+      }
 
       final manualModels = storedModels[0] as List<ProviderModelOption>;
       final remoteModels = storedModels[1] as List<ProviderModelOption>;
@@ -713,10 +732,14 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         remoteModels: remoteModels,
       );
     } catch (_) {
-      if (!mounted) return;
+      if (!await waitForPageReady() ||
+          !mounted ||
+          !pageLoadIsCurrent(#providerInitial)) {
+        return;
+      }
       showToast(context.l10n.modelProviderLoadFailed, type: ToastType.error);
     } finally {
-      if (mounted) {
+      if (await waitForPageReady() && pageLoadIsCurrent(#providerInitial)) {
         setState(() => _isLoading = false);
       }
     }
@@ -856,7 +879,8 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       _enrichModelsForProfile(profile, manualModels),
       _enrichModelsForProfile(profile, remoteModels),
     ]);
-    if (!mounted ||
+    if (!await waitForPageReady() ||
+        !mounted ||
         _editingProfileId != profile.id ||
         !identical(_manualModels, manualModels) ||
         !identical(_remoteModels, remoteModels)) {
@@ -1244,10 +1268,10 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     if (current == null || current.readOnly || _profiles.length <= 1) {
       return;
     }
-    final confirmed = await showDialog<bool>(
+    final confirmed = await showOmniGlassCardSheet<bool>(
       context: context,
       builder: (context) {
-        return AlertDialog(
+        return OmniGlassAlertDialog(
           title: Text(context.l10n.modelDeleteProviderTitle),
           content: Text(context.l10n.modelDeleteProviderMsg(current.name)),
           actions: [
@@ -1315,7 +1339,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     if (current == null || current.readOnly) {
       return;
     }
-    final modelId = await showDialog<String>(
+    final modelId = await showOmniGlassCardSheet<String>(
       context: context,
       useRootNavigator: false,
       builder: (_) => const _AddModelIdDialog(),
@@ -1697,6 +1721,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         .toDouble();
     final selected = await showOmniMenu<String>(
       context: context,
+      sourceContext: anchorContext,
       anchor: anchorRect,
       width: popupWidth,
       padding: EdgeInsets.zero,
@@ -1768,6 +1793,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         .toDouble();
     return showOmniMenu<String>(
       context: context,
+      sourceContext: anchorContext,
       anchor: anchorRect,
       width: popupWidth,
       padding: EdgeInsets.zero,
@@ -2016,16 +2042,14 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
             ),
           ),
           const SizedBox(width: 8),
-          IconButton(
+          OmniCircleButton(
             tooltip: _headerText('删除', 'Delete'),
             onPressed: readOnly
                 ? null
                 : () => _removeCustomHeaderEntry(entry.id),
-            icon: Icon(
-              LucideIcons.trash2,
-              size: 18,
-              color: readOnly ? _tertiaryTextColor : AppColors.alertRed,
-            ),
+            icon: LucideIcons.trash2,
+            size: 36,
+            foregroundColor: readOnly ? _tertiaryTextColor : AppColors.alertRed,
           ),
         ],
       ),
@@ -2038,81 +2062,22 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
     bool highlighted = false,
     bool loading = false,
   }) {
-    final isEnabled = onPressed != null;
-    final useHighlightStyle = highlighted || loading;
-    final accentColor = context.omniPalette.accentPrimary;
-    final iconColor = !isEnabled && !loading
-        ? _tertiaryTextColor
-        : useHighlightStyle
-        ? accentColor
-        : _primaryTextColor;
-
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(10),
-        onTap: onPressed,
-        splashColor: accentColor.withValues(alpha: 0.08),
-        highlightColor: accentColor.withValues(alpha: 0.04),
-        child: SizedBox(
-          width: 42,
-          height: 42,
-          child: Center(
-            child: loading
-                ? SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      valueColor: AlwaysStoppedAnimation<Color>(iconColor),
-                    ),
-                  )
-                : Icon(icon, size: 20, color: iconColor),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildLucideModelActionButton({
-    required IconData icon,
-    required VoidCallback? onPressed,
-    required String tooltip,
-    Key? key,
-    bool highlighted = false,
-  }) {
-    final isEnabled = onPressed != null;
-    final accentColor = context.omniPalette.accentPrimary;
-    final iconColor = !isEnabled
-        ? _tertiaryTextColor
-        : highlighted
-        ? accentColor
-        : _primaryTextColor;
-
-    return Tooltip(
-      message: tooltip,
-      child: Semantics(
-        button: true,
-        label: tooltip,
-        enabled: isEnabled,
-        child: Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(10),
-          child: InkWell(
-            key: key,
-            borderRadius: BorderRadius.circular(10),
-            onTap: onPressed,
-            splashColor: accentColor.withValues(alpha: 0.08),
-            highlightColor: accentColor.withValues(alpha: 0.04),
-            child: SizedBox(
-              width: 42,
-              height: 42,
-              child: Center(child: Icon(icon, size: 20, color: iconColor)),
-            ),
-          ),
-        ),
-      ),
+    final tooltip = icon == LucideIcons.plus
+        ? _headerText('添加', 'Add')
+        : icon == LucideIcons.trash2
+        ? _headerText('删除', 'Delete')
+        : _headerText('获取模型', 'Fetch models');
+    return OmniCircleButton(
+      icon: icon,
+      tooltip: tooltip,
+      onPressed: onPressed,
+      foregroundColor: highlighted ? context.omniPalette.accentPrimary : null,
+      iconWidget: loading
+          ? const SizedBox.square(
+              dimension: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : null,
     );
   }
 
@@ -2672,6 +2637,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         .toDouble();
     final selected = await showOmniMenu<String>(
       context: context,
+      sourceContext: anchorContext,
       anchor: anchorRect,
       width: popupWidth,
       padding: EdgeInsets.zero,
@@ -2717,6 +2683,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         .toDouble();
     await showOmniMenu<String>(
       context: context,
+      sourceContext: anchorContext,
       anchor: anchorRect,
       width: popupWidth,
       padding: EdgeInsets.zero,
@@ -2756,7 +2723,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
           overflow: TextOverflow.ellipsis,
           style: TextStyle(
             color: _primaryTextColor,
-            fontSize: 15,
+            fontSize: 16,
             fontWeight: FontWeight.w600,
             fontFamily: 'PingFang SC',
           ),
@@ -2783,7 +2750,10 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
       ],
     );
     final boundedMaxWidth = maxWidth != null && maxWidth.isFinite;
-    final titleButton = Builder(
+    final titleButton = FlClashPopupSource(
+      glass: false,
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       builder: (anchorContext) {
         return InkWell(
           key: const Key('provider-config-title'),
@@ -2830,7 +2800,10 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
   }
 
   Widget _buildProtocolTypeButton({double maxWidth = 176}) {
-    return Builder(
+    return FlClashPopupSource(
+      glass: false,
+      color: Colors.transparent,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       builder: (anchorContext) {
         final current = _currentProfile;
         final enabled =
@@ -2886,7 +2859,21 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
 
   Widget _buildWireApiField() {
     final enabled = !(_currentProfile?.readOnly ?? false);
-    return Builder(
+    final decoration = _buildInputDecoration(
+      label: _headerText('接口方式', 'Wire API'),
+    ).applyDefaults(Theme.of(context).inputDecorationTheme);
+    return FlClashPopupSource(
+      glass: false,
+      color: decoration.filled == true
+          ? decoration.fillColor ?? Colors.transparent
+          : Colors.transparent,
+      shape: decoration.enabledBorder ?? decoration.border ?? InputBorder.none,
+      captureRect: (context) => glassPopupInputContainerRect(
+        context,
+        _wireApiContentKey.currentContext,
+      ),
+      captureOverflow: (context) =>
+          glassPopupInputLabelRects(context, _wireApiContentKey.currentContext),
       builder: (anchorContext) {
         return Opacity(
           opacity: enabled ? 1 : 0.68,
@@ -2902,12 +2889,11 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
                   : null,
               borderRadius: BorderRadius.circular(12),
               child: InputDecorator(
-                decoration: _buildInputDecoration(
-                  label: _headerText('接口方式', 'Wire API'),
-                ),
+                decoration: decoration,
                 isEmpty: false,
                 isFocused: false,
                 child: Row(
+                  key: _wireApiContentKey,
                   children: [
                     Expanded(
                       child: Text(
@@ -2945,317 +2931,340 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage> {
         title: context.l10n.settingsModelProviderTitle,
         primary: true,
       ),
-      body: SafeArea(
-        top: false,
-        bottom: false,
-        child: _isLoading
-            ? const Center(child: CircularProgressIndicator())
-            : ListView(
-                padding: edgeToEdgeScrollPadding(
-                  context,
-                  const EdgeInsets.fromLTRB(22, 12, 22, 24),
-                ),
-                children: [
-                  SettingsSectionTitle(
-                    label: context.l10n.modelProviderConfigTitle,
-                    subtitle: context.l10n.modelProviderConfigDesc,
-                  ),
-                  _buildCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  return Align(
-                                    alignment: Alignment.centerLeft,
-                                    child: _buildProviderConfigTitle(
-                                      maxWidth: constraints.maxWidth,
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            _buildModelActionButton(
-                              icon: LucideIcons.trash2,
-                              onPressed:
-                                  _profiles.length <= 1 ||
-                                      _currentProfile?.readOnly == true
-                                  ? null
-                                  : _deleteCurrentProfile,
-                            ),
-                            const SizedBox(width: 8),
-                            _buildModelActionButton(
-                              icon: LucideIcons.plus,
-                              onPressed: _promptAddProfile,
-                            ),
-                          ],
+      body: OmniContentWidth(
+        child: SafeArea(
+          top: false,
+          bottom: false,
+          child: _isLoading
+              ? const Center(child: CircularProgressIndicator())
+              : ListView.builder(
+                  itemCount: 1 + modelGroups.length,
+                  itemBuilder: (context, index) {
+                    if (index > 0) {
+                      return Padding(
+                        padding: const EdgeInsets.only(top: 12),
+                        child: _buildCard(
+                          child: _buildModelGroupSection(
+                            modelGroups[index - 1],
+                            isLast: true,
+                          ),
                         ),
-                        const SizedBox(height: 4),
-                        ConstrainedBox(
-                          constraints: const BoxConstraints(minHeight: 44),
-                          child: Row(
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SettingsSectionTitle(
+                          label: _headerText('当前提供商', 'Current provider'),
+                        ),
+                        _buildCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(
-                                _headerText('提供商', 'Provider'),
-                                style: TextStyle(
-                                  color: _secondaryTextColor,
-                                  fontSize: 13,
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: LayoutBuilder(
-                                  builder: (context, constraints) =>
-                                      _buildProtocolTypeButton(
-                                        maxWidth: constraints.maxWidth,
-                                      ),
-                                ),
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: LayoutBuilder(
+                                      builder: (context, constraints) {
+                                        return Align(
+                                          alignment: Alignment.centerLeft,
+                                          child: _buildProviderConfigTitle(
+                                            maxWidth: constraints.maxWidth,
+                                          ),
+                                        );
+                                      },
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildModelActionButton(
+                                    icon: LucideIcons.trash2,
+                                    onPressed:
+                                        _profiles.length <= 1 ||
+                                            _currentProfile?.readOnly == true
+                                        ? null
+                                        : _deleteCurrentProfile,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildModelActionButton(
+                                    icon: LucideIcons.plus,
+                                    onPressed: _promptAddProfile,
+                                  ),
+                                ],
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 12),
-                        TextField(
-                          controller: _nameController,
-                          focusNode: _nameFocusNode,
-                          enabled: !(_currentProfile?.readOnly ?? false),
-                          style: context.omniInputTextStyle,
-                          decoration: _buildInputDecoration(
-                            label: context.l10n.modelProviderName,
-                            hint: context.l10n.modelProviderNameHint,
-                          ),
+                        const SizedBox(height: 28),
+                        SettingsSectionTitle(
+                          label: _headerText('连接设置', 'Connection'),
+                          subtitle: context.l10n.modelProviderConfigDesc,
                         ),
-                        if (_isChatGptProvider) ...[
-                          const SizedBox(height: 16),
-                          ChatGptAccountSection(
-                            key: ValueKey('chatgpt-account-$_editingProfileId'),
-                            profileId: _editingProfileId,
-                            enabled:
-                                !_isSelectingProviderType &&
-                                !_isSwitchingProfile,
-                            beforeLogin: _persistProfileDraft,
-                            onAccountChanged: _refreshChatGptProfile,
-                          ),
-                        ] else ...[
-                          const SizedBox(height: 12),
-                          TextField(
-                            controller: _baseUrlController,
-                            focusNode: _baseUrlFocusNode,
-                            enabled: !(_currentProfile?.readOnly ?? false),
-                            style: context.omniInputTextStyle,
-                            decoration: _buildInputDecoration(
-                              label: 'Base URL',
-                              hint: context.l10n.modelProviderBaseUrlHint,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          ValueListenableBuilder<TextEditingValue>(
-                            valueListenable: _baseUrlController,
-                            builder: (context, value, child) {
-                              final url = _buildBaseUrlHelperText(value.text);
-                              if (url == null) {
-                                return const SizedBox.shrink();
-                              }
-                              return Text(
-                                url,
-                                style: TextStyle(
-                                  color: _tertiaryTextColor,
-                                  fontSize: 12,
-                                  fontFamily: 'PingFang SC',
+                        _buildCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(
+                                  minHeight: 44,
                                 ),
-                              );
-                            },
-                          ),
-                          if (_selectedProviderValue ==
-                              'openai_compatible') ...[
-                            const SizedBox(height: 12),
-                            _buildWireApiField(),
-                          ],
-                          const SizedBox(height: 14),
-                          TextField(
-                            controller: _apiKeyController,
-                            focusNode: _apiKeyFocusNode,
-                            enabled: !(_currentProfile?.readOnly ?? false),
-                            style: context.omniInputTextStyle,
-                            obscureText: _obscureApiKey,
-                            decoration: _buildInputDecoration(
-                              label: 'API Key',
-                              hint: 'e.g., sk-xxxx',
-                              suffixIcon: IconButton(
-                                key: const Key(
-                                  'provider-api-key-visibility-button',
-                                ),
-                                splashRadius: 18,
-                                onPressed: () {
-                                  setState(() {
-                                    _obscureApiKey = !_obscureApiKey;
-                                  });
-                                },
-                                icon: Icon(
-                                  _obscureApiKey
-                                      ? LucideIcons.eyeOff
-                                      : LucideIcons.eye,
-                                  color: _tertiaryTextColor,
-                                  size: 18,
-                                ),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            context.l10n.modelProviderApiKeyHint,
-                            style: TextStyle(
-                              color: _tertiaryTextColor,
-                              fontSize: 12,
-                              fontFamily: 'PingFang SC',
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _buildCustomHeadersEditor(),
-                        ],
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 18),
-                  SettingsSectionTitle(
-                    label: context.l10n.modelListTitle,
-                    subtitle: context.l10n.modelListDesc,
-                  ),
-                  _buildCard(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                context.l10n.modelListCount(modelItems.length),
-                                style: TextStyle(
-                                  color: _secondaryTextColor,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w500,
-                                  fontFamily: 'PingFang SC',
-                                ),
-                              ),
-                            ),
-                            _buildModelActionButton(
-                              icon: LucideIcons.plus,
-                              onPressed: _currentProfile?.readOnly == true
-                                  ? null
-                                  : _promptAddModel,
-                            ),
-                            const SizedBox(width: 8),
-                            _buildModelActionButton(
-                              icon: LucideIcons.arrowBigDown,
-                              onPressed:
-                                  _isFetchingModels ||
-                                      (_isChatGptProvider &&
-                                          _currentProfile?.ready != true)
-                                  ? null
-                                  : _fetchModelsLocalized,
-                              highlighted: true,
-                              loading: _isFetchingModels,
-                            ),
-                            const SizedBox(width: 4),
-                            Builder(
-                              builder: (anchorContext) {
-                                final hasHiddenRemoteModel = _remoteModels.any(
-                                  (model) => !_isModelVisibleInChat(model),
-                                );
-                                return _buildLucideModelActionButton(
-                                  key: const Key(
-                                    'provider-chat-model-visibility-button',
-                                  ),
-                                  icon: LucideIcons.columns3Cog,
-                                  tooltip: _headerText(
-                                    '管理聊天页模型',
-                                    'Manage chat list models',
-                                  ),
-                                  highlighted: hasHiddenRemoteModel,
-                                  onPressed: _currentProfile == null
-                                      ? null
-                                      : () {
-                                          unawaited(
-                                            _openChatModelVisibilityMenu(
-                                              anchorContext,
-                                            ),
-                                          );
-                                        },
-                                );
-                              },
-                            ),
-                            const SizedBox(width: 4),
-                            _buildModelGroupToggleButton(modelGroups),
-                          ],
-                        ),
-                        const SizedBox(height: 12),
-                        SizedBox(
-                          height: 280,
-                          child: modelItems.isEmpty
-                              ? Padding(
-                                  padding: const EdgeInsets.all(10),
-                                  child: Center(
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        Icon(
-                                          LucideIcons.package,
-                                          size: 64,
-                                          color: _tertiaryTextColor,
-                                        ),
-                                        const SizedBox(height: 10),
-                                        Text(
-                                          _modelFetchError ??
-                                              context.l10n.modelAddPrompt,
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                            color: _secondaryTextColor,
-                                            fontSize: 15,
-                                            fontWeight: FontWeight.w600,
-                                            fontFamily: 'PingFang SC',
-                                          ),
-                                        ),
-                                        if (_modelFetchError != null) ...[
-                                          const SizedBox(height: 8),
-                                          TextButton(
-                                            onPressed: _isFetchingModels
-                                                ? null
-                                                : _fetchModelsLocalized,
-                                            child: Text(
-                                              _headerText('重试', 'Retry'),
-                                            ),
-                                          ),
-                                        ],
-                                      ],
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      _headerText('提供商', 'Provider'),
+                                      style: TextStyle(
+                                        color: _secondaryTextColor,
+                                        fontSize: 13,
+                                      ),
                                     ),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                      child: LayoutBuilder(
+                                        builder: (context, constraints) =>
+                                            _buildProtocolTypeButton(
+                                              maxWidth: constraints.maxWidth,
+                                            ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                              const SizedBox(height: 12),
+                              TextField(
+                                controller: _nameController,
+                                focusNode: _nameFocusNode,
+                                enabled: !(_currentProfile?.readOnly ?? false),
+                                style: context.omniInputTextStyle,
+                                decoration: _buildInputDecoration(
+                                  label: context.l10n.modelProviderName,
+                                  hint: context.l10n.modelProviderNameHint,
+                                ),
+                              ),
+                              if (_isChatGptProvider) ...[
+                                const SizedBox(height: 16),
+                                ChatGptAccountSection(
+                                  key: ValueKey(
+                                    'chatgpt-account-$_editingProfileId',
                                   ),
-                                )
-                              : ListView.builder(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    2,
-                                    2,
-                                    2,
-                                    8,
+                                  profileId: _editingProfileId,
+                                  enabled:
+                                      !_isSelectingProviderType &&
+                                      !_isSwitchingProfile,
+                                  beforeLogin: _persistProfileDraft,
+                                  onAccountChanged: _refreshChatGptProfile,
+                                ),
+                              ] else ...[
+                                const SizedBox(height: 12),
+                                TextField(
+                                  controller: _baseUrlController,
+                                  focusNode: _baseUrlFocusNode,
+                                  enabled:
+                                      !(_currentProfile?.readOnly ?? false),
+                                  style: context.omniInputTextStyle,
+                                  decoration: _buildInputDecoration(
+                                    label: 'Base URL',
+                                    hint: context.l10n.modelProviderBaseUrlHint,
                                   ),
-                                  itemCount: modelGroups.length,
-                                  itemBuilder: (context, index) {
-                                    final group = modelGroups[index];
-                                    return _buildModelGroupSection(
-                                      group,
-                                      isLast: index == modelGroups.length - 1,
+                                ),
+                                const SizedBox(height: 8),
+                                ValueListenableBuilder<TextEditingValue>(
+                                  valueListenable: _baseUrlController,
+                                  builder: (context, value, child) {
+                                    final url = _buildBaseUrlHelperText(
+                                      value.text,
+                                    );
+                                    if (url == null) {
+                                      return const SizedBox.shrink();
+                                    }
+                                    return Text(
+                                      url,
+                                      style: TextStyle(
+                                        color: _tertiaryTextColor,
+                                        fontSize: 12,
+                                        fontFamily: 'PingFang SC',
+                                      ),
                                     );
                                   },
                                 ),
+                                if (_selectedProviderValue ==
+                                    'openai_compatible') ...[
+                                  const SizedBox(height: 12),
+                                  _buildWireApiField(),
+                                ],
+                                const SizedBox(height: 14),
+                                TextField(
+                                  controller: _apiKeyController,
+                                  focusNode: _apiKeyFocusNode,
+                                  enabled:
+                                      !(_currentProfile?.readOnly ?? false),
+                                  style: context.omniInputTextStyle,
+                                  obscureText: _obscureApiKey,
+                                  decoration: _buildInputDecoration(
+                                    label: 'API Key',
+                                    hint: 'e.g., sk-xxxx',
+                                    suffixIcon: IconButton(
+                                      key: const Key(
+                                        'provider-api-key-visibility-button',
+                                      ),
+                                      splashRadius: 18,
+                                      onPressed: () {
+                                        setState(() {
+                                          _obscureApiKey = !_obscureApiKey;
+                                        });
+                                      },
+                                      icon: Icon(
+                                        _obscureApiKey
+                                            ? LucideIcons.eyeOff
+                                            : LucideIcons.eye,
+                                        color: _tertiaryTextColor,
+                                        size: 18,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                                const SizedBox(height: 8),
+                                Text(
+                                  context.l10n.modelProviderApiKeyHint,
+                                  style: TextStyle(
+                                    color: _tertiaryTextColor,
+                                    fontSize: 12,
+                                    fontFamily: 'PingFang SC',
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                _buildCustomHeadersEditor(),
+                              ],
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 28),
+                        SettingsSectionTitle(
+                          label: context.l10n.modelListTitle,
+                          subtitle: context.l10n.modelListDesc,
+                        ),
+                        _buildCard(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      context.l10n.modelListCount(
+                                        modelItems.length,
+                                      ),
+                                      style: TextStyle(
+                                        color: _secondaryTextColor,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w500,
+                                        fontFamily: 'PingFang SC',
+                                      ),
+                                    ),
+                                  ),
+                                  _buildModelActionButton(
+                                    icon: LucideIcons.plus,
+                                    onPressed: _currentProfile?.readOnly == true
+                                        ? null
+                                        : _promptAddModel,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  _buildModelActionButton(
+                                    icon: LucideIcons.arrowBigDown,
+                                    onPressed:
+                                        _isFetchingModels ||
+                                            (_isChatGptProvider &&
+                                                _currentProfile?.ready != true)
+                                        ? null
+                                        : _fetchModelsLocalized,
+                                    highlighted: true,
+                                    loading: _isFetchingModels,
+                                  ),
+                                  const SizedBox(width: 4),
+                                  OmniCircleButton.popup(
+                                    key: const Key(
+                                      'provider-chat-model-visibility-button',
+                                    ),
+                                    icon: LucideIcons.columns3Cog,
+                                    tooltip: _headerText(
+                                      '管理聊天页模型',
+                                      'Manage chat list models',
+                                    ),
+                                    foregroundColor:
+                                        _remoteModels.any(
+                                          (model) =>
+                                              !_isModelVisibleInChat(model),
+                                        )
+                                        ? context.omniPalette.accentPrimary
+                                        : null,
+                                    onOpen: _currentProfile == null
+                                        ? null
+                                        : (anchorContext) => unawaited(
+                                            _openChatModelVisibilityMenu(
+                                              anchorContext,
+                                            ),
+                                          ),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  _buildModelGroupToggleButton(modelGroups),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              ConstrainedBox(
+                                constraints: BoxConstraints(
+                                  minHeight: modelItems.isEmpty ? 120 : 0,
+                                ),
+                                child: modelItems.isEmpty
+                                    ? Padding(
+                                        padding: const EdgeInsets.all(10),
+                                        child: Center(
+                                          child: Column(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Icon(
+                                                LucideIcons.package,
+                                                size: 64,
+                                                color: _tertiaryTextColor,
+                                              ),
+                                              const SizedBox(height: 10),
+                                              Text(
+                                                _modelFetchError ??
+                                                    context.l10n.modelAddPrompt,
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                  color: _secondaryTextColor,
+                                                  fontSize: 15,
+                                                  fontWeight: FontWeight.w600,
+                                                  fontFamily: 'PingFang SC',
+                                                ),
+                                              ),
+                                              if (_modelFetchError != null) ...[
+                                                const SizedBox(height: 8),
+                                                TextButton(
+                                                  onPressed: _isFetchingModels
+                                                      ? null
+                                                      : _fetchModelsLocalized,
+                                                  child: Text(
+                                                    _headerText('重试', 'Retry'),
+                                                  ),
+                                                ),
+                                              ],
+                                            ],
+                                          ),
+                                        ),
+                                      )
+                                    : const SizedBox.shrink(),
+                              ),
+                            ],
+                          ),
                         ),
                       ],
-                    ),
+                    );
+                  },
+                  padding: edgeToEdgeScrollPadding(
+                    context,
+                    const EdgeInsets.fromLTRB(16, 16, 16, 24),
                   ),
-                ],
-              ),
+                ),
+        ),
       ),
     );
   }
@@ -3783,12 +3792,11 @@ class _AddModelIdDialogState extends State<_AddModelIdDialog> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: false,
+      canPop: true,
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) return;
-        _close();
+        if (didPop) _focusNode.unfocus();
       },
-      child: AlertDialog(
+      child: OmniGlassAlertDialog(
         title: Text(context.l10n.modelIdHint),
         content: TextField(
           controller: _controller,

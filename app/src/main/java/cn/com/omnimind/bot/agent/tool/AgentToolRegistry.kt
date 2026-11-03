@@ -2,9 +2,9 @@ package cn.com.omnimind.bot.agent
 
 import android.content.Context
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
-import cn.com.omnimind.baselib.shizuku.PrivilegedActionPolicy
+import cn.com.omnimind.baselib.privileged.PrivilegedActionPolicy
 import cn.com.omnimind.baselib.shizuku.ShizukuBackend
-import cn.com.omnimind.baselib.shizuku.ShizukuCapabilityManager
+import cn.com.omnimind.baselib.privileged.PrivilegedCapabilityManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.agent.tool.AgentCapabilityToolDefinition
 import cn.com.omnimind.bot.plugin.OmniPluginToolDefinition
@@ -47,7 +47,7 @@ class AgentToolRegistry(
 
     init {
         val locale = AppLocaleManager.resolvePromptLocale(context)
-        val shizukuStatus = ShizukuCapabilityManager.get(context).getStatus()
+        val privilegedStatus = PrivilegedCapabilityManager.get(context).getStatus()
         val runtimeDefinitions = mutableListOf<JsonObject>()
         runtimeDefinitions.addAll(
             AgentToolDefinitions.staticTools(
@@ -56,10 +56,10 @@ class AgentToolRegistry(
                 includeVlmTool = includeVlmTool,
             )
         )
-        if (shizukuStatus.isGranted()) {
-            val privilegedVisibleActions = shizukuStatus.availableActions.ifEmpty {
+        if (privilegedStatus.isGranted()) {
+            val privilegedVisibleActions = privilegedStatus.availableActions.ifEmpty {
                 PrivilegedActionPolicy.visibleAgentActions(
-                    if (shizukuStatus.backend == ShizukuBackend.ROOT) {
+                    if (privilegedStatus.backend == ShizukuBackend.ROOT) {
                         ShizukuBackend.ROOT
                     } else {
                         ShizukuBackend.ADB
@@ -69,31 +69,36 @@ class AgentToolRegistry(
             runtimeDefinitions.add(
                 AgentToolDefinitions.androidPrivilegedActionTool(
                     visibleActions = privilegedVisibleActions,
-                    backend = shizukuStatus.backend,
+                    backend = privilegedStatus.backend,
+                    provider = privilegedStatus.provider,
                     locale = locale
                 )
             )
             runtimeDefinitions.add(
                 AgentToolDefinitions.androidPrivilegedSessionStartTool(
-                    backend = shizukuStatus.backend,
+                    backend = privilegedStatus.backend,
+                    provider = privilegedStatus.provider,
                     locale = locale
                 )
             )
             runtimeDefinitions.add(
                 AgentToolDefinitions.androidPrivilegedSessionExecTool(
-                    backend = shizukuStatus.backend,
+                    backend = privilegedStatus.backend,
+                    provider = privilegedStatus.provider,
                     locale = locale
                 )
             )
             runtimeDefinitions.add(
                 AgentToolDefinitions.androidPrivilegedSessionReadTool(
-                    backend = shizukuStatus.backend,
+                    backend = privilegedStatus.backend,
+                    provider = privilegedStatus.provider,
                     locale = locale
                 )
             )
             runtimeDefinitions.add(
                 AgentToolDefinitions.androidPrivilegedSessionStopTool(
-                    backend = shizukuStatus.backend,
+                    backend = privilegedStatus.backend,
+                    provider = privilegedStatus.provider,
                     locale = locale
                 )
             )

@@ -43,11 +43,11 @@ class NaCloudDraftSessionTest {
                     assertEquals(emptyList<Any>(), listed["sessions"])
                     assertFalse(mockingDetails(repository).invocations.any { it.method.name == "ensureBinding" })
 
-                    `when`(repository.ensureBinding(id, cwd = "na-cloud")).thenReturn(42L)
+                    `when`(repository.ensureBinding(id, NA_AGENT_ID, cwd = "na-cloud")).thenReturn(42L)
                     val sent = reopened.callConnected("session/prompt", mapOf("sessionId" to id, "text" to "hello")) as Map<*, *>
                     assertEquals(id, sent["sessionId"])
                     assertEquals(42L, sent["conversationId"])
-                    verify(repository).ensureBinding(id, cwd = "na-cloud")
+                    verify(repository).ensureBinding(id, NA_AGENT_ID, cwd = "na-cloud")
                     assertEquals(connection.prefix, store.naOwnerForConversation(42L))
                 }
                 assertEquals("POST", server.takeRequest().method)

@@ -1,6 +1,6 @@
 # OOB ACP Harness 适配边界
 
-本文记录 OpenOmniBot（OOB）中小万、Codex、Claude Code、OpenCode 和 DeepSeek Harness 的统一 ACP 接入方式。目标是：每个 Harness 只声明自己的外部运行时差异，主聊天、会话、Provider、流式事件和插件能力全部走同一条主路。
+本文记录 OpenOmniBot（OOB）中本地 Harness 的统一 ACP 接入方式。目标是：每个 Harness 只声明自己的外部运行时差异，主聊天、会话、Provider、流式事件和插件能力全部走同一条主路。内置目录以 `app/src/main/assets/acp/agents.json` 为准。
 
 ## 总体原则
 
@@ -16,7 +16,7 @@ LocalAcpRuntime
 official ACP Harness process
 ```
 
-Harness 的具体名称只能用于注册官方 profile；运行时不应在主路写成 `if (dsh)`、`if (codex)` 来修补行为。主路通过 profile 取得 capability：
+Harness 的具体名称只能用于注册官方 profile；运行时不应在主路写成 `if (codex)` 等厂商分支来修补行为。主路通过 profile 取得 capability：
 
 ```kotlin
 val adapter = AcpHarnessAdapters.forProfile(profile)
@@ -29,6 +29,24 @@ val adapter = AcpHarnessAdapters.forProfile(profile)
 - `app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeManager.kt`
 - `app/src/main/java/cn/com/omnimind/bot/agent/runtime/LocalAcpRuntime.kt`
 - `app/src/main/java/cn/com/omnimind/bot/agent/runtime/AgentRuntimeMcp.kt`
+
+## 请求必须携带自身归属
+
+运行时不再保存“当前选中的全局 Agent”。`AgentConversationModePolicy` 统一校验请求的 `agentId`、持久 Conversation owner 和 ACP Session owner；已存在的归属不得被页面选择覆盖，彼此冲突时报 `agent_owner_conflict`。没有已知 owner 的新 Agent 请求必须明确传 `agentId`，否则报 `agent_identity_required`。
+
+`normal`、`chat_only` 是明确的小万产品模式，只有 owner 缺失时可据此确定 `xiaowan-acp`；不能用它们改写另一 Agent 的既有会话。新建内置 SubAgent 定时任务由产品入口显式写入 `xiaowan-acp`。没有可验证归属的历史仍可查看及管理，不自动补写默认 Agent。
+
+| 宿主操作 | 身份要求 |
+| --- | --- |
+| `agent/list` | 只读目录；返回 `agents`、`retiredAgentIds`，不返回 `selectedAgentId` 或条目 `selected` |
+| `status`、`disconnect` | 指定 `agentId`，或提供能解析持久 owner 的 `conversationId` / `sessionId` |
+| `initialize` | 连接级握手，明确指定 `agentId`，不靠 Conversation 或 Session hint 切换连接 |
+| `session/new`、`session/prompt` 及其他 session 操作 | 新会话明确指定 Agent；已有会话沿持久 owner 执行，连接由同一 ACP runtime 按需建立 |
+| `agent/select`、`connect` | 已移除，不作为发送前置操作 |
+
+本机 Codex 的身份是 `codex-acp`，PC Bridge 的身份是 `codex-remote`。`remoteEnabled` 只控制远端连接是否可用，不能据此把本地会话改发到远端。配置、模型列表和文件请求也必须寻址对应 owner。
+
+持久化变更仅删除 `acp_agent_profiles` 中旧的 `selected_profile_id`；不读取其值决定运行时，也不创建替代全局选择键。现有 Conversation/Session bindings 与 Room schema 保持原有格式。页面草稿继续使用既有 Conversation target 保存自己的 `agentId`，它不是运行时默认值。Provider 解析、凭据与长期记忆 API/数据不随这次归属调整改变。
 
 ## 哪些必须由 Harness adapter 处理
 
@@ -60,23 +78,20 @@ val adapter = AcpHarnessAdapters.forProfile(profile)
 
 | Harness | 必须保留的 adapter 差异 | 统一复用的部分 | 是否需要独立配置重写 |
 | --- | --- | --- | --- |
-| 小万 | 使用内置 ACP connection；不需要外部 managed npm 包 | Provider/模型、session、事件、MCP/插件边界 | 不需要 DSH 风格配置文件；只维护自身官方 ACP 启动入口 |
+| 小万 | 使用内置 ACP connection；不需要外部 managed npm 包 | Provider/模型、session、事件、MCP/插件边界 | 只维护自身官方 ACP 启动入口 |
 | Codex | 官方 `config.toml`、`auth.json`、model catalog；Responses wire API | session、Provider 绑定、事件、取消和统一 MCP | 需要自己的官方配置面，但不需要自己的会话/插件机制 |
 | Claude Code | 官方 `settings.json`；`ANTHROPIC_*` 环境变量和模型映射 | ACP 生命周期、Provider、事件、MCP 声明 | 需要自己的配置面；原始 JSON 内容走统一 raw-config 兼容 |
 | OpenCode | 官方 `opencode.json` provider/model 配置；`OPENAI_*` 环境变量 | ACP 生命周期、Provider、事件、MCP 声明 | 需要自己的配置面；只同步共享 Provider/model |
-| DeepSeek Harness | 官方 DSH 配置 JSON；官方 `session/new.mcpServers`（stdio/streamable HTTP）；stdio mode name 归一化；官方 profile 插件安装 | ACP session、Provider/model 来源、事件 reducer、OmniFlow 插件系统 | 需要 adapter-owned 配置和启动环境；这些差异不能泄漏到 Manager 主路 |
 
 这里的“需要重写”只表示把同一份共享 Provider 意图翻译成该 Harness 官方接受的配置，不表示重新实现 Agent、会话、工具或插件系统。
 
-## DSH 的特殊性应停留在哪里
+## 已移除的运行时
 
-DeepSeek Harness 的差异是事实上的官方运行时差异，不应被删除；但它应只存在于以下边界：
+DeepSeek Harness 不再作为内置 Agent 提供安装、升级、配置适配或 Web 入口。DeepSeek 模型及 API Provider 仍由共享 Provider 层支持，与本地 Harness 的支持范围独立。旧版本的安装与验收文档仅保留历史证据，不作为当前支持声明或操作指南。
 
-- `AcpHarnessAdapters.deepSeekHarness`：MCP transport、配置读写、启动环境和 stdio 归一化。
-- `AcpOfficialRuntime`：官方包、健康检查、原生构建要求、安装脚本和终端包 metadata。
-- `AgentConfigAdapters`：共享 Provider 到官方 Harness 配置的纯映射兼容。
+升级会清除旧启动配置与安装状态，保留 Conversation/Session 的原 Agent 归属和历史。退休 ID 在统一请求入口被拒绝；Flutter 和 WebChat 根据目录中的 `retiredAgentIds` 显示只读提示，继续使用其他 Agent 需要新建会话。
 
-`AgentRuntimeManager` 只询问 adapter 的能力，不判断 DSH ID。这样未来增加另一个“自定义配置 + mode 归一化”的 Harness 时，只需增加 profile/adapter，不应修改 session 或聊天主路。
+后台清理复用受管卸载脚本和安装互斥锁，只处理现有 Alpine/Ubuntu 环境中的已知全局包及可确认归属的旧启动器，不安装缺失环境。`.dsh` 配置、会话、用户插件及共享 Node/Python 工具保留；未知或修改过的启动器保留并记录清理未完成。安装清理代码仅用于旧版本迁移，不提供恢复 Harness 的入口。
 
 ## 评审检查清单
 

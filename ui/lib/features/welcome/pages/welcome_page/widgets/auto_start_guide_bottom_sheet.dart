@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:ui/widgets/omni_glass.dart';
 import 'package:flutter_svg/svg.dart';
 import 'package:ui/theme/app_colors.dart';
 import 'package:ui/widgets/gradient_button.dart';
@@ -38,7 +39,7 @@ class AutoStartGuideBottomSheet extends StatefulWidget {
     VoidCallback? onGoToSettings,
     VoidCallback? onCompleted,
   }) {
-    return showModalBottomSheet<bool>(
+    return showOmniGlassBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       isDismissible: false,
@@ -136,21 +137,9 @@ class _AutoStartGuideBottomSheetState extends State<AutoStartGuideBottomSheet>
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
-    return Container(
-      decoration: const BoxDecoration(
-        color: AppColors.background,
-        borderRadius: BorderRadius.only(
-          topLeft: Radius.circular(8),
-          topRight: Radius.circular(8),
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: Color(0x59000000),
-            blurRadius: 8,
-            offset: Offset(4, 4),
-          ),
-        ],
-      ),
+    return OmniGlassSheet(
+      backgroundColor: AppColors.background,
+      borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [

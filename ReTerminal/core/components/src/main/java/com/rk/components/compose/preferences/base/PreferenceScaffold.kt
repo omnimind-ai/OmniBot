@@ -16,14 +16,21 @@ package com.rk.components.compose.preferences.base
  * limitations under the License.
  */
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.unit.dp
 import com.rk.components.compose.appbars.TopBar
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -39,20 +46,31 @@ fun PreferenceScaffold(
     content: @Composable (PaddingValues) -> Unit,
 ) {
     val scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior()
-    Scaffold(
-        modifier = modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
-        topBar = {
-            TopBar(
-                backArrowVisible = backArrowVisible,
-                label = label,
-                isExpandedScreen = isExpandedScreen,
-                actions = actions,
-                scrollBehavior = scrollBehavior,
-            )
-        },
-        floatingActionButton = fab,
-        bottomBar = bottomBar,
+    // Match the Flutter settings column while keeping the page background
+    // edge-to-edge. This boundary is used only by preferences; terminal output
+    // retains its full viewport. One scaffold keeps its scroll and focus owners
+    // when the available window width changes.
+    Box(
+        modifier = modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.TopCenter,
     ) {
-        content(it)
+        Scaffold(
+            modifier = Modifier.widthIn(max = 840.dp)
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
+            topBar = {
+                TopBar(
+                    backArrowVisible = backArrowVisible,
+                    label = label,
+                    isExpandedScreen = isExpandedScreen,
+                    actions = actions,
+                    scrollBehavior = scrollBehavior,
+                )
+            },
+            floatingActionButton = fab,
+            bottomBar = bottomBar,
+        ) {
+            content(it)
+        }
     }
 }

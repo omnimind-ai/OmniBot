@@ -12,40 +12,10 @@ import org.junit.Test
 
 class AgentConfigAdaptersTest {
     @Test
-    fun deepSeekLaunchRereadsSavedPermissionsAndReasoningWithProviderPatch() {
-        for (mode in listOf("danger-full-access", "read-only", "workspace-write")) {
-            val input = AgentProviderMappingInput(
-                agentId = "deepseek-harness-acp",
-                provider = AgentProviderCredentials("https://gateway.example/v1", "current-key"),
-                model = "current-model",
-                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
-                rawHarnessConfig = buildDeepSeekHarnessConfigJson(
-                    DeepSeekHarnessConfig(
-                        apiKey = "old-key", model = "old-model",
-                        permissionMode = mode, reasoningEffort = "high",
-                    ),
-                ),
-            )
-            val mapping = AgentConfigAdapterRegistry.map(input)
-            val writes = AgentConfigAdapterRegistry.launchConfigWrites(input, mapping, emptyList(), "")
-            assertEquals(mode, mapping.environment["DSH_PERMISSION_MODE"])
-            assertEquals("high", mapping.environment["DSH_REASONING_EFFORT"])
-            assertEquals("current-key", mapping.environment["OMNIBOT_DSH_API_KEY"])
-            assertTrue(writes.single().content.contains("\"reasoning\":\"high\""))
-            assertFalse(writes.single().content.contains("old-key"))
-            assertFalse(writes.single().content.contains("old-model"))
-        }
-    }
-
-    @Test
     fun harnessModelSelectionUsesAdvertisedValuesWithoutLosingModelNamespace() {
         assertEquals("omnibot/org/model", AcpHarnessAdapters.openCode.resolveModelValue(
             "org/model", listOf("omnibot/org/model")))
         assertEquals(null, AcpHarnessAdapters.openCode.resolveModelValue("model", listOf("other/model")))
-        assertEquals("[\"provider\",\"org/model\"]", AcpHarnessAdapters.deepSeekHarness.resolveModelValue(
-            "org/model", listOf("[\"provider\",\"org/model\"]")))
-        assertEquals(null, AcpHarnessAdapters.deepSeekHarness.resolveModelValue(
-            "model", listOf("[\"a\",\"model\"]", "[\"b\",\"model\"]")))
         assertEquals(null, AcpHarnessAdapters.claudeCode.resolveModelValue("model", listOf("other")))
         assertEquals("model", AcpHarnessAdapters.codex.resolveModelValue("model", listOf("model")))
     }
@@ -91,11 +61,11 @@ class AgentConfigAdaptersTest {
             providerModels = listOf(ProviderModelOption(id = "model-a", reasoning = true,
                 toolCall = true, temperature = false, contextLimit = 32000, outputLimit = 4000)),
         )).asJsonObject
-        val model = root.getAsJsonObject("provider").getAsJsonObject("omnibot")
+        val model = root.getAsJsonObject("providers").getAsJsonObject("omnibot")
             .getAsJsonObject("models").getAsJsonObject("model-a")
-        assertTrue(model["reasoning"].asBoolean)
-        assertTrue(model["tool_call"].asBoolean)
-        assertFalse(model["temperature"].asBoolean)
+        assertTrue(model["capabilities"].asJsonObject["reasoning"].asJsonObject["supported"].asBoolean)
+        assertTrue(model["capabilities"].asJsonObject["tools"].asBoolean)
+        assertFalse(model["capabilities"].asJsonObject["temperature"].asBoolean)
         assertEquals(32000, model.getAsJsonObject("limit")["context"].asInt)
         assertEquals(4000, model.getAsJsonObject("limit")["output"].asInt)
         assertFalse(model.has("variants"))
@@ -116,11 +86,11 @@ class AgentConfigAdaptersTest {
             providerModels = listOf(ProviderModelOption(id = "current")),
             existingConfigJson = """{"provider":{"omnibot":{"models":{"stale":{},"current":{"options":{"temperature":0.3}}}},"custom":{"models":{"mine":{}}}}}""",
         )).asJsonObject
-        val providers = root["provider"].asJsonObject
+        val providers = root["providers"].asJsonObject
         val models = providers["omnibot"].asJsonObject["models"].asJsonObject
         assertEquals(setOf("current"), models.keySet())
-        assertEquals(0.3, models["current"].asJsonObject["options"].asJsonObject["temperature"].asDouble, 0.0)
-        assertTrue(providers["custom"].asJsonObject["models"].asJsonObject.has("mine"))
+        assertEquals(0.3, models["current"].asJsonObject["body"].asJsonObject["temperature"].asDouble, 0.0)
+        assertTrue(root["provider"].asJsonObject["custom"].asJsonObject["models"].asJsonObject.has("mine"))
     }
 
     @Test
@@ -173,10 +143,10 @@ class AgentConfigAdaptersTest {
     fun openCodeUsesTheConfiguredWireAcrossProtocolSwitches() {
         var saved = "{}"
         val cases = listOf(
-            Triple("openai_compatible", "chat_completions", "@ai-sdk/openai-compatible"),
-            Triple("openai_compatible", "responses", "@ai-sdk/openai"),
-            Triple("anthropic", "chat_completions", "@ai-sdk/anthropic"),
-            Triple("openai_compatible", "chat_completions", "@ai-sdk/openai-compatible"),
+            Triple("openai_compatible", "chat_completions", "@opencode/ai/providers/openai-compatible"),
+            Triple("openai_compatible", "responses", "@opencode/ai/providers/openai-compatible/responses"),
+            Triple("anthropic", "chat_completions", "@opencode/ai/providers/anthropic-compatible"),
+            Triple("openai_compatible", "chat_completions", "@opencode/ai/providers/openai-compatible"),
         )
         for ((protocol, wire, npm) in cases) {
             val input = AgentProviderMappingInput(
@@ -190,8 +160,8 @@ class AgentConfigAdaptersTest {
                 listOf(ProviderModelOption(id = "org/model-a")), saved,
             ).single().content
             val root = JsonParser.parseString(saved).asJsonObject
-            val provider = root["provider"].asJsonObject["omnibot"].asJsonObject
-            assertEquals(npm, provider["npm"].asString)
+            val provider = root["providers"].asJsonObject["omnibot"].asJsonObject
+            assertEquals(npm, provider["package"].asString)
             assertEquals("omnibot/org/model-a", root["model"].asString)
             assertTrue(provider["models"].asJsonObject.has("org/model-a"))
             assertFalse(saved.contains("test-secret"))
@@ -203,7 +173,7 @@ class AgentConfigAdaptersTest {
         val root = JsonParser.parseString(buildOpenCodeConfigJson(
             model = "org/model-a", baseUrl = "https://gateway.example/v1",
         )).asJsonObject
-        val models = root["provider"].asJsonObject["omnibot"].asJsonObject["models"].asJsonObject
+        val models = root["providers"].asJsonObject["omnibot"].asJsonObject["models"].asJsonObject
         assertTrue(models.has("org/model-a"))
         assertFalse(models.has("model-a"))
     }
@@ -243,25 +213,6 @@ class AgentConfigAdaptersTest {
     }
 
     @Test
-    fun deepSeekAcpUsesOfficialProviderPatchWithoutPersistingCredentials() {
-        val input = AgentProviderMappingInput(
-            agentId = "deepseek-harness-acp",
-            provider = AgentProviderCredentials("https://gateway.example/v1", "secret-key",
-                customHeaders = mapOf("X-Route" to "mobile")),
-            model = "model-b", harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
-        )
-        val mapping = AgentConfigAdapterRegistry.map(input)
-        val patch = AgentConfigAdapterRegistry.launchConfigWrites(
-            input, mapping, emptyList(), "",
-        ).single().content
-        assertTrue(patch.contains("- id: llm-pi-ai"))
-        assertTrue(patch.contains("- id: acp"))
-        assertTrue(patch.contains("\"model\":\"model-b\""))
-        assertTrue(patch.contains("\"X-Route\":\"mobile\""))
-        assertFalse(patch.contains("secret-key"))
-        assertEquals("secret-key", mapping.environment["OMNIBOT_DSH_API_KEY"])
-    }
-    @Test
     fun openCodeMappingPreservesExplicitProviderSelection() {
         val config = JsonParser.parseString(buildOpenCodeConfigJson(
             model = "omnibot/model-a", baseUrl = "https://example.test/v1",
@@ -282,7 +233,7 @@ class AgentConfigAdaptersTest {
             existingConfig = "{}",
         ).single()
         val config = JsonParser.parseString(write.content).asJsonObject
-        assertTrue(config.getAsJsonObject("provider").getAsJsonObject("omnibot")
+        assertTrue(config.getAsJsonObject("providers").getAsJsonObject("omnibot")
             .getAsJsonObject("models").has("model-b"))
     }
     private val provider = AgentProviderCredentials(
@@ -340,18 +291,6 @@ class AgentConfigAdaptersTest {
     @Test
     fun sharedProviderMapsToOfficialRuntimeSurfaces() {
         val model = "GLM-5.1"
-
-        val dsh = AgentConfigAdapterRegistry.map(
-            AgentProviderMappingInput(
-                agentId = AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
-                provider = provider,
-                model = model,
-                harnessAdapter = AcpHarnessAdapters.deepSeekHarness,
-            ),
-        )
-        assertEquals("https://llmapi.paratera.com/v1", dsh.environment["DEEPSEEK_BASE_URL"])
-        assertEquals("secret", dsh.environment["DEEPSEEK_API_KEY"])
-        assertEquals(model, dsh.environment["DSH_MODEL"])
 
         val codex = AgentConfigAdapterRegistry.map(
             AgentProviderMappingInput(
@@ -558,8 +497,8 @@ class AgentConfigAdaptersTest {
             existingConfig = "",
         ).single().content
         val openCodeHeaders = JsonParser.parseString(openCodeConfig)
-            .asJsonObject["provider"].asJsonObject["omnibot"]
-            .asJsonObject["options"].asJsonObject["headers"].asJsonObject
+            .asJsonObject["providers"].asJsonObject["omnibot"]
+            .asJsonObject["headers"].asJsonObject
         assertEquals(
             "{env:OMNIBOT_PROVIDER_HEADER_0}",
             openCodeHeaders["X-Trace-Id"].asString,
@@ -753,7 +692,6 @@ class AgentConfigAdaptersTest {
     @Test
     fun adaptersDoNotUseOldModelOverrides() {
         listOf(
-            AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID,
             AcpAgentProfileStore.CODEX_AGENT_ID,
             CLAUDE_CODE_AGENT_ID,
             "opencode-acp",
@@ -763,14 +701,10 @@ class AgentConfigAdaptersTest {
                     agentId = agentId,
                     provider = provider,
                     model = null,
-                    harnessAdapter = if (
-                        agentId == AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID
-                    ) AcpHarnessAdapters.deepSeekHarness else AcpHarnessAdapters.standard,
+                    harnessAdapter = AcpHarnessAdapters.standard,
                 ),
             )
             when (agentId) {
-                AcpAgentProfileStore.DEEPSEEK_HARNESS_AGENT_ID ->
-                    assertEquals("", mapping.deepSeekConfig?.model)
                 AcpAgentProfileStore.CODEX_AGENT_ID ->
                     assertEquals(null, mapping.codexModel)
                 CLAUDE_CODE_AGENT_ID ->
@@ -963,7 +897,7 @@ class AgentConfigAdaptersTest {
             baseUrl = "https://llmapi.paratera.com/v1"
         )
         assertTrue(config.contains("https://opencode.ai/config.json"))
-        assertTrue(config.contains("@ai-sdk/openai-compatible"))
+        assertTrue(config.contains("@opencode/ai/providers/openai-compatible"))
         assertTrue(config.contains("omnibot/GLM-5.1"))
         assertTrue(config.contains("{env:OPENAI_API_KEY}"))
         assertFalse(config.contains("\"context\""))
@@ -995,8 +929,8 @@ class AgentConfigAdaptersTest {
                 customHeaders = mapOf("X-New" to "new-value"),
             ),
         ).asJsonObject
-        val headers = config["provider"].asJsonObject["omnibot"]
-            .asJsonObject["options"].asJsonObject["headers"].asJsonObject
+        val headers = config["providers"].asJsonObject["omnibot"]
+            .asJsonObject["headers"].asJsonObject
 
         assertTrue("X-Old" !in headers.entrySet().map { it.key })
         assertEquals("keep-me", headers["X-Keep"].asString)

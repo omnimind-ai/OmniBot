@@ -136,6 +136,18 @@ class PermissionRegistry {
     ];
     final optionalPermissions = <PermissionSpec>[
       PermissionSpec(
+        id: 'local_network',
+        iconPath: 'assets/welcome/permission_installed_apps.svg',
+        iconWidth: 32.0,
+        iconHeight: 32.0,
+        name: LegacyTextLocalizer.isEnglish ? 'Local network' : '局域网访问',
+        description: LegacyTextLocalizer.isEnglish
+            ? 'Connect to computers, model providers and MCP services on your network (Android 17+)'
+            : '连接局域网电脑、模型和 MCP 服务（Android 17 及以上）',
+        openMethod: 'requestLocalNetworkPermission',
+        checkMethod: 'isLocalNetworkPermissionGranted',
+      ),
+      PermissionSpec(
         id: 'shizuku',
         iconPath: 'assets/welcome/permission_installed_apps.svg',
         iconWidth: 32.0,

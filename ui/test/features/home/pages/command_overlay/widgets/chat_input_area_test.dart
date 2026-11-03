@@ -281,7 +281,8 @@ void main() {
         );
         await tester.binding.handlePopRoute();
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pump(const Duration(milliseconds: 600));
+        await tester.pump();
         expect(find.byType(GlassPopupOverlayContent), findsNothing);
         expect(button, findsOneWidget);
         expect(route.popDisposition, RoutePopDisposition.bubble);
@@ -502,7 +503,8 @@ void main() {
       ),
     );
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
 
     expect(selected, AgentPermissionMode.autoReview);
   });
@@ -692,12 +694,25 @@ void main() {
       ),
     );
     await tester.pump(const Duration(milliseconds: 200));
+    for (final value in ['low', 'high', 'xhigh']) {
+      expect(
+        find.descendant(
+          of: find.byKey(
+            ValueKey('chat-input-agent-run-settings-option-effort-$value'),
+          ),
+          matching: find.text(value),
+        ),
+        findsOneWidget,
+      );
+    }
     await tester.tap(
       find.byKey(
         const ValueKey('chat-input-agent-run-settings-option-effort-xhigh'),
       ),
     );
-    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
     expect(selectedEffort, 'xhigh');
   });
 

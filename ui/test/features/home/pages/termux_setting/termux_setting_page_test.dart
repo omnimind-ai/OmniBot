@@ -9,6 +9,7 @@ import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/theme/app_theme.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -112,12 +113,12 @@ void main() {
     await tester.tap(find.text('Ubuntu'));
     await tester.pump();
 
-    var selector = tester.widget<SegmentedButton<EmbeddedTerminalDistribution>>(
-      find.byType(SegmentedButton<EmbeddedTerminalDistribution>),
-    );
-    expect(selector.selected, <EmbeddedTerminalDistribution>{
-      EmbeddedTerminalDistribution.ubuntu,
-    });
+    var selector = tester
+        .widget<OmniSegmentedSlider<EmbeddedTerminalDistribution>>(
+          find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
+        );
+    expect(selector.value, EmbeddedTerminalDistribution.ubuntu);
+    expect(selector.onChanged, isNull);
     expect(find.text('取消下载'), findsOneWidget);
 
     await tester.tap(find.text('取消下载'));
@@ -260,11 +261,9 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     final selector = tester
-        .widget<SegmentedButton<EmbeddedTerminalDistribution>>(
-          find.byType(SegmentedButton<EmbeddedTerminalDistribution>),
+        .widget<OmniSegmentedSlider<EmbeddedTerminalDistribution>>(
+          find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
         );
-    expect(selector.selected, <EmbeddedTerminalDistribution>{
-      EmbeddedTerminalDistribution.alpine,
-    });
+    expect(selector.value, EmbeddedTerminalDistribution.alpine);
   });
 }

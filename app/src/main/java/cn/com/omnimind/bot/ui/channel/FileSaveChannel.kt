@@ -11,10 +11,11 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
-import androidx.core.content.FileProvider
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.bot.activity.HtmlPreviewActivity
 import cn.com.omnimind.bot.resource.OfficeDocumentPreviewRepository
+import cn.com.omnimind.bot.resource.ResourceFileIntents
 import cn.com.omnimind.bot.util.AssistsUtil
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
@@ -38,9 +39,6 @@ class FileSaveChannel(
         private const val TAG = "FileSaveChannel"
         private const val CHANNEL = "cn.com.omnimind.bot/file_save"
         private const val REQUEST_CODE_CREATE_DOCUMENT = 39121
-        private const val SHARED_EXPORT_DIR = "shared_exports"
-        private const val MAX_SHARED_EXPORT_FILES = 24
-        private const val SHARED_EXPORT_RETENTION_MS = 2L * 24L * 60L * 60L * 1000L
 
         @Volatile
         private var pendingResult: MethodChannel.Result? = null
@@ -105,10 +103,6 @@ class FileSaveChannel(
                 }
             } ?: error("Cannot open output stream for target uri")
         }
-
-        private fun fileProviderAuthority(context: Context): String {
-            return "${context.packageName}.fileprovider"
-        }
     }
 
     private var channel: MethodChannel? = null
@@ -131,6 +125,7 @@ class FileSaveChannel(
             when (call.method) {
                 "saveFileWithSystemDialog" -> saveFileWithSystemDialog(call, result)
                 "openFile" -> openFile(call, result)
+                "openHtmlPreview" -> openHtmlPreview(call, result)
                 "openInBrowser" -> openInBrowser(call, result)
                 "shareFile" -> shareFile(call, result)
                 "shareText" -> shareText(call, result)
@@ -164,6 +159,41 @@ class FileSaveChannel(
             previewPermit.withPermit { previewLoader(path, kind) }
         }
 
+    internal fun openHtmlPreview(call: MethodCall, result: MethodChannel.Result) {
+        val activity = context as? Activity
+        if (activity == null) {
+            result.error("INIT_FAILED", "Not attached to activity", null)
+            return
+        }
+        val args = call.arguments as? Map<*, *>
+        val sourcePath = args?.get("sourcePath") as? String
+        if (sourcePath.isNullOrBlank()) {
+            result.error("INVALID_ARGS", "sourcePath is required", null)
+            return
+        }
+
+        try {
+            val sourceFile = File(sourcePath)
+            if (!sourceFile.isFile || !sourceFile.canRead()) {
+                result.error("INVALID_ARGS", "sourcePath must be a readable file", null)
+                return
+            }
+            if (sourceFile.extension.lowercase(Locale.ROOT) !in setOf("html", "htm")) {
+                result.error("INVALID_ARGS", "sourcePath must be an HTML file", null)
+                return
+            }
+            val title = (args?.get("title") as? String)?.trim().takeUnless { it.isNullOrEmpty() }
+                ?: sourceFile.name
+            activity.startActivity(
+                HtmlPreviewActivity.createIntent(activity, sourceFile.absolutePath, title),
+            )
+            result.success(true)
+        } catch (error: Exception) {
+            OmniLog.e(TAG, "Failed to open HTML preview", error)
+            result.error("OPEN_FAILED", "Unable to open HTML preview", null)
+        }
+    }
+
     private fun openFile(call: MethodCall, result: MethodChannel.Result) {
         val activity = context as? Activity
         if (activity == null) {
@@ -184,7 +214,7 @@ class FileSaveChannel(
                 result.error("INVALID_ARGS", "sourcePath does not exist", sourcePath)
                 return
             }
-            val contentUri = buildShareableContentUri(activity, sourceFile)
+            val contentUri = ResourceFileIntents.contentUri(activity, sourceFile)
             var safeMimeType = resolveMimeType(sourceFile, mimeType)
             var intent = buildViewIntent(activity, contentUri, safeMimeType, sourceFile.name)
             if (!hasIntentHandler(activity, intent) && safeMimeType != "*/*") {
@@ -242,7 +272,7 @@ class FileSaveChannel(
                 return
             }
 
-            val contentUri = buildShareableContentUri(activity, sourceFile)
+            val contentUri = ResourceFileIntents.contentUri(activity, sourceFile)
             val safeMimeType = resolveMimeType(sourceFile, mimeType)
             val intent = buildViewIntent(
                 activity,
@@ -285,7 +315,7 @@ class FileSaveChannel(
                 result.error("INVALID_ARGS", "sourcePath does not exist", sourcePath)
                 return
             }
-            val contentUri = buildShareableContentUri(activity, sourceFile)
+            val contentUri = ResourceFileIntents.contentUri(activity, sourceFile)
             var safeMimeType = resolveMimeType(sourceFile, mimeType)
             var intent = buildShareIntent(
                 activity = activity,
@@ -477,44 +507,6 @@ class FileSaveChannel(
             putExtra(Intent.EXTRA_SUBJECT, title)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
             clipData = ClipData.newUri(activity.contentResolver, title, contentUri)
-        }
-    }
-
-    private fun buildShareableContentUri(context: Context, sourceFile: File): Uri {
-        return try {
-            FileProvider.getUriForFile(context, fileProviderAuthority(context), sourceFile)
-        } catch (_: IllegalArgumentException) {
-            val stagedFile = stageFileInCache(context, sourceFile)
-            FileProvider.getUriForFile(context, fileProviderAuthority(context), stagedFile)
-        }
-    }
-
-    private fun stageFileInCache(context: Context, sourceFile: File): File {
-        val exportDir = File(context.cacheDir, SHARED_EXPORT_DIR)
-        if (!exportDir.exists()) {
-            exportDir.mkdirs()
-        }
-        cleanupSharedExports(exportDir)
-
-        val safeName = sourceFile.name.ifBlank { "shared_file" }
-        val prefix = System.currentTimeMillis().toString()
-        val stagedFile = File(exportDir, "${prefix}_$safeName")
-        sourceFile.inputStream().use { input ->
-            stagedFile.outputStream().use { output ->
-                input.copyTo(output)
-            }
-        }
-        return stagedFile
-    }
-
-    private fun cleanupSharedExports(directory: File) {
-        val files = directory.listFiles().orEmpty().sortedByDescending { it.lastModified() }
-        val now = System.currentTimeMillis()
-        files.forEachIndexed { index, file ->
-            val expired = now - file.lastModified() > SHARED_EXPORT_RETENTION_MS
-            if (expired || index >= MAX_SHARED_EXPORT_FILES) {
-                runCatching { file.delete() }
-            }
         }
     }
 
