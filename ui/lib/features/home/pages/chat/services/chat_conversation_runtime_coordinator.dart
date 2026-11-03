@@ -13,6 +13,7 @@ import 'package:ui/services/agent_message_kinds.dart';
 import 'package:ui/services/conversation_history_service.dart';
 import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
+import 'package:ui/services/na_history_sync_service.dart';
 import 'package:ui/services/agent_stream_meta.dart';
 
 part 'chat_runtime_internal_support.dart';
@@ -45,6 +46,7 @@ class _PendingPersistenceRequest {
     this.generateSummary = false,
     this.markComplete = false,
     this.persistMessages = false,
+    this.preserveActivityTime = false,
   });
 
   final int conversationId;
@@ -53,6 +55,7 @@ class _PendingPersistenceRequest {
   final bool generateSummary;
   final bool markComplete;
   final bool persistMessages;
+  final bool preserveActivityTime;
 }
 
 class ChatConversationRuntimeCoordinator extends ChangeNotifier {
@@ -93,6 +96,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   void ensureInitialized() {
     if (_initialized) return;
     _initialized = true;
+    NaHistorySyncService.instance.initialize();
     unawaited(VoicePlaybackCoordinator.instance.ensureInitialized());
 
     AssistsMessageService.initialize();

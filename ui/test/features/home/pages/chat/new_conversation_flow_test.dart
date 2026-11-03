@@ -23,6 +23,7 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/theme/app_theme.dart';
 
 class _DraftFilePicker extends FilePickerPlatform {
@@ -75,6 +76,10 @@ void main() {
   Completer<void>? historyMetadataGate;
   Completer<void>? historySessionGate;
   Map<String, Object?>? historySessionResponse;
+  late Map<String, Map<String, Object?>> naHistoryPages;
+  late Set<String> failedNaHistoryCursors;
+  Completer<void>? naHistoryStatusGate;
+  var delayNaHistoryStatus = false;
   Completer<void>? remoteSessionLoadGate;
   Completer<void>? remoteHistoryReadGate;
   var useRemoteRuntime = false;
@@ -168,6 +173,10 @@ void main() {
     historyMetadataGate = null;
     historySessionGate = null;
     historySessionResponse = null;
+    naHistoryPages = {};
+    failedNaHistoryCursors = {};
+    naHistoryStatusGate = null;
+    delayNaHistoryStatus = false;
     remoteSessionLoadGate = null;
     remoteHistoryReadGate = null;
     useRemoteRuntime = false;
@@ -274,6 +283,10 @@ void main() {
         case 'agent/list':
           return {'agents': agents};
         case 'status':
+          if (delayNaHistoryStatus) {
+            delayNaHistoryStatus = false;
+            await naHistoryStatusGate?.future;
+          }
           if (failAgentStatus) {
             throw PlatformException(
               code: 'STATUS_UNAVAILABLE',
@@ -321,6 +334,14 @@ void main() {
           return sessionResponse(sessionId);
         case 'session/load':
           final arguments = call.arguments as Map;
+          if (failedNaHistoryCursors.contains(arguments['historyCursor'])) {
+            throw PlatformException(code: 'TEMPORARY_HISTORY_FAILURE');
+          }
+          if (arguments['agentId'] == 'na-cloud' &&
+              arguments['includeHistory'] == false &&
+              naHistoryStatusGate != null) {
+            delayNaHistoryStatus = true;
+          }
           if (failSessionLoad) {
             throw PlatformException(
               code: 'SESSION_UNAVAILABLE',
@@ -358,10 +379,12 @@ void main() {
             };
           }
           if (arguments['refreshConfig'] == true) await sessionLoadGate?.future;
-          if (arguments['conversationId'] != null &&
-              arguments['includeHistory'] == false) {
+          if (arguments['conversationId'] != null) {
+            final snapshot =
+                naHistoryPages[arguments['historyCursor']] ??
+                historySessionResponse;
             await historySessionGate?.future;
-            if (historySessionResponse != null) return historySessionResponse;
+            if (snapshot != null) return snapshot;
           }
           return sessionResponse(
             (arguments['sessionId'] ??
@@ -1303,6 +1326,389 @@ void main() {
     expect(find.byType(ChatEmptyGreeting), findsNothing);
     await disposeChat(tester);
   });
+
+  Map<String, Object?> naHistory(
+    String text, {
+    String status = 'completed',
+    String turn = 'other-phone-turn',
+  }) => {
+    'threadId': 'na:fixture:conversation',
+    'agentId': 'na-cloud',
+    'thread': {
+      'id': 'na:fixture:conversation',
+      'agentId': 'na-cloud',
+      'turns': [
+        {
+          'id': turn,
+          'status': status,
+          'stopReason': status == 'completed' ? 'end_turn' : null,
+          'items': [
+            {'id': '$turn-reply', 'type': 'agentMessage', 'text': text},
+          ],
+        },
+      ],
+    },
+  };
+
+  Future<void> emitNaChange(
+    WidgetTester tester, {
+    int? id,
+    String? owner,
+  }) async {
+    await tester.runAsync(() async {
+      await messenger.handlePlatformMessage(
+        'cn.com.omnimind.bot/AssistCoreEvent',
+        const StandardMethodCodec().encodeMethodCall(
+          MethodCall('onConversationListChanged', {
+            'reason': 'na_cloud_history_changed',
+            if (id != null) 'conversation': {'id': id, 'agentId': 'na-cloud'},
+            if (owner != null) 'naOwnerPrefix': owner,
+          }),
+        ),
+        (_) {},
+      );
+      await Future<void>.delayed(Duration.zero);
+    });
+    await pumpHistoryFrames(tester);
+  }
+
+  Future<void> openNaHistory(WidgetTester tester) async {
+    AssistsMessageService.hasNaHistoryOwnerSnapshot = false;
+    conversations = [
+      {
+        ...historyConversation(806, ConversationMode.agent),
+        'agentId': 'na-cloud',
+      },
+    ];
+    historySessionResponse = naHistory('另一台手机的旧回复');
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: 806,
+        mode: ConversationMode.agent,
+        agentId: 'na-cloud',
+      ),
+    );
+    expect(
+      coordinator
+          .runtimeFor(conversationId: 806, mode: kChatRuntimeModeAgent)!
+          .messages
+          .where((row) => row.text == '另一台手机的旧回复'),
+      hasLength(1),
+    );
+    agentCalls.clear();
+  }
+
+  testWidgets('Na imports earlier cloud pages after showing the latest page', (
+    tester,
+  ) async {
+    AssistsMessageService.hasNaHistoryOwnerSnapshot = false;
+    conversations = [
+      {
+        ...historyConversation(806, ConversationMode.agent),
+        'agentId': 'na-cloud',
+      },
+    ];
+    historySessionResponse = {
+      ...naHistory('最新一页'),
+      'nextRunCursor': 'before-recent',
+    };
+    naHistoryPages = {
+      'before-recent': {
+        ...naHistory('中间一页', turn: 'middle'),
+        'nextRunCursor': 'before-middle',
+      },
+      'before-middle': naHistory('最早一页', turn: 'oldest'),
+    };
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: 806,
+        mode: ConversationMode.agent,
+        agentId: 'na-cloud',
+      ),
+    );
+    final runtime = coordinator.runtimeFor(
+      conversationId: 806,
+      mode: kChatRuntimeModeAgent,
+    )!;
+    expect(
+      runtime.messages.map((row) => row.text),
+      containsAll(['最新一页', '中间一页', '最早一页']),
+    );
+    expect(
+      agentCalls
+          .where(
+            (call) =>
+                call.method == 'session/load' &&
+                (call.arguments as Map)['historyCursor'] != null,
+          )
+          .map((call) => (call.arguments as Map)['historyCursor']),
+      ['before-recent', 'before-middle'],
+    );
+    agentCalls.clear();
+    await emitNaChange(tester, id: 806);
+    expect(
+      agentCalls.where((call) => call.method == 'session/load'),
+      hasLength(1),
+    );
+    expect(
+      runtime.messages.map((row) => row.text),
+      containsAll(['最新一页', '中间一页', '最早一页']),
+    );
+    await disposeChat(tester);
+  });
+
+  testWidgets(
+    'Na resume catches messages written while this phone was backgrounded',
+    (tester) async {
+      await openNaHistory(tester);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      historySessionResponse = naHistory('后台期间另一手机的新消息');
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      final runtime = coordinator.runtimeFor(
+        conversationId: 806,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      expect(
+        runtime.messages.where((row) => row.text == '后台期间另一手机的新消息'),
+        hasLength(1),
+      );
+      expect(
+        agentCalls.where((call) => call.method == 'session/prompt'),
+        isEmpty,
+      );
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
+    'Na invalidation imports another phone output once without a local prompt',
+    (tester) async {
+      await openNaHistory(tester);
+      historySessionResponse = naHistory('另一台手机正在继续输出', status: 'running');
+      await emitNaChange(tester, id: 806);
+      await emitNaChange(tester, id: 806);
+      final runtime = coordinator.runtimeFor(
+        conversationId: 806,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      expect(
+        runtime.messages.where((row) => row.text == '另一台手机正在继续输出'),
+        hasLength(1),
+      );
+      expect(runtime.hasInFlightTask, false);
+      expect(runtime.activeAcpTurnId, isNull);
+      expect(
+        agentCalls.where((call) => call.method == 'session/prompt'),
+        isEmpty,
+      );
+      historySessionResponse = naHistory('另一台手机已完成');
+      await emitNaChange(tester, id: 806);
+      expect(
+        runtime.messages.where((row) => row.text == '另一台手机已完成'),
+        hasLength(1),
+      );
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets('Na reconnect continues an interrupted earlier history page', (
+    tester,
+  ) async {
+    AssistsMessageService.hasNaHistoryOwnerSnapshot = false;
+    conversations = [
+      {
+        ...historyConversation(806, ConversationMode.agent),
+        'agentId': 'na-cloud',
+      },
+    ];
+    historySessionResponse = {
+      ...naHistory('最近消息'),
+      'nextRunCursor': 'before-recent',
+    };
+    naHistoryPages = {'before-recent': naHistory('断网前尚未加载的旧消息', turn: 'older')};
+    failedNaHistoryCursors.add('before-recent');
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: 806,
+        mode: ConversationMode.agent,
+        agentId: 'na-cloud',
+      ),
+    );
+    final runtime = coordinator.runtimeFor(
+      conversationId: 806,
+      mode: kChatRuntimeModeAgent,
+    )!;
+    expect(
+      runtime.messages.map((row) => row.text),
+      isNot(contains('断网前尚未加载的旧消息')),
+    );
+    failedNaHistoryCursors.clear();
+    await emitNaChange(tester, id: 806);
+    await tester.pumpAndSettle();
+    expect(
+      runtime.messages.map((row) => row.text),
+      containsAll(['最近消息', '断网前尚未加载的旧消息']),
+    );
+    await disposeChat(tester);
+  });
+
+  testWidgets(
+    'Na late initial snapshot cannot roll back newer completed remote output',
+    (tester) async {
+      AssistsMessageService.hasNaHistoryOwnerSnapshot = false;
+      conversations = [
+        {
+          ...historyConversation(806, ConversationMode.agent),
+          'agentId': 'na-cloud',
+        },
+      ];
+      historyPages[806] = historyMessage(806);
+      historySessionResponse = {
+        ...naHistory('过时的未完成片段', status: 'running'),
+        'eventCursor': 10,
+      };
+      naHistoryStatusGate = Completer<void>();
+      await pumpChat(
+        tester,
+        const ConversationThreadTarget.existing(
+          conversationId: 806,
+          mode: ConversationMode.agent,
+          agentId: 'na-cloud',
+        ),
+        settle: false,
+      );
+      await pumpHistoryFrames(tester);
+      historySessionResponse = {...naHistory('更新且已完成的回复'), 'eventCursor': 20};
+      await emitNaChange(tester, id: 806);
+      final runtime = coordinator.runtimeFor(
+        conversationId: 806,
+        mode: kChatRuntimeModeAgent,
+      )!;
+      expect(runtime.messages.map((row) => row.text), contains('更新且已完成的回复'));
+      naHistoryStatusGate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        runtime.messages.map((row) => row.text),
+        isNot(contains('过时的未完成片段')),
+      );
+      expect(
+        runtime.messages
+            .singleWhere((row) => row.text == '更新且已完成的回复')
+            .streamMeta?['isFinal'],
+        true,
+      );
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
+    'Na reads preserve server activity time rather than the synchronization time',
+    (tester) async {
+      await openNaHistory(tester);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(conversations.single['updatedAt'], 2000);
+      historySessionResponse = naHistory('更晚的服务端消息');
+      (historySessionResponse!['thread'] as Map)['updatedAt'] =
+          '2026-10-01T00:00:00Z';
+      await emitNaChange(tester, id: 806);
+      await tester.pump(const Duration(milliseconds: 400));
+      await tester.pumpAndSettle();
+      expect(
+        conversations.single['updatedAt'],
+        DateTime.utc(2026, 10, 1).millisecondsSinceEpoch,
+      );
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets('Na ignores other conversation and old owner invalidations', (
+    tester,
+  ) async {
+    await openNaHistory(tester);
+    AssistsMessageService.hasNaHistoryOwnerSnapshot = true;
+    AssistsMessageService.visibleNaOwnerPrefix = 'new-owner';
+    await emitNaChange(tester, id: 807);
+    await emitNaChange(tester, id: 806, owner: 'old-owner');
+    expect(agentCalls.where((call) => call.method == 'session/load'), isEmpty);
+    expect(
+      coordinator
+          .runtimeFor(conversationId: 806, mode: kChatRuntimeModeAgent)!
+          .messages
+          .map((row) => row.text),
+      contains('另一台手机的旧回复'),
+    );
+    AssistsMessageService.hasNaHistoryOwnerSnapshot = false;
+    await disposeChat(tester);
+  });
+
+  testWidgets(
+    'Na coalesces changes during a pending history read and catches the latest',
+    (tester) async {
+      await openNaHistory(tester);
+      historySessionResponse = naHistory('中途快照');
+      historySessionGate = Completer<void>();
+      await emitNaChange(tester, id: 806);
+      historySessionResponse = naHistory('读取期间又有新消息');
+      await emitNaChange(tester, id: 806);
+      await emitNaChange(tester, id: 806);
+      expect(
+        agentCalls.where((call) => call.method == 'session/load'),
+        hasLength(1),
+      );
+      historySessionGate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        agentCalls.where((call) => call.method == 'session/load'),
+        hasLength(2),
+      );
+      expect(
+        coordinator
+            .runtimeFor(conversationId: 806, mode: kChatRuntimeModeAgent)!
+            .messages
+            .map((row) => row.text),
+        contains('读取期间又有新消息'),
+      );
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
+    'Na discards a history response after account visibility changes',
+    (tester) async {
+      await openNaHistory(tester);
+      historySessionResponse = naHistory('旧账号的迟到内容');
+      historySessionGate = Completer<void>();
+      await emitNaChange(tester, id: 806);
+      AssistsMessageService.conversationVisibilityRevision++;
+      historySessionGate!.complete();
+      await tester.pumpAndSettle();
+      expect(
+        coordinator
+            .runtimeFor(conversationId: 806, mode: kChatRuntimeModeAgent)!
+            .messages
+            .map((row) => row.text),
+        isNot(contains('旧账号的迟到内容')),
+      );
+      expect(
+        coordinator
+            .runtimeFor(conversationId: 806, mode: kChatRuntimeModeAgent)!
+            .messages
+            .map((row) => row.text),
+        contains('另一台手机的旧回复'),
+      );
+      await disposeChat(tester);
+    },
+  );
 
   testWidgets(
     'restoring an unresolved target keeps the welcome screen hidden',
