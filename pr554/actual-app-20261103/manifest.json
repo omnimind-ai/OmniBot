@@ -1,0 +1,29 @@
+{
+  "sourceCommit": "27d2e63c7e773c1520db395af9c9e25e9338b28f",
+  "entrypoint": "lib/main_standard.dart",
+  "device": "2407FRK8EC / Android API 36",
+  "capture": "ADB screencap and unedited screenrecord; normal App UI",
+  "durationSeconds": 16.39,
+  "files": [
+    {
+      "file": "pr554-offline.png",
+      "bytes": 146520,
+      "sha256": "3c792ac7e2d0e81fd01088bdf2de5bb47b9cb341cc9d55fc04af249b414b066c"
+    },
+    {
+      "file": "pr554-checking.png",
+      "bytes": 119287,
+      "sha256": "48daf0417c67bd5030181f35dbe85b826b22ce344bf78100485aa81bc32bd0e7"
+    },
+    {
+      "file": "pr554-online.png",
+      "bytes": 121869,
+      "sha256": "fb126f6080d3cab8c567184cddcff01a4b34b1b2a9a53f89ba33f96203fb87ff"
+    },
+    {
+      "file": "pr554-real-ui.mp4",
+      "bytes": 1855813,
+      "sha256": "140b052d2110e6255a2ff431cd5b9a52e661f689f9fa98acb369534a40cbe50d"
+    }
+  ]
+}
