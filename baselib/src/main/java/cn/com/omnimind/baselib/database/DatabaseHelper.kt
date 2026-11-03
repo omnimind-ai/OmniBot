@@ -495,6 +495,10 @@ object DatabaseHelper {
         getDatabase().conversationDao().updatePreservingCheckpoint(conversation, preserveLatestMetadata)
     }
 
+    suspend fun updateCloudListMetadata(id: Long, at: Long, count: Int, preview: String?) {
+        getDatabase().conversationDao().updateCloudListMetadata(id, at, count, preview)
+    }
+
     suspend fun getConversationDisplayPage(offset: Int, limit: Int, includeArchived: Boolean, archivedOnly: Boolean, mode: String?) =
         getDatabase().conversationDao().getDisplayPage(offset, limit, includeArchived, archivedOnly, mode)
 

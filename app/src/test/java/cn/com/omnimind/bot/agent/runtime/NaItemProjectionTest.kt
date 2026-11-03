@@ -26,7 +26,8 @@ class NaItemProjectionTest {
         val normalized = RemoteHistoryCompatibility.normalizeResponse(mapOf("thread" to snapshot))["thread"] as Map<*, *>
         val turn = (normalized["turns"] as List<*>).single() as Map<*, *>
         val user = (turn["items"] as List<*>).single() as Map<*, *>
-        assertEquals("host-user", user["hostMessageId"])
+        assertNull(user["hostMessageId"])
+        assertEquals("host-user", user["legacyHostMessageId"])
         assertEquals("read", user["content"])
         val card = (user["attachments"] as List<*>).single() as Map<*, *>
         assertEquals("report.txt", card["name"])
@@ -81,8 +82,8 @@ class NaItemProjectionTest {
     }
     @Test fun recoveredSnapshotUsesLivePromptAndItemIdentities() {
         val snapshot = naThreadSnapshot("na:instance:conversation", mapOf("conversation" to mapOf("title" to "Na"),
-            "runs" to listOf(mapOf("id" to "server-run", "clientMessageId" to "host-prompt", "clientUserMessageId" to "original-user", "input" to "hello",
-                "status" to "completed", "items" to listOf(mapOf("id" to "item_1", "type" to "agent_message", "text" to "answer"))))))
+            "runs" to listOf(mapOf("id" to "server-run", "clientMessageId" to "phone:host-prompt", "clientOriginId" to "phone", "clientUserMessageId" to "original-user", "input" to "hello",
+                "status" to "completed", "items" to listOf(mapOf("id" to "item_1", "type" to "agent_message", "text" to "answer"))))), "phone")
         val turn = (snapshot["turns"] as List<*>).single() as Map<*, *>
         assertEquals("host-prompt", turn["id"])
         assertEquals("original-user", ((turn["items"] as List<*>)[0] as Map<*, *>)["hostMessageId"])

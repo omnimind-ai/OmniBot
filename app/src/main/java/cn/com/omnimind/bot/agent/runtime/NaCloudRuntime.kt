@@ -7,6 +7,7 @@ import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
@@ -73,6 +74,9 @@ internal class NaCloudRuntime(
     private val activeRuns = ConcurrentHashMap<String, String>()
     private val cancelPending = ConcurrentHashMap.newKeySet<String>()
     private var cachedStatus: Map<String, Any?> = emptyMap()
+    private val clientOriginId: String = naInstallationOrigin(appContext.noBackupFilesDir)
+    private var historySyncEnabled = false
+    private var historySyncJob: Job? = null
     private val configurationRevision = AtomicLong()
     private class ConnectionRevision(val value: Long) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ConnectionRevision>
@@ -91,6 +95,7 @@ internal class NaCloudRuntime(
                         promptOwners.remove(it.key)
                     }
                     cachedStatus = emptyMap()
+                    restartHistorySync()
                 }
                 previous = current
             }
@@ -100,13 +105,13 @@ internal class NaCloudRuntime(
     private suspend fun connection() = currentCoroutineContext()[NaCloudConnection]
         ?: error("Na connection attribution is missing")
 
-    private suspend fun <T> withConnection(operation: suspend () -> T): T {
+    private suspend fun <T> withConnection(readOnly: Boolean = false, operation: suspend () -> T): T {
         val snapshot = synchronized(this) { Triple(development, baseUrl, token to configurationRevision.get()) }
         val connection = if (snapshot.first) NaCloudConnection(snapshot.second, developmentToken = snapshot.third.first)
             else NaCloudConnection.managed(BuildConfig.CLOUD_URL, NaCloudEnvironment.developmentAvailable, OmniAccount.repository())
         return withContext(connection + ConnectionRevision(snapshot.third.second)) {
             requireCurrentConnection(connection, snapshot.third.second)
-            connection.prepareWorkspace(client)
+            connection.prepareWorkspace(client, allowClaim = !readOnly)
             requireCurrentConnection(connection, snapshot.third.second)
             operation()
         }
@@ -129,6 +134,7 @@ internal class NaCloudRuntime(
             token = ""
             configurationRevision.incrementAndGet()
             cachedStatus = emptyMap()
+            restartHistorySync()
             cn.com.omnimind.bot.webchat.FlutterChatSyncBridge.dispatchNaHistoryOwnerChanged(appContext)
             return config()
         }
@@ -142,6 +148,7 @@ internal class NaCloudRuntime(
         args["apiKey"]?.let { token = it.toString().trim() }
         configurationRevision.incrementAndGet()
         cachedStatus = emptyMap()
+        restartHistorySync()
         cn.com.omnimind.bot.webchat.FlutterChatSyncBridge.dispatchNaHistoryOwnerChanged(appContext)
         return config()
     }
@@ -178,7 +185,56 @@ internal class NaCloudRuntime(
         "collaborationMode/list" -> mapOf("collaborationModes" to emptyList<Any>())
         "config/read" -> config()
         "session/close" -> mapOf("ok" to true)
+        "config/na/historySync" -> setHistorySync(args["enabled"] == true)
         else -> withConnection { handleConnected(method, args) }
+    }
+
+    @Synchronized private fun setHistorySync(enabled: Boolean): Map<String, Any?> {
+        if (enabled != historySyncEnabled || (enabled && historySyncJob?.isActive != true)) {
+            historySyncEnabled = enabled
+            restartHistorySync()
+        }
+        return mapOf("enabled" to enabled)
+    }
+
+    @Synchronized private fun restartHistorySync() {
+        historySyncJob?.cancel()
+        historySyncJob = null
+        if (!historySyncEnabled) return
+        if (!development && (!OmniAccount.isConfigured() || !OmniAccount.repository().isSignedIn())) return
+        historySyncJob = scope.launch {
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                try {
+                    withConnection(readOnly = true) {
+                        val owner = connection()
+                        val revision = currentCoroutineContext()[ConnectionRevision]!!.value
+                        observeNaHistoryChanges(
+                            snapshot = { list(withCursorFallback = true) },
+                            subscribe = { cursor, receive ->
+                                val request = Request.Builder().url(owner.apiBaseUrl + "/api/events?after=$cursor")
+                                    .header("Accept", "text/event-stream").build()
+                                owner.execute(eventClient, request, retryReads = false) { response ->
+                                    check(response.isSuccessful) { "Na history stream HTTP ${response.code}" }
+                                    check(response.header("Content-Type").orEmpty().startsWith("text/event-stream"))
+                                    readNaEvents(response.body.source(), receive)
+                                }
+                            },
+                            checkOwner = { requireCurrentConnection(owner, revision) },
+                            changed = {
+                                requireCurrentConnection(owner, revision)
+                                cn.com.omnimind.bot.webchat.FlutterChatSyncBridge.dispatchNaCloudHistoryChanged(owner.prefix)
+                            },
+                        )
+                    }
+                } catch (error: kotlinx.coroutines.CancellationException) {
+                    throw error
+                } catch (_: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    delay(3000)
+                }
+            }
+        }
     }
 
     private suspend fun handleConnected(method: String, args: Map<String, Any?>): Any? {
@@ -232,6 +288,8 @@ internal class NaCloudRuntime(
 
     private suspend fun bind(id: String, conversationId: Long?, title: String?): Long {
         val connection = connection()
+        val revision = currentCoroutineContext()[ConnectionRevision]?.value
+        if (revision != null) requireCurrentConnection(connection, revision)
         connection.account?.requireSessionGeneration(connection.generation)
         if (conversationId != null) {
             val existingOwner = profiles.naOwnerForConversation(conversationId)
@@ -242,6 +300,7 @@ internal class NaCloudRuntime(
         profiles.bindConversation(local, NA_AGENT_ID)
         profiles.bindNaConversationOwner(local, connection.prefix)
         connection.account?.requireSessionGeneration(connection.generation)
+        if (revision != null) requireCurrentConnection(connection, revision)
         return local
     }
 
@@ -267,9 +326,15 @@ internal class NaCloudRuntime(
     private suspend fun load(args: Map<String, Any?>, create: Boolean): Map<String, Any?> {
         val prefix = connection().prefix
         val existing = resolveSession(args)
+        val historyCursor = args["historyCursor"] as? String
         val response = if (existing == null) {
+            require(historyCursor == null) { "Na history requires an existing session" }
             require(create || args["conversationId"] != null) { "Na session is required" }
             request("POST", "/api/conversations", emptyMap())
+        } else if (historyCursor != null) {
+            val url = (connection().apiBaseUrl + "/api/conversations/${existing.removePrefix(prefix)}/runs")
+                .toHttpUrl().newBuilder().addQueryParameter("before", historyCursor).addQueryParameter("limit", "100").build()
+            request("GET", url.encodedPath.removePrefix(connection().apiBaseUrl.toHttpUrl().encodedPath.trimEnd('/')) + "?" + url.encodedQuery)
         } else request("GET", "/api/conversations/${existing.removePrefix(prefix)}")
         val snapshot = response.map("conversation")
         val sessionId = existing ?: prefix + snapshot["id"]
@@ -280,12 +345,20 @@ internal class NaCloudRuntime(
         } else null
         return mapOf("sessionId" to sessionId, "threadId" to sessionId, "conversationId" to local,
             "agentId" to NA_AGENT_ID, "agentRuntime" to "na", "configOptions" to emptyList<Any>(),
-            "thread" to naThreadSnapshot(sessionId, response))
+            "thread" to naThreadSnapshot(sessionId, response, clientOriginId))
     }
 
-    private suspend fun list(): Map<String, Any?> {
+    private suspend fun list(withCursorFallback: Boolean = false): Map<String, Any?> = mutex.withLock {
         val prefix = connection().prefix
-        val entries = request("GET", "/api/conversations")["conversations"] as? List<*> ?: emptyList<Any>()
+        // Older servers do not include a list cursor. Read it before listing,
+        // never afterward, so mutations during the list can still be replayed.
+        var response = request("GET", "/api/conversations")
+        val before = if (withCursorFallback && response["eventCursor"] == null) {
+            val cursor = request("GET", "/api/status")["eventCursor"]
+            response = request("GET", "/api/conversations")
+            cursor
+        } else null
+        val entries = response["conversations"] as? List<*> ?: emptyList<Any>()
         val sessions = entries.mapNotNull { raw ->
             val c = raw as? Map<*, *> ?: return@mapNotNull null
             val id = prefix + c["id"]
@@ -293,11 +366,21 @@ internal class NaCloudRuntime(
                 return@mapNotNull null
             }
             val local = bind(id, null, c["title"]?.toString())
+            val activity = naConversationListMetadata(c)
+            if (activity != null && prompts.entries.none { it.key.startsWith("$id/") && !it.value.isCompleted }) {
+                val owner = connection()
+                val revision = currentCoroutineContext()[ConnectionRevision]?.value
+                if (revision != null) requireCurrentConnection(owner, revision)
+                cn.com.omnimind.baselib.database.DatabaseHelper.updateCloudListMetadata(
+                    local, activity.updatedAt, activity.messageCount, activity.preview)
+                if (revision != null) requireCurrentConnection(owner, revision)
+            }
             mapOf("id" to id, "sessionId" to id, "threadId" to id, "conversationId" to local,
                 "agentId" to NA_AGENT_ID, "agentRuntime" to "na", "title" to c["title"],
                 "preview" to c["title"], "cwd" to "na-cloud")
         }
-        return mapOf("sessions" to sessions, "threads" to sessions, "data" to sessions)
+        mapOf("sessions" to sessions, "threads" to sessions, "data" to sessions,
+            "eventCursor" to (response["eventCursor"] ?: before))
     }
 
     private suspend fun prompt(args: Map<String, Any?>): Map<String, Any?> {
@@ -308,6 +391,7 @@ internal class NaCloudRuntime(
         }.orEmpty()
         val id = resolveSession(args) ?: error("Na session is required")
         val reservation = args["requestId"]?.toString()?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+        val cloudReservation = naCloudMessageId(clientOriginId, reservation)
         val connection = connection()
         val prefix = connection.prefix
         val key = "$id/$reservation"
@@ -322,7 +406,7 @@ internal class NaCloudRuntime(
                 }
                 var admittedRunId: String? = null
                 try {
-                    val uploadOwner = mapOf("conversationId" to id.removePrefix(prefix), "clientMessageId" to reservation)
+                    val uploadOwner = mapOf("conversationId" to id.removePrefix(prefix), "clientMessageId" to cloudReservation)
                     val attachmentIds = mutableListOf<String>()
                     if (attachments.isNotEmpty()) {
                         val capabilities = request("GET", "/api/status")["capabilities"] as? List<*>
@@ -330,7 +414,7 @@ internal class NaCloudRuntime(
                     }
                     // One admission after all uploads; neither PUT nor POST is replayed.
                     val accepted = naSubmitWithAttachments(
-                        input["text"]?.toString().orEmpty(), attachments, key, appContext.cacheDir,
+                        input["text"]?.toString().orEmpty(), attachments, "$id/$cloudReservation", appContext.cacheDir,
                         ::openAttachment,
                         { path, file, active ->
                             val attachment = attachments[attachmentIds.size]
@@ -344,7 +428,8 @@ internal class NaCloudRuntime(
                         cleanup = { request("DELETE", "/api/files/uploads", uploadOwner) },
                     ) { text ->
                         request("POST", "/api/conversations/${id.removePrefix(prefix)}/messages",
-                            mapOf("text" to text, "clientMessageId" to reservation, "attachmentIds" to attachmentIds) +
+                            mapOf("text" to text, "clientMessageId" to cloudReservation, "clientOriginId" to clientOriginId,
+                                "attachmentIds" to attachmentIds) +
                                 (args["userMessageId"]?.toString()?.takeIf { it.isNotBlank() }?.let { mapOf("clientUserMessageId" to it) } ?: emptyMap()))
                     }
                     val runId = accepted["runId"].toString()
@@ -554,14 +639,17 @@ internal class NaItemProjection(private val turnId: String) {
 /** Na ids are scoped exactly like live session/update projection. The App's
  * existing snapshot mapper and coordinator merge these with committed history.
  */
-internal fun naThreadSnapshot(sessionId: String, response: Map<String, Any?>): Map<String, Any?> {
+internal fun naThreadSnapshot(sessionId: String, response: Map<String, Any?>, clientOriginId: String? = null): Map<String, Any?> {
     val conversation = response["conversation"] as? Map<*, *> ?: emptyMap<Any, Any>()
     val turns = (response["runs"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.map { run ->
-        val turnId = (run["clientMessageId"] ?: run["id"]).toString()
+        val turnId = naSnapshotTurnId(run, clientOriginId)
         val items = mutableListOf<Map<String, Any?>>(mapOf("id" to "$turnId-user", "type" to "userMessage",
             "content" to listOf(mapOf("type" to "text", "text" to (run["userText"] ?: run["input"]))), "createdAt" to run["createdAt"],
             "attachments" to naHistoryAttachments(sessionId, run["attachments"]),
-            "hostMessageId" to run["clientUserMessageId"]))
+            "hostMessageId" to run["clientUserMessageId"].takeIf {
+                naRunIsLocal(run, clientOriginId)
+            },
+            "legacyHostMessageId" to run["clientUserMessageId"].takeIf { run["clientOriginId"] == null }))
         (run["items"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.forEach { item ->
             val itemId = "$turnId-${item["id"]}"
             val identity = if (item["type"] in setOf("agent_message", "reasoning")) emptyMap()
@@ -576,7 +664,11 @@ internal fun naThreadSnapshot(sessionId: String, response: Map<String, Any?>): M
                 else -> null
             })
     } ?: emptyList()
-    return mapOf("id" to sessionId, "agentId" to NA_AGENT_ID, "agentName" to "Na", "title" to conversation["title"], "turns" to turns)
+    return mapOf("id" to sessionId, "agentId" to NA_AGENT_ID, "agentName" to "Na", "title" to conversation["title"],
+        "updatedAt" to conversation["updatedAt"],
+        "turns" to turns, "eventCursor" to response["eventCursor"],
+        "runDetailsMayBeTruncated" to response["runDetailsMayBeTruncated"],
+        "nextRunCursor" to response["nextRunCursor"], "hasMoreRuns" to response["hasMoreRuns"])
 }
 
 internal fun requireNaWorkspaceOwner(expected: String, supplied: Any?, required: Boolean) {

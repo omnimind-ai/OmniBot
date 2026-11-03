@@ -42,7 +42,12 @@ class NaCloudStreamingTest {
                     assertEquals(result, runtime.callPrompt(args))
                 }
                 assertEquals(3, server.requestCount)
-                assertEquals("POST", server.takeRequest().method)
+                val admission = server.takeRequest()
+                assertEquals("POST", admission.method)
+                val payload = com.google.gson.JsonParser.parseString(admission.body.readUtf8()).asJsonObject
+                val origin = payload["clientOriginId"].asString
+                assertTrue(origin.isNotBlank())
+                assertEquals("$origin:same-turn", payload["clientMessageId"].asString)
                 assertEquals("/api/runs/run", server.takeRequest().path)
                 assertEquals("/api/events?after=1", server.takeRequest().path)
                 assertEquals(listOf("first ", "second"), seen.map {

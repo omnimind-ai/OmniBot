@@ -97,4 +97,18 @@ class NaCloudConnectionTest {
             assertEquals(1, server.requestCount)
         }
     }
+
+    @Test fun historyObservationNeverClaimsAMissingWorkspace() = runBlocking {
+        val remote = mock(AccountRemoteDataSource::class.java)
+        `when`(remote.getCurrentUser("access-one")).thenReturn(user)
+        val account = AccountRepository(remote, Store(tokens))
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("{\"workspace\":null,\"executionAvailable\":false}"))
+            server.start()
+            val connection = NaCloudConnection.managed(server.url("/").newBuilder().host("127.0.0.1").build().toString(), true, account)
+            assertTrue(runCatching { connection.prepareWorkspace(client, allowClaim = false) }.isFailure)
+            assertEquals(1, server.requestCount)
+            assertEquals("GET", server.takeRequest().method)
+        }
+    }
 }
