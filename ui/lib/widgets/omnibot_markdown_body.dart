@@ -244,6 +244,49 @@ String _normalizeOmnibotHeadingLine(String line) {
   );
 }
 
+/// Round only the current table row (or header plus divider) to its end.
+/// Subsequent prose keeps its normal reveal budget. Offsets refer to the
+/// original source, so normalization must remain in the rendering layer.
+int omnibotMarkdownRevealBoundary(String source, int requested) {
+  final end = requested.clamp(0, source.length);
+  if (end == 0 || end == source.length || !source.contains('|')) return end;
+  final lines = source.split('\n');
+  final fenced = _markdownFencedLines(lines);
+  var offset = 0;
+  var inTable = false;
+  for (var i = 0; i < lines.length; i++) {
+    final lineEnd = offset + lines[i].length;
+    if (fenced[i]) inTable = false;
+    final header =
+        !fenced[i] &&
+        i + 1 < lines.length &&
+        !fenced[i + 1] &&
+        omnibotMarkdownLineLooksLikeTableCandidate(lines[i]) &&
+        OmnibotTableSyntax._tableDividerPattern.hasMatch(
+          lines[i + 1].trimRight(),
+        );
+    if (header) {
+      final dividerEnd = lineEnd + 1 + lines[i + 1].length;
+      final contentEnd = lines[i + 1].endsWith('\r')
+          ? dividerEnd - 1
+          : dividerEnd;
+      if (end > offset && end < contentEnd) return contentEnd;
+      if (end <= dividerEnd) return end;
+      offset = dividerEnd + 1;
+      i++;
+      inTable = true;
+      continue;
+    }
+    inTable = inTable && !fenced[i] && _looksLikeMarkdownTableRow(lines[i]);
+    if (end <= lineEnd) {
+      final contentEnd = lines[i].endsWith('\r') ? lineEnd - 1 : lineEnd;
+      return inTable && end > offset && end < contentEnd ? contentEnd : end;
+    }
+    offset = lineEnd + 1;
+  }
+  return end;
+}
+
 bool omnibotMarkdownContainsTableCandidate(String source) {
   source = normalizeOmnibotMarkdown(source);
   final lines = source.split('\n');

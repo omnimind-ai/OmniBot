@@ -55,16 +55,88 @@ void main() {
   );
 
   testWidgets(
-    'final history and replacement never retain a hidden stale tail',
+    'completion preserves the reveal progress and eventually shows the tail',
     (tester) async {
       final text = '## 长回复\n\n${'内容' * 400}';
       await tester.pumpWidget(page(text));
+      final before = displayed(tester);
       await tester.pumpWidget(page(text, finalText: true));
+      expect(displayed(tester), before);
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(displayed(tester).length, greaterThan(before.length));
+      expect(displayed(tester).length, lessThan(text.length));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
       expect(displayed(tester), text);
       await tester.pumpWidget(page('## 新回复\n\n替换'));
       expect(displayed(tester), '## 新回复\n\n替换');
       await tester.pumpWidget(const SizedBox());
       await tester.pump(const Duration(seconds: 1));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('a table burst keeps following prose paced', (tester) async {
+    final text =
+        '| 项目 | 数值 |\n| --- | --- |\n| A | 1 |\n\n'
+        '${'后续正文🌍。' * 200}\n\n尾部标记';
+    await tester.pumpWidget(page(text));
+    final first = displayed(tester);
+    expect(find.byType(Table), findsOneWidget);
+    expect(first, isNot(contains('尾部标记')));
+    expect(first.length, lessThan(text.length));
+    await tester.pump(const Duration(milliseconds: 80));
+    expect(displayed(tester).length, greaterThan(first.length));
+    expect(displayed(tester).length, lessThan(text.length));
+    for (var i = 0; i < 30; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    expect(displayed(tester), text);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('a final chunk does not flush a live Markdown backlog', (
+    tester,
+  ) async {
+    final text = '## 回答\n\n${'内容' * 400}';
+    await tester.pumpWidget(page(text));
+    final before = displayed(tester);
+    final completed = '$text\n\n最后一段';
+    await tester.pumpWidget(page(completed, finalText: true));
+    expect(displayed(tester), before);
+    for (var i = 0; i < 20; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
+    expect(displayed(tester), completed);
+  });
+
+  testWidgets('completed history appears immediately, including replacement', (
+    tester,
+  ) async {
+    final text = '## 历史\n\n${'历史内容' * 200}';
+    await tester.pumpWidget(page(text, finalText: true));
+    expect(displayed(tester), text);
+    await tester.pumpWidget(page('$text\n\n结尾', finalText: true));
+    expect(displayed(tester), '$text\n\n结尾');
+    await tester.pumpWidget(page('## 另一条历史\n\n完整内容', finalText: true));
+    expect(displayed(tester), '## 另一条历史\n\n完整内容');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'completion keeps progress when unfinished bold becomes Markdown',
+    (tester) async {
+      final text = '**未闭合的加粗${'正文' * 400}';
+      await tester.pumpWidget(page(text));
+      await tester.pump(const Duration(milliseconds: 80));
+      expect(find.byType(OmnibotPacedRevealText), findsOneWidget);
+      await tester.pumpWidget(page(text, finalText: true));
+      expect(displayed(tester).length, lessThan(text.length));
+      for (var i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 80));
+      }
+      expect(displayed(tester), text);
       expect(tester.takeException(), isNull);
     },
   );
@@ -77,6 +149,40 @@ void main() {
     await tester.pumpWidget(page('$prose\n\n## 新标题\n\n继续'));
     expect(displayed(tester).startsWith(prose), isTrue);
     await tester.pumpWidget(const SizedBox());
+  });
+
+  test(
+    'table reveal boundaries preserve rows without exposing later prose',
+    () {
+      for (final newline in ['\n', '\r\n']) {
+        final header = '| 名称 | 数值 |$newline| --- | --- |';
+        final row = '$newline| A🌍 | 1 |';
+        final text =
+            '$header$row$newline$newline'
+            '后续正文';
+        expect(omnibotMarkdownRevealBoundary(text, 3), header.length);
+        expect(
+          omnibotMarkdownRevealBoundary(
+            text,
+            header.length + newline.length + 3,
+          ),
+          header.length + row.length,
+        );
+        final proseStart = text.indexOf('后续正文');
+        expect(
+          omnibotMarkdownRevealBoundary(text, proseStart + 2),
+          proseStart + 2,
+        );
+      }
+    },
+  );
+
+  test('table-like code and ordinary pipes keep their reveal offset', () {
+    const code = '```text\n| A | B |\n| --- | --- |\n| 1 | 2 |\n```';
+    final offset = code.indexOf('A') + 1;
+    expect(omnibotMarkdownRevealBoundary(code, offset), offset);
+    expect(omnibotMarkdownRevealBoundary('正文 a | b 后续文字', 8), 8);
+    expect(omnibotMarkdownRevealBoundary('| A | B |', 3), 3);
   });
 
   test(

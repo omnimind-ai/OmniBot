@@ -79,7 +79,7 @@ int _clampOmnibotTextToCodePointBoundary(String text, int requestedLength) {
 /// - 只含加粗标记的正文使用同一个 RichText 逐字透出，不嵌套整段
 ///   WidgetSpan。
 /// - 复杂 Markdown 限频更新同一个文档；大批文字分步透出，避免瞬间撑高。
-///   表格保持完整行，最终态和历史记录立即显示。
+///   表格保持完整行，流式结束后继续透出剩余文字；历史记录立即显示。
 /// - 未启用 Markdown 时走 [OmnibotPacedRevealText] 做逐字透出（轻量）。
 class StreamingText extends StatefulWidget {
   /// 完整的文本内容（会随着流式推送逐渐增加）
@@ -376,21 +376,29 @@ class _SmoothedMarkdown extends StatefulWidget {
 class _SmoothedMarkdownState extends State<_SmoothedMarkdown> {
   static const interval = Duration(milliseconds: 80);
   late String displayed;
+  late bool hasLiveInput;
   Timer? timer;
   Widget? cachedBody;
 
-  bool get showWhole =>
-      widget.isFinal || omnibotMarkdownContainsTableCandidate(widget.text);
+  int revealEnd(int requested) => omnibotMarkdownRevealBoundary(
+    widget.text,
+    _clampOmnibotTextToCodePointBoundary(widget.text, requested),
+  );
 
   @override
   void initState() {
     super.initState();
-    displayed = showWhole
+    // A final update can also switch from the plain/bold reveal widget to
+    // Markdown. Carry that widget's visible prefix through the renderer change.
+    hasLiveInput =
+        !widget.isFinal || widget.initialVisibleLength < widget.text.length;
+    // History starts complete. Finishing a live reply does not flush its
+    // remaining animation: execution state and reveal progress are separate.
+    displayed = !hasLiveInput
         ? widget.text
         : widget.text.substring(
             0,
-            _clampOmnibotTextToCodePointBoundary(
-              widget.text,
+            revealEnd(
               widget.initialVisibleLength < 128
                   ? 128
                   : widget.initialVisibleLength,
@@ -406,10 +414,7 @@ class _SmoothedMarkdownState extends State<_SmoothedMarkdown> {
       if (!mounted) return;
       final remaining = widget.text.length - displayed.length;
       final step = (remaining / 8).ceil().clamp(128, 1000000);
-      final end = _clampOmnibotTextToCodePointBoundary(
-        widget.text,
-        displayed.length + step,
-      );
+      final end = revealEnd(displayed.length + step);
       setState(() {
         displayed = widget.text.substring(0, end);
         cachedBody = null;
@@ -421,6 +426,9 @@ class _SmoothedMarkdownState extends State<_SmoothedMarkdown> {
   @override
   void didUpdateWidget(_SmoothedMarkdown oldWidget) {
     super.didUpdateWidget(oldWidget);
+    hasLiveInput = widget.text.startsWith(oldWidget.text)
+        ? hasLiveInput || !widget.isFinal
+        : !widget.isFinal;
     if (widget.style != oldWidget.style ||
         widget.trailing != oldWidget.trailing ||
         widget.onResourceOpen != oldWidget.onResourceOpen) {
@@ -429,7 +437,7 @@ class _SmoothedMarkdownState extends State<_SmoothedMarkdown> {
     if (widget.text == oldWidget.text && widget.isFinal == oldWidget.isFinal) {
       return;
     }
-    if (showWhole || !widget.text.startsWith(displayed)) {
+    if (!hasLiveInput || !widget.text.startsWith(displayed)) {
       timer?.cancel();
       timer = null;
       displayed = widget.text;
