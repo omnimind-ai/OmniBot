@@ -1153,8 +1153,14 @@ class AgentRuntimeService {
     );
   }
 
-  static Future<Map<String, dynamic>> testAgent(String agentId) {
-    return _invokeMap('agent/test', {'agentId': agentId.trim()});
+  static Future<Map<String, dynamic>> testAgent(
+    String agentId, {
+    bool readOnly = false,
+  }) {
+    return _invokeMap('agent/test', {
+      'agentId': agentId.trim(),
+      if (readOnly) 'readOnly': true,
+    });
   }
 
   static Future<Map<String, dynamic>> prepareAgent(

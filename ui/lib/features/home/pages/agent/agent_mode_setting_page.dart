@@ -51,6 +51,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
   bool _searchVisible = false;
   bool _loading = true;
   bool _refreshing = false;
+  bool _checkingNaConnection = false;
+  bool _checkNaAfterLoad = false;
   bool _checkingUpdates = false;
   bool _upgradingAll = false;
   String? _error;
@@ -89,10 +91,9 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
           unawaited(publishPageState(() {}));
           if (completed) unawaited(_load());
         });
-    // The native agent/list endpoint returns cached health. Keep route entry
-    // immediate; users can request the full terminal/proot probe with the
-    // refresh action without blocking this page.
-    unawaited(_load());
+    // Render the cached catalog first, then check Na through its existing
+    // health endpoint. Local terminal/proot probes remain an explicit action.
+    unawaited(_load(checkNaConnection: widget.active));
     unawaited(_loadPluginActions());
     unawaited(_loadSharedModel());
     unawaited(_loadRemoteBridge());
@@ -103,7 +104,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
     super.didUpdateWidget(oldWidget);
     if (!widget.active) _searchFocusNode.unfocus();
     if (widget.active && !oldWidget.active) {
-      unawaited(_load());
+      unawaited(_load(checkNaConnection: true));
       unawaited(_loadPluginActions());
       unawaited(_loadSharedModel());
       unawaited(_loadRemoteBridge());
@@ -208,9 +209,13 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
     setState(() => _webActionStatuses = statuses);
   }
 
-  Future<void> _load({bool refresh = false}) => refresh
-      ? _readCatalog(refresh: true)
-      : runPageLoad(#catalog, _readCatalog, revalidate: true);
+  Future<void> _load({bool refresh = false, bool checkNaConnection = false}) {
+    // A coalesced catalog read must retain the page-entry health check.
+    if (checkNaConnection) _checkNaAfterLoad = true;
+    return refresh
+        ? _readCatalog(refresh: true)
+        : runPageLoad(#catalog, _readCatalog, revalidate: true);
+  }
 
   Future<void> _readCatalog({bool refresh = false}) async {
     if (!await waitForPageReady()) return;
@@ -233,6 +238,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
         _refreshing = false;
         _error = null;
       });
+      if (_checkNaAfterLoad && widget.active) {
+        _checkNaAfterLoad = false;
+        unawaited(
+          runPageLoad(#naConnection, _readNaConnection, revalidate: true),
+        );
+      }
     } catch (error) {
       if (!await waitForPageReady() ||
           requestId != _catalogRequestId ||
@@ -247,6 +258,32 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
         // second list in Dart.
         _error = formatAgentRuntimeErrorForUser(error, english: _english);
       });
+    }
+  }
+
+  Future<void> _readNaConnection() async {
+    if (!widget.active ||
+        !(_catalog?.agents.any(
+              (agent) => agent.id == 'na-cloud' && agent.enabled,
+            ) ??
+            false)) {
+      return;
+    }
+    setState(() => _checkingNaConnection = true);
+    try {
+      await AgentRuntimeService.testAgent('na-cloud', readOnly: true);
+      if (mounted) await _load(); // Native Na health owns the persisted result.
+    } catch (error) {
+      if (!await waitForPageReady() || !pageLoadIsCurrent(#naConnection)) {
+        return;
+      }
+      setState(() {
+        _error = formatAgentRuntimeErrorForUser(error, english: _english);
+      });
+    } finally {
+      if (await waitForPageReady()) {
+        setState(() => _checkingNaConnection = false);
+      }
     }
   }
 
@@ -403,6 +440,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
 
   Future<void> _test(AcpAgentProfile agent) async {
     if (_busyAgentId == agent.id ||
+        (agent.id == 'na-cloud' && _checkingNaConnection) ||
         _packageOperations.containsKey(agent.id) ||
         !agent.enabled) {
       return;
@@ -785,7 +823,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
                           Text(_error!, textAlign: TextAlign.center),
                           const SizedBox(height: 12),
                           FilledButton(
-                            onPressed: _load,
+                            onPressed: () => _load(checkNaConnection: true),
                             child: Text(_text('重试', 'Retry')),
                           ),
                         ],
@@ -956,7 +994,9 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
     final operation = _packageOperations[agent.id];
     final changingPackage = operation != null;
     final queued = AgentRuntimeService.queuedAgentIds.contains(agent.id);
-    final busy = agent.id == _busyAgentId || changingPackage;
+    final checkingConnection = agent.id == 'na-cloud' && _checkingNaConnection;
+    final busy =
+        agent.id == _busyAgentId || changingPackage || checkingConnection;
     final canUninstall =
         agent.builtIn &&
         agent.managedAdapter &&
@@ -984,7 +1024,11 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
         fallbackColor: palette.accentPrimary,
       ),
       title: agent.name,
-      statusColor: changingPackage ? const Color(0xFFE3A52B) : statusColor,
+      statusColor: changingPackage
+          ? const Color(0xFFE3A52B)
+          : checkingConnection
+          ? palette.textTertiary
+          : statusColor,
       statusLabel: changingPackage
           ? operation == AgentPackageOperation.uninstall
                 ? queued
@@ -995,6 +1039,8 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
                 : _text('后台安装 / 升级中', 'Installing / updating')
           : !agent.enabled
           ? _text('已停用', 'Disabled')
+          : checkingConnection
+          ? _text('检测中', 'Checking connection')
           : status.label,
       subtitle: !agent.builtIn && agent.description.isNotEmpty
           ? agent.description
@@ -1005,7 +1051,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
           ? _versionSummary(agent)
           : null,
       detailIsError: agent.packageVersion?.error != null,
-      errorText: hasError && !changingPackage
+      errorText: hasError && !changingPackage && !checkingConnection
           ? _actionError(
               agent.lastCheckError,
               installation: agent.installed == false,
@@ -1085,9 +1131,12 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
           showChevron: false,
           trailing: _refreshing ? const _AgentBusyIndicator() : null,
           onTap:
-              _refreshing || _checkingUpdates || _packageOperations.isNotEmpty
+              _refreshing ||
+                  _checkingNaConnection ||
+                  _checkingUpdates ||
+                  _packageOperations.isNotEmpty
               ? null
-              : () => _load(refresh: true),
+              : () => _load(refresh: true, checkNaConnection: true),
         ),
         OmniSettingsTile(
           tileKey: const Key('agent-check-updates'),

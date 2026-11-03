@@ -75,7 +75,7 @@ internal class NaCloudConnection(
         ) { _, token -> send(token) }
     }
 
-    suspend fun prepareWorkspace(client: OkHttpClient) {
+    suspend fun prepareWorkspace(client: OkHttpClient, claimIfMissing: Boolean = true) {
         if (!managed) return
         suspend fun workspace(method: String): Map<String, Any?> {
             val path = "/v1/cloud/workspace" + if (method == "POST") "/claim" else ""
@@ -90,7 +90,7 @@ internal class NaCloudConnection(
             }
         }
         var state = workspace("GET")
-        if (state["workspace"] == null) state = workspace("POST")
+        if (state["workspace"] == null && claimIfMissing) state = workspace("POST")
         check(state["executionAvailable"] == true) { "云端空间尚未准备好，请稍后重试。" }
     }
 }
