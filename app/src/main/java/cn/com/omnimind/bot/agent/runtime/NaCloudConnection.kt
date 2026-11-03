@@ -51,7 +51,7 @@ internal class NaCloudConnection(
         .digest((baseUrl + (userId?.let { "\n$it" } ?: "")).toByteArray())
         .take(8).joinToString("") { "%02x".format(it) } + ":"
 
-    suspend fun <T> execute(client: OkHttpClient, request: Request, consume: (Response) -> T): T {
+    suspend fun <T> execute(client: OkHttpClient, request: Request, retryReads: Boolean = true, consume: (Response) -> T): T {
         // Reject redirects at the client, and credentials to any unrelated URL.
         val target = request.url
         val expected = baseUrl.toHttpUrl()
@@ -62,7 +62,7 @@ internal class NaCloudConnection(
             val authenticated = request.newBuilder().apply {
                 if (token.isNotBlank()) header("Authorization", "Bearer $token")
             }.build()
-            return naHttpResponse(client, authenticated) { response ->
+            return naHttpResponse(client, authenticated, retryReads) { response ->
                 if (managed && response.code == 401) {
                     throw AccountApiException(401, "authentication_required", "登录已失效，请重新连接。")
                 }

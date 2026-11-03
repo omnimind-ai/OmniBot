@@ -379,7 +379,7 @@ void main() {
               ),
             ),
           );
-          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 80));
           expect(tester.takeException(), isNull);
         }
 
@@ -409,7 +409,7 @@ void main() {
     );
   }
 
-  testWidgets('a long live table keeps its last row visible in the widget tree', (
+  testWidgets('a long live table reveals complete rows and eventually its tail', (
     tester,
   ) async {
     final text =
@@ -431,6 +431,20 @@ void main() {
     await tester.pump();
     expect(tester.takeException(), isNull);
     expect(find.byType(Table), findsOneWidget);
+    expect(find.text('行-199'), findsNothing);
+    final first = tester
+        .widget<OmnibotMarkdownBody>(find.byType(OmnibotMarkdownBody))
+        .data;
+    expect(first, endsWith('|'));
+    await tester.pump(const Duration(milliseconds: 80));
+    final next = tester
+        .widget<OmnibotMarkdownBody>(find.byType(OmnibotMarkdownBody))
+        .data;
+    expect(next.length, greaterThan(first.length));
+    expect(next, endsWith('|'));
+    for (var i = 0; i < 40; i++) {
+      await tester.pump(const Duration(milliseconds: 80));
+    }
     expect(find.text('行-199'), findsOneWidget);
   });
 

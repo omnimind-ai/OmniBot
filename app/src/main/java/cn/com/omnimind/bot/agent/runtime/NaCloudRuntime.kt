@@ -16,6 +16,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.ConnectionPool
 import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -54,6 +60,11 @@ internal class NaCloudRuntime(
     private val client = OkHttpClient.Builder().retryOnConnectionFailure(false)
         .followRedirects(false).followSslRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+    // Long-lived subscriptions must not occupy the ordinary request queue:
+    // status reads and, especially, cancel POSTs must remain dispatchable.
+    private val eventClient = client.newBuilder().dispatcher(okhttp3.Dispatcher().apply {
+        maxRequestsPerHost = 50 // Na's maximum number of admitted active runs.
+    }).build()
     private val gson = Gson()
     private var token = "" // Debug standalone-instance token; managed credentials stay in AccountRepository.
     private val mutex = Mutex()
@@ -342,27 +353,37 @@ internal class NaCloudRuntime(
                     val projector = NaItemProjection(reservation)
                     if (cancelPending.remove(id)) request("POST", "/api/runs/$runId/cancel", emptyMap())
                     withTimeout(31 * 60 * 1000L) {
-                        while (true) {
-                            val snapshot = request("GET", "/api/runs/$runId")
-                            val run = snapshot.map("run").ifEmpty { snapshot }
-                            (run["items"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.forEach { raw ->
-                                projector.updates(raw.entries.associate { it.key.toString() to it.value }).forEach { update ->
+                        val run = awaitNaRun(runId,
+                            snapshot = { request("GET", "/api/runs/$runId") },
+                            subscribe = { cursor, receive ->
+                                val request = Request.Builder().url(connection.apiBaseUrl + "/api/events?after=$cursor")
+                                    .header("Accept", "text/event-stream").build()
+                                connection.execute(eventClient, request, retryReads = false) { response ->
+                                    if (response.code == 409) throw IOException("Na event history compacted")
+                                    check(response.isSuccessful) { naCloudPublicError(response.code, null) }
+                                    check(response.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
+                                        "Na returned an invalid event stream"
+                                    }
+                                    readNaEvents(response.body.source(), receive)
+                                }
+                            },
+                            checkOwner = {
+                                promptContext.ensureActive()
+                                connection.account?.requireSessionGeneration(connection.generation)
+                            },
+                            onItem = { item ->
+                                projector.updates(item).forEach { update ->
+                                    promptContext.ensureActive()
                                     connection.account?.requireSessionGeneration(connection.generation)
                                     emit(mapOf("method" to "session/update", "conversationId" to local,
                                         "agentId" to NA_AGENT_ID, "sessionId" to id, "turnId" to reservation,
                                         "params" to mapOf("sessionId" to id, "turnId" to reservation, "update" to update)))
                                 }
-                            }
-                            val state = run["status"]?.toString()
-                            if (state in setOf("completed", "cancelled", "failed")) {
-                                return@withTimeout mapOf("sessionId" to id, "threadId" to id,
-                                    "conversationId" to local, "turnId" to reservation,
-                                    "stopReason" to when(state) { "completed" -> "end_turn"; "cancelled" -> "cancelled"; else -> "error" },
-                                    "error" to run["error"])
-                            }
-                            delay(600)
-                        }
-                        @Suppress("UNREACHABLE_CODE") emptyMap<String, Any?>()
+                            })
+                        mapOf("sessionId" to id, "threadId" to id,
+                            "conversationId" to local, "turnId" to reservation,
+                            "stopReason" to when(run["status"]) { "completed" -> "end_turn"; "cancelled" -> "cancelled"; else -> "error" },
+                            "error" to run["error"])
                     }
                 } catch (_: NaAttachmentCancelled) {
                     mapOf("sessionId" to id, "threadId" to id, "conversationId" to local,
@@ -577,13 +598,32 @@ internal fun naHistoryAttachments(sessionId: String, value: Any?): List<Map<Stri
 
 /** One transport owner for safe reads. Writes, including a lost prompt POST
  * response, are never retried. A read snapshot cannot admit another turn. */
-internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, consume: (Response) -> T): T {
+internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, retryReads: Boolean = true, consume: (Response) -> T): T {
+    // A peer can close an idle HTTP/1 connection before OkHttp probes it again.
+    // Writes cannot safely recover by replaying after an ambiguous I/O failure,
+    // so start each write with an empty pool and retire its connection afterward.
+    // Keep the shared dispatcher/TLS settings and the existing read/SSE policy.
+    val requestClient = if (request.method == "GET" || request.method == "HEAD") client else
+        client.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+            .retryOnConnectionFailure(false).build()
     var failures = 0
     while (true) {
         try {
-            return withContext(Dispatchers.IO) { client.newCall(request).execute().use(consume) }
+            return suspendCancellableCoroutine { continuation ->
+                val call = requestClient.newCall(request)
+                continuation.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : Callback {
+                    override fun onFailure(call: Call, error: IOException) {
+                        continuation.resumeWithException(error)
+                    }
+                    override fun onResponse(call: Call, response: Response) {
+                        try { continuation.resume(response.use(consume)) }
+                        catch (error: Exception) { continuation.resumeWithException(error) }
+                    }
+                })
+            }
         } catch (error: IOException) {
-            if (request.method != "GET" || ++failures >= 3) throw error
+            if (!retryReads || request.method != "GET" || ++failures >= 3) throw error
             delay(1000L * failures)
         }
     }
