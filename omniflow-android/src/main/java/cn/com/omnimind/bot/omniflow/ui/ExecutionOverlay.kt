@@ -13,6 +13,8 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
+import cn.com.omnimind.baselib.i18n.AppLocaleManager
+import cn.com.omnimind.bot.omniflow.R
 import android.widget.TextView
 import cn.com.omnimind.androidgui.AndroidGuiOverlayHost
 import cn.com.omnimind.baselib.util.OmniLog
@@ -52,7 +54,7 @@ internal object ExecutionOverlay {
             ExecutionOverlayHost.APPLICATION -> appContext
         }
         val manager = windowContext.getSystemService(Context.WINDOW_SERVICE) as WindowManager
-        val session = Session(manager, onComplete, onStop, initialPhase)
+        val session = Session(windowContext, manager, onComplete, onStop, initialPhase)
         val feedbackView = ExecutionFeedbackView(windowContext)
         val feedbackParams = feedbackLayoutParams(host.windowType)
         runCatching {
@@ -128,13 +130,14 @@ internal object ExecutionOverlay {
             setTextColor(Color.parseColor("#5F6875"))
             textSize = 11f
         }
-        val pause = action(context, "接管", "#F3F4F5", "#202F51") {
+        val localizedContext = AppLocaleManager.localizedContext(context)
+        val pause = action(context, localizedContext.getString(R.string.omniflow_action_takeover), "#F3F4F5", "#202F51") {
             session.togglePaused()
         }
-        val stop = action(context, "停止", "#FFF0F0", "#C73636") {
+        val stop = action(context, localizedContext.getString(R.string.omniflow_action_stop), "#FFF0F0", "#C73636") {
             session.requestStop()
         }
-        val complete = action(context, "已完成", "#EAF7EE", "#257A43") {
+        val complete = action(context, localizedContext.getString(R.string.omniflow_action_complete), "#EAF7EE", "#257A43") {
             session.requestComplete()
         }
         row.addView(
@@ -190,12 +193,13 @@ internal object ExecutionOverlay {
         (value * resources.displayMetrics.density).toInt()
 
     class Session internal constructor(
+        private val context: Context,
         private val manager: WindowManager,
         private val onComplete: () -> Unit,
         private val onStop: () -> Unit,
         initialPhase: ExecutionPhase,
     ) {
-        private val statusState = ExecutionStatusState(initialPhase)
+        private val statusState = ExecutionStatusState(context, initialPhase)
         private val paused = MutableStateFlow(false)
         private val stopped = AtomicBoolean(false)
         private val terminalRequested = AtomicBoolean(false)
@@ -342,7 +346,7 @@ internal object ExecutionOverlay {
             paused.value = false
             setFeedbackRunning(false)
             view?.post {
-                status?.text = "正在停止"
+                status?.text = AppLocaleManager.localizedContext(context).getString(R.string.omniflow_stopping)
                 pause?.isEnabled = false
                 complete?.isEnabled = false
                 stop?.isEnabled = false
@@ -398,7 +402,12 @@ internal object ExecutionOverlay {
         private fun renderPaused() {
             val isPaused = paused.value
             statusState.setPaused(isPaused)
-            pause?.text = if (isPaused) "继续" else "接管"
+            val localizedContext = AppLocaleManager.localizedContext(context)
+            pause?.text = if (isPaused) {
+                localizedContext.getString(R.string.omniflow_action_continue)
+            } else {
+                localizedContext.getString(R.string.omniflow_action_takeover)
+            }
             status?.text = statusState.label
             setFeedbackRunning(!isPaused && !stopped.get() && !terminalRequested.get())
         }

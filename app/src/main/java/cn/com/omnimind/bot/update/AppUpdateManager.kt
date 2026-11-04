@@ -274,7 +274,7 @@ object AppUpdateManager {
             return ExternalApkInstallResult(
                 success = false,
                 status = ExternalApkInstaller.STATUS_INSTALL_FAILED,
-                message = "当前没有可安装的新版本。"
+                message = context.getString(cn.com.omnimind.bot.R.string.update_no_version_available)
             )
         }
 

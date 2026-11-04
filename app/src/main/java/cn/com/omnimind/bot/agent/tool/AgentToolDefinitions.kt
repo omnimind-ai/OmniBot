@@ -24,6 +24,33 @@ object AgentToolDefinitions {
 
     private fun currentLocale(): PromptLocale = AppLocaleManager.currentPromptLocale()
 
+    private fun localizeDescription(zhDescription: String, locale: PromptLocale): String {
+        if (locale != PromptLocale.EN_US) return zhDescription
+        
+        // Key tool descriptions in English for when app language is English
+        return when (zhDescription) {
+            "读取 workspace 或 Omnibot 白名单目录中的文件。文本默认每次返回最多 65536 个字符，可用 maxChars 缩小读取量（例如 2048），适用于长单行文件或上下文预算较小时；hasMore=true 时用 nextOffset 作为 offset 继续，不要同时传 lineStart，原文件不截断。图片返回元数据与可视预览；PDF、音视频、压缩包等二进制文件返回文件信息，请用相应解析工具提取内容。" ->
+                "Read files from workspace or Omnibot whitelist directories. Text files return up to 65536 characters by default; use maxChars to reduce (e.g. 2048) for long single-line files or tight context budgets. When hasMore=true, pass the returned nextOffset as offset to continue; do not also pass lineStart, and the original file is not truncated. Images return metadata and visual preview; PDFs, audio/video, archives and other binary files return file info—use appropriate parsing tools to extract content."
+            
+            "将内容写入指定路径。写入总是完整覆盖（若文件已存在，则清空重写）。路径需在 workspace 或 Omnibot 白名单范围内；如父目录不存在，会自动创建。请检查返回的写入结果（成功或错误），不要凭假设继续。" ->
+                "Write content to a specified path. Writing always performs a full overwrite (if the file exists, it is cleared and rewritten). The path must be within workspace or Omnibot whitelist; parent directories are created automatically if they don't exist. Check the returned write result (success or error); do not proceed based on assumptions."
+            
+            "在已有文件中插入、删除或替换多处内容。此工具首次调用前先用 file_read 确认当前内容，保证 insert/delete/replace 锚点正确；若锚点不存在或重复，操作会失败。不要尝试全文覆盖：全文替换请用 file_write。" ->
+                "Insert, delete, or replace multiple sections in an existing file. Before first use, confirm current content with file_read to ensure insert/delete/replace anchors are correct; if an anchor doesn't exist or is duplicated, the operation will fail. Do not attempt full-file replacement: use file_write for complete rewrites."
+            
+            "执行命令行命令或启动需要后台交互的进程。支持单次命令和持久会话（session），进程结束前用 terminal_read 读取输出。命令输出默认只展示最近部分，用户看不到完整历史；如果需要分析完整日志，应主动用 file_write 重定向保存。" ->
+                "Execute command-line commands or launch processes requiring background interaction. Supports single commands and persistent sessions; use terminal_read to fetch output before the process ends. Command output shows only the most recent portion by default; users cannot see full history, so actively redirect and save with file_write when full logs are needed for analysis."
+            
+            "创建新的定时任务。`targetKind=subagent` 为唯一支持的执行类型；`subagentPrompt` 必须写成任务触发时要立即执行的动作，不要重复填写\"每天几点提醒我/定时去做\"这类调度描述。" ->
+                "Create a new scheduled task. `targetKind=subagent` is the only supported execution type; `subagentPrompt` must describe the action to execute when triggered, not scheduling descriptions like \"remind me at X time every day\" or \"scheduled to do\"."
+            
+            "修改已有定时任务的时间、标题、每日重复或启停状态。`targetKind=subagent` 为唯一支持的执行类型；更新后的 `subagentPrompt` 仍应描述触发时真正执行的动作，而不是再次描述调度本身。" ->
+                "Modify an existing scheduled task's time, title, daily repeat, or enabled state. `targetKind=subagent` is the only supported execution type; the updated `subagentPrompt` should still describe the action to execute when triggered, not the scheduling itself."
+            
+            else -> zhDescription // Keep Chinese for other tools
+        }
+    }
+
     fun decorateToolDefinition(
         definition: JsonObject,
         locale: PromptLocale = currentLocale(),
@@ -49,7 +76,10 @@ object AgentToolDefinitions {
                         // private field must not enter any runtime catalog.
                         "postToolRule" -> Unit
 
-                        "description" -> put("description", value)
+                        "description" -> {
+                            val zhDesc = value.jsonPrimitive.contentOrNull.orEmpty()
+                            put("description", localizeDescription(zhDesc, locale))
+                        }
 
                             "parameters" -> put("parameters", value)
 
@@ -171,7 +201,10 @@ object AgentToolDefinitions {
         "写入当日记忆" to "Write Daily Memory",
         "沉淀长期记忆" to "Upsert Long-Term Memory",
         "整理当日记忆" to "Roll Up Daily Memory",
+        "加载长期记忆" to "Load Long-Term Memory",
         "分派子任务" to "Dispatch Subtasks",
+        "查找可用工具" to "Find Available Tools",
+        "查询当前时间" to "Query Current Time",
         "查询设备已安装应用列表。需要应用包名或确认应用是否已安装时优先调用。" to
             "Query the list of apps installed on the device. Prefer this when you need an app package name or need to confirm whether an app is installed.",
         "通过 Android GUI 插件的 VLM 流程操作当前界面。只要用户要求操作手机或 App（例如下单咖啡、购物、联系人、设置、导航、打开应用），必须立即调用此工具，并把完整用户目标原样放入 goal；不要用 terminal/browser 代替，也不要直接回复已完成。若 OmniFlow 操作模块未启用，调用后会提示用户到插件市场手动启用。" to

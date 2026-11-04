@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="omniflow_phase_reasoning">智能推理</string>
+    <string name="omniflow_phase_automatic">自动执行</string>
+    <string name="omniflow_paused_label">已暂停，可手动操作</string>
+    <string name="omniflow_action_takeover">接管</string>
+    <string name="omniflow_action_stop">停止</string>
+    <string name="omniflow_action_complete">已完成</string>
+    <string name="omniflow_action_continue">继续</string>
+    <string name="omniflow_stopping">正在停止</string>
+</resources>

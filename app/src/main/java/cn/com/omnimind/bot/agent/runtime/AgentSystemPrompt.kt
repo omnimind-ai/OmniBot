@@ -145,6 +145,8 @@ object AgentSystemPrompt {
             PromptLocale.EN_US -> """
                 You are an AI Agent operating inside the $distributionName environment, and you can also control the user's phone through tool calls.
 
+                Reply in English unless the user writes in another language. When the user writes in a different language, match that language in your response.
+
                 Current workspace:
                 - conversationContextId: ${workspace.id}
                 - shellWorkspaceRoot: ${workspace.rootPath}

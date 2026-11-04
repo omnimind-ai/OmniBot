@@ -47,6 +47,7 @@ class LegacyTextLocalizer {
     '复制地址': 'Copy Address',
     '复制 Token': 'Copy Token',
     '刷新 Token': 'Refresh Token',
+    '加载中': 'Loading',
     '加载中...': 'Loading...',
     '模型与记忆': 'Models & Memory',
     '服务与环境': 'Services & Environment',
@@ -470,6 +471,40 @@ class LegacyTextLocalizer {
     '特性': 'Features',
     '初次使用教程': 'First-use Tutorial',
     '重新查看应用首次启动时的引导页面': 'Replay the first-launch onboarding page',
+    '小万': 'Omnibot',
+    '正在下载中，请稍候...': 'Downloading, please wait...',
+    '开始下载...': 'Download started...',
+    '图片已保存到相册': 'Image saved to gallery',
+    '文件已保存到下载目录': 'File saved to Downloads',
+    '下载失败': 'Download failed',
+    '网页浏览': 'Web Browser',
+    '页面加载失败': 'Page load failed',
+    '未知错误': 'Unknown error',
+    '重新加载': 'Reload',
+    'OpenClaw Base URL 为空，请先配置': 'OpenClaw Base URL is empty, please configure first',
+    'OpenClaw 连接成功，Gateway 协议正常': 'OpenClaw connected successfully, Gateway protocol OK',
+    'OpenClaw 已连接但未收到 challenge，请检查 Gateway 版本': 'OpenClaw connected but no challenge received, check Gateway version',
+    'OpenClaw 连接超时，请检查服务地址和网络': 'OpenClaw connection timeout, check service address and network',
+    'Workspace 挂载': 'Workspace mounts',
+    '把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。': 'Link device directories to the workspace for direct access in terminal and chat. Unmounting does not delete files.',
+    '新增挂载': 'Add mount',
+    '还没有挂载任何宿主目录。': 'No mounted directories yet.',
+    '选择宿主目录': 'Select a host directory',
+    '挂载名称': 'Mount name',
+    '会显示为 `/workspace/<名称>`': 'Will appear as `/workspace/<name>`',
+    '挂载': 'Mount',
+    '卸载挂载': 'Unmount directory',
+    '卸载': 'Unmount',
+    '取消下载': 'Cancel',
+    '正在取消下载…': 'Canceling download…',
+    '切换终端系统失败': 'Failed to switch terminal system',
+    '终端系统': 'Terminal system',
+    '选择终端与 Agent 共用的 Linux 系统。': 'Choose the Linux system shared by terminal and Agent.',
+    '正在准备终端系统…': 'Preparing terminal system…',
+    '检测未完成，请重新检测以确认组件状态。': 'Detection incomplete, please retest to confirm component status.',
+    '异常': 'broken',
+    '已挂载': 'mounted',
+    '未确认': 'Not confirmed',
   };
 
   static final List<(RegExp, _TextRewriter)>
@@ -575,6 +610,38 @@ class LegacyTextLocalizer {
     ),
     (RegExp(r'^打开\s*(.+?)\s*应用$'), (match) => 'Opening ${match.group(1)!} app'),
     (RegExp(r'^正在打开(.+)$'), (match) => 'Opening ${match.group(1)!}'),
+    (
+      RegExp(r'^文件已下载：(.+)$'),
+      (match) => 'File downloaded: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^OpenClaw 连接失败：(.+)$'),
+      (match) => 'OpenClaw connection failed: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^确认卸载 `/workspace/(.+)` 吗？原始宿主目录和里面的文件都不会被删除。$'),
+      (match) => 'Unmount `/workspace/${match.group(1)!}`? The original host directory and its files will not be deleted.',
+    ),
+    (
+      RegExp(r'^原始目录不存在或当前不可读：(.+)$'),
+      (match) => 'Original directory does not exist or is currently unreadable: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^已挂载到 /workspace/(.+)$'),
+      (match) => 'Mounted as /workspace/${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^已卸载 /workspace/(.+)$'),
+      (match) => 'Unmounted /workspace/${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^正在准备 (Ubuntu|Alpine)…$'),
+      (match) => 'Preparing ${match.group(1)!}…',
+    ),
+    (
+      RegExp(r'^终端系统已切换为 (Ubuntu|Alpine)$'),
+      (match) => 'Terminal system switched to ${match.group(1)!}',
+    ),
   ];
 
   static void setResolvedLocale(Locale locale) {

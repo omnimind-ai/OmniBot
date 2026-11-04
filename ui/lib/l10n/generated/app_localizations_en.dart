@@ -1887,4 +1887,114 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get homeDrawerLateNightSub2 => 'Say good night to today';
+
+  @override
+  String get dialogCancel => 'Cancel';
+
+  @override
+  String get dialogConfirm => 'Confirm';
+
+  @override
+  String get dialogOk => 'OK';
+
+  @override
+  String get dialogLoading => 'Loading';
+
+  @override
+  String get dialogPleaseWait => 'Please wait...';
+
+  @override
+  String get webviewDownloading => 'Downloading, please wait...';
+
+  @override
+  String get webviewDownloadStarted => 'Download started...';
+
+  @override
+  String get webviewImageSaved => 'Image saved to gallery';
+
+  @override
+  String get webviewFileSavedDownloads => 'File saved to Downloads';
+
+  @override
+  String webviewFileSaved(Object fileName) {
+    return 'File downloaded: $fileName';
+  }
+
+  @override
+  String get webviewDownloadFailed => 'Download failed';
+
+  @override
+  String get webviewBrowse => 'Web Browser';
+
+  @override
+  String get webviewRefresh => 'Refresh';
+
+  @override
+  String get webviewLoadFailed => 'Page load failed';
+
+  @override
+  String get webviewUnknownError => 'Unknown error';
+
+  @override
+  String get webviewReload => 'Reload';
+
+  @override
+  String get openclawBaseUrlEmpty =>
+      'OpenClaw Base URL is empty, please configure first';
+
+  @override
+  String get openclawConnected =>
+      'OpenClaw connected successfully, Gateway protocol OK';
+
+  @override
+  String get openclawConnectedNoChallenge =>
+      'OpenClaw connected but no challenge received, check Gateway version';
+
+  @override
+  String get openclawTimeout =>
+      'OpenClaw connection timeout, check service address and network';
+
+  @override
+  String openclawFailed(Object error) {
+    return 'OpenClaw connection failed: $error';
+  }
+
+  @override
+  String get chatHistoryExpandAll => 'Expand all dates';
+
+  @override
+  String get chatHistoryCollapseAll => 'Collapse all dates';
+
+  @override
+  String chatHistoryMessageCount(Object count) {
+    return '$count messages';
+  }
+
+  @override
+  String get chatHistoryUntitled => 'Untitled conversation';
+
+  @override
+  String authContinueTaskRequires(Object permissions) {
+    return 'Continue task only requires: $permissions';
+  }
+
+  @override
+  String get authSetPermissions => 'Set Permissions';
+
+  @override
+  String get authPermissionsSafe =>
+      'Don\'t worry, you can revoke these permissions anytime';
+
+  @override
+  String get authCheckingPermissions => 'Checking permissions...';
+
+  @override
+  String get authContinueTask => 'Continue Task';
+
+  @override
+  String get permissionAccessibility => 'Accessibility permission';
+
+  @override
+  String get permissionAccessibilityAndroidGui =>
+      'Android GUI Accessibility permission';
 }

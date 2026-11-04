@@ -36,4 +36,42 @@
     <string name="quick_log_delete_success">记忆已删除</string>
     <string name="quick_log_delete_failed">删除失败，请重试</string>
     <string name="quick_log_not_found">这条记忆已经不存在了</string>
+    <!-- App Update -->
+    <string name="update_no_version_available">当前没有可安装的新版本。</string>
+    <string name="update_cloud_service_policy_invalid">云服务最低版本策略无效，请稍后重试</string>
+    <string name="update_cloud_service_check_failed">无法验证云服务最低版本，请联网检查更新</string>
+    <string name="update_version_too_old">当前版本过旧，请升级至 v%s 或更高版本后使用账号与官方云服务</string>
+    <!-- Permissions -->
+    <string name="permission_accessibility">无障碍权限</string>
+    <string name="permission_overlay">悬浮窗权限</string>
+    <string name="permission_accessibility_missing">缺少无障碍权限</string>
+    <string name="permission_automation_both_required">请先开启无障碍权限和悬浮窗权限，视觉执行才能操作界面并显示任务控制条。</string>
+    <string name="permission_automation_accessibility_required">请先开启无障碍权限，视觉执行才能点击、滑动和输入。</string>
+    <string name="permission_automation_overlay_required">请先开启悬浮窗权限，视觉执行才能显示任务控制条。</string>
+    <!-- Task Runtime -->
+    <string name="task_completed_default">任务已完成</string>
+    <!-- Launcher Activity -->
+    <string name="launcher_app_name">小万</string>
+    <string name="launcher_initializing">正在初始化...</string>
+    <!-- Tool Titles -->
+    <string name="tool_privileged_action">安卓高级动作</string>
+    <string name="tool_privileged_session_start">启动高权限会话</string>
+    <string name="tool_privileged_session_exec">执行高权限命令</string>
+    <string name="tool_privileged_session_read">读取高权限输出</string>
+    <string name="tool_privileged_session_stop">结束高权限会话</string>
+    <string name="tool_terminal_execute">执行终端命令</string>
+    <string name="tool_file_read">读取文件</string>
+    <string name="tool_file_write">写入文件</string>
+    <string name="tool_file_edit">编辑文件</string>
+    <string name="tool_file_list">列出文件</string>
+    <string name="tool_file_search">搜索文件</string>
+    <string name="tool_browser_use">浏览器操作</string>
+    <string name="tool_vlm_task">执行界面操作</string>
+    <!-- Music Playback States -->
+    <string name="music_state_preparing">准备中</string>
+    <string name="music_state_playing">播放中</string>
+    <string name="music_state_paused">已暂停</string>
+    <string name="music_state_completed">已完成</string>
+    <string name="music_state_error">播放失败</string>
+    <string name="music_state_stopped">已停止</string>
 </resources>

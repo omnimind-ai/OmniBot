@@ -7,18 +7,18 @@ import cn.com.omnimind.baselib.util.exception.PermissionException
 
 internal data class AndroidAutomationPermissionCheck(
     val missingIds: List<String>,
+    val context: Context,
 ) {
     val granted: Boolean
         get() = missingIds.isEmpty()
 
-    val displayNames: List<String>
-        get() = missingIds.map { id ->
-            when (id) {
-                AndroidAutomationPermissionGate.ACCESSIBILITY -> "无障碍权限"
-                AndroidAutomationPermissionGate.OVERLAY -> "悬浮窗权限"
-                else -> id
-            }
+    fun getDisplayNames(): List<String> = missingIds.map { id ->
+        when (id) {
+            AndroidAutomationPermissionGate.ACCESSIBILITY -> context.getString(cn.com.omnimind.bot.R.string.permission_accessibility)
+            AndroidAutomationPermissionGate.OVERLAY -> context.getString(cn.com.omnimind.bot.R.string.permission_overlay)
+            else -> id
         }
+    }
 
     val errorCode: String
         get() = if (AndroidAutomationPermissionGate.ACCESSIBILITY in missingIds) {
@@ -27,20 +27,19 @@ internal data class AndroidAutomationPermissionCheck(
             "OOB_PERMISSION_REQUIRED"
         }
 
-    val message: String
-        get() = when {
-            AndroidAutomationPermissionGate.ACCESSIBILITY in missingIds &&
-                AndroidAutomationPermissionGate.OVERLAY in missingIds ->
-                "请先开启无障碍权限和悬浮窗权限，视觉执行才能操作界面并显示任务控制条。"
-            AndroidAutomationPermissionGate.ACCESSIBILITY in missingIds ->
-                "请先开启无障碍权限，视觉执行才能点击、滑动和输入。"
+    fun getMessage(): String = when {
+        AndroidAutomationPermissionGate.ACCESSIBILITY in missingIds &&
             AndroidAutomationPermissionGate.OVERLAY in missingIds ->
-                "请先开启悬浮窗权限，视觉执行才能显示任务控制条。"
-            else -> ""
-        }
+            context.getString(cn.com.omnimind.bot.R.string.permission_automation_both_required)
+        AndroidAutomationPermissionGate.ACCESSIBILITY in missingIds ->
+            context.getString(cn.com.omnimind.bot.R.string.permission_automation_accessibility_required)
+        AndroidAutomationPermissionGate.OVERLAY in missingIds ->
+            context.getString(cn.com.omnimind.bot.R.string.permission_automation_overlay_required)
+        else -> ""
+    }
 
     fun requireGranted() {
-        if (!granted) throw PermissionException(message)
+        if (!granted) throw PermissionException(getMessage())
     }
 }
 
@@ -49,11 +48,13 @@ internal object AndroidAutomationPermissionGate {
     const val OVERLAY = "overlay"
 
     fun check(context: Context): AndroidAutomationPermissionCheck = evaluate(
+        context = context,
         accessibilityEnabled = AndroidGuiEnvironment(context).isAccessibilityEnabled(),
         overlayEnabled = Settings.canDrawOverlays(context),
     )
 
     internal fun evaluate(
+        context: Context,
         accessibilityEnabled: Boolean,
         overlayEnabled: Boolean,
     ): AndroidAutomationPermissionCheck = AndroidAutomationPermissionCheck(
@@ -61,5 +62,6 @@ internal object AndroidAutomationPermissionGate {
             if (!accessibilityEnabled) add(ACCESSIBILITY)
             if (!overlayEnabled) add(OVERLAY)
         },
+        context = context,
     )
 }

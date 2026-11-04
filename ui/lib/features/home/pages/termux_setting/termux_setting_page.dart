@@ -9,6 +9,7 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/workspace_mount_service.dart';
@@ -212,32 +213,28 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   Color get _mutedSurfaceColor => context.omniPalette.surfaceSecondary;
 
   String get _workspaceMountSectionTitle =>
-      _isEnglish ? 'Workspace mounts' : 'Workspace 挂载';
-  String get _workspaceMountSectionDesc => _isEnglish
-      ? 'Connect a device directory to the workspace for terminal and chat access. Removing a mount keeps the original files.'
-      : '把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。';
-  String get _workspaceMountAddLabel => _isEnglish ? 'Add mount' : '新增挂载';
+      LegacyTextLocalizer.localize('Workspace 挂载');
+  String get _workspaceMountSectionDesc =>
+      LegacyTextLocalizer.localize('把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。');
+  String get _workspaceMountAddLabel => LegacyTextLocalizer.localize('新增挂载');
   String get _workspaceMountEmptyDesc =>
-      _isEnglish ? 'No mounted directories yet.' : '还没有挂载任何宿主目录。';
+      LegacyTextLocalizer.localize('还没有挂载任何宿主目录。');
   String get _workspaceMountPickTitle =>
-      _isEnglish ? 'Select a host directory' : '选择宿主目录';
-  String get _workspaceMountAliasTitle => _isEnglish ? 'Mount name' : '挂载名称';
-  String get _workspaceMountAliasHint => _isEnglish
-      ? 'This will become `/workspace/<name>`'
-      : '会显示为 `/workspace/<名称>`';
-  String get _workspaceMountAliasSave => _isEnglish ? 'Mount' : '挂载';
+      LegacyTextLocalizer.localize('选择宿主目录');
+  String get _workspaceMountAliasTitle => LegacyTextLocalizer.localize('挂载名称');
+  String get _workspaceMountAliasHint =>
+      LegacyTextLocalizer.localize('会显示为 `/workspace/<名称>`');
+  String get _workspaceMountAliasSave => LegacyTextLocalizer.localize('挂载');
   String get _workspaceMountUnmountTitle =>
-      _isEnglish ? 'Unmount directory' : '卸载挂载';
-  String _workspaceMountUnmountMessage(String alias) => _isEnglish
-      ? 'Unmount `/workspace/$alias`? The original host directory and its files will remain untouched.'
-      : '确认卸载 `/workspace/$alias` 吗？原始宿主目录和里面的文件都不会被删除。';
-  String _workspaceMountBrokenMessage(String sourcePath) => _isEnglish
-      ? 'Source is missing or unreadable: $sourcePath'
-      : '原始目录不存在或当前不可读：$sourcePath';
+      LegacyTextLocalizer.localize('卸载挂载');
+  String _workspaceMountUnmountMessage(String alias) =>
+      LegacyTextLocalizer.localize('确认卸载 `/workspace/$alias` 吗？原始宿主目录和里面的文件都不会被删除。');
+  String _workspaceMountBrokenMessage(String sourcePath) =>
+      LegacyTextLocalizer.localize('原始目录不存在或当前不可读：$sourcePath');
   String _workspaceMountedToast(String alias) =>
-      _isEnglish ? 'Mounted as /workspace/$alias' : '已挂载到 /workspace/$alias';
+      LegacyTextLocalizer.localize('已挂载到 /workspace/$alias');
   String _workspaceUnmountedToast(String alias) =>
-      _isEnglish ? 'Unmounted /workspace/$alias' : '已卸载 /workspace/$alias';
+      LegacyTextLocalizer.localize('已卸载 /workspace/$alias');
 
   String _resolveL10nKey(String key) {
     // Returns the localized string for a given ARB key.
@@ -330,9 +327,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     if (!_isDistributionSwitching || _isDistributionCancelling) return;
     setState(() {
       _isDistributionCancelling = true;
-      _distributionSwitchStage = _isEnglish
-          ? 'Cancelling download…'
-          : '正在取消下载…';
+      _distributionSwitchStage = LegacyTextLocalizer.localize('正在取消下载…');
     });
     try {
       await cancelEmbeddedTerminalInit();
@@ -391,9 +386,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       _isDistributionCancelling = false;
       _switchingDistribution = distribution;
       _distributionSwitchProgress = null;
-      _distributionSwitchStage = _isEnglish
-          ? 'Preparing ${distribution == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}…'
-          : '正在准备 ${distribution == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}…';
+      _distributionSwitchStage = LegacyTextLocalizer.localize(
+          '正在准备 ${distribution == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}…');
       _hasInitializedSelection = false;
       _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
       _selectedPackageIds = <String>{};
@@ -408,9 +402,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       await _refreshAutoStartTasks();
       if (!mounted) return;
       showToast(
-        _isEnglish
-            ? 'Terminal system switched to ${saved == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}'
-            : '终端系统已切换为 ${saved == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}',
+        LegacyTextLocalizer.localize(
+            '终端系统已切换为 ${saved == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}'),
       );
     } on PlatformException catch (error) {
       if (!mounted) return;
@@ -418,8 +411,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _selectedDistribution = previous;
       });
       showToast(
-        error.message ??
-            (_isEnglish ? 'Failed to switch terminal system' : '切换终端系统失败'),
+        error.message ?? LegacyTextLocalizer.localize('切换终端系统失败'),
         type: ToastType.error,
       );
       await _refreshInventory();
@@ -429,7 +421,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _selectedDistribution = previous;
       });
       showToast(
-        _isEnglish ? 'Failed to switch terminal system' : '切换终端系统失败',
+        LegacyTextLocalizer.localize('切换终端系统失败'),
         type: ToastType.error,
       );
       await _refreshInventory();
@@ -646,7 +638,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       title: _workspaceMountUnmountTitle,
       content: _workspaceMountUnmountMessage(entry.alias),
       cancelText: context.trLegacy('取消'),
-      confirmText: _isEnglish ? 'Unmount' : '卸载',
+      confirmText: LegacyTextLocalizer.localize('卸载'),
     );
     if (confirmed != true || _isMountsBusy) {
       return;
@@ -941,14 +933,12 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   Widget _buildDistributionCard() {
     final busy = _isDistributionLoading || _isDistributionSwitching;
     return _buildSectionCard(
-      title: _isEnglish ? 'Terminal system' : '终端系统',
+      title: LegacyTextLocalizer.localize('终端系统'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            _isEnglish
-                ? 'Choose the Linux system shared by the terminal and Agents.'
-                : '选择终端与 Agent 共用的 Linux 系统。',
+            LegacyTextLocalizer.localize('选择终端与 Agent 共用的 Linux 系统。'),
             style: TextStyle(
               color: _secondaryTextColor,
               fontSize: 13,
@@ -994,9 +984,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                   Expanded(
                     child: Text(
                       _distributionSwitchStage ??
-                          (_isEnglish
-                              ? 'Preparing terminal system…'
-                              : '正在准备终端系统…'),
+                          LegacyTextLocalizer.localize('正在准备终端系统…'),
                       style: TextStyle(
                         color: _secondaryTextColor,
                         fontSize: 12,
@@ -1009,7 +997,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                     onPressed: _isDistributionCancelling
                         ? null
                         : () => unawaited(_cancelDistributionSwitch()),
-                    child: Text(_isEnglish ? 'Cancel' : '取消下载'),
+                    child: Text(LegacyTextLocalizer.localize('取消下载')),
                   ),
                 ],
               ),
@@ -1061,7 +1049,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
             ),
           ),
           OmniCircleButton(
-            tooltip: _isEnglish ? 'Refresh' : '刷新',
+            tooltip: LegacyTextLocalizer.localize('刷新'),
             onPressed: _isDetecting || _isDistributionSwitching
                 ? null
                 : () => _refreshInventory(),
@@ -1160,8 +1148,8 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
 
   Widget _buildWorkspaceMountTile(WorkspaceMountEntry entry) {
     final stateLabel = entry.isBroken
-        ? (_isEnglish ? 'broken' : '异常')
-        : (_isEnglish ? 'mounted' : '已挂载');
+        ? LegacyTextLocalizer.localize('异常')
+        : LegacyTextLocalizer.localize('已挂载');
     final stateBackground = entry.isBroken
         ? const Color(0xFFFFF7ED)
         : context.omniPalette.surfaceSecondary;
@@ -1230,7 +1218,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                       ? null
                       : () => _unmountWorkspaceDirectory(entry),
                   icon: const Icon(LucideIcons.unlink, size: 18),
-                  label: Text(_isEnglish ? 'Unmount' : '卸载'),
+                  label: Text(LegacyTextLocalizer.localize('卸载')),
                 ),
               ],
             ),
@@ -1461,7 +1449,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     final versionText = item.version?.trim().isNotEmpty == true
         ? item.version!.trim()
         : (unknown
-              ? (_isEnglish ? 'Not confirmed' : '未确认')
+              ? LegacyTextLocalizer.localize('未确认')
               : ready
               ? context.l10n.alpineVersionDetected
               : context.l10n.alpineVersionNotFound);

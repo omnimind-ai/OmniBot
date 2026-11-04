@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' as io;
 
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/utils/ui.dart';
 
 class OpenClawConnectionChecker {
@@ -11,7 +12,7 @@ class OpenClawConnectionChecker {
   static Future<void> checkAndToast(String baseUrl) async {
     final normalizedBaseUrl = baseUrl.trim();
     if (normalizedBaseUrl.isEmpty) {
-      AppToast.warning('OpenClaw Base URL 为空，请先配置');
+      AppToast.warning(LegacyTextLocalizer.localize('OpenClaw Base URL 为空，请先配置'));
       return;
     }
 
@@ -23,20 +24,20 @@ class OpenClawConnectionChecker {
       final challengeReceived = await _waitForConnectChallenge(ws);
       await ws.close(io.WebSocketStatus.normalClosure, 'config check');
       if (challengeReceived) {
-        AppToast.success('OpenClaw 连接成功，Gateway 协议正常');
+        AppToast.success(LegacyTextLocalizer.localize('OpenClaw 连接成功，Gateway 协议正常'));
       } else {
-        AppToast.warning('OpenClaw 已连接但未收到 challenge，请检查 Gateway 版本');
+        AppToast.warning(LegacyTextLocalizer.localize('OpenClaw 已连接但未收到 challenge，请检查 Gateway 版本'));
       }
     } on TimeoutException {
       AppToast.error(
-        'OpenClaw 连接超时，请检查服务地址和网络',
+        LegacyTextLocalizer.localize('OpenClaw 连接超时，请检查服务地址和网络'),
         duration: const Duration(seconds: 3),
       );
     } catch (e) {
       String errMsg = e.toString();
       if (errMsg.length > 100) errMsg = '${errMsg.substring(0, 100)}...';
       AppToast.error(
-        'OpenClaw 连接失败: $errMsg',
+        LegacyTextLocalizer.localize('OpenClaw 连接失败：$errMsg'),
         duration: const Duration(seconds: 3),
       );
     }
