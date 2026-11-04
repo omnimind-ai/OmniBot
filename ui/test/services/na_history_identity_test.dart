@@ -9,6 +9,22 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  test('Na snapshot carries each server run status without adding local ACP work', () {
+    for (final agentId in ['na-cloud', 'codex-acp']) {
+      final messages = remoteCodexMessagesFromThreadResponseForTesting({
+        'agentId': agentId,
+        'turns': [
+          for (final status in ['running', 'completed', 'failed', 'cancelled'])
+            {'id': status, 'status': status, 'items': [
+              {'id': '$status-reply', 'type': 'agentMessage', 'text': status},
+            ]},
+        ],
+      });
+      for (final message in messages) {
+        expect(message.streamMeta?['naRunStatus'], agentId == 'na-cloud' ? message.text : null);
+      }
+    }
+  });
   setUpAll(() async {
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

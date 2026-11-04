@@ -413,6 +413,7 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
   }
   final chronological = <ChatMessageModel>[];
   final terminalReasons = <String, String>{};
+  final naRunStatuses = <String, String>{};
   final effectiveActiveTurnId =
       activeTurnId ??
       (active ? _remoteCodexLatestTurnIdFromThreadResponse(response) : null);
@@ -425,6 +426,10 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
     final turnId =
         _remoteCodexTurnIdAt(rawTurns, turnIndex) ?? 'turn-$turnIndex';
     final stopReason = _asAgentString(turn['stopReason']);
+    if (agentId == 'na-cloud') {
+      final status = _asAgentString(turn['status']);
+      if (status != null) naRunStatuses[turnId] = status;
+    }
     if (const {'end_turn', 'cancelled', 'error'}.contains(stopReason)) {
       terminalReasons[turnId] = stopReason!;
     }
@@ -868,11 +873,15 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
       )
       .map(
         (message) => _withAcpAgentIdentity(
-          terminalReasons.containsKey(_messageTaskId(message))
+          terminalReasons.containsKey(_messageTaskId(message)) ||
+                  naRunStatuses.containsKey(_messageTaskId(message))
               ? message.copyWith(
                   streamMeta: {
                     ...?message.streamMeta,
-                    'stopReason': terminalReasons[_messageTaskId(message)],
+                    if (terminalReasons.containsKey(_messageTaskId(message)))
+                      'stopReason': terminalReasons[_messageTaskId(message)],
+                    if (naRunStatuses.containsKey(_messageTaskId(message)))
+                      'naRunStatus': naRunStatuses[_messageTaskId(message)],
                   },
                 )
               : message,

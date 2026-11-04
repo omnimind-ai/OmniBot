@@ -20,12 +20,10 @@ class AgentRunTimelineEntry {
 
 /// Whether an agent turn is still producing output.
 ///
-/// This is derived at render time from the set of in-flight task ids, never
-/// from a persisted flag. A turn that is not in that set has ended — whether it
-/// ended cleanly, was cancelled, or died with the process. Gating the run
-/// header on a persisted `isFinal` boolean instead used to mean that one lost
-/// bit removed the agent avatar, the "processed" label, and the fold all at
-/// once.
+/// Local ACP work is derived from the coordinator's in-flight task ids. Na
+/// snapshots additionally carry the server's run status for work started on a
+/// different device; it affects this presentation without admitting a local
+/// prompt or changing ACP lifecycle ownership.
 enum AgentRunStatus { running, finished, failed, cancelled }
 
 /// One chronological slice of a turn: either a message that stays in the
@@ -231,7 +229,9 @@ List<AgentRunTimelineEntry> buildAgentRunTimelineEntries(
   // condition, not one per in-flight id. Emitting one per id is what used to
   // stack up a column of avatars and "processing" rows.
   final hasRunningGroup = entries.any(
-    (entry) => entry.group?.isRunning ?? false,
+    (entry) =>
+        (entry.group?.isRunning ?? false) &&
+        normalizedActiveTaskIds.contains(entry.group!.taskId),
   );
   if (!hasRunningGroup) {
     final pendingTaskId = normalizedActiveTaskIds
@@ -453,9 +453,8 @@ List<AgentRunTimelineEntry> _stabilizeLegacyTurnEntriesNewestFirst(
     }
     // `ChatMessageList` reverses this newest-first projection for display, so
     // the run must precede its user prompt here to render prompt -> response.
-    final turnRankCompare = _legacyTurnNewestFirstRank(
-      left.entry,
-    ).compareTo(_legacyTurnNewestFirstRank(right.entry));
+    final turnRankCompare = _legacyTurnNewestFirstRank(left.entry)
+        .compareTo(_legacyTurnNewestFirstRank(right.entry));
     if (turnRankCompare != 0) {
       return turnRankCompare;
     }
@@ -595,32 +594,58 @@ AgentRunTimelineGroup? _buildTimelineGroup(
   // answer never grouped, and therefore never showed an agent avatar once it
   // came back from the database.
   final segments = _buildSegments(taskMessages);
+  final agentId = resolveAgentRunAgentId(
+    turnMessages: taskMessages,
+    conversationAgentId: conversationAgentId,
+  );
+  final naStatus = agentId == 'na-cloud'
+      ? _naSnapshotRunStatus(taskMessages)
+      : null;
+  final status = isActive
+      ? AgentRunStatus.running
+      : naStatus ??
+            (taskMessages.any(isAgentTurnFailureMessage)
+                ? AgentRunStatus.failed
+                : taskMessages.any(_isCancelledTurnItem)
+                ? AgentRunStatus.cancelled
+                : AgentRunStatus.finished);
   if (!segments.any((segment) => !segment.isProcess) &&
       !isActive &&
+      (naStatus == null || naStatus == AgentRunStatus.finished) &&
       !taskMessages.any(_isCancelledTurnItem)) {
     return null;
   }
 
   return AgentRunTimelineGroup(
     taskId: taskId,
-    status: isActive
-        ? AgentRunStatus.running
-        : taskMessages.any(isAgentTurnFailureMessage)
-        ? AgentRunStatus.failed
-        : taskMessages.any(_isCancelledTurnItem)
-        ? AgentRunStatus.cancelled
-        : AgentRunStatus.finished,
-    agentId: resolveAgentRunAgentId(
-      turnMessages: taskMessages,
-      conversationAgentId: conversationAgentId,
-    ),
+    status: status,
+    agentId: agentId,
     startedAt:
         _runBoundaryTimestamp(taskMessages, earliest: true) ?? DateTime.now(),
-    finishedAt: isActive
+    finishedAt: status == AgentRunStatus.running
         ? null
         : _runBoundaryTimestamp(taskMessages, earliest: false),
     segmentsOldestFirst: segments,
   );
+}
+
+AgentRunStatus? _naSnapshotRunStatus(List<ChatMessageModel> messages) {
+  var hasActiveStatus = false;
+  for (final message in messages) {
+    final status = switch (message.streamMeta?['naRunStatus']) {
+      'running' || 'cancelling' || 'queued' => AgentRunStatus.running,
+      'completed' => AgentRunStatus.finished,
+      'failed' => AgentRunStatus.failed,
+      'cancelled' => AgentRunStatus.cancelled,
+      _ => null,
+    };
+    // A partial history window can retain old tool cards outside the current
+    // run.items window. Server terminal states never revert, so their newer
+    // marker must win over those retained running cards regardless of order.
+    if (status != null && status != AgentRunStatus.running) return status;
+    hasActiveStatus = hasActiveStatus || status == AgentRunStatus.running;
+  }
+  return hasActiveStatus ? AgentRunStatus.running : null;
 }
 
 /// `entrySeq` is allocated once when a streamed entry is created, unlike
