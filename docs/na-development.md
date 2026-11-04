@@ -52,6 +52,39 @@ The native adapter reads durable run snapshots every 600 ms, emits normalized se
 
 Session loading returns cloud history using the same prompt/item identities as live updates. The existing snapshot mapper and coordinator merge it with committed App history, preserving live turns and user queries. Listing cloud sessions creates the ordinary local conversation bindings; opening them hydrates the shared chat.
 
+### Same-account history on multiple phones
+
+While the App is in the foreground, `NaHistorySyncService` enables one native
+history observer through `config/na/historySync`. It reads only an existing
+workspace, captures the conversation list's `eventCursor`, and follows the
+existing `/api/events` stream. Chat/file changes coalesce into ordinary
+`onConversationListChanged` invalidations with the account/endpoint owner prefix.
+The drawer reads synchronized title/count/preview/activity metadata; the visible
+Na chat reloads the existing ACP session snapshot. This observer never submits a
+prompt, claims a missing workspace, or creates a second Agent lifecycle.
+
+The shared coordinator merges cloud items by identity, preserving the locally
+admitted turn while allowing another phone's running turn to update. Those
+external turns do not acquire local prompt ownership. Initial/latest snapshots
+and historical pages are merged without discarding older local history. A new
+phone first displays the newest page, then imports older 100-run pages through
+the server's stable `nextRunCursor`; live invalidations refresh the newest page.
+Backgrounding stops the subscription; reconnect, foregrounding and owner changes
+restart from snapshots, including recovery after compacted event history.
+
+An installation UUID in Android's `noBackupFilesDir` namespaces server
+`clientMessageId` values; retries of one submission retain that identity. The
+server preserves `clientOriginId` with runs/archives. Only the originating phone
+may reuse `clientUserMessageId` as a local message id. Other phones use canonical
+run/item identities. Legacy local user aliases are migrated only when their
+explicit mapping is unique; message text is never used as an identity.
+
+The Na server update adds atomic list/detail cursors, bounded previews and older
+run pagination. Older servers still support snapshot recovery/observation, but
+full older-history pagination requires the matching server update. Managed
+account routing continues to select the account's private Na instance; local
+conversation database ids and installation ids are not authorization credentials.
+
 Na files use the existing remote workspace browser and file preview/save/share components. The native HTTP adapter maps `/workspace` to Na's files API. Text editing uses the existing editor and `PUT /api/files/content`. Regular files support rename and delete through `POST /api/files/rename` and `DELETE /api/files/content`; directory mutations remain hidden. The server rejects mutations while a task is active, private paths, links, traversal and overwrites. Download and upload limits remain 20 MiB and 10 MiB.
 
 App chat attachments require the server's `attachments` capability. Each file is limited to 10 MiB (10,485,760 bytes), including providers with unknown or inaccurate size metadata, with at most 20 files per message. The existing prompt reservation stages selected sources in private cache and uploads them sequentially to `PUT /api/files/uploads/<UUID>` with conversation/message ownership. One message admission supplies `attachmentIds`; the server publishes those files and constructs model references in the same run transaction. Android paths and document URIs stay on the phone. Temporary copies are removed on success, failure or cancellation; account generation checks fence uploads and message admission after logout or account switching. PUT and message POST are never automatically replayed.

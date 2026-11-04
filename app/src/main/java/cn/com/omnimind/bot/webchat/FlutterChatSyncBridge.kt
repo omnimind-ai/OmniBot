@@ -45,6 +45,13 @@ object FlutterChatSyncBridge {
         ))
     }
 
+    fun dispatchNaCloudHistoryChanged(ownerPrefix: String) {
+        dispatch("onConversationListChanged", mapOf(
+            "reason" to "na_cloud_history_changed",
+            "naOwnerPrefix" to ownerPrefix,
+        ))
+    }
+
     fun dispatchConversationMessagesChanged(
         conversationId: Long,
         mode: String,

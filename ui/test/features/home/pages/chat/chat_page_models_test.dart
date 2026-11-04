@@ -418,6 +418,23 @@ void main() {
       list.dispose();
     });
 
+    test('Na run status transition invalidates timeline shape with identical message IDs', () {
+      list.add(ChatMessageModel.assistantMessage('same text', id: 'same-id').copyWith(
+        streamMeta: {'parentTaskId': 'remote-turn', 'naRunStatus': 'running', 'isFinal': true},
+      ));
+      final revision = list.structureRevision;
+      final notifier = list.listenableAt(0);
+      list[0] = list[0].copyWith(content: {'text': 'same text continues'});
+      expect(list.structureRevision, revision);
+      for (final status in ['completed', 'failed', 'cancelled']) {
+        final previousRevision = list.structureRevision;
+        list[0] = list[0].copyWith(streamMeta: {...?list[0].streamMeta, 'naRunStatus': status});
+        expect(list.structureRevision, previousRevision + 1);
+        expect(list.lastMutationKind, ChatMessageListMutationKind.structure);
+        expect(list.listenableAt(0), same(notifier));
+      }
+    });
+
     test('insert triggers list-level notifyListeners', () {
       list.insert(0, ChatMessageModel.assistantMessage('hi', id: 'm-1'));
       expect(notifyCount, 1);

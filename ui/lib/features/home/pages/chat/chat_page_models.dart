@@ -354,6 +354,9 @@ class ObservableChatMessageList extends ChangeNotifier
     }
     final previousMeta = previous.streamMeta;
     final nextMeta = next.streamMeta;
+    if (previousMeta?['naRunStatus'] != nextMeta?['naRunStatus']) {
+      return true;
+    }
     if ((previousMeta?.containsKey('isFinal') ?? false) !=
             (nextMeta?.containsKey('isFinal') ?? false) ||
         previousMeta?['isFinal'] != nextMeta?['isFinal']) {
