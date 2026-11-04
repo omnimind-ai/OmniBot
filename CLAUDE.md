@@ -178,6 +178,10 @@ OMNI_RELEASE_KEY_PWD=***
 - `assists/src/main/java/cn/com/omnimind/assists/AssistsCore.kt`: Task SDK interface
 - `baselib/src/main/java/cn/com/omnimind/baselib/database/`: Database layer
 
+### Na Personal Page UI
+- `NaPersonalPage` (`ui/lib/features/home/pages/agent/na_personal_page.dart`) and its child widgets (`na_composio_settings.dart`, `na_connector_grants.dart`, `na_notification_settings.dart`) use the app's shared liquid-glass components: `OmniSegmentedSlider` for the tab row, `OmniGlassCard` (`LiquidGlassStyle.regular`) for cards, `OmniSettingsSearchField` for search, and `OmniCircleButton` for header actions. Do not add page-local card, chip, or search styles to these pages.
+- Na page copy stays short and user-facing: no internal identifiers (Composio/toolkit slugs, account ids, tool versions, revisions, IANA) in the primary UI — collapse them under a 详情/advanced affordance. Prefer one short empty-state line over explanatory paragraphs.
+
 ## Version Management
 
 The app includes automatic version update checking and forced update functionality. Version info is in `app/build.gradle.kts`:

@@ -164,8 +164,10 @@ void main() {
           'toolkits': ['github'],
           'accounts': [
             {
+              // Some providers echo the raw account id as the label; the card
+              // must then fall back to the app (toolkit) name.
               'id': 'ca_exact',
-              'label': '工作账号',
+              'label': 'ca_exact',
               'toolkit': 'github',
               'status': 'EXPIRED',
             },
@@ -215,11 +217,10 @@ void main() {
     (tester) async {
       await pump(tester);
       expect(find.text('工作账号'), findsNothing);
-      expect(find.text('ca_exact'), findsOneWidget);
       await tester.tap(find.text('审核并执行'));
       await tester.pumpAndSettle();
       expect(find.textContaining('Exact reviewed title'), findsOneWidget);
-      expect(find.text('工具版本：20261029_00'), findsOneWidget);
+      expect(find.text('ca_exact'), findsOneWidget);
       expect(
         calls.where((call) => call['operation'] == 'actions.approve'),
         isEmpty,
@@ -276,7 +277,7 @@ void main() {
           .where((call) => call['operation'] == 'memories.search')
           .last;
       expect(search['payload'], {'query': '论文', 'limit': 20});
-      expect(find.text('搜索结果已截断；清空关键词后查看完整记忆。'), findsOneWidget);
+      expect(find.text('内容过长已截断，清空关键词查看全文'), findsOneWidget);
       final edit = tester.widget<TextButton>(
         find.widgetWithText(TextButton, '编辑'),
       );
@@ -305,6 +306,8 @@ void main() {
             .first,
       );
       expect(find.textContaining('授权已过期'), findsOneWidget);
+      expect(find.text('github'), findsOneWidget);
+      expect(find.text('ca_exact'), findsNothing);
       await tester.ensureVisible(find.text('断开此账号'));
       await tester.pumpAndSettle();
       await tester.tap(find.text('断开此账号'));
@@ -373,7 +376,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
   testWidgets(
-    'refresh reuses the shared glass control and selected tabs have no leading checkmark gap',
+    'refresh reuses the shared glass control and tab labels stay centered in the segmented slider',
     (tester) async {
       await pump(tester);
       expect(find.byKey(const Key('na-personal-refresh')), findsOneWidget);
@@ -381,12 +384,12 @@ void main() {
         tester.widget(find.byKey(const Key('na-personal-refresh'))),
         isA<OmniCircleButton>(),
       );
-      final chip = find.byKey(const Key('na-personal-tab-0'));
-      expect(tester.widget<ChoiceChip>(chip).showCheckmark, isFalse);
+      final segment = find.byKey(const Key('na-personal-tab-0'));
+      expect(tester.widget(segment), isA<InkWell>());
       final label = tester.getRect(
-        find.descendant(of: chip, matching: find.text('收件箱')),
+        find.descendant(of: segment, matching: find.text('收件箱')),
       );
-      final bounds = tester.getRect(chip);
+      final bounds = tester.getRect(segment);
       expect((label.center.dx - bounds.center.dx).abs(), lessThan(2));
       expect(tester.takeException(), isNull);
     },
@@ -405,7 +408,7 @@ void main() {
       await tester.pumpAndSettle();
       final key = find.byKey(const Key('na-composio-api-key'));
       final button = find.byKey(const Key('na-composio-settings-save'));
-      expect(find.text('Composio 项目 Key'), findsOneWidget);
+      expect(find.text('连接服务'), findsOneWidget);
       expect(tester.widget<TextField>(key).enabled, isTrue);
       expect(key.hitTestable(), findsOneWidget);
       expect(button.hitTestable(), findsOneWidget);
@@ -424,7 +427,7 @@ void main() {
         'authConfigs': {},
         'apiKey': 'fixture-managed-project-key',
       });
-      expect(find.text('连接服务设置已保存到 Na 服务端。'), findsOneWidget);
+      expect(find.text('设置已保存'), findsOneWidget);
       expect(tester.widget<TextField>(key).controller!.text, isEmpty);
       expect(tester.takeException(), isNull);
     },
@@ -437,7 +440,7 @@ void main() {
       await pump(tester);
       await tester.tap(find.byKey(const Key('na-personal-tab-1')));
       await tester.pumpAndSettle();
-      expect(find.textContaining('Composio 账号列表暂不可用'), findsOneWidget);
+      expect(find.textContaining('账号列表暂不可用'), findsOneWidget);
       expect(find.text('授权 Google'), findsNothing);
       final key = find.byKey(const Key('na-composio-api-key'));
       expect(tester.widget<TextField>(key).obscureText, isTrue);
@@ -459,8 +462,8 @@ void main() {
         'authConfigs': {},
         'apiKey': 'write-only-new-fixture-key',
       });
-      expect(find.text('连接服务设置已保存到 Na 服务端。'), findsOneWidget);
-      expect(find.textContaining('Composio 账号列表暂不可用'), findsOneWidget);
+      expect(find.text('设置已保存'), findsOneWidget);
+      expect(find.textContaining('账号列表暂不可用'), findsOneWidget);
       final field = tester.widget<TextField>(
         find.byKey(const Key('na-composio-api-key')),
       );
@@ -511,7 +514,7 @@ void main() {
     expect(updates, hasLength(1));
     expect(updates.single['owner'], 'owner-1');
     expect(find.text('Na 连接已变化'), findsOneWidget);
-    expect(find.text('连接服务设置已保存到 Na 服务端。'), findsNothing);
+    expect(find.text('设置已保存'), findsNothing);
   });
   testWidgets(
     'managed Na opens the full application catalog without development configuration access',

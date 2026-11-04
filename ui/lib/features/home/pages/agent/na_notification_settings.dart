@@ -125,15 +125,15 @@ class _NaNotificationSettingsState extends State<NaNotificationSettings>
         if (_data['developmentMode'] == true)
           const Padding(
             padding: EdgeInsets.only(bottom: 8),
-            child: Text('开启后，开发服务连接令牌仅以系统密钥加密保存在此设备；关闭时删除。'),
+            child: Text('令牌加密保存在本设备，关闭后删除。'),
           ),
         if (enabled)
           const Padding(
             padding: EdgeInsets.only(bottom: 8),
-            child: Text('后台连接会显示常驻通知。省电限制可能延迟提醒；强行停止应用后需重新打开。'),
+            child: Text('省电限制可能延迟提醒。'),
           ),
         if (_data['permissionGranted'] == false && enabled)
-          const Text('系统通知权限已关闭，提醒暂未消耗；恢复权限后继续接收。'),
+          const Text('系统通知权限已关闭，开启后才能接收提醒。'),
         if (warning != null && warning.isNotEmpty)
           Padding(
             padding: const EdgeInsets.only(top: 8),

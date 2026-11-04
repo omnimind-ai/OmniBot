@@ -21,6 +21,8 @@ import 'na_routine_editor.dart';
 import 'package:ui/widgets/navigation/page_route.dart';
 
 import 'package:ui/widgets/omni_adaptive_layout.dart';
+import 'package:ui/widgets/omni_glass.dart';
+import 'package:ui/widgets/omni_segmented_slider.dart';
 import 'package:ui/widgets/settings_ui.dart';
 
 /// Client views of the existing Na service. Chat/session/turn ownership stays
@@ -190,7 +192,7 @@ class _NaPersonalPageState extends State<NaPersonalPage>
             // Recheck the Na owner separately: provider/key trouble should not
             // hide the very settings needed to repair that connection.
             await _request('status');
-            inventoryError = 'Composio 账号列表暂不可用。连接服务设置仍可编辑，请检查密钥、配置或网络后刷新。';
+            inventoryError = '账号列表暂不可用，请检查密钥或网络后刷新。';
           }
           data = {
             'composio': inventory,
@@ -407,31 +409,29 @@ class _NaPersonalPageState extends State<NaPersonalPage>
       child: OmniContentWidth(
         child: Column(
           children: [
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+              child: OmniSegmentedSlider<int>(
+                keyPrefix: 'na-personal-tab',
+                value: _tab,
+                options: [
                   for (var index = 0; index < _labels.length; index++)
-                    Padding(
-                      padding: const EdgeInsets.only(right: 8),
-                      child: ChoiceChip(
-                        key: Key('na-personal-tab-$index'),
-                        label: Text(_labels[index]),
-                        showCheckmark: false,
-                        selected: _tab == index,
-                        onSelected: _busy
-                            ? null
-                            : (_) {
-                                setState(() {
-                                  _tab = index;
-                                  _data = {};
-                                });
-                                unawaited(_load());
-                              },
-                      ),
+                    OmniSegmentedOption(
+                      value: index,
+                      label: _labels[index],
+                      id: '$index',
                     ),
                 ],
+                onChanged: _busy
+                    ? null
+                    : (index) {
+                        if (index == _tab) return;
+                        setState(() {
+                          _tab = index;
+                          _data = {};
+                        });
+                        unawaited(_load());
+                      },
               ),
             ),
             if (_loading || _busy) const LinearProgressIndicator(minHeight: 2),
@@ -488,16 +488,19 @@ class _NaPersonalPageState extends State<NaPersonalPage>
       ],
     ),
   );
-  Widget _note(String text) => Padding(
+  Widget _note(String text, {Color? color}) => Padding(
     padding: const EdgeInsets.symmetric(vertical: 8),
     child: Text(
       text,
-      style: TextStyle(color: context.omniPalette.textSecondary, height: 1.5),
+      style: TextStyle(
+        color: color ?? context.omniPalette.textSecondary,
+        height: 1.5,
+      ),
     ),
   );
   Widget _record(Widget child) => Padding(
     padding: const EdgeInsets.only(bottom: 14),
-    child: OmniSettingsCard(child: child),
+    child: OmniGlassCard(child: child),
   );
   Widget _details(String label, dynamic value) => ExpansionTile(
     tilePadding: EdgeInsets.zero,
@@ -531,10 +534,10 @@ class _NaPersonalPageState extends State<NaPersonalPage>
           child: const Text('全部已读'),
         ),
       ),
-      if (actions.isEmpty && !_loading) _note('暂无待确认操作。新的提醒和外部操作会保存在这里。'),
+      if (actions.isEmpty && !_loading) _note('暂无待确认操作'),
       for (final action in actions) _actionCard(action),
       _heading('跟进消息'),
-      if (notices.isEmpty && !_loading) _note('暂无跟进消息。'),
+      if (notices.isEmpty && !_loading) _note('暂无跟进消息'),
       for (final notice in notices)
         _record(
           Column(
@@ -568,31 +571,42 @@ class _NaPersonalPageState extends State<NaPersonalPage>
     ];
   }
 
+  static const _actionStatusLabels = {
+    'pending': '等待确认',
+    'executing': '执行中',
+    'completed': '已完成',
+    'unknown': '结果待核实',
+    'failed': '执行失败',
+    'rejected': '已拒绝',
+  };
+
+  Color _actionStatusColor(String status) {
+    final palette = context.omniPalette;
+    return switch (status) {
+      'pending' || 'executing' || 'unknown' => palette.accentPrimary,
+      'failed' || 'rejected' => Theme.of(context).colorScheme.error,
+      _ => palette.textTertiary,
+    };
+  }
+
   Widget _actionCard(Map<String, dynamic> action) {
     final account = _map(action['account']),
         connector = _map(action['connector']);
     final status = action['status']?.toString() ?? '';
-    final statuses = {
-      'pending': '等待确认',
-      'executing': '执行中',
-      'completed': '已完成',
-      'unknown': '结果待核实',
-      'failed': '执行失败',
-      'rejected': '已拒绝',
-    };
+    final accountId = account['id']?.toString();
+    var accountLabel = '—';
+    for (final candidate in [account['label'], account['email'], account['alias']]) {
+      final text = candidate?.toString();
+      if (text != null && text.isNotEmpty && text != accountId) {
+        accountLabel = text;
+        break;
+      }
+    }
     final content = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          action['operation']?.toString() ?? '',
-          style: Theme.of(context).textTheme.titleSmall,
-        ),
-        const SizedBox(height: 10),
-        Text(
-          '执行账号：${account['label'] ?? account['email'] ?? account['alias'] ?? ''}',
-        ),
+        if (accountLabel != '—') Text('执行账号：$accountLabel'),
         if (account['id'] != null) SelectableText(account['id'].toString()),
-        if (connector['version'] != null) Text('工具版本：${connector['version']}'),
         const SizedBox(height: 12),
         SelectableText(_json(action['args'] ?? {})),
       ],
@@ -601,19 +615,28 @@ class _NaPersonalPageState extends State<NaPersonalPage>
       Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            action['summary']?.toString() ??
-                action['operation']?.toString() ??
-                '',
-            style: Theme.of(context).textTheme.titleSmall,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: Text(
+                  action['summary']?.toString() ??
+                      action['operation']?.toString() ??
+                      '',
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ),
+              const SizedBox(width: 8),
+              OmniSettingsStatusBadge(
+                label: _actionStatusLabels[status] ?? status,
+                color: _actionStatusColor(status),
+              ),
+            ],
           ),
-          _note(statuses[status] ?? status),
-          Text(
-            '执行账号：${account['label'] ?? account['email'] ?? account['alias'] ?? account['id'] ?? '—'}',
-          ),
-          if (account['id'] != null) SelectableText(account['id'].toString()),
-          _details('完整操作内容', {
+          if (accountLabel != '—') _note('执行账号：$accountLabel'),
+          _details('详情', {
             'operation': action['operation'],
+            if (account['id'] != null) 'accountId': account['id'],
             if (connector['version'] != null) 'version': connector['version'],
             'args': action['args'] ?? {},
           }),
@@ -632,8 +655,11 @@ class _NaPersonalPageState extends State<NaPersonalPage>
               disabled: _busy,
               ownerKey: _owner,
             ),
-          if (action['error'] != null) _note(action['error'].toString()),
-          if (status == 'unknown') _note('请先到对应应用核实结果，避免重复执行。'),
+          if (action['error'] != null)
+            _note(
+              action['error'].toString(),
+              color: Theme.of(context).colorScheme.error,
+            ),
           if (action['unavailableReason'] != null)
             _note(action['unavailableReason'].toString()),
           if (status == 'pending')
@@ -689,8 +715,9 @@ class _NaPersonalPageState extends State<NaPersonalPage>
       );
       final saved = _map(response['settings']);
       if (!mounted) return null;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('连接服务设置已保存到 Na 服务端。')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('设置已保存')));
       await _load();
       return saved;
     } catch (error) {
@@ -699,6 +726,41 @@ class _NaPersonalPageState extends State<NaPersonalPage>
     } finally {
       if (mounted) setState(() => _busy = false);
     }
+  }
+
+  static const _connectionStatusLabels = {
+    'ACTIVE': '已连接',
+    'DISABLED': '已停用',
+    'EXPIRED': '授权已过期',
+    'INITIATED': '等待授权',
+    'INITIALIZING': '准备授权',
+    'FAILED': '连接失败',
+    'REVOKED': '已撤销',
+  };
+
+  String _connectionStatus(dynamic status) =>
+      _connectionStatusLabels[status] ?? status?.toString() ?? '未知状态';
+
+  Color _connectionStatusColor(dynamic status) {
+    final palette = context.omniPalette;
+    return switch (status) {
+      'ACTIVE' || 'INITIATED' || 'INITIALIZING' => palette.accentPrimary,
+      'EXPIRED' || 'FAILED' || 'REVOKED' => Theme.of(context).colorScheme.error,
+      _ => palette.textTertiary,
+    };
+  }
+
+  // Providers may surface the raw account id as the label/alias; a name that
+  // is just the id is not user-facing, so fall back to the app (toolkit) name.
+  String _accountTitle(Map<String, dynamic> account) {
+    final id = account['id']?.toString();
+    for (final candidate in [account['label'], account['alias']]) {
+      final text = candidate?.toString();
+      if (text != null && text.isNotEmpty && text != id) return text;
+    }
+    final toolkit = account['toolkit']?.toString();
+    if (toolkit != null && toolkit.isNotEmpty) return toolkit;
+    return '已连接账号';
   }
 
   List<Widget> _connections() {
@@ -715,7 +777,6 @@ class _NaPersonalPageState extends State<NaPersonalPage>
           label: const Text('浏览所有应用'),
         ),
       ),
-      _note('浏览 Composio 全部应用，在服务端管理连接和账号。'),
       if (_capabilities.contains('composio_events'))
         Align(
           alignment: Alignment.centerLeft,
@@ -737,27 +798,28 @@ class _NaPersonalPageState extends State<NaPersonalPage>
         ),
       if (composio['configured'] != true)
         _note(
-          settings['enabled'] == false
-              ? '连接服务已关闭。修改服务设置并保存后即可启用。'
-              : '请先在连接服务设置中保存项目密钥和需要开放的应用。',
+          settings['enabled'] == false ? '连接服务已关闭，可在上方开启。' : '请先保存项目密钥。',
         )
       else ...[
-        _note('应用操作默认先由你审核。你也可为特定职责明确保存相同操作的重复授权，随时撤销。'),
         for (final account in accounts)
           _record(
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  account['label']?.toString() ??
-                      account['alias']?.toString() ??
-                      account['toolkit'].toString(),
-                  style: Theme.of(context).textTheme.titleSmall,
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        _accountTitle(account),
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ),
+                    OmniSettingsStatusBadge(
+                      label: _connectionStatus(account['status']),
+                      color: _connectionStatusColor(account['status']),
+                    ),
+                  ],
                 ),
-                _note(
-                  '${account['toolkit']} · ${_connectionStatus(account['status'])}',
-                ),
-                SelectableText(account['id'].toString()),
                 TextButton(
                   onPressed: _disabled
                       ? null
@@ -765,7 +827,7 @@ class _NaPersonalPageState extends State<NaPersonalPage>
                           if (await _confirm(
                                 '断开此账号',
                                 Text(
-                                  '${account['toolkit']}\n${account['label'] ?? account['alias'] ?? ''}\n${account['id']}',
+                                  '${_accountTitle(account)}\n${account['id']}',
                                 ),
                               ) &&
                               mounted) {
@@ -783,23 +845,10 @@ class _NaPersonalPageState extends State<NaPersonalPage>
               ],
             ),
           ),
-        if (accounts.isEmpty) _note('尚无连接账号。完成浏览器授权后点击右上角刷新。'),
+        if (accounts.isEmpty) _note('暂无已连接账号'),
       ],
     ];
   }
-
-  String _connectionStatus(dynamic status) =>
-      const {
-        'ACTIVE': '已连接',
-        'DISABLED': '已停用',
-        'EXPIRED': '授权已过期',
-        'INITIATED': '等待授权',
-        'INITIALIZING': '准备授权',
-        'FAILED': '连接失败',
-        'REVOKED': '已撤销',
-      }[status] ??
-      status?.toString() ??
-      '未知状态';
 
   Future<void> _editMemory([Map<String, dynamic>? memory]) async {
     final result = await _edit(memory == null ? '新增记忆' : '编辑记忆', [
@@ -834,22 +883,19 @@ class _NaPersonalPageState extends State<NaPersonalPage>
         label: const Text('新增'),
       ),
     ),
-    _note('这里保存你明确要求记住的资料。每轮上下文有预算，Na 可按需检索额外记忆。'),
-    TextField(
+    OmniSettingsSearchField(
       key: const Key('na-memory-search'),
       controller: _search,
-      decoration: InputDecoration(
-        labelText: '搜索记忆',
-        hintText: '输入中文或英文关键词',
-        suffixIcon: IconButton(
-          onPressed: _disabled ? null : _load,
-          icon: const Icon(LucideIcons.search, size: 18),
-        ),
-      ),
+      hintText: '搜索记忆',
+      onChanged: _disabled
+          ? null
+          : (text) {
+              if (text.isEmpty) unawaited(_load());
+            },
       onSubmitted: _disabled ? null : (_) => _load(),
     ),
     const SizedBox(height: 16),
-    if (_list(_data['memories']).isEmpty && !_loading) _note('没有匹配的记忆。'),
+    if (_list(_data['memories']).isEmpty && !_loading) _note('没有匹配的记忆'),
     for (final memory in _list(_data['memories']))
       _record(
         Column(
@@ -861,7 +907,7 @@ class _NaPersonalPageState extends State<NaPersonalPage>
             ),
             const SizedBox(height: 8),
             SelectableText(memory['value'].toString()),
-            if (memory['truncated'] == true) _note('搜索结果已截断；清空关键词后查看完整记忆。'),
+            if (memory['truncated'] == true) _note('内容过长已截断，清空关键词查看全文'),
             Wrap(
               spacing: 12,
               children: [
@@ -964,13 +1010,11 @@ class _NaPersonalPageState extends State<NaPersonalPage>
             Text(
               '下次执行：${routine['nextRunAt'] ?? (routine['trigger'] == 'event' ? '等待应用事件' : '—')}',
             ),
-            if (routine['nextAllowedAt'] != null ||
-                routine['nextCheckAllowedAt'] != null)
-              _note(
-                '下次允许重试：${routine['nextAllowedAt'] ?? routine['nextCheckAllowedAt']}',
-              ),
             if (routine['lastCheckFailureCause'] != null)
-              _note('读取失败原因：${routine['lastCheckFailureCause']}'),
+              _note(
+                '上次检查失败：${routine['lastCheckFailureCause']}',
+                color: Theme.of(context).colorScheme.error,
+              ),
             Wrap(
               spacing: 8,
               children: [
@@ -1009,8 +1053,7 @@ class _NaPersonalPageState extends State<NaPersonalPage>
           ],
         ),
       ),
-    if (_list(_data['routines']).isEmpty && !_loading)
-      _note('暂无持续任务。检查结果有变化时才应提醒你。'),
+    if (_list(_data['routines']).isEmpty && !_loading) _note('暂无持续任务'),
   ];
 
   Future<void> _editRoutine([Map<String, dynamic>? routine]) async {
@@ -1102,7 +1145,7 @@ class _NaPersonalPageState extends State<NaPersonalPage>
         ),
       ),
       _note(
-        '安静时段：${proactivity['quietStart'] ?? '—'} — ${proactivity['quietEnd'] ?? '—'}\n提醒最小间隔：${proactivity['minIntervalMinutes'] ?? '—'} 分钟',
+        '安静时段 ${proactivity['quietStart'] ?? '—'}–${proactivity['quietEnd'] ?? '—'} · 提醒最小间隔 ${proactivity['minIntervalMinutes'] ?? '—'} 分钟',
       ),
       TextButton(
         onPressed: _disabled
@@ -1153,8 +1196,8 @@ class _NaPersonalPageState extends State<NaPersonalPage>
     final result = await _edit('编辑个人助理资料', [
       for (final field in [
         ('name', '你的称呼'),
-        ('timezone', 'IANA 时区'),
-        ('locale', '语言（zh-CN / en）'),
+        ('timezone', '时区（如 Asia/Shanghai）'),
+        ('locale', '语言'),
         ('about', '关于你'),
         ('goals', '当前目标'),
       ])

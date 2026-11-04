@@ -157,7 +157,7 @@ void main() {
       await tap(tester, '保存重复授权');
       expect(find.textContaining('Exact reviewed subject'), findsOneWidget);
       expect(find.textContaining('默认有效 30 天'), findsOneWidget);
-      expect(find.textContaining('当前待审核操作仍需单独审核执行'), findsOneWidget);
+      expect(find.textContaining('保存不会执行本次操作'), findsOneWidget);
       await tap(tester, '取消');
       expect(calls, isEmpty);
     },
@@ -297,7 +297,7 @@ void main() {
     }
 
     await pumpList(tester, request);
-    expect(find.textContaining('来源操作：action-one'), findsOneWidget);
+    expect(find.textContaining('操作：'), findsOneWidget);
     expect(find.textContaining('到期：'), findsOneWidget);
     await tap(tester, '撤销授权');
     await tap(tester, '取消');

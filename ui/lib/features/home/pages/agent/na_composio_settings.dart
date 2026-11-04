@@ -78,9 +78,7 @@ class _NaComposioSettingsState extends State<NaComposioSettings> {
   Future<void> _save() async {
     if (widget.busy || _saving) return;
     if (_key.text.trim().startsWith('ck_')) {
-      setState(
-        () => _error = '这是 Connect 消费者密钥。请在 Platform 项目的 Settings → API Keys 获取项目 API Key。',
-      );
+      setState(() => _error = 'ck_ 是消费者密钥，请使用 ak_ 开头的项目密钥。');
       return;
     }
     final toolkits = <String>[], authConfigs = <String, String>{};
@@ -88,7 +86,7 @@ class _NaComposioSettingsState extends State<NaComposioSettings> {
       final slug = row.slug.text.trim(), config = row.authConfig.text.trim();
       if (!RegExp(r'^[a-z0-9_][a-z0-9_-]{0,63}$').hasMatch(slug) ||
           toolkits.contains(slug)) {
-        setState(() => _error = '应用标识需为不重复的小写 Composio toolkit，例如 gmail。');
+        setState(() => _error = '应用标识需为小写字母，例如 gmail，且不能重复。');
         return;
       }
       toolkits.add(slug);
@@ -125,13 +123,13 @@ class _NaComposioSettingsState extends State<NaComposioSettings> {
       key: const Key('na-composio-settings'),
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Composio 项目 Key', style: Theme.of(context).textTheme.titleMedium),
+        Text('连接服务', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 6),
         Text(keyConfigured ? '已配置项目密钥 · 可在下方替换' : '未配置项目密钥 · 在下方设置'),
         const SizedBox(height: 4),
         SwitchListTile(
           contentPadding: EdgeInsets.zero,
-          title: const Text('启用 Composio'),
+          title: const Text('启用连接服务'),
           value: _enabled,
           onChanged: disabled
               ? null
@@ -148,8 +146,8 @@ class _NaComposioSettingsState extends State<NaComposioSettings> {
           autocorrect: false,
           enableSuggestions: false,
           decoration: InputDecoration(
-            labelText: '项目 API Key',
-            hintText: keyConfigured ? '留空保留现有密钥' : 'Platform 项目密钥（ak_…）',
+            labelText: '项目密钥',
+            hintText: keyConfigured ? '留空保留现有密钥' : '以 ak_ 开头',
           ),
           onChanged: (_) => setState(() => _dirty = true),
         ),
@@ -171,14 +169,14 @@ class _NaComposioSettingsState extends State<NaComposioSettings> {
             _error!,
             style: TextStyle(color: Theme.of(context).colorScheme.error),
           ),
-        if (changedElsewhere) const Text('服务配置已在其他客户端更新。保存会检查版本，请先重新载入。'),
+        if (changedElsewhere) const Text('设置已在其他设备更新，请重新载入。'),
         Wrap(
           spacing: 12,
           children: [
             FilledButton(
               key: const Key('na-composio-settings-save'),
               onPressed: disabled ? null : _save,
-              child: Text(_saving ? '正在保存…' : '保存到 Na 服务端'),
+              child: Text(_saving ? '正在保存…' : '保存'),
             ),
             TextButton.icon(
               key: const Key('na-composio-get-key'),
@@ -197,26 +195,24 @@ class _NaComposioSettingsState extends State<NaComposioSettings> {
                         // Keep plugin failures local and never include form values.
                       }
                       if (!opened && mounted) {
-                        setState(
-                          () => _error = '无法打开 Composio 控制台，请在 Platform 项目的 Settings → API Keys 获取项目密钥。',
-                        );
+                        setState(() => _error = '无法打开密钥页面，请检查网络后重试。');
                       }
                     },
               icon: const Icon(LucideIcons.externalLink, size: 16),
-              label: const Text('获取项目 API Key'),
+              label: const Text('获取密钥'),
             ),
             if (changedElsewhere)
               TextButton(
                 onPressed: disabled
                     ? null
                     : () => setState(() => _adopt(widget.settings)),
-                child: const Text('重新载入服务配置'),
+                child: const Text('重新载入'),
               ),
           ],
         ),
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 12),
-          child: Text('密钥只写入服务端，不会回显；应用授权仍在官方页面由你完成。'),
+          child: Text('密钥仅保存在服务端。'),
         ),
         ExpansionTile(
           key: const Key('na-composio-advanced-settings'),

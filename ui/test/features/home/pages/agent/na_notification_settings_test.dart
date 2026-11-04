@@ -67,7 +67,7 @@ void main() {
     'opt in requests device delivery only and preserves captured owner',
     (tester) async {
       await pump(tester);
-      expect(find.textContaining('系统密钥加密'), findsOneWidget);
+      expect(find.textContaining('加密保存在本设备'), findsOneWidget);
       await tester.tap(find.byKey(const Key('na-notifications-enabled')));
       await tester.pumpAndSettle();
       expect(enabled, isTrue);

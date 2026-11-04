@@ -71,7 +71,7 @@ void main() {
       );
       expect(key.obscureText, isTrue);
       expect(key.controller!.text, isEmpty);
-      expect(find.text('获取项目 API Key'), findsOneWidget);
+      expect(find.text('获取密钥'), findsOneWidget);
       await save(tester);
       expect(calls.single, {
         'expectedRevision': 7,
@@ -136,7 +136,7 @@ void main() {
       }, settings: settings);
       final key = find.byKey(const Key('na-composio-api-key'));
       final button = find.byKey(const Key('na-composio-settings-save'));
-      expect(find.text('Composio 项目 Key'), findsOneWidget);
+      expect(find.text('连接服务'), findsOneWidget);
       expect(key.hitTestable(), findsOneWidget);
       expect(button.hitTestable(), findsOneWidget);
       expect(
@@ -179,7 +179,7 @@ void main() {
       );
       await save(tester);
       expect(count, 0);
-      expect(find.textContaining('这是 Connect 消费者密钥'), findsOneWidget);
+      expect(find.textContaining('ck_ 是消费者密钥'), findsOneWidget);
     },
   );
 }

@@ -168,10 +168,8 @@ class _NaRepeatGrantButtonState extends State<NaRepeatGrantButton> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Text('职责：${action['routineTitle'] ?? action['routineId']}'),
-                Text('工具：${connector['tool']} · ${connector['version']}'),
+                Text('操作：${connector['tool']}'),
                 Text('账号：${account['label'] ?? account['id']}'),
-                if (connector['noAuth'] != true)
-                  SelectableText('账号标识：${account['id']}'),
                 const SizedBox(height: 12),
                 const Text('准确参数'),
                 SelectableText(
@@ -179,11 +177,11 @@ class _NaRepeatGrantButtonState extends State<NaRepeatGrantButton> {
                 ),
                 const SizedBox(height: 12),
                 const Text(
-                  '默认有效 30 天。仅允许当前职责在工具、账号、版本与参数完全相同时重复执行。职责或连接配置变化会使授权失效，你也可随时撤销。',
+                  '默认有效 30 天，仅限该职责以相同账号和参数重复执行；随时可撤销。',
                 ),
                 if (action['status'] == 'pending') ...[
                   const SizedBox(height: 8),
-                  const Text('保存不会执行本次操作；当前待审核操作仍需单独审核执行。'),
+                  const Text('保存不会执行本次操作。'),
                 ],
               ],
             );
@@ -397,7 +395,7 @@ class _NaConnectorGrantListState extends State<NaConnectorGrantList> {
     children: [
       Text('重复操作授权', style: Theme.of(context).textTheme.titleMedium),
       const SizedBox(height: 6),
-      const Text('仅在你明确保存后，指定职责才可重复执行完全相同的操作。'),
+      const Text('保存后，该职责再次执行相同操作无需重复审核。'),
       TextButton(
         onPressed: widget.disabled || _loading || _busy != null ? null : _load,
         child: Text(_loading ? '正在读取授权…' : '刷新重复授权'),
@@ -418,16 +416,11 @@ class _NaConnectorGrantListState extends State<NaConnectorGrantList> {
               Text(
                 '${grant['routineTitle'] ?? grant['routineId']} · ${_grantStatus(grant['status'])}',
               ),
-              SelectableText('${grant['tool']} · ${grant['version']}'),
-              Text(
-                grant['noAuth'] == true
-                    ? '无需账号授权的公开工具'
-                    : '账号：${grant['accountId']}',
-              ),
+              Text('操作：${grant['tool']}'),
+              if (grant['noAuth'] != true) Text('账号：${grant['accountId']}'),
               Text(
                 '到期：${DateTime.tryParse(grant['expiresAt']?.toString() ?? '')?.toLocal().toString().split('.').first ?? '待确认'}',
               ),
-              SelectableText('来源操作：${grant['sourceActionId']}'),
               if (grant['status'] != 'active')
                 Text(_grantReason(grant['reason'])),
               if (['active', 'suspended'].contains(grant['status']))
