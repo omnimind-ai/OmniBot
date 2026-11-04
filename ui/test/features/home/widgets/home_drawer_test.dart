@@ -21,6 +21,7 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/models/habitual_hand.dart';
 import 'package:ui/services/app_update_service.dart';
+import 'package:ui/services/embedded_terminal_preparation_service.dart';
 import 'package:ui/services/scheduled_task_storage_service.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/storage_service.dart';
@@ -1765,6 +1766,91 @@ void main() {
       expect(selected?.mode, ConversationMode.agent);
       expect(agentMethods, isNot(contains('agent/select')));
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  for (final health in [
+    {'installed': null, 'status': 'unchecked'},
+    {'installed': false, 'status': 'unchecked'},
+    {'installed': false, 'status': 'missing'},
+  ]) {
+    testWidgets(
+      'fresh home keeps Xiaowan while its environment is running: $health',
+      (tester) async {
+        final preparation = EmbeddedTerminalPreparationService.instance;
+        preparation.resetForTest();
+        addTearDown(preparation.resetForTest);
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+            .setMockMethodCallHandler(spePermission, (call) async {
+              if (call.method == 'getEmbeddedTerminalInitSnapshot') {
+                return {'running': true, 'completed': false};
+              }
+              return null;
+            });
+        await preparation.refresh();
+        expect(preparation.snapshot?.running, isTrue);
+        expect(preparation.ready, isFalse);
+        // A fresh catalog can list Na first while Xiaowan has no probe result.
+        // Catalog order and installation progress must not select the mode.
+        nativeAgents = [
+          nativeAgents.firstWhere((agent) => agent['id'] == 'na-cloud'),
+          {
+            ...nativeAgents.firstWhere((agent) => agent['id'] == 'xiaowan-acp'),
+            ...health,
+          },
+        ];
+        ConversationThreadTarget? opened;
+        await pumpSelectionHome(tester, onOpen: (target) => opened = target);
+        expect(
+          tester
+              .widget<Text>(find.byKey(const ValueKey('home-agent-name')))
+              .data,
+          '小万',
+        );
+        await tester.tap(find.byKey(const ValueKey('home-new-conversation')));
+        expect(opened?.agentId, 'xiaowan-acp');
+        expect(opened?.mode, ConversationMode.agent);
+        await tester.tap(find.text('开始对话'));
+        expect(opened?.agentId, 'xiaowan-acp');
+        expect(agentMethods, isNot(contains('agent/select')));
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  testWidgets(
+    'explicit Na filter survives a refreshed unprepared Xiaowan catalog',
+    (tester) async {
+      nativeAgents.firstWhere((agent) => agent['id'] == 'xiaowan-acp').addAll({
+        'installed': null,
+        'status': 'unchecked',
+      });
+      ConversationThreadTarget? opened;
+      await pumpSelectionHome(tester, onOpen: (target) => opened = target);
+      await selectHomeCategory(tester, 'na-cloud');
+      final context = tester.element(find.byType(HomeDrawer));
+      unawaited(
+        Navigator.of(context).push<void>(
+          MaterialPageRoute(builder: (_) => const Scaffold(body: Text('配置'))),
+        ),
+      );
+      await tester.pumpAndSettle();
+      nativeAgents = [
+        for (final agent in nativeAgents)
+          if (agent['id'] == 'xiaowan-acp')
+            {...agent, 'installed': false, 'status': 'missing'}
+          else
+            agent,
+      ];
+      Navigator.of(context).pop();
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<Text>(find.byKey(const ValueKey('home-agent-name'))).data,
+        'Na',
+      );
+      await tester.tap(find.byKey(const ValueKey('home-new-conversation')));
+      expect(opened?.agentId, 'na-cloud');
+      expect(agentMethods, isNot(contains('agent/select')));
     },
   );
 

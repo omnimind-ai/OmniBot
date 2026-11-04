@@ -129,6 +129,8 @@ class SpecialPermissionChannel {
                     )
                     "openAppDetailsSettings" -> specialPermissionManager!!
                         .openAppDetailsSettings(result)
+                    "openNotificationSettings" -> specialPermissionManager!!
+                        .openNotificationSettings(result)
                     "isNotificationPermissionGranted" -> specialPermissionManager!!
                         .isNotificationPermissionGranted(result)
                     "requestNotificationPermission" -> specialPermissionManager!!

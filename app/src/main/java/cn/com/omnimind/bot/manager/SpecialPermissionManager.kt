@@ -7,6 +7,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import cn.com.omnimind.androidgui.AndroidGuiEnvironment
 import cn.com.omnimind.baselib.permission.PermissionRequest
@@ -23,6 +24,7 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalLaunchHelper
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalSetupManager
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalInstallService
 import cn.com.omnimind.bot.termux.TermuxCommandRunner
 import cn.com.omnimind.bot.util.AssistsUtil
 import cn.com.omnimind.bot.workspace.PublicStorageAccess
@@ -356,16 +358,26 @@ class SpecialPermissionManager(private val context: Context) {
         }
     }
 
+    fun openNotificationSettings(result: MethodChannel.Result) {
+        try {
+            context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+                putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            })
+            result.success(null)
+        } catch (error: Exception) {
+            OmniLog.e(TAG, "Could not open app notification settings", error)
+            result.error("INTENT_FAILED", "Could not open notification settings.", error.message)
+        }
+    }
+
     fun isNotificationPermissionGranted(result: MethodChannel.Result) {
         try {
-            val granted = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                true
-            } else {
-                ContextCompat.checkSelfPermission(
+            val granted = NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+                (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || ContextCompat.checkSelfPermission(
                     context,
                     Manifest.permission.POST_NOTIFICATIONS
-                ) == PackageManager.PERMISSION_GRANTED
-            }
+                ) == PackageManager.PERMISSION_GRANTED)
             result.success(granted)
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error checking notification permission", e)
@@ -380,7 +392,7 @@ class SpecialPermissionManager(private val context: Context) {
     fun requestNotificationPermission(result: MethodChannel.Result) {
         try {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-                result.success(true)
+                result.success(NotificationManagerCompat.from(context).areNotificationsEnabled())
                 return
             }
             CoroutineScope(Dispatchers.Default).launch {
@@ -390,7 +402,10 @@ class SpecialPermissionManager(private val context: Context) {
                 context,
                 arrayOf(Manifest.permission.POST_NOTIFICATIONS)
             ) {
-                result.success(it[Manifest.permission.POST_NOTIFICATIONS] == true)
+                val granted = it[Manifest.permission.POST_NOTIFICATIONS] == true &&
+                    NotificationManagerCompat.from(context).areNotificationsEnabled()
+                if (granted) EmbeddedTerminalInstallService.refresh(context)
+                result.success(granted)
             }
         } catch (e: Exception) {
             OmniLog.e(TAG, "Error requesting notification permission", e)

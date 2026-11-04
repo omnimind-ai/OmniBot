@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:ui/services/embedded_terminal_preparation_service.dart';
 import 'package:ui/theme/theme_context.dart';
+import 'package:ui/widgets/installation_notification_permission_button.dart';
 
 import '../../command_overlay/widgets/cards/bot_status.dart';
 import 'chat_message_viewport.dart';
@@ -70,6 +71,10 @@ class ChatEnvironmentPreparation extends StatelessWidget {
                 textAlign: TextAlign.center,
                 style: TextStyle(color: color, fontSize: 13, height: 1.5),
               ),
+            ),
+            InstallationNotificationPermissionButton(
+              preparation: preparation,
+              textColor: color,
             ),
             if (failed || cannotRead) ...[
               const SizedBox(height: 12),

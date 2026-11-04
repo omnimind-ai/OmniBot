@@ -933,6 +933,10 @@ Future<bool> ensureNotificationPermission() async {
   return requestNotificationPermission();
 }
 
+Future<void> openNotificationSettings() async {
+  await spePermission.invokeMethod<void>('openNotificationSettings');
+}
+
 Future<bool> isWorkspaceStorageAccessGranted() async {
   try {
     return await spePermission.invokeMethod<bool>(

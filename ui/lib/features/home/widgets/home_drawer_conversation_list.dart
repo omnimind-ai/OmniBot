@@ -220,6 +220,10 @@ extension _HomeDrawerConversationList on HomeDrawerState {
                   ),
                 ),
               ),
+              if (widget.homePage)
+                InstallationNotificationPermissionButton(
+                  textColor: _drawerSecondaryTextColor,
+                ),
             ],
           ),
         ),

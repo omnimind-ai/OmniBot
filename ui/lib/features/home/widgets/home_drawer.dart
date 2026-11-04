@@ -48,6 +48,7 @@ import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/cache_util.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/agent_brand_icon.dart';
+import 'package:ui/widgets/installation_notification_permission_button.dart';
 import 'package:ui/widgets/app_update_dialog.dart';
 import 'package:ui/widgets/flclash/popup.dart';
 import 'package:ui/widgets/flclash/search_header.dart';

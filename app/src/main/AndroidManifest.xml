@@ -257,6 +257,10 @@
             android:enabled="true"
             android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service
+            android:name="cn.com.omnimind.bot.terminal.EmbeddedTerminalInstallService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
         <activity
             android:name="cn.com.omnimind.bot.agent.BrowserFileChooserRequestActivity"
             android:exported="false"

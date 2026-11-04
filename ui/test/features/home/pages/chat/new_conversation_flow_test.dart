@@ -707,6 +707,48 @@ void main() {
   }
 
   testWidgets(
+    'fresh chat startup remains Xiaowan with no preferences and an unprepared environment',
+    (tester) async {
+      environmentSnapshot = {'running': true, 'completed': false};
+      await EmbeddedTerminalPreparationService.instance.refresh();
+      reportedStatusAgentId = 'na-cloud';
+      agents.firstWhere((agent) => agent['id'] == 'xiaowan-acp').addAll({
+        'installed': null,
+        'status': 'unchecked',
+      });
+      await pumpChat(tester, null, settle: false);
+      await pumpHistoryFrames(tester);
+      expect(selector(tester).selectedId, 'xiaowan-acp');
+      expect(
+        find.byKey(const ValueKey('chat-environment-preparation')),
+        findsOneWidget,
+      );
+      expectNoSessionAdmission();
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
+    'startup preserves a persisted explicit Na draft while local setup runs',
+    (tester) async {
+      environmentSnapshot = {'running': true, 'completed': false};
+      await EmbeddedTerminalPreparationService.instance.refresh();
+      restoredTarget = const ConversationThreadTarget.newConversation(
+        agentId: 'na-cloud',
+        requestKey: 'persisted-na-draft',
+      );
+      await pumpChat(tester, null);
+      expect(selector(tester).selectedId, 'na-cloud');
+      expect(
+        find.byKey(const ValueKey('chat-environment-preparation')),
+        findsNothing,
+      );
+      expectNoSessionAdmission();
+      await disposeChat(tester);
+    },
+  );
+
+  testWidgets(
     'system failure offers retry while other conversation modes stay available',
     (tester) async {
       environmentSnapshot = {

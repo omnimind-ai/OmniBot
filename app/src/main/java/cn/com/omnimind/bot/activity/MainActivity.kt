@@ -16,6 +16,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.App
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalAutoStartManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalInitCoordinator
+import cn.com.omnimind.bot.terminal.EmbeddedTerminalInstallService
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
 import cn.com.omnimind.bot.ui.channel.ChannelManager
 import cn.com.omnimind.bot.ui.channel.FileSaveChannel
@@ -168,6 +169,7 @@ class MainActivity : FlutterActivity() {
         super.onResume()
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.onActivityResumed(this)
+        EmbeddedTerminalInstallService.refresh(applicationContext)
         AppUpdateManager.requestSilentCheckIfDue(this)
         lifecycleScope.launch {
             runCatching {

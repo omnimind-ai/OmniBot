@@ -127,6 +127,48 @@ class AcpAgentProfileStoreTest {
     }
 
     @Test
+    fun `fresh Xiaowan is bundled before terminal preparation without claiming readiness`() {
+        val store = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+        repeat(2) {
+            val payload = store.catalogPayload()["agents"] as List<*>
+            val xiaowan = payload.map { it as Map<*, *> }
+                .single { it["id"] == AcpAgentProfileStore.XIAOWAN_AGENT_ID }
+            assertEquals(true, xiaowan["enabled"])
+            assertEquals(true, xiaowan["installed"])
+            assertEquals(AcpAgentHealth.STATUS_UNCHECKED, xiaowan["status"])
+            assertEquals(null, xiaowan["lastCheckAt"])
+            store.clearHealth(AcpAgentProfileStore.XIAOWAN_AGENT_ID)
+        }
+    }
+
+    @Test
+    fun `bundled Xiaowan repairs stale command discovery but preserves actual preparation failures and Na owners`() {
+        val context = acpProfileStoreTestContext(directory.root)
+        val missing = AcpAgentHealth(
+            status = AcpAgentHealth.STATUS_MISSING,
+            installed = false,
+            error = "terminal not prepared",
+            checkedAt = 123L,
+        )
+        context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE).edit()
+            .putString("health", Gson().toJson(mapOf(AcpAgentProfileStore.XIAOWAN_AGENT_ID to missing)))
+            .commit()
+        val store = AcpAgentProfileStore(context)
+        store.bindConversation(42, NA_AGENT_ID)
+        store.bindSession("na-session", NA_AGENT_ID)
+        val repaired = store.health(AcpAgentProfileStore.XIAOWAN_AGENT_ID)
+        assertEquals(AcpAgentHealth.STATUS_UNCHECKED, repaired.status)
+        assertEquals(true, repaired.installed)
+        assertEquals(null, repaired.error)
+        val failure = missing.copy(status = AcpAgentHealth.STATUS_OFFLINE, error = "package download failed")
+        store.saveHealth(AcpAgentProfileStore.XIAOWAN_AGENT_ID, failure)
+        val reopened = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
+        assertEquals(failure.copy(installed = true), reopened.health(AcpAgentProfileStore.XIAOWAN_AGENT_ID))
+        assertEquals(NA_AGENT_ID, reopened.agentIdForConversation(42))
+        assertEquals(NA_AGENT_ID, reopened.agentIdForSession("na-session"))
+    }
+
+    @Test
     fun `fresh and reset Na remain available before the first cloud check`() {
         val store = AcpAgentProfileStore(acpProfileStoreTestContext(directory.root))
         val profile = store.list().single { it.id == NA_AGENT_ID }

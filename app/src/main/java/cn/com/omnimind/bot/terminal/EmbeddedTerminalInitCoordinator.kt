@@ -111,6 +111,7 @@ object EmbeddedTerminalInitCoordinator {
             }
         }
         val appContext = context.applicationContext
+        EmbeddedTerminalInstallService.observe(appContext)
         val job = workerScope.launch {
             runPreparation(appContext, deferred)
         }
@@ -138,6 +139,7 @@ object EmbeddedTerminalInitCoordinator {
             }
         }
         if (shouldStartNow) {
+            EmbeddedTerminalInstallService.observe(appContext)
             val job = workerScope.launch {
                 runPreparation(appContext, deferred, selectedPackageIds)
             }
@@ -170,6 +172,7 @@ object EmbeddedTerminalInitCoordinator {
                 resetEmbeddedTerminalInitStateLocked()
             }
         }
+        EmbeddedTerminalInstallService.observe(appContext)
         val job = workerScope.launch {
             runDistributionPreparation(appContext, distribution, deferred)
         }

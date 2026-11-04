@@ -1,4 +1,11 @@
 <resources>
+    <string name="system_install_notification_channel">系统安装</string>
+    <string name="system_install_notification_channel_description">显示后台系统与基础工具的安装进度</string>
+    <string name="system_install_notification_running">正在安装系统</string>
+    <string name="system_install_notification_preparing">正在准备系统与基础工具</string>
+    <string name="system_install_notification_failed">系统安装未完成</string>
+    <string name="system_install_notification_retry_hint">点击重试</string>
+    <string name="system_install_notification_retry">重试安装</string>
     <string name="app_name">\u5c0f\u4e07</string>
     <string name="omni_app_name">\u5c0f\u4e07</string>
     <string name="quick_log_widget_title">记忆</string>
