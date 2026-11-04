@@ -481,7 +481,7 @@ void main() {
     expect(find.byKey(const ValueKey('startup-account-card')), findsNothing);
   });
 
-  testWidgets('prompts after onboarding completes in the same app launch', (
+  testWidgets('first launch shows the account sheet without a tutorial', (
     tester,
   ) async {
     await StorageService.setBool(StorageKeys.welcomeCompleted, false);
@@ -503,18 +503,17 @@ void main() {
             accountChecks += 1;
             return const AccountSessionState(configured: true, signedIn: false);
           },
-          child: const Scaffold(body: Text('onboarding')),
+          child: const Scaffold(body: Text('home')),
         ),
       ),
     );
     await tester.pumpAndSettle();
 
-    expect(versionChecks, 0);
-    expect(accountChecks, 0);
-    expect(find.byKey(const ValueKey('startup-account-card')), findsNothing);
-    expect(find.text('onboarding'), findsOneWidget);
+    expect(versionChecks, 1);
+    expect(accountChecks, 1);
+    expect(find.byKey(const ValueKey('startup-account-card')), findsOneWidget);
+    expect(find.text('home'), findsOneWidget);
 
-    await StorageService.setBool(StorageKeys.welcomeCompleted, true);
     routeChanges.notifyListeners();
     await tester.pump();
     await tester.pumpAndSettle();

@@ -9,7 +9,7 @@ import '../onboarding_provider_controller.dart';
 import '../widgets/onboarding_common.dart';
 import '../widgets/onboarding_page_scaffold.dart';
 
-/// Step 5: enter the connection details for the chosen provider.
+/// Enter the connection details for the chosen provider.
 class OnboardingProviderConnectionPage extends StatelessWidget {
   const OnboardingProviderConnectionPage({
     super.key,

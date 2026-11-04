@@ -753,6 +753,36 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         }
       }
       if (!_isConversationTargetRequestCurrent(sendTargetId)) return;
+      if (_isWaitingForXiaowanEnvironment) {
+        // Entry points may supply text directly (for example a shared task).
+        // Keep it as an ordinary editable draft, without admitting or queuing
+        // an ACP turn. Readiness never automatically submits it later.
+        if (text != null && submittedText.trim().isNotEmpty) {
+          final currentDraft = _messageController.text;
+          final incoming = submittedText.trim();
+          if (!currentDraft.contains(incoming)) {
+            final staged = currentDraft.trim().isEmpty
+                ? incoming
+                : '$incoming\n\n$currentDraft';
+            _messageController.value = TextEditingValue(
+              text: staged,
+              selection: TextSelection.collapsed(offset: staged.length),
+            );
+            _modeState(_activeConversationMode).draftMessage = staged;
+          }
+        }
+        showToast(
+          _terminalPreparation.failed
+              ? (LegacyTextLocalizer.isEnglish
+                    ? 'System installation failed. Tap Retry to continue.'
+                    : '系统安装失败，请重试安装')
+              : (LegacyTextLocalizer.isEnglish
+                    ? 'The system is installing. Your draft is saved.'
+                    : '系统正在安装，输入内容已保留'),
+          type: ToastType.info,
+        );
+        return;
+      }
       final unavailableMessage = _activeAgentUnavailableMessage;
       if (unavailableMessage != null) {
         showToast(unavailableMessage, type: ToastType.error);

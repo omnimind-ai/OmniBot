@@ -77,6 +77,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _runtimeCoordinator.ensureInitialized();
     _lastAgentEventProjection = _runtimeCoordinator.latestAgentEventProjection;
     _runtimeCoordinator.addListener(_handleRuntimeCoordinatorChanged);
+    _terminalPreparation.addListener(_handleTerminalPreparationChanged);
+    _terminalPreparation.startObserving();
     HomeGreetingSettingsService.notifier.addListener(
       _handleHomeGreetingSettingsChanged,
     );
@@ -764,6 +766,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       _subscribedRoute = null;
     }
     _runtimeCoordinator.removeListener(_handleRuntimeCoordinatorChanged);
+    _terminalPreparation.removeListener(_handleTerminalPreparationChanged);
     HomeGreetingSettingsService.notifier.removeListener(
       _handleHomeGreetingSettingsChanged,
     );
@@ -999,6 +1002,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   void _handleHomeGreetingSettingsChanged() {
     if (!mounted) return;
     setState(() {});
+  }
+
+  void _handleTerminalPreparationChanged() {
+    if (mounted) setState(() {});
   }
 
   @override

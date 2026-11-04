@@ -5,7 +5,7 @@ import 'onboarding_definitions.dart';
 /// Tracks the current tutorial page, the back-history stack, and which
 /// pagination pages have been visited.
 class OnboardingFlowController extends ChangeNotifier {
-  TutorialPage _page = TutorialPage.system;
+  TutorialPage _page = TutorialPage.permissions;
   final List<TutorialPage> _pageHistory = <TutorialPage>[];
 
   /// 1 when navigating forward, -1 when navigating back. Used to pick the
@@ -13,7 +13,7 @@ class OnboardingFlowController extends ChangeNotifier {
   int _transitionDirection = 1;
 
   final Set<TutorialPage> _visitedTutorialPages = <TutorialPage>{
-    TutorialPage.system,
+    TutorialPage.permissions,
   };
 
   TutorialPage get page => _page;

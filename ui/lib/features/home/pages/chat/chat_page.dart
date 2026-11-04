@@ -44,6 +44,7 @@ import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/services/agent_browser_session_service.dart';
 import 'package:ui/services/chat_terminal_environment_service.dart';
+import 'package:ui/services/embedded_terminal_preparation_service.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/services/omnilink_plugin_service.dart';
 import 'package:ui/services/omnilink_event_formatter.dart';
@@ -89,6 +90,7 @@ import 'widgets/chat_pane_resize_handle.dart';
 import 'widgets/chat_message_viewport.dart';
 import 'widgets/chat_browser_overlay.dart';
 import 'widgets/chat_history_loading_transition.dart';
+import 'widgets/chat_environment_preparation.dart';
 import 'widgets/chat_message_anchor_bar.dart';
 import 'widgets/chat_tool_activity_strip.dart';
 import 'widgets/chat_spotlight_tour.dart';
@@ -193,6 +195,8 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   bool _isCheckingSendModelConfiguration = false;
   final ChatConversationRuntimeCoordinator _runtimeCoordinator =
       ChatConversationRuntimeCoordinator.instance;
+  final EmbeddedTerminalPreparationService _terminalPreparation =
+      EmbeddedTerminalPreparationService.instance;
   final ChatConversationLifecycleGuard _conversationLifecycleGuard =
       ChatConversationLifecycleGuard();
   ConversationThreadTarget? _resolvedThreadTarget;
@@ -422,6 +426,23 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   // Pure chat remains an ACP session with tool capabilities disabled.
   String? get _activeAcpAgentId => _committedAcpAgentId;
+
+  // Installation readiness only gates an unsubmitted local Xiaowan draft.
+  // Existing history and other Harnesses retain their independent runtime.
+  bool get _isWaitingForXiaowanEnvironment {
+    final target = _resolvedThreadTarget ?? widget.threadTarget;
+    final targetAgentId = target?.agentId?.trim();
+    final agentId = targetAgentId?.isNotEmpty == true
+        ? targetAgentId
+        : (_activeAcpAgentId ?? _kXiaowanAcpAgentId);
+    return !_terminalPreparation.ready &&
+        _activeMode == ChatPageMode.agent &&
+        target?.mode == ConversationMode.agent &&
+        agentId == _kXiaowanAcpAgentId &&
+        target?.isNewConversation == true &&
+        _currentConversationId == null &&
+        _messages.isEmpty;
+  }
 
   bool get _activeAgentTargetIsRemote =>
       _activeAcpAgentId == _kRemoteCodexModeAgentId;
