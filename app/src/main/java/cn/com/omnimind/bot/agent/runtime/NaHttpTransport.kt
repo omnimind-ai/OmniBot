@@ -13,9 +13,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
+import java.util.concurrent.TimeUnit
 
 /** Set only after this instance advertises durable admission deduplication. */
 internal object NaIdempotentAdmission
@@ -56,8 +58,13 @@ private fun IOException.canRecover(): Boolean {
 
 /** One bounded transport owner. Repeating an admission keeps its exact body
  * and logical identities; other writes and terminal executions are not replayed. */
-internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, consume: (Response) -> T): T {
-    val repeatable = request.method == "GET" ||
+internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, retryReads: Boolean = true, consume: (Response) -> T): T {
+    // Writes start with an empty pool so a stale idle read connection cannot
+    // lose their response. Explicit admission deduplication still owns retries.
+    val requestClient = if (request.method == "GET" || request.method == "HEAD") client else
+        client.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
+            .retryOnConnectionFailure(false).build()
+    val repeatable = (request.method == "GET" && retryReads) ||
         (request.method == "POST" && request.tag(NaIdempotentAdmission::class.java) != null)
     val guard = request.tag(NaHttpRequestGuard::class.java)
     var attempts = 0
@@ -68,7 +75,7 @@ internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, 
         attempts++
         try {
             return suspendCancellableCoroutine { continuation ->
-                val call = client.newCall(request)
+                val call = requestClient.newCall(request)
                 continuation.invokeOnCancellation { call.cancel() }
                 call.enqueue(object : Callback {
                     override fun onFailure(call: Call, error: IOException) {

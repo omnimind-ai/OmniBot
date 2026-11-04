@@ -8,7 +8,6 @@ import com.google.gson.reflect.TypeToken
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
@@ -21,13 +20,13 @@ import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.UUID
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.io.IOException
 import java.net.URLConnection
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
@@ -56,6 +55,11 @@ internal class NaCloudRuntime(
     private val client = OkHttpClient.Builder().retryOnConnectionFailure(false)
         .followRedirects(false).followSslRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+    // Long-lived subscriptions must not occupy the ordinary request queue:
+    // status reads and, especially, cancel POSTs must remain dispatchable.
+    private val eventClient = client.newBuilder().dispatcher(okhttp3.Dispatcher().apply {
+        maxRequestsPerHost = 50 // Na's maximum number of admitted active runs.
+    }).build()
     private val gson = Gson()
     private var token = NaNotificationDelivery.restoreDevelopmentToken(appContext, development, baseUrl)
         // Keystore recovery exists only after the user opts in to background reception.
@@ -516,27 +520,37 @@ internal class NaCloudRuntime(
                     val projector = NaItemProjection(reservation)
                     if (cancelPending.remove(id)) request("POST", "/api/runs/$runId/cancel", emptyMap())
                     withTimeout(31 * 60 * 1000L) {
-                        while (true) {
-                            val snapshot = request("GET", "/api/runs/$runId")
-                            val run = snapshot.map("run").ifEmpty { snapshot }
-                            (run["items"] as? List<*>)?.filterIsInstance<Map<*, *>>()?.forEach { raw ->
-                                projector.updates(raw.entries.associate { it.key.toString() to it.value }).forEach { update ->
+                        val run = awaitNaRun(runId,
+                            snapshot = { request("GET", "/api/runs/$runId") },
+                            subscribe = { cursor, receive ->
+                                val request = Request.Builder().url(connection.apiBaseUrl + "/api/events?after=$cursor")
+                                    .header("Accept", "text/event-stream").build()
+                                connection.execute(eventClient, request, retryReads = false) { response ->
+                                    if (response.code == 409) throw IOException("Na event history compacted")
+                                    check(response.isSuccessful) { naCloudPublicError(response.code, null) }
+                                    check(response.header("Content-Type").orEmpty().startsWith("text/event-stream")) {
+                                        "Na returned an invalid event stream"
+                                    }
+                                    readNaEvents(response.body.source(), receive)
+                                }
+                            },
+                            checkOwner = {
+                                promptContext.ensureActive()
+                                connection.account?.requireSessionGeneration(connection.generation)
+                            },
+                            onItem = { item ->
+                                projector.updates(item).forEach { update ->
+                                    promptContext.ensureActive()
                                     connection.account?.requireSessionGeneration(connection.generation)
                                     emit(mapOf("method" to "session/update", "conversationId" to local,
                                         "agentId" to NA_AGENT_ID, "sessionId" to id, "turnId" to reservation,
                                         "params" to mapOf("sessionId" to id, "turnId" to reservation, "update" to update)))
                                 }
-                            }
-                            val state = run["status"]?.toString()
-                            if (state in setOf("completed", "cancelled", "failed")) {
-                                return@withTimeout mapOf("sessionId" to id, "threadId" to id,
-                                    "conversationId" to local, "turnId" to reservation,
-                                    "stopReason" to when(state) { "completed" -> "end_turn"; "cancelled" -> "cancelled"; else -> "error" },
-                                    "error" to run["error"])
-                            }
-                            delay(600)
-                        }
-                        @Suppress("UNREACHABLE_CODE") emptyMap<String, Any?>()
+                            })
+                        mapOf("sessionId" to id, "threadId" to id,
+                            "conversationId" to local, "turnId" to reservation,
+                            "stopReason" to when(run["status"]) { "completed" -> "end_turn"; "cancelled" -> "cancelled"; else -> "error" },
+                            "error" to run["error"])
                     }
                 } catch (_: NaAttachmentCancelled) {
                     mapOf("sessionId" to id, "threadId" to id, "conversationId" to local,
