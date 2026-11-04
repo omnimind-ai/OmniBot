@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:ui/services/agent_runtime_service.dart';
 import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/theme/theme_context.dart';
@@ -12,6 +11,14 @@ import 'package:ui/widgets/common_app_bar.dart';
 import 'package:ui/widgets/omni_circle_button.dart';
 
 import 'na_composio_settings.dart';
+import 'na_connector_grants.dart';
+import 'na_composio_catalog.dart';
+import 'na_composio_events.dart';
+import 'na_notification_settings.dart';
+import 'na_connector_result.dart';
+import 'na_routine_editor.dart';
+
+import 'package:ui/widgets/navigation/page_route.dart';
 
 import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/widgets/settings_ui.dart';
@@ -35,11 +42,9 @@ class _NaPersonalPageState extends State<NaPersonalPage>
   int _tab = 0, _revision = 0;
   bool _loading = true, _busy = false;
   bool _connectionConfigurationAvailable = false;
-  bool _openingConnection = false;
+  bool _openingConnection = false, _openingCatalog = false;
   String? _error;
   final _search = TextEditingController();
-  final _alias = TextEditingController();
-  String? _toolkit;
 
   @override
   void initState() {
@@ -53,13 +58,15 @@ class _NaPersonalPageState extends State<NaPersonalPage>
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     _search.dispose();
-    _alias.dispose();
     super.dispose();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && !_busy && !_openingConnection) {
+    if (state == AppLifecycleState.resumed &&
+        !_busy &&
+        !_openingConnection &&
+        !_openingCatalog) {
       unawaited(_load());
     }
   }
@@ -323,34 +330,41 @@ class _NaPersonalPageState extends State<NaPersonalPage>
     return result;
   }
 
-  Future<void> _authorize(Map<String, dynamic> payload) async {
-    if (_disabled) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
+  Future<void> _openEvents() async {
+    if (_disabled || _openingCatalog) return;
+    setState(() => _openingCatalog = true);
     try {
-      final result = await _request('composio.authorize', payload: payload);
-      final uri = Uri.tryParse(result['url']?.toString() ?? '');
-      const hosts = {'connect.composio.dev', 'app.composio.dev'};
-      if (uri == null ||
-          uri.scheme != 'https' ||
-          !hosts.contains(uri.host) ||
-          uri.userInfo.isNotEmpty ||
-          uri.hasPort) {
-        throw StateError('服务返回了不受支持的授权地址。');
-      }
-      if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
-        throw StateError('无法打开授权页，请稍后重试。');
-      }
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('完成浏览器授权后，返回并刷新账号。')));
-      }
-    } catch (error) {
-      if (mounted) setState(() => _error = _message(error));
+      await Navigator.of(context).push<void>(
+        OmniPageRoute<void>(
+          builder: (_) =>
+              NaComposioEventsPage(request: _request, ownerKey: _owner),
+        ),
+      );
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() => _openingCatalog = false);
+        await _load();
+      }
+    }
+  }
+
+  Future<void> _openCatalog() async {
+    if (_disabled || _openingCatalog) return;
+    setState(() => _openingCatalog = true);
+    try {
+      await Navigator.of(context).push<void>(
+        OmniPageRoute<void>(
+          builder: (_) => NaComposioCatalogPage(
+            request: (operation, payload) =>
+                _request(operation, payload: payload),
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _openingCatalog = false);
+        await _load();
+      }
     }
   }
 
@@ -508,6 +522,8 @@ class _NaPersonalPageState extends State<NaPersonalPage>
     final notices = _list(_data['notifications']),
         actions = _list(_data['actions']);
     return [
+      NaNotificationSettings(disabled: _busy || _openingConnection),
+      const SizedBox(height: 12),
       _heading(
         '需要你确认',
         trailing: TextButton(
@@ -602,6 +618,20 @@ class _NaPersonalPageState extends State<NaPersonalPage>
             'args': action['args'] ?? {},
           }),
           if (action['result'] != null) _details('执行结果', action['result']),
+          if (_map(_map(action['result'])['overflow']).isNotEmpty)
+            NaConnectorResultViewer(
+              overflow: _map(_map(action['result'])['overflow']),
+              readPage: (id, payload) =>
+                  _request('connectors.resultPage', id: id, payload: payload),
+            ),
+          if (_capabilities.contains('connector_grants'))
+            NaRepeatGrantButton(
+              action: action,
+              request: _request,
+              onChanged: _load,
+              disabled: _busy,
+              ownerKey: _owner,
+            ),
           if (action['error'] != null) _note(action['error'].toString()),
           if (status == 'unknown') _note('请先到对应应用核实结果，避免重复执行。'),
           if (action['unavailableReason'] != null)
@@ -675,14 +705,29 @@ class _NaPersonalPageState extends State<NaPersonalPage>
     final composio = _map(_data['composio']);
     final settings = _map(_data['composioSettings']);
     final accounts = _list(composio['accounts']);
-    final toolkits =
-        (composio['toolkits'] as List? ?? settings['toolkits'] as List? ?? [])
-            .whereType<String>()
-            .toList();
-    if (!toolkits.contains(_toolkit)) _toolkit = toolkits.firstOrNull;
     return [
-      _heading('应用连接'),
-      _note('Google Workspace 和其他应用统一通过 Composio 连接。'),
+      _heading(
+        '应用连接',
+        trailing: TextButton.icon(
+          key: const Key('na-composio-browse'),
+          onPressed: _disabled || _openingCatalog ? null : _openCatalog,
+          icon: const Icon(LucideIcons.layoutGrid, size: 16),
+          label: const Text('浏览所有应用'),
+        ),
+      ),
+      _note('浏览 Composio 全部应用，在服务端管理连接和账号。'),
+      if (_capabilities.contains('composio_events'))
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            key: const Key('na-composio-events'),
+            onPressed: _disabled || _openingCatalog ? null : _openEvents,
+            icon: const Icon(LucideIcons.zap, size: 16),
+            label: const Text('管理应用事件'),
+          ),
+        ),
+      if (_data['inventoryError'] != null)
+        _note(_data['inventoryError'].toString()),
       if (settings.isNotEmpty)
         NaComposioSettings(
           key: ValueKey('composio-settings-$_dataOwner'),
@@ -690,8 +735,6 @@ class _NaPersonalPageState extends State<NaPersonalPage>
           busy: _disabled,
           onSave: _saveComposioSettings,
         ),
-      if (_data['inventoryError'] != null)
-        _note(_data['inventoryError'].toString()),
       if (composio['configured'] != true)
         _note(
           settings['enabled'] == false
@@ -699,45 +742,7 @@ class _NaPersonalPageState extends State<NaPersonalPage>
               : '请先在连接服务设置中保存项目密钥和需要开放的应用。',
         )
       else ...[
-        if (toolkits.isNotEmpty) ...[
-          DropdownButtonFormField<String>(
-            initialValue: _toolkit,
-            decoration: const InputDecoration(labelText: '选择应用'),
-            items: toolkits
-                .map(
-                  (toolkit) =>
-                      DropdownMenuItem(value: toolkit, child: Text(toolkit)),
-                )
-                .toList(),
-            onChanged: _disabled
-                ? null
-                : (value) => setState(() => _toolkit = value),
-          ),
-          const SizedBox(height: 14),
-          TextField(
-            controller: _alias,
-            enabled: !_disabled,
-            decoration: const InputDecoration(
-              labelText: '账号名称',
-              hintText: '增加账号时请填写，例如：工作账号',
-            ),
-            maxLength: 80,
-          ),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              onPressed: _disabled || _toolkit == null
-                  ? null
-                  : () => _authorize({
-                      'toolkit': _toolkit,
-                      'alias': _alias.text.trim(),
-                    }),
-              icon: const Icon(LucideIcons.externalLink, size: 16),
-              label: const Text('连接应用'),
-            ),
-          ),
-        ],
-        _note('每次 Composio 应用操作都会先在收件箱展示具体账号与参数，等你确认后执行。'),
+        _note('应用操作默认先由你审核。你也可为特定职责明确保存相同操作的重复授权，随时撤销。'),
         for (final account in accounts)
           _record(
             Column(
@@ -891,6 +896,12 @@ class _NaPersonalPageState extends State<NaPersonalPage>
   ];
 
   List<Widget> _responsibilities() => [
+    if (_capabilities.contains('connector_grants'))
+      NaConnectorGrantList(
+        request: _request,
+        disabled: _busy,
+        ownerKey: _owner,
+      ),
     _heading('主动跟进场景'),
     for (final scenario in _list(_data['scenarios']))
       _record(
@@ -949,7 +960,17 @@ class _NaPersonalPageState extends State<NaPersonalPage>
               ),
             ),
             _note(routine['prompt']?.toString() ?? ''),
-            Text('下次检查：${routine['nextRunAt'] ?? '—'}'),
+            Text(naRoutineStatus(routine)),
+            Text(
+              '下次执行：${routine['nextRunAt'] ?? (routine['trigger'] == 'event' ? '等待应用事件' : '—')}',
+            ),
+            if (routine['nextAllowedAt'] != null ||
+                routine['nextCheckAllowedAt'] != null)
+              _note(
+                '下次允许重试：${routine['nextAllowedAt'] ?? routine['nextCheckAllowedAt']}',
+              ),
+            if (routine['lastCheckFailureCause'] != null)
+              _note('读取失败原因：${routine['lastCheckFailureCause']}'),
             Wrap(
               spacing: 8,
               children: [
@@ -993,55 +1014,41 @@ class _NaPersonalPageState extends State<NaPersonalPage>
   ];
 
   Future<void> _editRoutine([Map<String, dynamic>? routine]) async {
-    final result = await _edit(routine == null ? '新增职责' : '编辑职责', [
-      (
-        key: 'title',
-        label: '职责名称',
-        value: routine?['title']?.toString() ?? '',
-        lines: 1,
-      ),
-      (
-        key: 'prompt',
-        label: '检查内容与提醒条件',
-        value: routine?['prompt']?.toString() ?? '',
-        lines: 3,
-      ),
-      (
-        key: 'nextRunAt',
-        label: '下次检查（ISO 时间，需带时区）',
-        value:
-            routine?['nextRunAt']?.toString() ??
-            DateTime.now()
-                .toUtc()
-                .add(const Duration(hours: 1))
-                .toIso8601String(),
-        lines: 1,
-      ),
-      (
-        key: 'intervalMinutes',
-        label: '重复间隔（分钟，留空为单次）',
-        value: routine?['intervalMinutes']?.toString() ?? '',
-        lines: 1,
-      ),
-    ]);
-    if (result == null || !mounted) return;
-    final interval = result['intervalMinutes']!.isEmpty
-        ? null
-        : num.tryParse(result['intervalMinutes']!);
-    if (result['intervalMinutes']!.isNotEmpty &&
-        (interval == null || interval < 1)) {
-      setState(() => _error = '重复间隔需为至少 1 分钟。');
-      return;
+    final owner = _owner, revision = _revision;
+    try {
+      final profile = await _request('profile.read');
+      if (!mounted || owner != _owner || revision != _revision) return;
+      final user = _map(_map(profile['profile'])['user']);
+      final timezone = user['timezone']?.toString();
+      if (timezone == null || timezone.isEmpty) {
+        throw StateError('请先在资料中设置计划时区。');
+      }
+      final result = await showNaRoutineEditor(
+        context,
+        routine: routine,
+        timezone: timezone,
+        isCurrent: () => mounted && owner == _owner && revision == _revision,
+      );
+      if (result == null ||
+          !mounted ||
+          owner != _owner ||
+          revision != _revision) {
+        return;
+      }
+      await _mutate(
+        routine == null ? 'routines.create' : 'routines.update',
+        id: routine?['id']?.toString(),
+        payload: result,
+      );
+    } catch (error) {
+      if (mounted && owner == _owner && revision == _revision) {
+        setState(
+          () => _error = error is PlatformException
+              ? (error.message ?? '无法打开职责编辑，请重试。')
+              : error.toString(),
+        );
+      }
     }
-    await _mutate(
-      routine == null ? 'routines.create' : 'routines.update',
-      id: routine?['id']?.toString(),
-      payload: {
-        for (final key in ['title', 'prompt', 'nextRunAt']) key: result[key],
-        if (routine == null || interval != routine['intervalMinutes'])
-          'intervalMinutes': interval,
-      },
-    );
   }
 
   List<Widget> _profile() {

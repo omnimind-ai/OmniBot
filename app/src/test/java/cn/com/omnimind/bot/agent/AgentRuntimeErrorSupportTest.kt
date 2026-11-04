@@ -267,6 +267,43 @@ class AgentRuntimeErrorSupportTest {
     }
 
     @Test
+    fun `Na failure kinds survive the boundary without exposing messages`() {
+        val cause = java.io.IOException("https://secret.invalid/?token=raw-secret")
+        val error = cn.com.omnimind.bot.agent.runtime.NaRuntimeException(
+            "na_connection_failed", "session_create", cause = cause,
+        )
+        val detail = AgentRuntimeErrorSupport.boundaryFailureDetails("session/new", error)
+        assertEquals("na_connection_failed", detail["failureKind"])
+        assertEquals("session/new", detail["method"])
+        assertEquals("session_create", detail["phase"])
+        assertEquals("java.io.IOException", detail["causeType"])
+        assertTrue(!detail.toString().contains("raw-secret"))
+        assertTrue(!detail.toString().contains("secret.invalid"))
+        assertTrue(AgentRuntimeErrorSupport.userFacingMessage(error).orEmpty().contains("Na"))
+        val outgoing = AgentRuntimeErrorSupport.acpPromptFailure("Safe failure", error)
+        val incoming = com.agentclientprotocol.protocol.JsonRpcException(
+            outgoing.code, outgoing.message,
+            kotlinx.serialization.json.Json.parseToJsonElement(outgoing.data.toString()),
+        )
+        assertEquals("na_connection_failed", AgentRuntimeErrorSupport.failureKind(incoming))
+        assertEquals(AgentRuntimeErrorSupport.userFacingMessage(error), AgentRuntimeErrorSupport.userFacingMessage(incoming))
+    }
+
+    @Test
+    fun `Na http diagnostics keep status and only app-owned fields`() {
+        val error = cn.com.omnimind.bot.agent.runtime.naHttpFailure(503, "message_admission")
+        val detail = AgentRuntimeErrorSupport.boundaryFailureDetails("session/prompt", error)
+        assertEquals(503, detail["httpStatus"])
+        assertEquals("message_admission", detail["phase"])
+        assertEquals("na_service_unavailable", detail["failureKind"])
+        val unknown = AgentRuntimeErrorSupport.boundaryFailureDetails(
+            "Bearer raw-secret", IllegalStateException("token=raw-secret"),
+        )
+        assertEquals("other", unknown["method"])
+        assertTrue(!unknown.toString().contains("raw-secret"))
+    }
+
+    @Test
     fun `diagnostic messages redact credentials without truncating the provider detail`() {
         val error = IllegalStateException(
             "request failed Bearer abc.def token=secret-value " + "x".repeat(500)

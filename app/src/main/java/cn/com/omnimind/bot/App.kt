@@ -130,6 +130,7 @@ class App : BaseApplication() {
         }
 
         NestedBackgroundStateUtil.init(this)
+        cn.com.omnimind.bot.notifications.NaMessageService.initialize(this)
         cn.com.omnimind.baselib.llm.ModelSceneRegistry.init(this)
         measureStartupStep("Workspace and built-in skills") {
             runCatching {

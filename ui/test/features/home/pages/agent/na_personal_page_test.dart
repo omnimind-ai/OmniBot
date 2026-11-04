@@ -27,7 +27,7 @@ void main() {
     retiredAction = false;
     settingsRevision = 3;
     messenger.setMockMethodCallHandler(channel, (call) async {
-      if (call.method == 'agent/list')
+      if (call.method == 'agent/list') {
         return {
           'agents': [
             {
@@ -38,6 +38,18 @@ void main() {
             },
           ],
         };
+      }
+      if (call.method == 'config/na/local-time') {
+        final args = Map<String, dynamic>.from(call.arguments as Map);
+        expect(args['timezone'], 'Asia/Shanghai');
+        return {'localTime': '2026-11-04T09:00', 'timezone': 'Asia/Shanghai'};
+      }
+      if (call.method == 'config/na/notifications') {
+        return {
+          'owner': 'device-owner',
+          'data': {'enabled': false, 'permissionGranted': true},
+        };
+      }
       expect(call.method, 'config/na/personal');
       final args = Map<String, dynamic>.from(call.arguments as Map);
       calls.add(args);
@@ -50,11 +62,12 @@ void main() {
         );
       }
       if (operation == 'composio.settings.update') {
-        if (settingsOwnerChanged)
+        if (settingsOwnerChanged) {
           throw PlatformException(
             code: 'AGENT_RUNTIME_CALL_FAILED',
             message: 'Na 连接已变化',
           );
+        }
         expect((args['payload'] as Map)['expectedRevision'], settingsRevision);
         settingsRevision++;
       }
@@ -114,6 +127,11 @@ void main() {
           'truncated': true,
           'omitted': 2,
         },
+        'profile.read' => {
+          'profile': {
+            'user': {'timezone': 'Asia/Shanghai'},
+          },
+        },
         'scenarios.list' => {'scenarios': []},
         'routines.list' => {
           'routines': [
@@ -152,6 +170,21 @@ void main() {
               'status': 'EXPIRED',
             },
           ],
+        },
+        'composio.catalog' => {
+          'cards': [
+            {
+              'slug': 'slack',
+              'label': 'Slack',
+              'description': '消息与频道',
+              'categories': ['Communication'],
+              'noAuth': false,
+            },
+          ],
+          'total': 1500,
+          'nextCursor': null,
+          'source': 'api',
+          'complete': true,
         },
         'composio.disconnect' => {
           'disconnected': true,
@@ -200,6 +233,8 @@ void main() {
       expect(approvals.single['id'], 'review-1');
       expect(approvals.single['owner'], 'owner-1');
       expect(find.text('已完成'), findsOneWidget);
+      await tester.ensureVisible(find.text('执行结果'));
+      await tester.pumpAndSettle();
       await tester.tap(find.text('执行结果'));
       await tester.pumpAndSettle();
       expect(find.textContaining('"number": 42'), findsOneWidget);
@@ -259,6 +294,16 @@ void main() {
       await pump(tester);
       await tester.tap(find.byKey(const Key('na-personal-tab-1')));
       await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.text('断开此账号'),
+        250,
+        scrollable: find
+            .descendant(
+              of: find.byKey(const ValueKey(1)),
+              matching: find.byType(Scrollable),
+            )
+            .first,
+      );
       expect(find.textContaining('授权已过期'), findsOneWidget);
       await tester.ensureVisible(find.text('断开此账号'));
       await tester.pumpAndSettle();
@@ -292,8 +337,8 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('编辑'));
       await tester.pumpAndSettle();
-      expect(find.text('1440.0'), findsOneWidget);
-      await tester.tap(find.text('保存'));
+      expect(find.text('每天'), findsOneWidget);
+      await tester.tap(find.text('保存职责'));
       await tester.pumpAndSettle();
       final update = calls
           .where((call) => call['operation'] == 'routines.update')
@@ -303,7 +348,8 @@ void main() {
         (update['payload'] as Map).containsKey('intervalMinutes'),
         isFalse,
       );
-      expect((update['payload'] as Map)['nextRunAt'], '2026-11-04T01:00:00Z');
+      expect((update['payload'] as Map).containsKey('nextRunAt'), isFalse);
+      expect((update['payload'] as Map).containsKey('schedule'), isFalse);
       expect(tester.takeException(), isNull);
     },
   );
@@ -347,6 +393,44 @@ void main() {
   );
 
   testWidgets(
+    'managed phone can replace its project key without development configuration access',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await pump(tester);
+      expect(find.byKey(const Key('na-connection-title')), findsNothing);
+      await tester.tap(find.byKey(const Key('na-personal-tab-1')));
+      await tester.pumpAndSettle();
+      final key = find.byKey(const Key('na-composio-api-key'));
+      final button = find.byKey(const Key('na-composio-settings-save'));
+      expect(find.text('Composio 项目 Key'), findsOneWidget);
+      expect(tester.widget<TextField>(key).enabled, isTrue);
+      expect(key.hitTestable(), findsOneWidget);
+      expect(button.hitTestable(), findsOneWidget);
+      await tester.enterText(key, 'fixture-managed-project-key');
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      final updates = calls
+          .where((call) => call['operation'] == 'composio.settings.update')
+          .toList();
+      expect(updates, hasLength(1));
+      expect(updates.single['owner'], 'owner-1');
+      expect(updates.single['payload'], {
+        'expectedRevision': 3,
+        'enabled': true,
+        'toolkits': ['github'],
+        'authConfigs': {},
+        'apiKey': 'fixture-managed-project-key',
+      });
+      expect(find.text('连接服务设置已保存到 Na 服务端。'), findsOneWidget);
+      expect(tester.widget<TextField>(key).controller!.text, isEmpty);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'failed provider inventory still permits server-owned connection settings repair',
     (tester) async {
       inventoryFailed = true;
@@ -355,8 +439,6 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.textContaining('Composio 账号列表暂不可用'), findsOneWidget);
       expect(find.text('授权 Google'), findsNothing);
-      await tester.tap(find.text('连接服务设置'));
-      await tester.pumpAndSettle();
       final key = find.byKey(const Key('na-composio-api-key'));
       expect(tester.widget<TextField>(key).obscureText, isTrue);
       await tester.enterText(key, 'write-only-new-fixture-key');
@@ -417,8 +499,6 @@ void main() {
     await pump(tester);
     await tester.tap(find.byKey(const Key('na-personal-tab-1')));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('连接服务设置'));
-    await tester.pumpAndSettle();
     settingsOwnerChanged = true;
     final save = find.byKey(const Key('na-composio-settings-save'));
     await tester.ensureVisible(save);
@@ -433,4 +513,24 @@ void main() {
     expect(find.text('Na 连接已变化'), findsOneWidget);
     expect(find.text('连接服务设置已保存到 Na 服务端。'), findsNothing);
   });
+  testWidgets(
+    'managed Na opens the full application catalog without development configuration access',
+    (tester) async {
+      await pump(tester);
+      expect(find.byKey(const Key('na-connection-title')), findsNothing);
+      await tester.tap(find.byKey(const Key('na-personal-tab-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('na-composio-browse')));
+      await tester.pumpAndSettle();
+      expect(find.text('所有应用'), findsOneWidget);
+      expect(find.text('Slack'), findsOneWidget);
+      expect(
+        calls
+            .where((call) => call['operation'] == 'composio.catalog')
+            .single['owner'],
+        'owner-1',
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

@@ -24,9 +24,11 @@ class NaCloudDraftSessionTest {
         fun runtime() = NaCloudRuntime(context, scope, repository, AcpAgentProfileStore(context), emit = {})
         try {
             MockWebServer().use { server ->
+                server.enqueue(MockResponse().setBody("""{"capabilities":[]}"""))
                 server.enqueue(MockResponse().setBody("""{"conversation":{"id":"draft","title":"New"}}"""))
                 server.enqueue(MockResponse().setBody("""{"conversation":{"id":"draft","title":"New"}}"""))
                 server.enqueue(MockResponse().setBody("""{"conversations":[{"id":"draft","title":"New"}]}"""))
+                server.enqueue(MockResponse().setBody("""{"capabilities":[]}"""))
                 server.enqueue(MockResponse().setBody("""{"runId":"first-run"}"""))
                 server.enqueue(MockResponse().setBody("""{"run":{"status":"completed","items":[]}}"""))
                 server.start()
@@ -50,10 +52,16 @@ class NaCloudDraftSessionTest {
                     verify(repository).ensureBinding(id, NA_AGENT_ID, cwd = "na-cloud")
                     assertEquals(connection.prefix, store.naOwnerForConversation(42L))
                 }
-                assertEquals("POST", server.takeRequest().method)
+                assertEquals("/api/status", server.takeRequest().path)
+                val creation = server.takeRequest()
+                assertEquals("POST", creation.method)
+                assertEquals("{}", creation.body.readUtf8())
                 assertEquals("/api/conversations/draft", server.takeRequest().path)
                 assertEquals("/api/conversations", server.takeRequest().path)
+                assertEquals("/api/status", server.takeRequest().path)
                 assertEquals("/api/conversations/draft/messages", server.takeRequest().path)
+                assertEquals("/api/runs/first-run", server.takeRequest().path)
+                assertEquals(7, server.requestCount)
             }
         } finally { scope.cancel() }
     }
