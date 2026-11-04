@@ -23,6 +23,7 @@ class NaCloudStreamingTest {
         val runtime = NaCloudRuntime(context, scope, bindings, AcpAgentProfileStore(context)) { seen += it }
         try {
             MockWebServer().use { server ->
+                server.enqueue(MockResponse().setBody("""{"capabilities":["idempotent_admission"]}"""))
                 server.enqueue(MockResponse().setBody("""{"runId":"run"}"""))
                 server.enqueue(MockResponse().setBody("""{"eventCursor":1,"run":{"id":"run","status":"running","items":[]}}"""))
                 val events = listOf(
@@ -41,7 +42,8 @@ class NaCloudStreamingTest {
                     assertEquals("end_turn", result["stopReason"])
                     assertEquals(result, runtime.callPrompt(args))
                 }
-                assertEquals(3, server.requestCount)
+                assertEquals(4, server.requestCount)
+                assertEquals("/api/status", server.takeRequest().path)
                 val admission = server.takeRequest()
                 assertEquals("POST", admission.method)
                 val payload = com.google.gson.JsonParser.parseString(admission.body.readUtf8()).asJsonObject

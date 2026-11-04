@@ -174,6 +174,32 @@ class NaPersonalApiTest {
             assertEquals(1, server.requestCount)
         }
     }
+    @Test fun immediateServiceRetryHeadersCannotReplayPersonalMutations() = runBlocking {
+        val submittedKey = "ak_fixture_project_private_value"
+        val mutations = listOf(
+            naPersonalRoute("composio.settings.update", null, mapOf("expectedRevision" to 1, "apiKey" to submittedKey)),
+            naPersonalRoute("connectors.execute", null, mapOf("provider" to "composio", "tool" to "GMAIL_GET_PROFILE", "accountId" to "ca_one", "args" to emptyMap<String, Any?>())),
+            naPersonalRoute("actions.approve", "one", emptyMap()),
+        )
+        for (route in mutations) {
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "0")
+                    .setBody("""{"error":"temporarily unavailable $submittedKey"}"""))
+                server.enqueue(MockResponse().setBody("""{"settings":{"enabled":true,"revision":2},"action":{"id":"one","status":"completed"}}"""))
+                server.start()
+                val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
+                val failure = runCatching { naPersonalHttpRequest(connection, client, route) }.exceptionOrNull()
+                assertEquals("${route.operation} must reach the service only once", 1, server.requestCount)
+                assertNotNull("${route.operation} must surface the first service failure", failure)
+                assertFalse(failure!!.message.orEmpty().contains(submittedKey))
+                val request = server.takeRequest()
+                assertEquals(route.method, request.method)
+                assertEquals(route.path, request.path)
+                assertNull(server.takeRequest(100, TimeUnit.MILLISECONDS))
+            }
+        }
+    }
+
     @Test fun composioSettingsUseFixedOwnerBoundRoutesAndKeepProjectKeyWriteOnly() = runBlocking {
         val body = mapOf("expectedRevision" to 7, "enabled" to true, "toolkits" to listOf("gmail"), "authConfigs" to emptyMap<String, String>(), "apiKey" to "write-only-fixture-key")
         assertEquals("GET", naPersonalRoute("composio.settings.read", null, emptyMap()).method)
@@ -211,6 +237,58 @@ class NaPersonalApiTest {
             assertNotNull(failure)
             assertFalse(failure!!.message.orEmpty().contains("bare-fixture-private-value"))
             assertEquals(1, server.requestCount)
+        }
+    }
+
+    @Test fun officialUnderscoreAndDigitToolkitsUseTheSameFixedQueryAndPathRoutes() {
+        for (toolkit in listOf("_1password", "_21risk", "_2chat", "1-custom-app", "team-app")) {
+            assertEquals("/api/integrations/composio/catalog/$toolkit",
+                naPersonalRoute("composio.catalogToolkit", null, mapOf("toolkit" to toolkit)).path)
+            assertTrue(naPersonalRoute("composio.authConfigs", null, mapOf("toolkit" to toolkit)).path.contains("toolkit=$toolkit"))
+            assertTrue(naPersonalRoute("composio.events.catalog", null, mapOf("toolkit" to toolkit)).path.contains("toolkit=$toolkit"))
+        }
+        for (toolkit in listOf("../private", "bad/app", "invalid.app", "Uppercase", "x".repeat(65))) {
+            assertTrue(runCatching { naPersonalRoute("composio.catalogToolkit", null, mapOf("toolkit" to toolkit)) }.isFailure)
+        }
+    }
+
+    @Test fun catalogAndOverflowReadsUseOnlyFixedEncodedResourceRoutes() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"cards":[],"complete":true}"""))
+            server.start()
+            val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
+            val route = naPersonalRoute("composio.catalog", null,
+                mapOf("query" to "slack & notion", "cursor" to "next/+==", "limit" to 25))
+            naPersonalHttpRequest(connection, client, route)
+            val request = server.takeRequest()
+            assertEquals("GET", request.method)
+            assertEquals("/api/integrations/composio/catalog", request.requestUrl!!.encodedPath)
+            assertEquals("slack & notion", request.requestUrl!!.queryParameter("query"))
+            assertEquals("next/+==", request.requestUrl!!.queryParameter("cursor"))
+            assertEquals(0L, request.body.size)
+            assertEquals("/api/integrations/composio/catalog/1-custom-app",
+                naPersonalRoute("composio.catalogToolkit", null, mapOf("toolkit" to "1-custom-app")).path)
+            assertTrue(naPersonalRoute("connectors.resultPage", "11111111-1111-1111-1111-111111111111",
+                mapOf("offset" to 2, "limit" to 8000)).path.endsWith("?offset=2&limit=8000"))
+        }
+        for (payload in listOf(mapOf("url" to "https://other.test"), mapOf("limit" to 101), mapOf("limit" to 1.5), mapOf("cursor" to "x".repeat(4097)))) {
+            assertTrue(runCatching { naPersonalRoute("composio.catalog", null, payload) }.isFailure)
+        }
+        assertTrue(runCatching { naPersonalRoute("composio.catalogToolkit", null, mapOf("toolkit" to "../private")) }.isFailure)
+        assertTrue(runCatching { naPersonalRoute("connectors.resultPage", "../private", emptyMap()) }.isFailure)
+        assertTrue(runCatching { naPersonalRoute("connectors.resultPage", "11111111-1111-1111-1111-111111111111", mapOf("limit" to 8001)) }.isFailure)
+    }
+
+    @Test fun aVerifiedPublicToolkitDoesNotRequireAnAuthorizationUrl() = runBlocking {
+        MockWebServer().use { server ->
+            server.enqueue(MockResponse().setBody("""{"toolkit":"public_app","noAuth":true,"connected":true}"""))
+            server.enqueue(MockResponse().setBody("""{"toolkit":"public_app","noAuth":true,"connected":false}"""))
+            server.start()
+            val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
+            val route = naPersonalRoute("composio.authorize", null, mapOf("toolkit" to "public_app"))
+            assertEquals(true, naPersonalHttpRequest(connection, client, route)["noAuth"])
+            assertTrue(runCatching { naPersonalHttpRequest(connection, client, route) }.isFailure)
+            assertEquals(2, server.requestCount)
         }
     }
 

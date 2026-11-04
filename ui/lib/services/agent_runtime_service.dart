@@ -213,6 +213,54 @@ const _agentUserErrors = <String, ({String zh, String en})>{
     zh: '模型服务商拒绝了本次请求，请检查模型及请求配置。',
     en: 'The model provider rejected this request. Check the model and request configuration.',
   ),
+  'naConnectionFailed': (
+    zh: '无法连接 Na 服务，请检查网络后重试。',
+    en: 'Could not connect to Na. Check your connection and try again.',
+  ),
+  'naRequestTimeout': (
+    zh: '连接 Na 服务超时，请稍后重试。',
+    en: 'The connection to Na timed out. Try again shortly.',
+  ),
+  'naCertificate': (
+    zh: 'Na 安全连接验证失败，请检查网络和设备时间。',
+    en: 'Could not verify the secure connection to Na. Check your network and device time.',
+  ),
+  'naAuthentication': (
+    zh: 'Na 连接验证已失效，请重新登录或检查连接设置。',
+    en: 'The Na connection is no longer authenticated. Sign in again or check the connection settings.',
+  ),
+  'naPermission': (
+    zh: '当前账号没有此 Na 操作的权限，请检查账号授权。',
+    en: 'Your account does not have permission for this Na action. Check its authorization.',
+  ),
+  'naConnectionChanged': (
+    zh: 'Na 连接已变化，请重新打开此对话。',
+    en: 'The Na connection changed. Reopen this conversation.',
+  ),
+  'naOwnerConflict': (
+    zh: '此 Na 对话属于其他账号或连接，请切回原账号或新建对话。',
+    en: 'This Na conversation belongs to another account or connection. Switch back or start a new conversation.',
+  ),
+  'naServiceUnavailable': (
+    zh: 'Na 服务暂时不可用，请稍后重试。',
+    en: 'Na is temporarily unavailable. Try again later.',
+  ),
+  'naRateLimited': (
+    zh: 'Na 请求过于频繁，请稍后重试。',
+    en: 'Na is rate limiting requests. Try again later.',
+  ),
+  'naRequestRejected': (
+    zh: 'Na 未接受此请求，请重新打开对话后重试。',
+    en: 'Na did not accept this request. Reopen the conversation and try again.',
+  ),
+  'naResponseInvalid': (
+    zh: 'Na 返回了无法识别的响应，请稍后重试。',
+    en: 'Na returned an invalid response. Try again later.',
+  ),
+  'naAdmissionUnconfirmed': (
+    zh: '尚未确认 Na 是否已受理，请重新打开对话查看状态。',
+    en: 'It is not yet confirmed whether Na accepted this request. Reopen the conversation to check its status.',
+  ),
   'unknown': (
     zh: '助手暂时无法完成操作，请重试。',
     en: 'The assistant could not complete this action. Please try again.',
@@ -252,6 +300,24 @@ String formatAgentRuntimeErrorForUser(
   if (failureKind == 'agent_retired' || raw.contains('agent_retired:')) {
     return text('agentRetired');
   }
+
+  // Na connection failures belong to the cloud service, not the model Provider.
+  final naError = switch (failureKind) {
+    'na_connection_failed' => 'naConnectionFailed',
+    'na_request_timeout' => 'naRequestTimeout',
+    'na_tls_certificate_failure' => 'naCertificate',
+    'na_authentication_required' => 'naAuthentication',
+    'na_permission_denied' => 'naPermission',
+    'na_connection_changed' => 'naConnectionChanged',
+    'na_owner_conflict' => 'naOwnerConflict',
+    'na_service_unavailable' => 'naServiceUnavailable',
+    'na_rate_limited' => 'naRateLimited',
+    'na_request_rejected' => 'naRequestRejected',
+    'na_response_invalid' => 'naResponseInvalid',
+    'na_admission_unconfirmed' => 'naAdmissionUnconfirmed',
+    _ => null,
+  };
+  if (naError != null) return text(naError);
 
   // Package maintenance errors belong to the host, not a model request. Use
   // their structured kind before inspecting diagnostics such as "timeout".
@@ -1149,6 +1215,39 @@ class AgentRuntimeService {
     final response = NaPersonalResponse.fromMap(result);
     if (owner != null && response.owner != owner) {
       throw StateError('Na 连接已更改，请重新载入连接。');
+    }
+    return response;
+  }
+
+  /// Pure IANA calendar conversion; never connects or starts an Agent turn.
+  static Future<Map<String, dynamic>> requestNaLocalTime({
+    String? localTime,
+    String? at,
+    required String timezone,
+  }) => _invokeMap('config/na/local-time', {
+    'agentId': 'na-cloud',
+    if (localTime != null) 'localTime': localTime,
+    if (at != null) 'at': at,
+    'timezone': timezone,
+  });
+
+  /// Local device delivery preferences; private connector/project keys never
+  /// enter this API. Native captures the same Na account/endpoint owner.
+  static Future<NaPersonalResponse> requestNaNotifications({
+    String? owner,
+    bool? enabled,
+  }) async {
+    if (enabled != null && (owner == null || owner.isEmpty)) {
+      throw ArgumentError('Na notification changes require their connection owner');
+    }
+    final response = NaPersonalResponse.fromMap(await _invokeMap('config/na/notifications', {
+      'agentId': 'na-cloud',
+      'operation': enabled == null ? 'read' : 'write',
+      if (owner != null) 'owner': owner,
+      if (enabled != null) 'enabled': enabled,
+    }));
+    if (owner != null && response.owner != owner) {
+      throw StateError('Na 连接已更改，请重新载入通知设置。');
     }
     return response;
   }

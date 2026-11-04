@@ -1,17 +1,23 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.account.*
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Rule
+import org.junit.rules.TemporaryFolder
 import org.mockito.Mockito.*
 
 class NaCloudConnectionTest {
+    @get:Rule val folder = TemporaryFolder()
     @Test fun staleWorkspaceWindowCannotActOnAnotherAccountOrEndpoint() {
         requireNaWorkspaceOwner("na:alice:cloud-a:", "na:alice:cloud-a:", true)
         requireNaWorkspaceOwner("na:alice:cloud-a:", null, false)
@@ -109,6 +115,48 @@ class NaCloudConnectionTest {
             assertTrue(runCatching { connection.prepareWorkspace(client, allowClaim = false) }.isFailure)
             assertEquals(1, server.requestCount)
             assertEquals("GET", server.takeRequest().method)
+        }
+    }
+
+    @Test fun foregroundObserverCannotClaimWorkspaceAndNotificationSetupCanSkipIt() = runBlocking {
+        val remote = mock(AccountRemoteDataSource::class.java)
+        `when`(remote.getCurrentUser("access-one")).thenReturn(user)
+        val account = AccountRepository(remote, Store(tokens))
+        // Inject only the local account/HTTP boundaries. Exercise the ordinary
+        // runtime routes with no sockets, Android services or real credentials.
+        val accountField = OmniAccount.javaClass.getDeclaredField("configuredRepository").apply { isAccessible = true }
+        val previous = accountField.get(OmniAccount)
+        accountField.set(OmniAccount, account)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val context = acpProfileStoreTestContext(folder.root)
+        val paths = java.util.concurrent.ConcurrentLinkedQueue<String>()
+        val workspaceRead = CompletableDeferred<Unit>()
+        val runtime = NaCloudRuntime(context, scope, mock(AgentSessionBindingRepository::class.java), AcpAgentProfileStore(context), {})
+        val fakeHttp = OkHttpClient.Builder().addInterceptor { chain ->
+            val request = chain.request()
+            paths += request.method + " " + request.url.encodedPath
+            val body = if (request.url.encodedPath == "/v1/cloud/workspace") {
+                workspaceRead.complete(Unit)
+                """{"workspace":null,"executionAvailable":false}"""
+            } else """{"capabilities":[]}"""
+            Response.Builder().request(request).protocol(Protocol.HTTP_1_1).code(200).message("OK")
+                .body(body.toResponseBody()).build()
+        }.build()
+        NaCloudRuntime::class.java.getDeclaredField("client").apply { isAccessible = true }.set(runtime, fakeHttp)
+        try {
+            runtime.handle("config/na/historySync", mapOf("enabled" to true))
+            withTimeout(2000) { workspaceRead.await() }
+            val settings = runtime.handle("config/na/notifications", mapOf("operation" to "read")) as Map<*, *>
+            val unsupported = runCatching {
+                runtime.handle("config/na/notifications", mapOf("operation" to "write", "enabled" to true, "owner" to settings["owner"]))
+            }.exceptionOrNull()
+            assertTrue(unsupported?.message.orEmpty().contains("尚未提供后台消息接收"))
+            runtime.handle("config/na/historySync", mapOf("enabled" to false))
+            assertEquals(listOf("GET /v1/cloud/workspace", "GET /v1/cloud/na/api/status"), paths.toList())
+            assertFalse(paths.any { it.contains("claim") || it.startsWith("POST ") })
+        } finally {
+            scope.cancel()
+            accountField.set(OmniAccount, previous)
         }
     }
 }

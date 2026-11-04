@@ -15,6 +15,42 @@ import kotlin.coroutines.intrinsics.suspendCoroutineUninterceptedOrReturn
 class NaCloudDraftSessionTest {
     @get:Rule val folder = TemporaryFolder()
 
+    @Test fun historyPageWithoutConversationLoadsOnlyTheResolvedOwnedSession() = runBlocking {
+        val context = acpProfileStoreTestContext(folder.root)
+        val repository = mock(AgentSessionBindingRepository::class.java)
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
+        val runtime = NaCloudRuntime(context, scope, repository, AcpAgentProfileStore(context), emit = {})
+        try {
+            MockWebServer().use { server ->
+                server.enqueue(MockResponse().setBody("""{"runs":[{"id":"old-run","status":"completed","input":"old message","items":[]}],"eventCursor":42,"hasMoreRuns":false,"nextRunCursor":null}"""))
+                server.enqueue(MockResponse().setBody("""{"conversation":{"id":"another-session"},"runs":[]}"""))
+                server.start()
+                val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
+                val id = connection.prefix + "existing"
+                withContext(connection) {
+                    val loaded = runtime.callConnected("session/load", mapOf("sessionId" to id, "historyCursor" to "before/run")) as Map<*, *>
+                    assertEquals(id, loaded["sessionId"])
+                    val thread = loaded["thread"] as Map<*, *>
+                    assertEquals(42.0, thread["eventCursor"])
+                    assertEquals("old-run", ((thread["turns"] as List<*>).single() as Map<*, *>)["id"])
+                    assertNotNull(runCatching {
+                        runtime.callConnected("session/load", mapOf("sessionId" to id, "historyCursor" to "before/run"))
+                    }.exceptionOrNull())
+                    assertNotNull(runCatching {
+                        runtime.callConnected("session/load", mapOf("sessionId" to "na:another-owner:existing", "historyCursor" to "before/run"))
+                    }.exceptionOrNull())
+                }
+                repeat(2) {
+                    val request = server.takeRequest()
+                    assertEquals("GET", request.method)
+                    assertEquals("/api/conversations/existing/runs?before=before%2Frun&limit=100", request.path)
+                }
+                assertEquals(2, server.requestCount)
+                assertFalse(mockingDetails(repository).invocations.any { it.method.name == "ensureBinding" })
+            }
+        } finally { scope.cancel() }
+    }
+
     @Test fun openingReloadingAndListingAnUnsentCloudSessionNeverCreatesLocalHistory() = runBlocking {
         val context = acpProfileStoreTestContext(folder.root)
         `when`(context.cacheDir).thenReturn(folder.root)
@@ -24,9 +60,11 @@ class NaCloudDraftSessionTest {
         fun runtime() = NaCloudRuntime(context, scope, repository, AcpAgentProfileStore(context), emit = {})
         try {
             MockWebServer().use { server ->
+                server.enqueue(MockResponse().setBody("""{"capabilities":[]}"""))
                 server.enqueue(MockResponse().setBody("""{"conversation":{"id":"draft","title":"New"}}"""))
                 server.enqueue(MockResponse().setBody("""{"conversation":{"id":"draft","title":"New"}}"""))
                 server.enqueue(MockResponse().setBody("""{"conversations":[{"id":"draft","title":"New"}]}"""))
+                server.enqueue(MockResponse().setBody("""{"capabilities":[]}"""))
                 server.enqueue(MockResponse().setBody("""{"runId":"first-run"}"""))
                 server.enqueue(MockResponse().setBody("""{"run":{"status":"completed","items":[]}}"""))
                 server.start()
@@ -50,10 +88,16 @@ class NaCloudDraftSessionTest {
                     verify(repository).ensureBinding(id, NA_AGENT_ID, cwd = "na-cloud")
                     assertEquals(connection.prefix, store.naOwnerForConversation(42L))
                 }
-                assertEquals("POST", server.takeRequest().method)
+                assertEquals("/api/status", server.takeRequest().path)
+                val creation = server.takeRequest()
+                assertEquals("POST", creation.method)
+                assertEquals("{}", creation.body.readUtf8())
                 assertEquals("/api/conversations/draft", server.takeRequest().path)
                 assertEquals("/api/conversations", server.takeRequest().path)
+                assertEquals("/api/status", server.takeRequest().path)
                 assertEquals("/api/conversations/draft/messages", server.takeRequest().path)
+                assertEquals("/api/runs/first-run", server.takeRequest().path)
+                assertEquals(7, server.requestCount)
             }
         } finally { scope.cancel() }
     }

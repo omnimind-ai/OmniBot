@@ -9,33 +9,26 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.suspendCancellableCoroutine
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import okhttp3.Call
-import okhttp3.Callback
-import okhttp3.ConnectionPool
 import kotlinx.coroutines.withTimeout
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.Response
-import java.io.IOException
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.UUID
 import java.io.ByteArrayOutputStream
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.io.InputStream
+import java.io.IOException
 import java.net.URLConnection
 import java.util.Base64
 import java.util.concurrent.ConcurrentHashMap
@@ -56,8 +49,11 @@ internal class NaCloudRuntime(
     private val emit: (Map<String, Any?>) -> Unit,
 ) {
     private val appContext = context.applicationContext
-    private val historyAccess = NaConversationAccess(appContext)
+    private val historyAccess = NaConversationAccess(profiles,
+        { bindings.getBindingByConversationId(it)?.threadId },
+        { NaConversationAccess.currentOwnerPrefix(appContext) })
     private val preferences = context.getSharedPreferences("na_cloud_connection", Context.MODE_PRIVATE)
+    private val admissions = context.getSharedPreferences("na_cloud_admission", Context.MODE_PRIVATE)
     private val client = OkHttpClient.Builder().retryOnConnectionFailure(false)
         .followRedirects(false).followSslRedirects(false)
         .connectTimeout(10, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
@@ -67,9 +63,11 @@ internal class NaCloudRuntime(
         maxRequestsPerHost = 50 // Na's maximum number of admitted active runs.
     }).build()
     private val gson = Gson()
-    private var token = "" // Debug standalone-instance token; managed credentials stay in AccountRepository.
+    private var token = NaNotificationDelivery.restoreDevelopmentToken(appContext, development, baseUrl)
+        // Keystore recovery exists only after the user opts in to background reception.
     private val mutex = Mutex()
     private val prompts = ConcurrentHashMap<String, Deferred<Map<String, Any?>>>()
+    private val promptInputs = ConcurrentHashMap<String, Map<String, Any?>>()
     private val promptOwners = ConcurrentHashMap<String, NaCloudConnection>()
     private val activeRuns = ConcurrentHashMap<String, String>()
     private val cancelPending = ConcurrentHashMap.newKeySet<String>()
@@ -78,6 +76,7 @@ internal class NaCloudRuntime(
     private var historySyncEnabled = false
     private var historySyncJob: Job? = null
     private val configurationRevision = AtomicLong()
+    private val notificationSettingsRevision = AtomicLong()
     private class ConnectionRevision(val value: Long) : kotlin.coroutines.AbstractCoroutineContextElement(Key) {
         companion object Key : kotlin.coroutines.CoroutineContext.Key<ConnectionRevision>
     }
@@ -92,6 +91,7 @@ internal class NaCloudRuntime(
                 if (current != previous && !development) {
                     promptOwners.entries.filter { it.value.managed && it.value.generation != current }.forEach {
                         prompts.remove(it.key)?.cancel()
+                        promptInputs.remove(it.key)
                         promptOwners.remove(it.key)
                     }
                     cachedStatus = emptyMap()
@@ -105,13 +105,17 @@ internal class NaCloudRuntime(
     private suspend fun connection() = currentCoroutineContext()[NaCloudConnection]
         ?: error("Na connection attribution is missing")
 
-    private suspend fun <T> withConnection(readOnly: Boolean = false, operation: suspend () -> T): T {
+    private suspend fun <T> withConnection(
+        readOnly: Boolean = false,
+        prepareWorkspace: Boolean = true,
+        operation: suspend () -> T,
+    ): T {
         val snapshot = synchronized(this) { Triple(development, baseUrl, token to configurationRevision.get()) }
         val connection = if (snapshot.first) NaCloudConnection(snapshot.second, developmentToken = snapshot.third.first)
             else NaCloudConnection.managed(BuildConfig.CLOUD_URL, NaCloudEnvironment.developmentAvailable, OmniAccount.repository())
         return withContext(connection + ConnectionRevision(snapshot.third.second)) {
             requireCurrentConnection(connection, snapshot.third.second)
-            connection.prepareWorkspace(client, allowClaim = !readOnly)
+            if (prepareWorkspace) connection.prepareWorkspace(client, allowClaim = !readOnly)
             requireCurrentConnection(connection, snapshot.third.second)
             operation()
         }
@@ -130,6 +134,7 @@ internal class NaCloudRuntime(
         val mode = args["connectionMode"]?.toString() ?: if (development) "development" else "managed"
         require(mode == "managed" || (mode == "development" && NaCloudEnvironment.developmentAvailable)) { "不支持此连接方式。" }
         if (mode == "managed") {
+            NaNotificationDelivery.disable(appContext)
             preferences.edit().putBoolean("development", false).apply()
             token = ""
             configurationRevision.incrementAndGet()
@@ -143,6 +148,7 @@ internal class NaCloudRuntime(
         require(url.username.isEmpty() && url.password.isEmpty() && url.query == null && url.fragment == null) {
             "请输入有效的 HTTP / HTTPS 服务地址。"
         }
+        NaNotificationDelivery.disable(appContext)
         preferences.edit().putString("baseUrl", address).apply()
         preferences.edit().putBoolean("development", true).apply()
         args["apiKey"]?.let { token = it.toString().trim() }
@@ -186,6 +192,10 @@ internal class NaCloudRuntime(
         "config/read" -> config()
         "session/close" -> mapOf("ok" to true)
         "config/na/historySync" -> setHistorySync(args["enabled"] == true)
+        "config/na/local-time" -> NaLocalTime.convert(args)
+        "config/na/notifications" -> if (args["operation"] == "read" ||
+            (args["operation"] == "write" && args["enabled"] == false)) localNotificationSettings(args)
+            else withConnection(prepareWorkspace = false) { notificationRequest(args) }
         else -> withConnection { handleConnected(method, args) }
     }
 
@@ -245,6 +255,7 @@ internal class NaCloudRuntime(
         }
         return when (method) {
             "config/na/personal" -> personalRequest(args)
+            "config/na/notifications" -> notificationRequest(args)
             "config/remote/fs/list" -> listFiles(args)
             "config/remote/fs/read" -> fileContent(args, write = false)
             "config/remote/fs/write" -> fileContent(args, write = true)
@@ -263,11 +274,103 @@ internal class NaCloudRuntime(
     }
 
     private fun requireCurrentConnection(connection: NaCloudConnection, revision: Long) {
-        check(configurationRevision.get() == revision) { "Na 连接已变化，请重新打开页面。" }
+        if (configurationRevision.get() != revision) throw NaRuntimeException("na_connection_changed", "connection")
         if (connection.managed) {
-            check(!development && connection.baseUrl == BuildConfig.CLOUD_URL.trimEnd('/')) { "Na 连接已变化，请重新打开页面。" }
+            if (development || connection.baseUrl != BuildConfig.CLOUD_URL.trimEnd('/'))
+                throw NaRuntimeException("na_connection_changed", "connection")
             connection.account?.requireSessionGeneration(connection.generation)
-        } else check(development && connection.baseUrl == baseUrl) { "Na 开发连接已变化，请重新打开页面。" }
+        } else if (!development || connection.baseUrl != baseUrl)
+            throw NaRuntimeException("na_connection_changed", "connection")
+    }
+
+    private fun localNotificationSettings(args: Map<String, Any?>): Map<String, Any?> {
+        val prefix = NaConversationAccess.currentOwnerPrefix(appContext) ?: "unavailable"
+        val generation = if (!development && OmniAccount.isConfigured())
+            OmniAccount.repository().sessionGeneration.value else 0L
+        val owner = naPersonalOwner(prefix, generation, configurationRevision.get())
+        val read = args["operation"] == "read"
+        requireNaPersonalOwner(owner, args["owner"], read)
+        if (!read) {
+            notificationSettingsRevision.incrementAndGet()
+            NaNotificationDelivery.disable(appContext)
+        }
+        return mapOf("owner" to owner, "data" to (NaNotificationDelivery.statePayload(appContext) + ("developmentMode" to development)))
+    }
+
+    private suspend fun notificationRequest(args: Map<String, Any?>): Map<String, Any?> {
+        val connection = connection()
+        val revision = currentCoroutineContext()[ConnectionRevision]?.value
+            ?: error("Na connection revision is missing")
+        fun current() = requireCurrentConnection(connection, revision)
+        current()
+        val operation = args["operation"] as? String ?: "read"
+        val owner = naPersonalOwner(connection.prefix, connection.generation, revision)
+        if (operation == "sync") {
+            val store = NaNotificationStore(appContext)
+            val expected = store.read()
+            check(expected.enabled && expected.owner == connection.prefix &&
+                args["lease"] == expected.lease && args["expectedOwner"] == expected.owner) {
+                "Na 提醒连接已改变。"
+            }
+            return NaNotificationDelivery.syncMutex.withLock {
+                fun guard() { current(); store.requireCurrent(expected) }
+                guard()
+                if (!NaNotificationDelivery.canPost(appContext)) {
+                    return@withLock mapOf("owner" to owner, "data" to (NaNotificationDelivery.statePayload(appContext) + ("developmentMode" to development)))
+                }
+                val waitMs = (args["waitMs"] as? Number)?.toInt() ?: 0
+                require(waitMs in 0..25000)
+                try {
+                    val batch = naNotificationFeedRequest(connection,
+                        client.newBuilder().readTimeout(40, TimeUnit.SECONDS).build(),
+                        store.read().cursor, waitMs, ::guard)
+                    NaNotificationDelivery.consume(appContext, expected, batch, ::guard) { notification ->
+                        val remoteId = notification.conversationId ?: return@consume null
+                        guard()
+                        val response = request("GET", "/api/conversations/$remoteId")
+                        val conversation = response.map("conversation")
+                        check(conversation["id"] == remoteId) { "Na 提醒会话不匹配。" }
+                        guard()
+                        bind(connection.prefix + remoteId, null, conversation["title"]?.toString())
+                    }
+                    mapOf("owner" to owner, "data" to (NaNotificationDelivery.statePayload(appContext) +
+                        ("hasMore" to batch.hasMore)))
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+                catch (error: Exception) {
+                    runCatching { NaNotificationDelivery.update(appContext, expected) {
+                        it.copy(error = "暂时无法连接 Na，将在网络恢复后重连。")
+                    } }
+                    throw error
+                }
+            }
+        }
+        require(operation in setOf("read", "write")) { "Na 通知操作无效。" }
+        requireNaPersonalOwner(owner, args["owner"], operation == "read")
+        if (operation == "write") {
+            val enabled = args["enabled"] as? Boolean ?: error("请选择是否接收 Na 主动消息。")
+            if (enabled) {
+                val change = notificationSettingsRevision.incrementAndGet()
+                fun requireLatestSetting() {
+                    current()
+                    check(notificationSettingsRevision.get() == change) { "Na 通知设置已改变。" }
+                }
+                val status = request("GET", "/api/status")
+                check((status["capabilities"] as? List<*>)?.contains("notification_feed") == true) {
+                    "此 Na 服务尚未提供后台消息接收，请升级服务。"
+                }
+                current()
+                NaNotificationDelivery.enable(appContext, connection, token, naNotificationCursor(status["eventCursor"]), ::requireLatestSetting)
+                try { cn.com.omnimind.bot.notifications.NaMessageService.startReception(appContext) }
+                catch (_: Exception) {
+                    val state = NaNotificationStore(appContext).read()
+                    NaNotificationDelivery.update(appContext, state) {
+                        it.copy(error = "后台连接尚未启动，请在应用前台重新开启；系统会定期补取提醒。")
+                    }
+                }
+            } else NaNotificationDelivery.disable(appContext)
+        }
+        current()
+        return mapOf("owner" to owner, "data" to (NaNotificationDelivery.statePayload(appContext) + ("developmentMode" to development)))
     }
 
     private suspend fun personalRequest(args: Map<String, Any?>): Map<String, Any?> {
@@ -293,7 +396,8 @@ internal class NaCloudRuntime(
         connection.account?.requireSessionGeneration(connection.generation)
         if (conversationId != null) {
             val existingOwner = profiles.naOwnerForConversation(conversationId)
-            check(existingOwner == null || existingOwner == connection.prefix) { "此会话属于另一个账号。" }
+            if (existingOwner != null && existingOwner != connection.prefix)
+                throw NaRuntimeException("na_owner_conflict", "session_load")
         }
         val local = bindings.ensureBinding(id, NA_AGENT_ID, conversationId, cwd = "na-cloud", title = title)
         profiles.bindSession(id, NA_AGENT_ID)
@@ -307,20 +411,34 @@ internal class NaCloudRuntime(
     private suspend fun resolveSession(args: Map<String, Any?>): String? {
         val local = (args["conversationId"] as? Number)?.toLong()
         if (local != null) {
-            require(historyAccess.canRead(local, connection().prefix)) {
-                "此云端会话缺少当前账号的可验证归属，请切回原账号或新建会话。"
-            }
+            if (!historyAccess.canRead(local, connection().prefix))
+                throw NaRuntimeException("na_owner_conflict", "session_load")
         }
         local?.let { profiles.naOwnerForConversation(it) }?.let { owner ->
-            require(owner == connection().prefix) { "此云端会话属于另一个账号。" }
+            if (owner != connection().prefix) throw NaRuntimeException("na_owner_conflict", "session_load")
         }
         val binding = local?.let { bindings.getBindingByConversationId(it) }
         val explicit = (args["sessionId"] ?: args["threadId"])?.toString()?.takeIf { it.isNotBlank() }
         // The persisted conversation wins over a stale view's session hint.
         val id = binding?.threadId ?: explicit ?: return null
         val prefix = connection().prefix
-        require(id.startsWith(prefix)) { "此云端会话属于另一个账号或连接，请切回原账号或新建会话。" }
+        if (!id.startsWith(prefix)) throw NaRuntimeException("na_owner_conflict", "session_load")
         return id
+    }
+
+    private suspend fun supportsIdempotentAdmission(): Boolean =
+        (request("GET", "/api/status")["capabilities"] as? List<*>)?.contains("idempotent_admission") == true
+
+    private suspend fun creationReservation(conversationId: Long?): String {
+        if (conversationId == null) return UUID.randomUUID().toString()
+        val key = "conversation:${connection().prefix}:$conversationId"
+        return withContext(Dispatchers.IO) {
+            admissions.getString(key, null) ?: UUID.randomUUID().toString().also {
+                // Persist before sending so an App/process restart can recover the same creation.
+                if (!admissions.edit().putString(key, it).commit())
+                    throw NaRuntimeException("na_admission_unconfirmed", "session_create")
+            }
+        }
     }
 
     private suspend fun load(args: Map<String, Any?>, create: Boolean): Map<String, Any?> {
@@ -330,14 +448,28 @@ internal class NaCloudRuntime(
         val response = if (existing == null) {
             require(historyCursor == null) { "Na history requires an existing session" }
             require(create || args["conversationId"] != null) { "Na session is required" }
-            request("POST", "/api/conversations", emptyMap())
+            val idempotent = supportsIdempotentAdmission()
+            val body = if (idempotent) mapOf("clientConversationId" to
+                creationReservation((args["conversationId"] as? Number)?.toLong())) else emptyMap()
+            request("POST", "/api/conversations", body, idempotent)
         } else if (historyCursor != null) {
             val url = (connection().apiBaseUrl + "/api/conversations/${existing.removePrefix(prefix)}/runs")
                 .toHttpUrl().newBuilder().addQueryParameter("before", historyCursor).addQueryParameter("limit", "100").build()
             request("GET", url.encodedPath.removePrefix(connection().apiBaseUrl.toHttpUrl().encodedPath.trimEnd('/')) + "?" + url.encodedQuery)
         } else request("GET", "/api/conversations/${existing.removePrefix(prefix)}")
         val snapshot = response.map("conversation")
-        val sessionId = existing ?: prefix + snapshot["id"]
+        // Run pages contain only runs/cursors. Their request already owns the
+        // resolved session; a supplied conversation identity must still match.
+        val remoteId = if (historyCursor != null) {
+            val suppliedId = snapshot["id"]
+            if (suppliedId != null && suppliedId != existing!!.removePrefix(prefix))
+                throw NaRuntimeException("na_response_invalid", "session_load")
+            existing!!.removePrefix(prefix)
+        } else (snapshot["id"] as? String)?.takeIf { it.isNotBlank() }
+            ?: throw NaRuntimeException("na_response_invalid", if (existing == null) "session_create" else "session_load")
+        if (existing != null && existing != prefix + remoteId)
+            throw NaRuntimeException("na_response_invalid", "session_load")
+        val sessionId = existing ?: prefix + remoteId
         profiles.bindSession(sessionId, NA_AGENT_ID)
         val requestedConversationId = (args["conversationId"] as? Number)?.toLong()
         val local = if (requestedConversationId != null || bindings.getBindingByThreadId(sessionId) != null) {
@@ -393,10 +525,14 @@ internal class NaCloudRuntime(
         val reservation = args["requestId"]?.toString()?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
         val cloudReservation = naCloudMessageId(clientOriginId, reservation)
         val connection = connection()
+        val revision = currentCoroutineContext()[ConnectionRevision]
         val prefix = connection.prefix
         val key = "$id/$reservation"
+        val submittedInput = input + ("userMessageId" to args["userMessageId"])
         val execution = mutex.withLock {
-            prompts[key] ?: scope.async(connection) {
+            if (prompts.containsKey(key) && promptInputs[key] != submittedInput)
+                throw naHttpFailure(409, "message_admission")
+            prompts[key] ?: scope.async(connection + (revision ?: kotlin.coroutines.EmptyCoroutineContext)) {
                 val local = bind(id, (args["conversationId"] as? Number)?.toLong(), null)
                 val promptContext = currentCoroutineContext()
                 val checkActive: () -> Unit = {
@@ -412,7 +548,8 @@ internal class NaCloudRuntime(
                         val capabilities = request("GET", "/api/status")["capabilities"] as? List<*>
                         check(capabilities?.contains("attachments") == true) { "云端附件服务尚未更新，请稍后再试。" }
                     }
-                    // One admission after all uploads; neither PUT nor POST is replayed.
+                    // The server's capability is required before recovering the same admission.
+                    val idempotent = supportsIdempotentAdmission()
                     val accepted = naSubmitWithAttachments(
                         input["text"]?.toString().orEmpty(), attachments, "$id/$cloudReservation", appContext.cacheDir,
                         ::openAttachment,
@@ -427,12 +564,66 @@ internal class NaCloudRuntime(
                         includeReferences = false,
                         cleanup = { request("DELETE", "/api/files/uploads", uploadOwner) },
                     ) { text ->
-                        request("POST", "/api/conversations/${id.removePrefix(prefix)}/messages",
-                            mapOf("text" to text, "clientMessageId" to cloudReservation, "clientOriginId" to clientOriginId,
-                                "attachmentIds" to attachmentIds) +
-                                (args["userMessageId"]?.toString()?.takeIf { it.isNotBlank() }?.let { mapOf("clientUserMessageId" to it) } ?: emptyMap()))
+                        val body = mapOf("text" to text, "clientMessageId" to cloudReservation,
+                            "clientOriginId" to clientOriginId, "attachmentIds" to attachmentIds) +
+                            (args["userMessageId"]?.toString()?.takeIf { it.isNotBlank() }?.let { mapOf("clientUserMessageId" to it) } ?: emptyMap())
+                        try {
+                            request("POST", "/api/conversations/${id.removePrefix(prefix)}/messages", body,
+                                idempotent, beforeAdmission = checkActive).also {
+                                if ((it["runId"] as? String).isNullOrBlank())
+                                    throw NaRuntimeException("na_response_invalid", "message_admission")
+                            }
+                        } catch (error: Exception) {
+                            if (error is kotlinx.coroutines.CancellationException) throw error
+                            val cancelled = error is NaAttachmentCancelled || cancelPending.contains(id)
+                            val failure = error as? NaRuntimeFailure
+                            if (!cancelled && failure?.failureKind !in setOf("na_connection_failed", "na_request_timeout", "na_service_unavailable", "na_response_invalid")) throw error
+                            // A lost response may already own a run. Recover that identity by reading;
+                            // do not reserve another turn or execute a failed run again.
+                            var confirmedAbsent = false
+                            val recovered = try {
+                                val snapshot = request("GET", "/api/conversations/${id.removePrefix(prefix)}")
+                                val snapshotId = snapshot.map("conversation")["id"]
+                                if (snapshotId != id.removePrefix(prefix))
+                                    throw NaRuntimeException("na_response_invalid", "message_admission")
+                                val runs = snapshot["runs"] as? List<*>
+                                    ?: throw NaRuntimeException("na_response_invalid", "message_admission")
+                                if (runs.any { it !is Map<*, *> }) throw NaRuntimeException("na_response_invalid", "message_admission")
+                                val candidates = runs.filterIsInstance<Map<*, *>>().filter { it["clientMessageId"] == cloudReservation }
+                                if (candidates.size > 1) throw NaRuntimeException("na_response_invalid", "message_admission")
+                                val candidate = candidates.singleOrNull()
+                                val candidateAttachments = (candidate?.get("attachments") as? List<*>).orEmpty()
+                                    .map { (it as? Map<*, *>)?.get("id") }
+                                val matchingInput = if (attachmentIds.isEmpty())
+                                    candidate?.get("input") == text.trim() && candidateAttachments.isEmpty()
+                                else candidate?.get("userText") == text.trim() && candidateAttachments == attachmentIds
+                                if (candidate != null && (!matchingInput ||
+                                        (candidate["clientOriginId"] != null && candidate["clientOriginId"] != clientOriginId) ||
+                                        (candidate["conversationId"] != null && candidate["conversationId"] != id.removePrefix(prefix)) ||
+                                        (body["clientUserMessageId"] != null && candidate["clientUserMessageId"] != body["clientUserMessageId"])))
+                                    throw naHttpFailure(409, "message_admission")
+                                if (candidate == null) {
+                                    // A latest-history window cannot prove that an
+                                    // earlier admission never happened.
+                                    confirmedAbsent = snapshot["hasMoreRuns"] != true &&
+                                        snapshot["runDetailsMayBeTruncated"] != true && snapshot["nextRunCursor"] == null
+                                    null
+                                }
+                                else (candidate["id"] as? String)?.takeIf { it.isNotBlank() }
+                                    ?: throw NaRuntimeException("na_response_invalid", "message_admission")
+                            } catch (lookupError: Exception) {
+                                val lookupFailure = lookupError as? NaRuntimeFailure
+                                if (lookupError is kotlinx.coroutines.CancellationException || lookupFailure?.statusCode == 409 ||
+                                    lookupFailure?.failureKind in setOf("na_authentication_required", "na_permission_denied", "na_connection_changed", "na_owner_conflict", "na_tls_certificate_failure")) throw lookupError
+                                null
+                            }
+                            if (recovered != null) mapOf("runId" to recovered)
+                            else if (cancelled && confirmedAbsent) throw NaAttachmentCancelled()
+                            else throw NaRuntimeException("na_admission_unconfirmed", "message_admission", failure?.statusCode, error)
+                        }
                     }
-                    val runId = accepted["runId"].toString()
+                    val runId = (accepted["runId"] as? String)?.takeIf { it.isNotBlank() }
+                        ?: throw NaRuntimeException("na_response_invalid", "message_admission")
                     admittedRunId = runId
                     activeRuns[id] = runId
                     val projector = NaItemProjection(reservation)
@@ -474,12 +665,12 @@ internal class NaCloudRuntime(
                     mapOf("sessionId" to id, "threadId" to id, "conversationId" to local,
                         "turnId" to reservation, "stopReason" to "cancelled")
                 } finally { admittedRunId?.let { activeRuns.remove(id, it) }; cancelPending.remove(id) }
-            }.also { promptOwners[key] = connection; prompts[key] = it }
+            }.also { promptOwners[key] = connection; promptInputs[key] = submittedInput; prompts[key] = it }
         }
         try { return execution.await() } finally {
             // Retain completed reservations for concurrent duplicate callers, bounded.
             if (prompts.size > 128) prompts.entries.filter { it.value.isCompleted }.take(64)
-                .forEach { prompts.remove(it.key, it.value); promptOwners.remove(it.key) }
+                .forEach { prompts.remove(it.key, it.value); promptInputs.remove(it.key); promptOwners.remove(it.key) }
         }
     }
 
@@ -579,22 +770,37 @@ internal class NaCloudRuntime(
         }
     }
 
-    private suspend fun request(method: String, path: String, body: Map<String, Any?>? = null): Map<String, Any?> =
+    private suspend fun request(method: String, path: String, body: Map<String, Any?>? = null,
+        idempotentAdmission: Boolean = false, beforeAdmission: (() -> Unit)? = null): Map<String, Any?> =
         withContext(Dispatchers.IO) {
             val connection = connection()
+            val revision = currentCoroutineContext()[ConnectionRevision]?.value
+            val phase = when {
+                path == "/api/status" -> "status"
+                path == "/api/conversations" && method == "POST" -> "session_create"
+                path.endsWith("/messages") -> "message_admission"
+                path.startsWith("/api/runs/") -> "run_read"
+                path.startsWith("/api/conversations/") -> "session_load"
+                else -> "request"
+            }
             val builder = Request.Builder().url(connection.apiBaseUrl + path)
                 .header("Accept", "application/json")
+                .tag(NaHttpRequestGuard::class.java, NaHttpRequestGuard {
+                    if (revision != null) requireCurrentConnection(connection, revision)
+                })
+            if (idempotentAdmission) builder.tag(NaIdempotentAdmission::class.java, NaIdempotentAdmission)
+            if (beforeAdmission != null) builder.tag(NaHttpAdmissionGuard::class.java, NaHttpAdmissionGuard(beforeAdmission))
             builder.method(method, if (method == "GET") null else gson.toJson(body ?: emptyMap<String, Any?>())
                 .toRequestBody("application/json".toMediaType()))
-            connection.execute(client, builder.build()) { response ->
-                val raw = response.body?.string().orEmpty()
-                if (response.code == 401) error("Na 访问令牌无效，请在设置 → Agent 模式 → Na 中更新。")
-                val value: Map<String, Any?> = runCatching {
-                    gson.fromJson<Map<String, Any?>>(raw, object : TypeToken<Map<String, Any?>>() {}.type)
-                }.getOrNull() ?: emptyMap()
-                check(response.isSuccessful) { naCloudPublicError(response.code, value["error"]) }
-                value
-            }
+            try {
+                connection.execute(client, builder.build()) { response ->
+                    if (!response.isSuccessful) throw naHttpFailure(response.code, phase)
+                    val raw = response.body?.string().orEmpty()
+                    runCatching {
+                        gson.fromJson<Map<String, Any?>>(raw, object : TypeToken<Map<String, Any?>>() {}.type)
+                    }.getOrNull() ?: throw NaRuntimeException("na_response_invalid", phase)
+                }
+            } catch (error: Exception) { throw naConnectionFailure(error, phase) }
         }
 }
 
@@ -687,36 +893,3 @@ internal fun naHistoryAttachments(sessionId: String, value: Any?): List<Map<Stri
             "path" to "/workspace/$path", "source" to "na-cloud", "sessionId" to sessionId,
             "isImage" to false, "deleted" to (row["deleted"] == true), "sendToModel" to false)
     }.orEmpty()
-
-/** One transport owner for safe reads. Writes, including a lost prompt POST
- * response, are never retried. A read snapshot cannot admit another turn. */
-internal suspend fun <T> naHttpResponse(client: OkHttpClient, request: Request, retryReads: Boolean = true, consume: (Response) -> T): T {
-    // A peer can close an idle HTTP/1 connection before OkHttp probes it again.
-    // Writes cannot safely recover by replaying after an ambiguous I/O failure,
-    // so start each write with an empty pool and retire its connection afterward.
-    // Keep the shared dispatcher/TLS settings and the existing read/SSE policy.
-    val requestClient = if (request.method == "GET" || request.method == "HEAD") client else
-        client.newBuilder().connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS))
-            .retryOnConnectionFailure(false).build()
-    var failures = 0
-    while (true) {
-        try {
-            return suspendCancellableCoroutine { continuation ->
-                val call = requestClient.newCall(request)
-                continuation.invokeOnCancellation { call.cancel() }
-                call.enqueue(object : Callback {
-                    override fun onFailure(call: Call, error: IOException) {
-                        continuation.resumeWithException(error)
-                    }
-                    override fun onResponse(call: Call, response: Response) {
-                        try { continuation.resume(response.use(consume)) }
-                        catch (error: Exception) { continuation.resumeWithException(error) }
-                    }
-                })
-            }
-        } catch (error: IOException) {
-            if (!retryReads || request.method != "GET" || ++failures >= 3) throw error
-            delay(1000L * failures)
-        }
-    }
-}

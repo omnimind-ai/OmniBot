@@ -39,6 +39,7 @@
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
         tools:ignore="QueryAllPackagesPermission" /><!--查询安装包权限-->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" /><!--后台服务权限-->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" /><!--后台服务数据更新权限-->
     <!-- 悬浮窗权限 -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
@@ -242,6 +243,15 @@
             android:name="cn.com.omnimind.bot.voice.SceneVoicePlaybackService"
             android:exported="false"
             android:foregroundServiceType="mediaPlayback" />
+        <service
+            android:name="cn.com.omnimind.bot.notifications.NaMessageService"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
+        <activity
+            android:name="cn.com.omnimind.bot.notifications.NaNotificationOpenActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:theme="@style/Theme.OmnibotApp.Transparent" />
         <service
             android:name="cn.com.omnimind.bot.task.runtime.TaskRuntimeService"
             android:enabled="true"

@@ -1423,6 +1423,40 @@ void main() {
     );
   });
 
+  test('Na failures retain their service category through durable formatting', () {
+    const cases = {
+      'na_connection_failed': '无法连接 Na 服务',
+      'na_request_timeout': '连接 Na 服务超时',
+      'na_tls_certificate_failure': 'Na 安全连接验证失败',
+      'na_authentication_required': 'Na 连接验证已失效',
+      'na_permission_denied': '当前账号没有此 Na 操作的权限',
+      'na_connection_changed': 'Na 连接已变化',
+      'na_owner_conflict': '此 Na 对话属于其他账号或连接',
+      'na_service_unavailable': 'Na 服务暂时不可用',
+      'na_rate_limited': 'Na 请求过于频繁',
+      'na_request_rejected': 'Na 未接受此请求',
+      'na_response_invalid': 'Na 返回了无法识别的响应',
+      'na_admission_unconfirmed': '尚未确认 Na 是否已受理',
+    };
+    for (final entry in cases.entries) {
+      final error = PlatformException(
+        code: 'AGENT_RUNTIME_CALL_FAILED',
+        message: 'authentication timeout token=secret-payload',
+        details: {'failureKind': entry.key, 'phase': 'message_admission'},
+      );
+      final message = formatAgentRuntimeErrorForUser(error);
+      final english = formatAgentRuntimeErrorForUser(error, english: true);
+      expect(message, contains(entry.value));
+      expect(message, isNot(contains('模型')));
+      expect(message, isNot(contains('secret-payload')));
+      expect(english, contains('Na'));
+      expect(english, isNot(contains('secret-payload')));
+      expect(formatAgentRuntimeErrorForUser(message), message);
+      expect(formatAgentRuntimeErrorForUser(english), message);
+      expect(formatAgentRuntimeErrorForUser(message, english: true), english);
+    }
+  });
+
   test('structured provider limit kinds remain distinct without raw payloads', () {
     const cases = {
       'provider_quota_exceeded': '额度不足',

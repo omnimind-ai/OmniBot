@@ -13,20 +13,20 @@ void main() {
   };
   Future<void> pump(
     WidgetTester tester,
-    Future<Map<String, dynamic>?> Function(Map<String, dynamic>) save,
-  ) async {
+    Future<Map<String, dynamic>?> Function(Map<String, dynamic>) save, {
+    Map<String, dynamic> settings = original,
+  }) async {
     await tester.pumpWidget(
       MaterialApp(
         home: Scaffold(
           body: ListView(
             children: [
-              NaComposioSettings(settings: original, busy: false, onSave: save),
+              NaComposioSettings(settings: settings, busy: false, onSave: save),
             ],
           ),
         ),
       ),
     );
-    await tester.tap(find.text('连接服务设置'));
     await tester.pumpAndSettle();
   }
 
@@ -37,6 +37,26 @@ void main() {
     await tester.tap(button);
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'official underscore and digit toolkit identifiers save without rewriting',
+    (tester) async {
+      final writes = <Map<String, dynamic>>[];
+      const slugs = [
+        '_1password',
+        '_21risk',
+        '_2chat',
+        '1-custom-app',
+        'team-app',
+      ];
+      await pump(tester, (value) async {
+        writes.add(value);
+        return {...original, 'toolkits': slugs, 'revision': 8};
+      }, settings: {...original, 'toolkits': slugs});
+      await save(tester);
+      expect(writes.single['toolkits'], slugs);
+    },
+  );
 
   testWidgets(
     'blank key preserves the server credential and carries optimistic revision',
@@ -51,7 +71,7 @@ void main() {
       );
       expect(key.obscureText, isTrue);
       expect(key.controller!.text, isEmpty);
-      expect(find.text('获取项目 API Key'), findsOneWidget);
+      expect(find.text('获取密钥'), findsOneWidget);
       await save(tester);
       expect(calls.single, {
         'expectedRevision': 7,
@@ -89,6 +109,63 @@ void main() {
     },
   );
   testWidgets(
+    'phone shows project key and nearby save before seven advanced application rows',
+    (tester) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const toolkits = [
+        'gmail',
+        'googlecalendar',
+        'googledrive',
+        'googledocs',
+        'googlesheets',
+        'googleslides',
+        'googletasks',
+      ];
+      final settings = {
+        ...original,
+        'toolkits': toolkits,
+        'authConfigs': {'gmail': 'ac_existing'},
+      };
+      final calls = <Map<String, dynamic>>[];
+      await pump(tester, (value) async {
+        calls.add(value);
+        return {...settings, 'revision': 8};
+      }, settings: settings);
+      final key = find.byKey(const Key('na-composio-api-key'));
+      final button = find.byKey(const Key('na-composio-settings-save'));
+      expect(find.text('连接服务'), findsOneWidget);
+      expect(key.hitTestable(), findsOneWidget);
+      expect(button.hitTestable(), findsOneWidget);
+      expect(
+        find.widgetWithText(TextField, '应用标识').hitTestable(),
+        findsNothing,
+      );
+      expect(
+        tester.getTopLeft(button).dy - tester.getBottomLeft(key).dy,
+        lessThan(90),
+      );
+      await tester.enterText(key, 'fixture-replacement-project-key');
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(calls.single, {
+        'expectedRevision': 7,
+        'enabled': true,
+        'toolkits': toolkits,
+        'authConfigs': {'gmail': 'ac_existing'},
+        'apiKey': 'fixture-replacement-project-key',
+      });
+      expect(tester.widget<TextField>(key).controller!.text, isEmpty);
+      await tester.tap(find.text('应用与授权配置'));
+      await tester.pumpAndSettle();
+      expect(find.widgetWithText(TextField, '应用标识'), findsNWidgets(7));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'known Connect consumer key shows Platform guidance without a write',
     (tester) async {
       var count = 0;
@@ -102,7 +179,7 @@ void main() {
       );
       await save(tester);
       expect(count, 0);
-      expect(find.textContaining('这是 Connect 消费者密钥'), findsOneWidget);
+      expect(find.textContaining('ck_ 是消费者密钥'), findsOneWidget);
     },
   );
 }

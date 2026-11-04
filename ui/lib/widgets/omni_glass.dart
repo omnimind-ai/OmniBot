@@ -351,6 +351,55 @@ class OmniGlassSheet extends StatelessWidget {
   }
 }
 
+/// Inline glass card for content inside a scrolling page (records, list
+/// rows, grouped blocks). Uses the shared regular glass pane and falls back
+/// to the plain settings surface when liquid glass is off.
+class OmniGlassCard extends StatelessWidget {
+  const OmniGlassCard({
+    super.key,
+    required this.child,
+    this.padding = const EdgeInsets.all(16),
+    this.margin,
+    this.borderRadius = 22,
+  });
+
+  final Widget child;
+  final EdgeInsetsGeometry padding;
+  final EdgeInsetsGeometry? margin;
+  final double borderRadius;
+
+  @override
+  Widget build(BuildContext context) {
+    final radius = BorderRadius.circular(borderRadius);
+    final content = Material(
+      type: MaterialType.transparency,
+      child: SizedBox(
+        width: double.infinity,
+        child: Padding(padding: padding, child: child),
+      ),
+    );
+    Widget card;
+    if (LiquidGlassScope.of(context)) {
+      card = LiquidGlass(
+        style: LiquidGlassStyle.regular(Theme.of(context).colorScheme),
+        borderRadius: radius,
+        child: ClipRRect(borderRadius: radius, child: content),
+      );
+    } else {
+      card = Material(
+        color: context.omniPalette.surfacePrimary,
+        shape: RoundedRectangleBorder(borderRadius: radius),
+        clipBehavior: Clip.antiAlias,
+        child: content,
+      );
+    }
+    if (margin != null) {
+      card = Padding(padding: margin!, child: card);
+    }
+    return card;
+  }
+}
+
 /// Material's alert content and actions inside the shared card sheet.
 ///
 /// AlertDialog remains the owner of intrinsic sizing, content scrolling,

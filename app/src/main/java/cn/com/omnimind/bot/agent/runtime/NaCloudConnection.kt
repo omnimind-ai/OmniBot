@@ -61,7 +61,10 @@ internal class NaCloudConnection(
             currentCoroutineContext().ensureActive()
             val authenticated = request.newBuilder().apply {
                 if (token.isNotBlank()) header("Authorization", "Bearer $token")
-            }.build()
+            }.tag(NaHttpRequestGuard::class.java, NaHttpRequestGuard {
+                account?.requireSessionGeneration(generation)
+                request.tag(NaHttpRequestGuard::class.java)?.check?.invoke()
+            }).build()
             return naHttpResponse(client, authenticated, retryReads) { response ->
                 if (managed && response.code == 401) {
                     throw AccountApiException(401, "authentication_required", "登录已失效，请重新连接。")
