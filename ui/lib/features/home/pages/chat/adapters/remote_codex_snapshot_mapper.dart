@@ -5,7 +5,34 @@ List<ChatMessageModel> _mergeRemoteCodexSnapshotMessages({
   required List<ChatMessageModel> existingMessages,
   required String? activeTaskId,
   required bool isAiResponding,
+  bool partialHistory = false,
 }) {
+  if (partialHistory) {
+    // Older clients used device-local message IDs before the server recorded
+    // an installation origin. Migrate only an explicit, unique server alias;
+    // equal text or timestamps never establish message identity.
+    final aliases = <String, List<String>>{};
+    final snapshotIds = snapshotMessages.map((message) => message.id).toSet();
+    for (final message in snapshotMessages) {
+      final alias = message.streamMeta?['legacyHostMessageId']?.toString();
+      if (message.type == 1 &&
+          message.user == 1 &&
+          alias != null &&
+          alias.isNotEmpty) {
+        (aliases[alias] ??= []).add(message.id);
+      }
+    }
+    existingMessages = existingMessages.map((message) {
+      final candidates = aliases[message.id];
+      if (message.type != 1 ||
+          message.user != 1 ||
+          candidates?.length != 1 ||
+          snapshotIds.contains(message.id))
+        return message;
+      final id = candidates!.single;
+      return message.copyWith(id: id, content: {...?message.content, 'id': id});
+    }).toList();
+  }
   if (existingMessages.isEmpty) {
     return snapshotMessages
         .map(canonicalizeAgentHistoryMessage)
@@ -17,11 +44,18 @@ List<ChatMessageModel> _mergeRemoteCodexSnapshotMessages({
   final existingById = <String, ChatMessageModel>{
     for (final message in existingMessages) message.id: message,
   };
-  final userMessageIdsToPreserve = _remoteRuntimeUserMessageIdsToPreserve(
-    existingMessages: existingMessages,
-    snapshotMessageIds: snapshotById.keys.toSet(),
-    snapshotUserTextCounts: _remoteUserMessageTextCounts(snapshotMessages),
-  );
+  final userMessageIdsToPreserve = partialHistory
+      ? existingMessages
+            .where((message) => message.type == 1 && message.user == 1)
+            .map((message) => message.id)
+            .toSet()
+      : _remoteRuntimeUserMessageIdsToPreserve(
+          existingMessages: existingMessages,
+          snapshotMessageIds: snapshotById.keys.toSet(),
+          snapshotUserTextCounts: _remoteUserMessageTextCounts(
+            snapshotMessages,
+          ),
+        );
   final snapshotTaskIds = _remoteSnapshotTaskIds(snapshotMessages);
   // A later authoritative terminal snapshot may settle a remote turn after
   // the phone's prompt transport failed. Retire only that turn's local error
@@ -86,17 +120,22 @@ List<ChatMessageModel> _mergeRemoteCodexSnapshotMessages({
       continue;
     }
     if (!_shouldPreserveRemoteRuntimeMessage(
-      existing,
-      activeTaskId: activeTaskId,
-      isAiResponding: isAiResponding,
-      snapshotTaskIds: snapshotTaskIds,
-    )) {
+          existing,
+          activeTaskId: activeTaskId,
+          isAiResponding: isAiResponding,
+          snapshotTaskIds: snapshotTaskIds,
+        ) &&
+        !(partialHistory &&
+            !snapshotTaskIds.contains(_messageTaskId(existing)))) {
       continue;
     }
     mergedById[existing.id] = canonicalizeAgentHistoryMessage(existing);
   }
   final merged = mergedById.values.toList(growable: false)
     ..sort((a, b) => b.createAt.compareTo(a.createAt));
+  // Na details can contain only the newest run window. Their item states are
+  // server-owned render hints, including work started on another device.
+  if (partialHistory) return merged;
   return _normalizeAgentLoadingThinkingCards(
     merged,
     activeTaskId: activeTaskId,
@@ -346,12 +385,14 @@ List<ChatMessageModel> mergeRemoteCodexSnapshotMessagesForTesting({
   required List<ChatMessageModel> existingMessages,
   required String? activeTaskId,
   required bool isAiResponding,
+  bool partialHistory = false,
 }) {
   return _mergeRemoteCodexSnapshotMessages(
     snapshotMessages: snapshotMessages,
     existingMessages: existingMessages,
     activeTaskId: activeTaskId,
     isAiResponding: isAiResponding,
+    partialHistory: partialHistory,
   );
 }
 
@@ -372,6 +413,7 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
   }
   final chronological = <ChatMessageModel>[];
   final terminalReasons = <String, String>{};
+  final naRunStatuses = <String, String>{};
   final effectiveActiveTurnId =
       activeTurnId ??
       (active ? _remoteCodexLatestTurnIdFromThreadResponse(response) : null);
@@ -384,6 +426,10 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
     final turnId =
         _remoteCodexTurnIdAt(rawTurns, turnIndex) ?? 'turn-$turnIndex';
     final stopReason = _asAgentString(turn['stopReason']);
+    if (agentId == 'na-cloud') {
+      final status = _asAgentString(turn['status']);
+      if (status != null) naRunStatuses[turnId] = status;
+    }
     if (const {'end_turn', 'cancelled', 'error'}.contains(stopReason)) {
       terminalReasons[turnId] = stopReason!;
     }
@@ -441,6 +487,11 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
             user: 1,
             content: content,
             createAt: createdAt,
+            streamMeta: {
+              'parentTaskId': turnId,
+              if (item['legacyHostMessageId'] is String)
+                'legacyHostMessageId': item['legacyHostMessageId'],
+            },
           ),
         );
         continue;
@@ -822,11 +873,15 @@ List<ChatMessageModel> _remoteCodexMessagesFromThreadResponse(
       )
       .map(
         (message) => _withAcpAgentIdentity(
-          terminalReasons.containsKey(_messageTaskId(message))
+          terminalReasons.containsKey(_messageTaskId(message)) ||
+                  naRunStatuses.containsKey(_messageTaskId(message))
               ? message.copyWith(
                   streamMeta: {
                     ...?message.streamMeta,
-                    'stopReason': terminalReasons[_messageTaskId(message)],
+                    if (terminalReasons.containsKey(_messageTaskId(message)))
+                      'stopReason': terminalReasons[_messageTaskId(message)],
+                    if (naRunStatuses.containsKey(_messageTaskId(message)))
+                      'naRunStatus': naRunStatuses[_messageTaskId(message)],
                   },
                 )
               : message,

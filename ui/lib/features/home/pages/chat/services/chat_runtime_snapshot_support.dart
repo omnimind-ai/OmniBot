@@ -1,6 +1,46 @@
 part of 'chat_conversation_runtime_coordinator.dart';
 
 extension ChatRuntimeSnapshotSupport on ChatConversationRuntimeCoordinator {
+  /// Import a server history projection without admitting/ending a local ACP
+  /// prompt. Another phone's running items may change while this device's own
+  /// prompt is queued, so protect only messages belonging to our bound task.
+  void mergeNaHistoryMessages({
+    required int conversationId,
+    required List<ChatMessageModel> messages,
+  }) {
+    if (_hiddenNaHistoryViews.contains(conversationId)) return;
+    final runtime = runtimeFor(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    if (runtime == null || runtime.conversation?.agentId != 'na-cloud') return;
+    final boundTasks = _taskBindings.entries
+        .where(
+          (entry) =>
+              entry.value.conversationId == conversationId &&
+              entry.value.mode == kChatRuntimeModeAgent &&
+              isTaskActive(
+                taskId: entry.key,
+                conversationId: conversationId,
+                mode: kChatRuntimeModeAgent,
+              ),
+        )
+        .map((entry) => entry.key)
+        .toSet();
+    final incoming = {for (final message in messages) message.id: message};
+    for (final existing in runtime.messages) {
+      if (boundTasks.contains(existing.runId) ||
+          boundTasks.contains(existing.id) ||
+          boundTasks.contains(existing.streamMeta?['parentTaskId'])) {
+        incoming[existing.id] = existing;
+      }
+    }
+    final merged = incoming.values.toList()
+      ..sort((a, b) => b.createAt.compareTo(a.createAt));
+    _replaceRuntimeMessagesIfChanged(runtime, merged);
+    _notifyRuntimeListeners();
+  }
+
   void replaceConversationSnapshot({
     required int conversationId,
     required String mode,

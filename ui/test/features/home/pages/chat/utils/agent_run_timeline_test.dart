@@ -3,6 +3,64 @@ import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/models/chat_message_model.dart';
 
 void main() {
+  for (final entry in {
+    'running': AgentRunStatus.running,
+    'completed': AgentRunStatus.finished,
+    'failed': AgentRunStatus.failed,
+    'cancelled': AgentRunStatus.cancelled,
+  }.entries) {
+    test('external Na turn renders explicit server status ${entry.key}', () {
+      final message = ChatMessageModel(
+        id: 'remote-reply', type: 1, user: 2,
+        content: const {'text': '远端回复', 'agentId': 'na-cloud'},
+        streamMeta: {'parentTaskId': 'remote-turn', 'naRunStatus': entry.key, 'isFinal': false},
+      );
+      final activeTasks = <String>{};
+      final group = buildAgentRunTimelineEntries([message], activeTaskIds: activeTasks).single.group!;
+      expect(group.status, entry.value);
+      expect(group.finishedAt == null, entry.value == AgentRunStatus.running);
+      expect(activeTasks, isEmpty);
+    });
+  }
+
+  test('external running Na group does not suppress this device pending prompt', () {
+    final message = ChatMessageModel(
+      id: 'remote-reply', type: 1, user: 2,
+      content: const {'text': '另一手机仍在输出', 'agentId': 'na-cloud'},
+      streamMeta: const {'parentTaskId': 'remote-turn', 'naRunStatus': 'running'},
+    );
+    final entries = buildAgentRunTimelineEntries([message], activeTaskIds: {'my-queued-turn'}, conversationAgentId: 'na-cloud');
+    expect(entries.where((entry) => entry.group?.status == AgentRunStatus.running), hasLength(2));
+    expect(entries.singleWhere((entry) => entry.group?.taskId == 'my-queued-turn').group!.isEmpty, true);
+    expect(entries.singleWhere((entry) => entry.group?.taskId == 'remote-turn').group!.isEmpty, false);
+  });
+
+  test('Na terminal marker wins over retained running tool cards outside a partial window', () {
+    final tool = ChatMessageModel.cardMessage(
+      const {'type': 'agent_tool_summary', 'toolType': 'workspace', 'status': 'running', 'agentId': 'na-cloud'},
+      id: 'older-tool', streamMeta: const {'parentTaskId': 'remote-turn', 'naRunStatus': 'running'},
+    );
+    final completed = ChatMessageModel(
+      id: 'remote-reply', type: 1, user: 2,
+      content: const {'text': '服务端已完成', 'agentId': 'na-cloud'},
+      streamMeta: const {'parentTaskId': 'remote-turn', 'naRunStatus': 'completed'},
+    );
+    for (final messages in [[tool, completed], [completed, tool]]) {
+      expect(buildAgentRunTimelineEntries(messages).single.group!.status, AgentRunStatus.finished);
+    }
+    expect(buildAgentRunTimelineEntries([tool]).single.group!.status, AgentRunStatus.running);
+  });
+
+  test('non Na runs do not trust Na snapshot render metadata', () {
+    final message = ChatMessageModel(
+      id: 'codex-reply', type: 1, user: 2,
+      content: const {'text': '普通ACP已结束', 'agentId': 'codex-acp'},
+      streamMeta: const {'parentTaskId': 'codex-turn', 'naRunStatus': 'running', 'isFinal': false},
+    );
+    expect(buildAgentRunTimelineEntries([message]).single.group!.status, AgentRunStatus.finished);
+    expect(buildAgentRunTimelineEntries([message], activeTaskIds: {'codex-turn'}).single.group!.status, AgentRunStatus.running);
+  });
+
   test('cancelled tool-only turn remains visible after reload', () {
     final tool = ChatMessageModel.cardMessage(
       const {'type': 'agent_tool_summary', 'toolType': 'workspace', 'status': 'success'},

@@ -10,6 +10,8 @@ import 'package:ui/features/home/pages/chat/chat_page_models.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_empty_greeting.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
 import 'package:ui/features/home/pages/chat/widgets/agent_run_details_sheet.dart';
+import 'package:ui/features/home/pages/chat/widgets/agent_run_group_message.dart';
+import 'package:ui/features/home/pages/chat/utils/agent_run_timeline.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/models/chat_message_model.dart';
 import 'package:ui/widgets/agent_brand_icon.dart';
@@ -19,6 +21,29 @@ import 'package:ui/services/storage_service.dart';
 import 'package:ui/widgets/navigation/page_route.dart';
 
 void main() {
+  testWidgets('Na same-ID server completion refreshes the cached run header', (tester) async {
+    final messages = ObservableChatMessageList();
+    final controller = ScrollController();
+    addTearDown(messages.dispose);
+    addTearDown(controller.dispose);
+    messages.add(ChatMessageModel(
+      id: 'remote-reply', type: 1, user: 2,
+      content: const {'text': '同步中的远端正文', 'agentId': 'na-cloud'},
+      streamMeta: const {'parentTaskId': 'remote-turn', 'naRunStatus': 'running', 'isFinal': true},
+    ));
+    await tester.pumpWidget(_buildLocalizedApp(child: ChatMessageList(
+      messages: messages, scrollController: controller, activeAcpAgentId: 'na-cloud', useAcpPresentation: true,
+      onBeforeTaskExecute: () async {},
+    )));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(tester.widget<AgentRunGroupMessage>(find.byType(AgentRunGroupMessage)).group.status, AgentRunStatus.running);
+    expect(find.textContaining('已处理'), findsNothing);
+    messages[0] = messages[0].copyWith(streamMeta: {...?messages[0].streamMeta, 'naRunStatus': 'completed'});
+    await tester.pump();
+    expect(tester.widget<AgentRunGroupMessage>(find.byType(AgentRunGroupMessage)).group.status, AgentRunStatus.finished);
+    expect(find.textContaining('已处理'), findsWidgets);
+    await tester.pumpWidget(const SizedBox());
+  });
   testWidgets('Claude Code ACP answers survive completion and history reload', (tester) async {
     final runtime = ChatConversationRuntimeState(conversationId: 63, mode: 'agent');
     addTearDown(runtime.dispose);

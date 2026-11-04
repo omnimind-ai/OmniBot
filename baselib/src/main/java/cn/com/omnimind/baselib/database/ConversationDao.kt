@@ -11,6 +11,11 @@ interface ConversationDao {
     @Update
     suspend fun update(conversation: Conversation)
 
+    // Cloud list observation changes only presentation metadata. Never write an
+    // old full Conversation over locally saved settings/checkpoints/messages.
+    @Query("UPDATE conversations SET updatedAt = :at, messageCount = :count, lastMessage = COALESCE(:preview, lastMessage) WHERE id = :id")
+    suspend fun updateCloudListMetadata(id: Long, at: Long, count: Int, preview: String?)
+
     @Transaction
     suspend fun updatePreservingCheckpoint(conversation: Conversation, preserveLatestMetadata: Boolean = false) {
         val current = getById(conversation.id)

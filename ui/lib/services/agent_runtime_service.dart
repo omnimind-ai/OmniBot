@@ -1593,6 +1593,7 @@ class AgentRuntimeService {
     bool includeHistory = true,
     bool refreshConfig = false,
     String? conversationMode,
+    String? historyCursor,
   }) {
     return _invokeMap('session/load', {
       if (sessionId != null) 'sessionId': sessionId,
@@ -1600,9 +1601,17 @@ class AgentRuntimeService {
       if (agentId != null && agentId.trim().isNotEmpty)
         'agentId': agentId.trim(),
       'includeHistory': includeHistory,
+      if (historyCursor != null) 'historyCursor': historyCursor,
       if (refreshConfig) 'refreshConfig': true,
       if (conversationMode != null && conversationMode.trim().isNotEmpty)
         'conversationMode': conversationMode.trim(),
+    });
+  }
+
+  static Future<void> setNaHistorySyncEnabled(bool enabled) async {
+    await _invokeMap('config/na/historySync', {
+      'agentId': 'na-cloud',
+      'enabled': enabled,
     });
   }
 

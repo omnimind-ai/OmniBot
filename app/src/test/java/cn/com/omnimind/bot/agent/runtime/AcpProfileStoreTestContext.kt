@@ -25,6 +25,7 @@ internal fun acpProfileStoreTestContext(directory: File): Context {
     `when`(context.applicationContext).thenReturn(context)
     `when`(context.assets).thenReturn(assets)
     `when`(context.filesDir).thenReturn(directory)
+    `when`(context.noBackupFilesDir).thenReturn(File(directory, "no-backup"))
     `when`(context.applicationInfo).thenReturn(ApplicationInfo().apply {
         dataDir = directory.absolutePath
     })

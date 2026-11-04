@@ -16,6 +16,7 @@ import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.mockwebserver.SocketPolicy
+import okhttp3.mockwebserver.Dispatcher
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -37,6 +38,7 @@ class NaCloudAdmissionRecoveryTest {
         }
         val bindings = mock(AgentSessionBindingRepository::class.java)
         val profiles = AcpAgentProfileStore(context)
+        val origin = naInstallationOrigin(context.noBackupFilesDir)
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Unconfined)
         val emitted = mutableListOf<Map<String, Any?>>()
         fun runtime() = NaCloudRuntime(context, scope, bindings, AcpAgentProfileStore(context), emit = { emitted += it })
@@ -53,8 +55,9 @@ class NaCloudAdmissionRecoveryTest {
     private fun completed() = MockResponse().setBody(
         """{"run":{"status":"completed","items":[{"id":"answer","type":"agent_message","text":"done"}]}}""",
     )
-    private fun matchingRun(userMessageId: String? = null): Map<String, Any?> = mapOf(
-        "id" to "original-run", "clientMessageId" to "host-turn", "input" to "hello", "conversationId" to "remote-session",
+    private fun matchingRun(origin: String, userMessageId: String? = null): Map<String, Any?> = mapOf(
+        "id" to "original-run", "clientMessageId" to naCloudMessageId(origin, "host-turn"),
+        "clientOriginId" to origin, "input" to "hello", "conversationId" to "remote-session",
     ) + if (userMessageId == null) emptyMap() else mapOf("clientUserMessageId" to userMessageId)
     private fun conversationSnapshot(run: Map<String, Any?>?) = MockResponse().setBody(Gson().toJson(mapOf(
         "conversation" to mapOf("id" to "remote-session"),
@@ -165,7 +168,8 @@ class NaCloudAdmissionRecoveryTest {
                 assertEquals("/api/conversations/remote-session/messages", first.path)
                 assertEquals(first.path, recovered.path)
                 assertEquals(first.json(), recovered.json())
-                assertEquals("host-turn", recovered.json()["clientMessageId"].asString)
+                assertEquals(naCloudMessageId(fixture.origin, "host-turn"), recovered.json()["clientMessageId"].asString)
+                assertEquals(fixture.origin, recovered.json()["clientOriginId"].asString)
                 assertEquals("host-user", recovered.json()["clientUserMessageId"].asString)
                 assertEquals("/api/runs/original-run", server.recorded().path)
                 assertEquals(4, server.requestCount)
@@ -189,11 +193,67 @@ class NaCloudAdmissionRecoveryTest {
         recoverAdmittedRun(idempotent = false)
     }
 
-    @Test fun recoveryRejectsAReservationWhoseOriginalInputUserOrConversationDoesNotMatch() = runBlocking {
+    @Test fun attachmentRecoveryUsesOriginalUserTextAndExactOrderedAttachmentIdentity() = runBlocking {
+        for (sameAttachment in listOf(true, false)) {
+            Fixture(directory.newFolder()).use { fixture ->
+                MockWebServer().use { server ->
+                    var admittedAttachment: String? = null
+                    server.dispatcher = object : Dispatcher() {
+                        override fun dispatch(request: RecordedRequest): MockResponse = when {
+                            request.path == "/api/status" -> MockResponse().setBody("""{"capabilities":["attachments","idempotent_admission"]}""")
+                            request.method == "PUT" -> {
+                                assertEquals(naCloudMessageId(fixture.origin, "host-turn"), request.requestUrl!!.queryParameter("clientMessageId"))
+                                MockResponse().setBody("""{"saved":true}""")
+                            }
+                            request.path == "/api/conversations/remote-session/messages" -> {
+                                val body = request.json()
+                                assertEquals("hello", body["text"].asString)
+                                assertEquals(fixture.origin, body["clientOriginId"].asString)
+                                admittedAttachment = body["attachmentIds"].asJsonArray.single().asString
+                                disconnected()
+                            }
+                            request.path == "/api/conversations/remote-session" -> conversationSnapshot(
+                                matchingRun(fixture.origin, "host-user") + mapOf(
+                                    "userText" to "hello", "input" to "hello\n\n[附件] attachment-path.txt",
+                                    "attachments" to listOf(mapOf("id" to if (sameAttachment) admittedAttachment else "different-attachment")),
+                                ),
+                            )
+                            request.path == "/api/runs/original-run" -> completed()
+                            request.method == "DELETE" -> MockResponse().setBody("{}")
+                            else -> MockResponse().setResponseCode(404)
+                        }
+                    }
+                    server.start()
+                    val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
+                    val sessionId = connection.prefix + "remote-session"
+                    `when`(fixture.bindings.ensureBinding(sessionId, NA_AGENT_ID, cwd = "na-cloud")).thenReturn(42L)
+                    val result = withContext(connection) {
+                        runCatching {
+                            fixture.runtime().callConnected("session/prompt", mapOf("sessionId" to sessionId,
+                                "requestId" to "host-turn", "userMessageId" to "host-user", "text" to "hello",
+                                "attachments" to listOf(mapOf("name" to "sample.txt", "mimeType" to "text/plain",
+                                    "dataUrl" to "data:text/plain;base64,aGk=")))) as Map<*, *>
+                        }
+                    }
+                    if (sameAttachment) assertEquals("end_turn", result.getOrThrow()["stopReason"])
+                    else assertEquals(409, (result.exceptionOrNull() as? NaRuntimeFailure)?.statusCode)
+                    val requests = List(8) { server.recorded() }
+                    val admissions = requests.filter { it.method == "POST" }
+                    assertEquals(3, admissions.size)
+                    assertTrue(admissions.all { it.json() == admissions.first().json() })
+                    assertEquals(if (sameAttachment) 1 else 0, fixture.emitted.size)
+                    assertEquals(8, server.requestCount)
+                }
+            }
+        }
+    }
+
+    @Test fun recoveryRejectsAReservationWhoseOriginalInputUserOriginOrConversationDoesNotMatch() = runBlocking {
         val conflicts = listOf(
             mapOf("input" to "another request"),
             mapOf("clientUserMessageId" to "another-user-item"),
             mapOf("conversationId" to "another-conversation"),
+            mapOf("clientOriginId" to "another-phone"),
         )
         for (conflict in conflicts) {
             Fixture(directory.newFolder()).use { fixture ->
@@ -202,7 +262,7 @@ class NaCloudAdmissionRecoveryTest {
                     // read-only reconciliation must still verify its identity.
                     server.enqueue(capabilities(idempotent = false))
                     server.enqueue(disconnected())
-                    server.enqueue(conversationSnapshot(matchingRun("host-user") + conflict))
+                    server.enqueue(conversationSnapshot(matchingRun(fixture.origin, "host-user") + conflict))
                     server.start()
                     val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
                     val sessionId = connection.prefix + "remote-session"
@@ -232,7 +292,7 @@ class NaCloudAdmissionRecoveryTest {
             MockWebServer().use { server ->
                 server.enqueue(capabilities())
                 server.enqueue(MockResponse().setBody("{}"))
-                server.enqueue(conversationSnapshot(matchingRun("host-user")))
+                server.enqueue(conversationSnapshot(matchingRun(fixture.origin, "host-user")))
                 server.enqueue(completed())
                 server.start()
                 val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
@@ -291,7 +351,7 @@ class NaCloudAdmissionRecoveryTest {
                 MockWebServer().use { server ->
                     server.enqueue(capabilities())
                     server.enqueue(MockResponse().setResponseCode(503).setHeader("Retry-After", "1").setBody("temporary"))
-                    server.enqueue(conversationSnapshot(if (alreadyAdmitted) matchingRun() else null))
+                    server.enqueue(conversationSnapshot(if (alreadyAdmitted) matchingRun(fixture.origin) else null))
                     if (alreadyAdmitted) {
                         server.enqueue(MockResponse().setBody("{}"))
                         server.enqueue(MockResponse().setBody("""{"run":{"status":"cancelled","items":[]}}"""))
@@ -334,7 +394,7 @@ class NaCloudAdmissionRecoveryTest {
     }
 
     @Test fun cancellationCannotClaimNoRunExistsWhenReconciliationFailsOrHasAnInvalidSnapshot() = runBlocking {
-        for (snapshotCase in listOf("unavailable", "missing_runs", "missing_id")) {
+        for (snapshotCase in listOf("unavailable", "missing_runs", "missing_id", "partial_history")) {
             Fixture(directory.newFolder()).use { fixture ->
                 MockWebServer().use { server ->
                     server.enqueue(capabilities())
@@ -342,7 +402,8 @@ class NaCloudAdmissionRecoveryTest {
                     when (snapshotCase) {
                         "unavailable" -> repeat(3) { server.enqueue(MockResponse().setResponseCode(503).setBody("unavailable")) }
                         "missing_runs" -> server.enqueue(MockResponse().setBody("""{"conversation":{"id":"remote-session"}}"""))
-                        else -> server.enqueue(conversationSnapshot(matchingRun() - "id"))
+                        "partial_history" -> server.enqueue(MockResponse().setBody("""{"conversation":{"id":"remote-session"},"runs":[],"hasMoreRuns":true,"runDetailsMayBeTruncated":true,"nextRunCursor":"older-run"}"""))
+                        else -> server.enqueue(conversationSnapshot(matchingRun(fixture.origin) - "id"))
                     }
                     server.start()
                     val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
@@ -387,7 +448,9 @@ class NaCloudAdmissionRecoveryTest {
                 server.enqueue(capabilities(idempotent))
                 val attempts = if (idempotent) 3 else 1
                 repeat(attempts) { server.enqueue(disconnected()) }
-                server.enqueue(MockResponse().setBody("""{"conversation":{"id":"remote-session"},"runs":[{"id":"unrelated-run","clientMessageId":"another-turn"},{"id":"original-run","clientMessageId":"host-turn","input":"hello","conversationId":"remote-session"}]}"""))
+                // Legacy servers may omit clientOriginId, but retain the
+                // installation-prefixed admission key from the request.
+                server.enqueue(conversationSnapshot(matchingRun(fixture.origin) - "clientOriginId"))
                 server.enqueue(completed())
                 server.start()
                 val connection = NaCloudConnection(server.url("/").toString().trimEnd('/'))
@@ -403,7 +466,8 @@ class NaCloudAdmissionRecoveryTest {
                 assertEquals("/api/status", requests.first().path)
                 val posts = requests.filter { it.method == "POST" }
                 assertEquals(attempts, posts.size)
-                assertTrue(posts.all { it.json()["clientMessageId"].asString == "host-turn" })
+                assertTrue(posts.all { it.json()["clientMessageId"].asString == naCloudMessageId(fixture.origin, "host-turn") })
+                assertTrue(posts.all { it.json()["clientOriginId"].asString == fixture.origin })
                 assertTrue(posts.all { it.json() == posts.first().json() })
                 assertEquals("GET", requests[attempts + 1].method)
                 assertEquals("/api/conversations/remote-session", requests[attempts + 1].path)

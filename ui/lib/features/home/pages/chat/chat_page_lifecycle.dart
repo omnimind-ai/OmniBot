@@ -40,6 +40,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   // an unsubmitted target. The request id prevents an older initialization
   // from restoring its composer into a newer conversation.
   int? _composerPreservationRequestId;
+  Future<void>? _naHistoryRefresh;
+  bool _naHistoryRefreshPending = false;
+  final Map<String, int> _naHistoryLatestCursors = {};
+  final Map<String, Map<String, int>> _naHistoryItemCursors = {};
+  int? _naHistoryBackfillRequestId;
+  String? _naHistoryBackfillCursor;
+  Future<void>? _naHistoryBackfill;
 
   @override
   void onConversationReset(ConversationMode mode) {
@@ -89,6 +96,10 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     _conversationListChangedSubscription = AssistsMessageService
         .conversationListChangedStream
         .listen((event) {
+          if (event['reason'] == 'na_cloud_history_changed') {
+            _handleNaCloudHistoryChanged(event);
+            return;
+          }
           if (event['reason'] == 'na_history_owner_changed') {
             final activeNa =
                 _activeMode == ChatPageMode.agent &&
@@ -103,6 +114,11 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
             _beginConversationTargetRequest();
             invalidateConversationLifecycle();
             _runtimeCoordinator.discardNaHistoryViews();
+            _naHistoryRefreshPending = false;
+            _naHistoryLatestCursors.clear();
+            _naHistoryItemCursors.clear();
+            _naHistoryBackfillRequestId = null;
+            _naHistoryBackfillCursor = null;
             if (activeNa || cachedNa)
               _resetLocalConversationState(ChatPageMode.agent);
             if (activeNa) {
@@ -370,9 +386,14 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         _modeState(targetMode).pendingAttachments.addAll(composerAttachments!);
       }
       _restoreLocalAgentThreadIdFromTarget(effectiveTarget);
+      final localHistoryReady = Completer<void>();
       final agentHistorySync =
           _shouldSyncExistingLocalAgentTarget(effectiveTarget)
-          ? _syncExistingLocalAgentTarget(effectiveTarget, activeRequestId)
+          ? _syncExistingLocalAgentTarget(
+              effectiveTarget,
+              activeRequestId,
+              localHistoryReady: localHistoryReady.future,
+            )
           : null;
       if (!preserveComposer) {
         _applyDraftForConversationMode(targetMode);
@@ -387,6 +408,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
           await initializeConversation(lifecycleToken: lifecycleToken);
         }
       } finally {
+        localHistoryReady.complete();
         if (_composerPreservationRequestId == activeRequestId) {
           _composerPreservationRequestId = null;
         }
@@ -479,8 +501,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
   Future<void> _syncExistingLocalAgentTarget(
     ConversationThreadTarget target,
-    int requestId,
-  ) async {
+    int requestId, {
+    Future<void>? localHistoryReady,
+  }) async {
     final conversationId = target.conversationId;
     if (conversationId == null) {
       return;
@@ -504,6 +527,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       } catch (_) {
         // Session ownership does not depend on optional status metadata.
       }
+      // Fetch concurrently, but import only after the initial local history
+      // load. A fast cloud response must not be erased by that older DB read.
+      await localHistoryReady;
       if (!mounted || !_isConversationTargetRequestCurrent(requestId)) {
         return;
       }
@@ -552,28 +578,8 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       });
       if (resolvedAgentId == 'na-cloud' &&
           _remoteCodexThreadResponseHasTurns(response)) {
-        final runtime = _runtimeForMode(ChatPageMode.agent);
-        final responding = runtime?.isAiResponding ?? false;
-        final merged = _mergeRemoteCodexSnapshotMessages(
-          snapshotMessages: _remoteCodexMessagesFromThreadResponse(response),
-          existingMessages: List<ChatMessageModel>.from(
-            runtime?.messages ?? _modeState(ChatPageMode.agent).messages,
-          ),
-          activeTaskId: runtime?.activeRunId,
-          isAiResponding: responding,
-        );
-        _syncRuntimeSnapshotForMode(
-          ChatPageMode.agent,
-          messages: merged,
-          preserveLiveStreamingState: responding,
-        );
-        if (!responding) {
-          await _runtimeCoordinator.persistRuntimeConversation(
-            conversationId: conversationId,
-            mode: kChatRuntimeModeAgent,
-            persistMessages: true,
-          );
-        }
+        _mergeNaHistoryResponse(conversationId, response);
+        _continueEarlierNaHistory(conversationId, response, requestId);
       }
       unawaited(_loadAgentCatalog());
       unawaited(_loadAgentModelOptionsWhenReady(force: true));
@@ -584,6 +590,202 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
         '$conversationId: $error',
       );
     }
+  }
+
+  void _continueEarlierNaHistory(
+    int conversationId,
+    Map<String, dynamic> response,
+    int requestId,
+  ) {
+    if (_naHistoryBackfillRequestId != requestId) {
+      _naHistoryBackfillRequestId = requestId;
+      _naHistoryBackfillCursor = _naNextHistoryCursor(response);
+      _naHistoryBackfill = null;
+    }
+    if (_naHistoryBackfillCursor == null || _naHistoryBackfill != null) return;
+    final operation = Future<void>.microtask(
+      () => _loadEarlierNaHistory(conversationId, requestId),
+    );
+    _naHistoryBackfill = operation;
+    unawaited(
+      operation.whenComplete(() {
+        if (identical(_naHistoryBackfill, operation)) _naHistoryBackfill = null;
+      }),
+    );
+  }
+
+  String? _naNextHistoryCursor(Map<String, dynamic> response) {
+    final thread = response['thread'];
+    final value =
+        (response['nextRunCursor'] ??
+                (thread is Map ? thread['nextRunCursor'] : null))
+            ?.toString();
+    return value == null || value.isEmpty ? null : value;
+  }
+
+  Future<void> _loadEarlierNaHistory(int conversationId, int requestId) async {
+    final revision = AssistsMessageService.conversationVisibilityRevision;
+    final seen = <String>{};
+    while (mounted &&
+        _isConversationTargetRequestCurrent(requestId) &&
+        _currentConversationId == conversationId &&
+        revision == AssistsMessageService.conversationVisibilityRevision &&
+        _naHistoryBackfillRequestId == requestId) {
+      final cursor = _naHistoryBackfillCursor;
+      if (cursor == null || cursor.isEmpty || !seen.add(cursor)) return;
+      Map<String, dynamic> response;
+      try {
+        response = await AgentRuntimeService.readSession(
+          conversationId: conversationId,
+          agentId: 'na-cloud',
+          conversationMode: ConversationMode.agent.storageValue,
+          historyCursor: cursor,
+        );
+      } catch (error) {
+        debugPrint('Na earlier history read failed: $error');
+        return;
+      }
+      if (!_isConversationTargetRequestCurrent(requestId) ||
+          _currentConversationId != conversationId ||
+          revision != AssistsMessageService.conversationVisibilityRevision)
+        return;
+      _mergeNaHistoryResponse(conversationId, response, earlierPage: true);
+      _naHistoryBackfillCursor = _naNextHistoryCursor(response);
+    }
+  }
+
+  void _handleNaCloudHistoryChanged(Map<String, dynamic> event) {
+    final owner = event['naOwnerPrefix'];
+    if (owner != null &&
+        AssistsMessageService.hasNaHistoryOwnerSnapshot &&
+        owner != AssistsMessageService.visibleNaOwnerPrefix)
+      return;
+    final changed = event['conversation'];
+    final changedId =
+        event['conversationId'] ?? (changed is Map ? changed['id'] : null);
+    if (changedId is num && changedId.toInt() != _currentConversationId) return;
+    unawaited(_refreshVisibleNaHistory());
+  }
+
+  Future<void> _refreshVisibleNaHistory() {
+    _naHistoryRefreshPending = true;
+    return _naHistoryRefresh ??= Future<void>.microtask(
+      _drainNaHistoryRefreshes,
+    );
+  }
+
+  Future<void> _drainNaHistoryRefreshes() async {
+    try {
+      while (mounted && _naHistoryRefreshPending) {
+        _naHistoryRefreshPending = false;
+        final target = _resolvedThreadTarget;
+        final conversationId = _currentConversationId;
+        if (_activeMode != ChatPageMode.agent ||
+            conversationId == null ||
+            target?.conversationId != conversationId ||
+            (_currentConversation?.agentId != 'na-cloud' &&
+                target?.agentId != 'na-cloud'))
+          continue;
+        final requestId = _conversationTargetRequestId;
+        final ownerRevision =
+            AssistsMessageService.conversationVisibilityRevision;
+        try {
+          final response = await AgentRuntimeService.readSession(
+            conversationId: conversationId,
+            agentId: 'na-cloud',
+            includeHistory: true,
+            conversationMode: ConversationMode.agent.storageValue,
+          );
+          if (!_isConversationTargetRequestCurrent(requestId) ||
+              ownerRevision !=
+                  AssistsMessageService.conversationVisibilityRevision ||
+              _activeMode != ChatPageMode.agent ||
+              _currentConversationId != conversationId)
+            continue;
+          _mergeNaHistoryResponse(conversationId, response);
+          _continueEarlierNaHistory(conversationId, response, requestId);
+        } catch (error) {
+          debugPrint('Na history refresh failed: $error');
+          // Native reconnection/resume emits a new invalidation. A history
+          // refresh must never retry or resubmit the user's prompt.
+        }
+      }
+    } finally {
+      _naHistoryRefresh = null;
+    }
+  }
+
+  void _mergeNaHistoryResponse(
+    int conversationId,
+    Map<String, dynamic> response, {
+    bool earlierPage = false,
+  }) {
+    if (!_remoteCodexThreadResponseHasTurns(response)) return;
+    final conversation =
+        _runtimeForMode(ChatPageMode.agent)?.conversation ??
+        _modeState(ChatPageMode.agent).currentConversation;
+    if (conversation?.id != conversationId ||
+        conversation?.agentId != 'na-cloud')
+      return;
+    final runtime = _runtimeCoordinator.ensureRuntime(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+      conversation: conversation,
+    );
+    final thread = response['thread'];
+    final cursorValue =
+        response['eventCursor'] ??
+        (thread is Map ? thread['eventCursor'] : null);
+    final cursor = cursorValue is num ? cursorValue.toInt() : null;
+    final key =
+        '${AssistsMessageService.conversationVisibilityRevision}:$conversationId';
+    final latestCursor = _naHistoryLatestCursors[key];
+    if (!earlierPage &&
+        cursor != null &&
+        latestCursor != null &&
+        cursor < latestCursor)
+      return;
+    if (!earlierPage && cursor != null) _naHistoryLatestCursors[key] = cursor;
+    final itemCursors = _naHistoryItemCursors.putIfAbsent(key, () => {});
+    if (!earlierPage && thread is Map) {
+      final updatedAt = _remoteCodexTimeValueMs(thread['updatedAt']);
+      if (updatedAt != null)
+        runtime.conversation = conversation!.copyWith(updatedAt: updatedAt);
+    }
+    final remoteActiveTurn = _remoteCodexActiveTurnIdFromThreadResponse(
+      response,
+    );
+    final snapshot =
+        _remoteCodexMessagesFromThreadResponse(
+              response,
+              active: remoteActiveTurn != null,
+              activeTurnId: remoteActiveTurn,
+            )
+            .where(
+              (message) =>
+                  cursor == null || (itemCursors[message.id] ?? -1) <= cursor,
+            )
+            .toList();
+    if (cursor != null) {
+      for (final message in snapshot) itemCursors[message.id] = cursor;
+    }
+    final merged = _mergeRemoteCodexSnapshotMessages(
+      snapshotMessages: snapshot,
+      existingMessages: List<ChatMessageModel>.of(runtime.messages),
+      activeTaskId: runtime.activeRunId,
+      isAiResponding: runtime.hasInFlightTask,
+      partialHistory: true,
+    );
+    _runtimeCoordinator.mergeNaHistoryMessages(
+      conversationId: conversationId,
+      messages: merged,
+    );
+    _runtimeCoordinator.schedulePersistRuntimeConversation(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+      persistMessages: true,
+      preserveActivityTime: true,
+    );
   }
 
   @override
@@ -865,6 +1067,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     unawaited(_handleDidPopNext());
     unawaited(_syncVisibleChatConversation());
     unawaited(_refreshAgentRuntimeStatus());
+    unawaited(_refreshVisibleNaHistory());
   }
 
   @override
@@ -1267,6 +1470,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       });
     }
     if (state == AppLifecycleState.resumed) {
+      unawaited(_refreshVisibleNaHistory());
       unawaited(_syncVisibleChatConversation());
       unawaited(AppUpdateService.refreshIfNeeded());
       unawaited(_loadNormalChatModelContext());

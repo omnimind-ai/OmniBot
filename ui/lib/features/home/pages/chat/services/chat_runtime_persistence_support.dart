@@ -7,6 +7,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
+    bool preserveActivityTime = false,
     bool allowEphemeralPersistence = false,
     bool allowHistoryRemoval = false,
     List<String>? removedMessageIds,
@@ -39,6 +40,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
             generateSummary: generateSummary,
             markComplete: markComplete,
             persistMessages: persistMessages,
+            preserveActivityTime: preserveActivityTime,
             allowHistoryRemoval: allowHistoryRemoval,
             removedMessageIds: removals,
           ),
@@ -68,6 +70,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
+    bool preserveActivityTime = false,
     bool allowHistoryRemoval = false,
     List<String>? removedMessageIds,
   }) async {
@@ -144,7 +147,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       summary: summary ?? baseConversation.summary,
       lastMessage: lastMessage,
       messageCount: messageCount,
-      updatedAt: now,
+      updatedAt: preserveActivityTime ? baseConversation.updatedAt : now,
     );
 
     await ConversationService.updateConversation(
@@ -214,6 +217,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
+    bool preserveActivityTime = false,
     Duration delay = const Duration(milliseconds: 350),
   }) {
     final key = _runtimeKey(conversationId: conversationId, mode: mode);
@@ -242,6 +246,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
               generateSummary: request.generateSummary,
               markComplete: request.markComplete,
               persistMessages: request.persistMessages,
+              preserveActivityTime: request.preserveActivityTime,
             ),
           );
         });
@@ -252,6 +257,8 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       generateSummary: nextGenerateSummary,
       markComplete: nextMarkComplete,
       persistMessages: nextPersistMessages,
+      preserveActivityTime:
+          preserveActivityTime && (previous?.preserveActivityTime ?? true),
     );
   }
 
@@ -274,6 +281,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       generateSummary: request.generateSummary,
       markComplete: request.markComplete,
       persistMessages: request.persistMessages,
+      preserveActivityTime: request.preserveActivityTime,
     );
   }
 
@@ -288,6 +296,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
         generateSummary: request.generateSummary,
         markComplete: request.markComplete,
         persistMessages: request.persistMessages,
+        preserveActivityTime: request.preserveActivityTime,
       );
     }
     // A timer is not the only source of persistence. ACP deltas and lifecycle
