@@ -636,7 +636,6 @@
   "openclawConnectedNoChallenge": "OpenClaw connected but no challenge received, check Gateway version",
   "openclawTimeout": "OpenClaw connection timeout, check service address and network",
   "openclawFailed": "OpenClaw connection failed: {error}",
-  "chatHistoryNoArchived": "No archived conversations",
   "chatHistoryExpandAll": "Expand all dates",
   "chatHistoryCollapseAll": "Collapse all dates",
   "chatHistoryMessageCount": "{count} messages",

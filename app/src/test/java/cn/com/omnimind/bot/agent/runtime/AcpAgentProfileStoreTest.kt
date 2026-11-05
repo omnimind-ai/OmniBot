@@ -16,6 +16,45 @@ class AcpAgentProfileStoreTest {
     val directory = TemporaryFolder()
 
     @Test
+    fun `changing language updates catalog labels while retaining agent configuration and bindings`() {
+        val context = acpProfileStoreTestContext(directory.root)
+        val languagePreferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        languagePreferences.edit().putString("flutter.language_option", "zhHans").commit()
+        val store = AcpAgentProfileStore(context)
+        val original = store.requireProfile(AcpAgentProfileStore.XIAOWAN_AGENT_ID)
+        assertEquals("小万", original.name)
+        val configured = store.save(original.copy(
+            command = "custom-xiaowan-acp",
+            arguments = listOf("--fixture"),
+            environment = mapOf("ACP_FIXTURE" to "retained"),
+            enabled = false,
+        ))
+        store.bindConversation(42, original.id)
+        store.bindSession("existing-session", original.id)
+        store.saveSessionConfiguration("existing-session", mapOf("model" to "existing-model"))
+        val preferences = context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE)
+        val storedState = preferences.all
+
+        languagePreferences.edit().putString("flutter.language_option", "en").commit()
+        val english = store.requireProfile(original.id)
+        assertEquals(configured.copy(
+            name = "Omnibot",
+            description = "Omnibot's built-in capabilities through the official ACP Agent interface",
+        ), english)
+        val englishPayload = (store.catalogPayload()["agents"] as List<*>)
+            .map { it as Map<*, *> }.single { it["id"] == original.id }
+        assertEquals(english.name, englishPayload["name"])
+        assertEquals(english.description, englishPayload["description"])
+
+        languagePreferences.edit().putString("flutter.language_option", "zhHans").commit()
+        assertEquals(configured, store.requireProfile(original.id))
+        assertEquals(original.id, store.agentIdForConversation(42))
+        assertEquals(original.id, store.agentIdForSession("existing-session"))
+        assertEquals(mapOf("model" to "existing-model"), store.sessionConfiguration("existing-session"))
+        assertEquals(storedState, preferences.all)
+    }
+
+    @Test
     fun `legacy global choice is removed without selecting a replacement or changing owners`() {
         val context = acpProfileStoreTestContext(directory.root)
         val preferences = context.getSharedPreferences("acp_agent_profiles", Context.MODE_PRIVATE)

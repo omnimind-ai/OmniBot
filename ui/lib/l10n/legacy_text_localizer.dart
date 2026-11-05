@@ -9,7 +9,7 @@ class LegacyTextLocalizer {
 
   static final Map<String, String> _exactEn = <String, String>{
     '宠物': 'Pet',
-    '小万': 'OmniAi',
+    '小万': 'Omnibot',
     '小万（OmniAi）': 'OmniAi',
     '默认的桌面悬浮窗宠物': 'Default desktop floating pet',
     '自定义宠物': 'Custom Pet',
@@ -471,7 +471,6 @@ class LegacyTextLocalizer {
     '特性': 'Features',
     '初次使用教程': 'First-use Tutorial',
     '重新查看应用首次启动时的引导页面': 'Replay the first-launch onboarding page',
-    '小万': 'Omnibot',
     '正在下载中，请稍候...': 'Downloading, please wait...',
     '开始下载...': 'Download started...',
     '图片已保存到相册': 'Image saved to gallery',

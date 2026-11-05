@@ -636,7 +636,6 @@
   "openclawConnectedNoChallenge": "OpenClaw 已连接但未收到 challenge，请检查 Gateway 版本",
   "openclawTimeout": "OpenClaw 连接超时，请检查服务地址和网络",
   "openclawFailed": "OpenClaw 连接失败：{error}",
-  "chatHistoryNoArchived": "暂无归档对话",
   "chatHistoryExpandAll": "展开全部日期",
   "chatHistoryCollapseAll": "折叠全部日期",
   "chatHistoryMessageCount": "{count} 条消息",
