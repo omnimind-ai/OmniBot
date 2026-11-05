@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import cn.com.omnimind.baselib.llm.ProviderModelOption
+import cn.com.omnimind.baselib.i18n.PromptLocale
 import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.AgentFinalResponse
@@ -30,9 +31,25 @@ import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
     @Test
+    fun `tool titles follow the context language through completion`() = runBlocking {
+        for ((locale, title) in listOf(
+            PromptLocale.ZH_CN to "写入文件",
+            PromptLocale.EN_US to "Write File",
+        )) {
+            val updates = mutableListOf<SessionUpdate>()
+            val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext(locale)) { updates += it }
+            bridge.onToolCallStart("write", "file_write", JsonObject(emptyMap()), "file")
+            bridge.onToolCallComplete("write", "file_write", ToolExecutionResult.Error("file_write", "denied"))
+
+            assertEquals(title, (updates.first() as SessionUpdate.ToolCall).title)
+            assertEquals(title, (updates.last() as SessionUpdate.ToolCallUpdate).title)
+        }
+    }
+
+    @Test
     fun `tool progress is output and never replaces model input`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge(updates::add)
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext(), updates::add)
         val input = Json.parseToJsonElement("""{"action":"shell.exec","arguments":{"command":"id","confirmed":false}}""").jsonObject
         bridge.onToolCallStart("permission-tool", "android_privileged_action", input, "command")
         repeat(3) { index ->
@@ -50,7 +67,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `streamed tool input updates one official card without claiming execution`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
         val call = cn.com.omnimind.bot.agent.AssistantToolCall(
             id = "html-stream",
             function = cn.com.omnimind.bot.agent.AssistantToolCallFunction("file_write", "{\"content\":\"<html>"),
@@ -189,7 +206,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `ordinary clarification is emitted as text without clarification metadata`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onClarifyRequired("需要确认目标文件", listOf("path"))
 
@@ -201,7 +218,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `declared runtime tool type is used for ACP kind`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart(
             "call-custom",
@@ -217,7 +234,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `legacy tool start without an ACP id is ignored`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("android_privileged_action", JsonObject(emptyMap()))
 
@@ -227,7 +244,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `replayed tool start with the same ACP id is idempotent`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("call-1", "android_privileged_action", JsonObject(emptyMap()))
         bridge.onToolCallStart("call-1", "android_privileged_action", JsonObject(emptyMap()))
@@ -244,7 +261,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `orphan tool completion does not invent an ACP call id`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallComplete("android_privileged_action", ToolExecutionResult.Error("android_privileged_action", "missing"))
 
@@ -254,7 +271,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `orphan tool progress does not invent an ACP call id`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallProgress("android_privileged_action", "执行中")
 
@@ -264,7 +281,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `permission waiting updates the existing ACP tool call`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart(
             "call-privileged",
@@ -326,7 +343,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `thinking start emits an empty ACP thought chunk for the existing card`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingStart()
 
@@ -340,7 +357,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `reasoning after a tool starts a new ACP thought segment`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingStart()
         bridge.onThinkingUpdate("先分析")
@@ -368,7 +385,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `tool boundary does not create an empty thought card before later reasoning`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingStart()
         bridge.onThinkingUpdate("工具前的思考")
@@ -395,7 +412,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `provider snapshot reset starts a new reasoning segment`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingStart()
         bridge.onThinkingUpdate("第一次请求的思考")
@@ -418,7 +435,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `provider snapshot reset does not fabricate a connection retry card`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onChatMessage("第一代答案", isFinal = false)
         bridge.onChatMessage("新一代答案", isFinal = true)
@@ -437,7 +454,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `legacy progress without tool id cannot cross-wire parallel same-name tools`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("call-1", "file_read", JsonObject(emptyMap()))
         bridge.onToolCallStart("call-2", "file_read", JsonObject(emptyMap()))
@@ -453,7 +470,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `legacy completion without tool id does not complete an ambiguous call`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("call-1", "file_read", JsonObject(emptyMap()))
         bridge.onToolCallStart("call-2", "file_read", JsonObject(emptyMap()))
@@ -470,7 +487,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `Xiaowan tool names are projected to official ACP kinds`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("read-1", "file_read", JsonObject(emptyMap()))
         bridge.onToolCallStart("edit-1", "apply_patch", JsonObject(emptyMap()))
@@ -489,7 +506,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `error recovery state is carried by the ACP assistant update`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onError("网络连接中断", retryable = true)
 
@@ -504,7 +521,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `partial error does not advertise approximate ACP continuation`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onChatMessage("半截答案", isFinal = false)
         bridge.onError("连接中断", retryable = true)
@@ -524,7 +541,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `ordinary clarification stays plain assistant text`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onClarifyRequired("是否继续执行？", listOf("arguments.confirmed"))
 
@@ -536,7 +553,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `automatic context compaction does not create a private ACP update`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onContextCompactionStateChanged(
             isCompacting = true,
@@ -550,7 +567,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `completion preserves the old turn usage footer data in ACP metadata`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onChatMessage("已完成", isFinal = false)
         bridge.onComplete(
@@ -613,7 +630,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `completion keeps output-only usage when prompt tokens are unavailable`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onComplete(
             AgentResult.Success(
@@ -633,7 +650,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `prompt token usage is emitted as the standard ACP usage update`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onPromptTokenUsageChanged(100, 128_000)
 
@@ -646,7 +663,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `completion projects legacy output state and restores empty output fallback`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onComplete(
             AgentResult.Success(
@@ -668,7 +685,7 @@ class XiaowanAcpPresentationBridgeTest {
     fun `final performance metadata survives deduplication of an identical text snapshot`() =
         runBlocking {
             val updates = mutableListOf<SessionUpdate>()
-            val bridge = XiaowanAcpEventBridge { updates += it }
+            val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
             bridge.onChatMessage("最终回答", isFinal = false)
             bridge.onChatMessage(
@@ -691,7 +708,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `structured thinking emits a display delta instead of raw JSON`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingUpdate(
             """{"task_description":"检查统一卡片","sub_tasks":["保留工具结果"],"preparation":"确认 ACP 流"}"""
@@ -705,7 +722,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `legacy thinking fields stay inside the official ACP thought chunk`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingUpdate(
             """{"task_description":"恢复旧能力","summary":"已完成分析","stage":"planning","phase":"prepare"}"""
@@ -722,7 +739,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `partial structured thinking streams readable deltas without raw json`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingUpdate("""{"task_description":"检查统一""")
         bridge.onThinkingUpdate(
@@ -742,7 +759,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `tool completion keeps structured terminal result in ACP raw output`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("call-1", "terminal", JsonObject(emptyMap()))
         bridge.onToolCallComplete(
@@ -772,7 +789,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `large tool result reaches the ACP update without a host truncation`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
         val stdout = "payload-" + "x".repeat(128 * 1024)
         val rawResult = JsonObject(mapOf("stdout" to JsonPrimitive(stdout))).toString()
 
@@ -803,7 +820,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `permission tool result keeps the existing permission card payload`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("call-permission", "vlm_task", JsonObject(emptyMap()))
         bridge.onToolCallComplete(
@@ -824,7 +841,7 @@ class XiaowanAcpPresentationBridgeTest {
     @Test
     fun `clarification tool result is terminal failure without a request channel`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onToolCallStart("call-confirm", "android_privileged_action", JsonObject(emptyMap()))
         bridge.onToolCallComplete(

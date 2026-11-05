@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
 import cn.com.omnimind.baselib.llm.ChatCompletionUsage
+import cn.com.omnimind.bot.agent.runtime.acpEventBridgeTestContext
 import cn.com.omnimind.baselib.llm.contentText
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -319,7 +320,7 @@ class AgentOrchestratorTest {
     private fun assertHtmlToolStream(outcome: String) = runBlocking {
         val updates = mutableListOf<com.agentclientprotocol.model.SessionUpdate>()
         val visible = kotlinx.coroutines.CompletableDeferred<Unit>()
-        val bridge = cn.com.omnimind.bot.agent.runtime.XiaowanAcpEventBridge {
+        val bridge = cn.com.omnimind.bot.agent.runtime.XiaowanAcpEventBridge(acpEventBridgeTestContext()) {
             updates += it
             if (it is com.agentclientprotocol.model.SessionUpdate.ToolCall) visible.complete(Unit)
         }

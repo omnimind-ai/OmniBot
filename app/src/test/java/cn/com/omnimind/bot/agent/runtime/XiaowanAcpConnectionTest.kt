@@ -93,7 +93,7 @@ class XiaowanAcpConnectionTest {
     @Test
     fun `explicit reasoning rounds use separate ACP thought messages`() = runBlocking {
         val updates = mutableListOf<SessionUpdate>()
-        val bridge = XiaowanAcpEventBridge { updates += it }
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
 
         bridge.onThinkingStart()
         bridge.onThinkingUpdate("先分析")

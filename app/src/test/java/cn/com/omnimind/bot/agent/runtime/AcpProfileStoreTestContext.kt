@@ -23,6 +23,7 @@ internal fun acpProfileStoreTestContext(directory: File): Context {
         File("src/main/assets", call.getArgument<String>(0)).inputStream()
     }
     `when`(context.applicationContext).thenReturn(context)
+    stubAcpTestResources(context)
     `when`(context.assets).thenReturn(assets)
     `when`(context.filesDir).thenReturn(directory)
     `when`(context.noBackupFilesDir).thenReturn(File(directory, "no-backup"))

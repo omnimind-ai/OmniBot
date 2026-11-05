@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent.runtime
 
 import android.content.Context
+import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import com.google.gson.Gson
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -20,13 +21,15 @@ internal object AcpAgentCatalog {
 
     fun load(context: Context): Catalog {
         val source = context.assets.open(ASSET_PATH).bufferedReader().use { it.readText() }
-        return parse(source) { assetPath ->
+        val isEnglish = AppLocaleManager.isEnglish(context)
+        return parse(source, isEnglish) { assetPath ->
             context.assets.open(assetPath).bufferedReader().use { it.readText() }
         }
     }
 
     internal fun parse(
         source: String,
+        isEnglishLocale: Boolean = false,
         assetReader: ((String) -> String)? = null,
     ): Catalog {
         val root = JsonParser.parseString(source).asJsonObject
@@ -40,10 +43,14 @@ internal object AcpAgentCatalog {
         require(entries.isNotEmpty()) { "ACP Agent catalog is empty." }
         val profiles = entries.map { entry ->
             val runtime = entry.getAsJsonObject("runtime")?.toRuntime(assetReader)
+            val baseName = entry.requiredString("name")
+            val baseDescription = entry.string("description").orEmpty()
+            val name = if (isEnglishLocale) entry.string("nameEn") ?: baseName else baseName
+            val description = if (isEnglishLocale) entry.string("descriptionEn") ?: baseDescription else baseDescription
             val profile = AcpAgentProfile(
                 id = entry.requiredString("id"),
-                name = entry.requiredString("name"),
-                description = entry.string("description").orEmpty(),
+                name = name,
+                description = description,
                 command = entry.requiredString("command"),
                 arguments = entry.getAsJsonArray("arguments")
                     ?.map { it.asString }

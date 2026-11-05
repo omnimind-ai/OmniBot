@@ -3,6 +3,8 @@ package cn.com.omnimind.bot.agent.runtime
 import android.content.Context
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import cn.com.omnimind.baselib.i18n.AppLocaleManager
+import cn.com.omnimind.baselib.i18n.PromptLocale
 import com.google.gson.Gson
 import com.google.gson.JsonParser
 import com.google.gson.reflect.TypeToken
@@ -157,7 +159,12 @@ internal data class AcpOfficialRuntime(
  */
 internal class AcpAgentProfileStore(context: Context) {
     private val appContext = context.applicationContext
-    private val catalog = AcpAgentCatalog.load(appContext)
+    private val localizedCatalogs = mutableMapOf<PromptLocale, AcpAgentCatalog.Catalog>()
+    private val catalog: AcpAgentCatalog.Catalog
+        get() = synchronized(this) {
+            val locale = AppLocaleManager.resolvePromptLocale(appContext)
+            localizedCatalogs.getOrPut(locale) { AcpAgentCatalog.load(appContext) }
+        }
     private val preferences = context.applicationContext.getSharedPreferences(
         PREFERENCES_NAME,
         Context.MODE_PRIVATE

@@ -22,7 +22,7 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginBottom="60dp"
-        android:text="小万"
+        android:text="@string/launcher_app_name"
         android:textSize="32sp"
         android:textColor="#F5F7FA"
         android:textStyle="bold"
@@ -41,7 +41,7 @@
         android:id="@+id/tv_loading"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="正在初始化..."
+        android:text="@string/launcher_initializing"
         android:textSize="14sp"
         android:textColor="#A7ADB5"
         android:fontFamily="sans-serif" />

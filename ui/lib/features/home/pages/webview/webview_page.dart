@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:dio/dio.dart';
 import 'package:gal/gal.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
 import 'package:webview_flutter/webview_flutter.dart';
@@ -42,7 +43,7 @@ class _WebViewPageState extends State<WebViewPage> {
   bool _isDownloading = false;
 
   /// 保存到的相册名称
-  static const String _albumName = '小万';
+  static String get _albumName => LegacyTextLocalizer.localize('小万');
 
   /// 可下载的文件扩展名
   static const _downloadableExtensions = [
@@ -191,7 +192,7 @@ class _WebViewPageState extends State<WebViewPage> {
   /// 处理文件下载
   Future<void> _handleDownload(String url) async {
     if (_isDownloading) {
-      showToast('正在下载中，请稍候...', type: ToastType.warning);
+      showToast(LegacyTextLocalizer.localize('正在下载中，请稍候...'), type: ToastType.warning);
       return;
     }
 
@@ -200,7 +201,7 @@ class _WebViewPageState extends State<WebViewPage> {
     });
 
     try {
-      showToast('开始下载...', type: ToastType.info);
+      showToast(LegacyTextLocalizer.localize('开始下载...'), type: ToastType.info);
 
       final dio = Dio();
       final fileName = _getFileNameFromUrl(url);
@@ -224,21 +225,21 @@ class _WebViewPageState extends State<WebViewPage> {
       // 如果是图片，保存到相册
       if (_isImageUrl(url)) {
         await Gal.putImage(savePath, album: _albumName);
-        showToast('图片已保存到相册', type: ToastType.success);
+        showToast(LegacyTextLocalizer.localize('图片已保存到相册'), type: ToastType.success);
       } else {
         // 非图片文件，移动到下载目录
         final downloadDir = Directory('/storage/emulated/0/Download');
         if (await downloadDir.exists()) {
           final destPath = '${downloadDir.path}/$fileName';
           await File(savePath).copy(destPath);
-          showToast('文件已保存到下载目录', type: ToastType.success);
+          showToast(LegacyTextLocalizer.localize('文件已保存到下载目录'), type: ToastType.success);
         } else {
-          showToast('文件已下载: $fileName', type: ToastType.success);
+          showToast(LegacyTextLocalizer.localize('文件已下载：$fileName'), type: ToastType.success);
         }
       }
     } catch (e) {
       debugPrint('下载失败: $e');
-      showToast('下载失败', type: ToastType.error);
+      showToast(LegacyTextLocalizer.localize('下载失败'), type: ToastType.error);
     } finally {
       setState(() {
         _isDownloading = false;
@@ -290,13 +291,13 @@ class _WebViewPageState extends State<WebViewPage> {
         appBar: widget.showAppBar
             ? CommonAppBar(
                 primary: true,
-                title: widget.title ?? '网页浏览',
+                title: widget.title ?? LegacyTextLocalizer.localize('网页浏览'),
                 onBackPressed: _handleAppBarBackPress,
                 trailing: widget.showRefreshButton
                     ? IconButton(
                         icon: const Icon(Icons.refresh),
                         onPressed: _reload,
-                        tooltip: '刷新',
+                        tooltip: LegacyTextLocalizer.localize('刷新'),
                       )
                     : null,
               )
@@ -344,7 +345,7 @@ class _WebViewPageState extends State<WebViewPage> {
             Icon(Icons.error_outline, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
             Text(
-              '页面加载失败',
+              LegacyTextLocalizer.localize('页面加载失败'),
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -353,7 +354,7 @@ class _WebViewPageState extends State<WebViewPage> {
             ),
             const SizedBox(height: 8),
             Text(
-              _errorMessage ?? '未知错误',
+              _errorMessage ?? LegacyTextLocalizer.localize('未知错误'),
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 14, color: Colors.grey[600]),
             ),
@@ -361,7 +362,7 @@ class _WebViewPageState extends State<WebViewPage> {
             ElevatedButton.icon(
               onPressed: _reload,
               icon: const Icon(Icons.refresh),
-              label: const Text('重新加载'),
+              label: Text(LegacyTextLocalizer.localize('重新加载')),
             ),
           ],
         ),

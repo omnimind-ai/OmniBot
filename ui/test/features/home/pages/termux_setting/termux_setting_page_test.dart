@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:ui/features/home/pages/termux_setting/termux_setting_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/theme/app_theme.dart';
@@ -13,6 +14,8 @@ import 'package:ui/widgets/omni_segmented_slider.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  setUp(() => LegacyTextLocalizer.setResolvedLocale(const Locale('zh')));
+  tearDown(LegacyTextLocalizer.clearResolvedLocale);
 
   const terminalChannel = MethodChannel(
     'cn.com.omnimind.bot/SpecialPermissionEvent',

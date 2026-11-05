@@ -3427,6 +3427,198 @@ abstract class AppLocalizations {
   /// In zh, this message translates to:
   /// **'好好和今天说晚安～'**
   String get homeDrawerLateNightSub2;
+
+  /// No description provided for @dialogCancel.
+  ///
+  /// In zh, this message translates to:
+  /// **'取消'**
+  String get dialogCancel;
+
+  /// No description provided for @dialogConfirm.
+  ///
+  /// In zh, this message translates to:
+  /// **'确认'**
+  String get dialogConfirm;
+
+  /// No description provided for @dialogOk.
+  ///
+  /// In zh, this message translates to:
+  /// **'确定'**
+  String get dialogOk;
+
+  /// No description provided for @dialogLoading.
+  ///
+  /// In zh, this message translates to:
+  /// **'加载中'**
+  String get dialogLoading;
+
+  /// No description provided for @dialogPleaseWait.
+  ///
+  /// In zh, this message translates to:
+  /// **'请稍候...'**
+  String get dialogPleaseWait;
+
+  /// No description provided for @webviewDownloading.
+  ///
+  /// In zh, this message translates to:
+  /// **'正在下载中，请稍候...'**
+  String get webviewDownloading;
+
+  /// No description provided for @webviewDownloadStarted.
+  ///
+  /// In zh, this message translates to:
+  /// **'开始下载...'**
+  String get webviewDownloadStarted;
+
+  /// No description provided for @webviewImageSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'图片已保存到相册'**
+  String get webviewImageSaved;
+
+  /// No description provided for @webviewFileSavedDownloads.
+  ///
+  /// In zh, this message translates to:
+  /// **'文件已保存到下载目录'**
+  String get webviewFileSavedDownloads;
+
+  /// No description provided for @webviewFileSaved.
+  ///
+  /// In zh, this message translates to:
+  /// **'文件已下载：{fileName}'**
+  String webviewFileSaved(Object fileName);
+
+  /// No description provided for @webviewDownloadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'下载失败'**
+  String get webviewDownloadFailed;
+
+  /// No description provided for @webviewBrowse.
+  ///
+  /// In zh, this message translates to:
+  /// **'网页浏览'**
+  String get webviewBrowse;
+
+  /// No description provided for @webviewRefresh.
+  ///
+  /// In zh, this message translates to:
+  /// **'刷新'**
+  String get webviewRefresh;
+
+  /// No description provided for @webviewLoadFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'页面加载失败'**
+  String get webviewLoadFailed;
+
+  /// No description provided for @webviewUnknownError.
+  ///
+  /// In zh, this message translates to:
+  /// **'未知错误'**
+  String get webviewUnknownError;
+
+  /// No description provided for @webviewReload.
+  ///
+  /// In zh, this message translates to:
+  /// **'重新加载'**
+  String get webviewReload;
+
+  /// No description provided for @openclawBaseUrlEmpty.
+  ///
+  /// In zh, this message translates to:
+  /// **'OpenClaw Base URL 为空，请先配置'**
+  String get openclawBaseUrlEmpty;
+
+  /// No description provided for @openclawConnected.
+  ///
+  /// In zh, this message translates to:
+  /// **'OpenClaw 连接成功，Gateway 协议正常'**
+  String get openclawConnected;
+
+  /// No description provided for @openclawConnectedNoChallenge.
+  ///
+  /// In zh, this message translates to:
+  /// **'OpenClaw 已连接但未收到 challenge，请检查 Gateway 版本'**
+  String get openclawConnectedNoChallenge;
+
+  /// No description provided for @openclawTimeout.
+  ///
+  /// In zh, this message translates to:
+  /// **'OpenClaw 连接超时，请检查服务地址和网络'**
+  String get openclawTimeout;
+
+  /// No description provided for @openclawFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'OpenClaw 连接失败：{error}'**
+  String openclawFailed(Object error);
+
+  /// No description provided for @chatHistoryExpandAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'展开全部日期'**
+  String get chatHistoryExpandAll;
+
+  /// No description provided for @chatHistoryCollapseAll.
+  ///
+  /// In zh, this message translates to:
+  /// **'折叠全部日期'**
+  String get chatHistoryCollapseAll;
+
+  /// No description provided for @chatHistoryMessageCount.
+  ///
+  /// In zh, this message translates to:
+  /// **'{count} 条消息'**
+  String chatHistoryMessageCount(Object count);
+
+  /// No description provided for @chatHistoryUntitled.
+  ///
+  /// In zh, this message translates to:
+  /// **'未命名对话'**
+  String get chatHistoryUntitled;
+
+  /// No description provided for @authContinueTaskRequires.
+  ///
+  /// In zh, this message translates to:
+  /// **'继续任务仅要求：{permissions}'**
+  String authContinueTaskRequires(Object permissions);
+
+  /// No description provided for @authSetPermissions.
+  ///
+  /// In zh, this message translates to:
+  /// **'设置权限'**
+  String get authSetPermissions;
+
+  /// No description provided for @authPermissionsSafe.
+  ///
+  /// In zh, this message translates to:
+  /// **'请放心，这些权限你随时可以收回'**
+  String get authPermissionsSafe;
+
+  /// No description provided for @authCheckingPermissions.
+  ///
+  /// In zh, this message translates to:
+  /// **'权限检查中...'**
+  String get authCheckingPermissions;
+
+  /// No description provided for @authContinueTask.
+  ///
+  /// In zh, this message translates to:
+  /// **'继续任务'**
+  String get authContinueTask;
+
+  /// No description provided for @permissionAccessibility.
+  ///
+  /// In zh, this message translates to:
+  /// **'无障碍权限'**
+  String get permissionAccessibility;
+
+  /// No description provided for @permissionAccessibilityAndroidGui.
+  ///
+  /// In zh, this message translates to:
+  /// **'Android GUI 无障碍权限'**
+  String get permissionAccessibilityAndroidGui;
 }
 
 class _AppLocalizationsDelegate

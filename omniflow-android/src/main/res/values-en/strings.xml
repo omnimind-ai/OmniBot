@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="omniflow_phase_reasoning">Reasoning</string>
+    <string name="omniflow_phase_automatic">Executing</string>
+    <string name="omniflow_paused_label">Paused, manual control available</string>
+    <string name="omniflow_action_takeover">Take Over</string>
+    <string name="omniflow_action_stop">Stop</string>
+    <string name="omniflow_action_complete">Complete</string>
+    <string name="omniflow_action_continue">Continue</string>
+    <string name="omniflow_stopping">Stopping</string>
+</resources>

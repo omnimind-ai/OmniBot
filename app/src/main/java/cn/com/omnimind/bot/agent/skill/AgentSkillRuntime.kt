@@ -2,6 +2,7 @@ package cn.com.omnimind.bot.agent
 
 import android.content.Context
 import android.content.res.AssetManager
+import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.bot.terminal.EmbeddedTerminalRuntime
 import cn.com.omnimind.bot.termux.TermuxCommandBuilder
 import cn.com.omnimind.bot.update.ApkDownloadSource
@@ -32,6 +33,7 @@ private data class BuiltinSkillAsset(
     val id: String = "",
     val name: String = "",
     val description: String = "",
+    val descriptionEn: String? = null,
     val assetPath: String = "",
     val hasScripts: Boolean = false,
     val hasReferences: Boolean = false,
@@ -105,6 +107,7 @@ private class BuiltinSkillAssetStore(
     private val gson = Gson()
 
     fun listBuiltins(): List<BuiltinSkillAsset> {
+        val isEnglish = AppLocaleManager.isEnglish(context)
         return runCatching {
             context.assets.open(BUILTIN_SKILL_MANIFEST_ASSET).bufferedReader().use { reader ->
                 gson.fromJson(reader, BuiltinSkillManifest::class.java)?.skills.orEmpty()
@@ -113,6 +116,12 @@ private class BuiltinSkillAssetStore(
             emptyList()
         }.filter { skill ->
             skill.id.isNotBlank() && skill.assetPath.isNotBlank()
+        }.map { skill ->
+            if (isEnglish && !skill.descriptionEn.isNullOrBlank()) {
+                skill.copy(description = skill.descriptionEn)
+            } else {
+                skill
+            }
         }
     }
 

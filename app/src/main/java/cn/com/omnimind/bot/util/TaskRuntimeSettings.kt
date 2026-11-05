@@ -213,7 +213,7 @@ object TaskRuntimeSettings {
         val normalizedMode = normalizeConversationMode(conversationMode)
         val petHintShown = showOverlayHint(
             context = context,
-            message = compactOverlayCompletionText(title, message),
+            message = compactOverlayCompletionText(context, title, message),
             conversationId = conversationId,
             conversationMode = normalizedMode
         )
@@ -470,7 +470,7 @@ object TaskRuntimeSettings {
             normalizeConversationMode(leftConversationMode) == normalizeConversationMode(rightConversationMode)
     }
 
-    private fun compactOverlayCompletionText(title: String, message: String): String {
+    private fun compactOverlayCompletionText(context: Context, title: String, message: String): String {
         val cleanedMessage = sanitizeCompletionText(message)
         val cleanedTitle = sanitizeCompletionText(title)
         val text = when {
@@ -479,7 +479,7 @@ object TaskRuntimeSettings {
             cleanedTitle.isNotBlank() && cleanedMessage.isNotBlank() -> "$cleanedTitle：$cleanedMessage"
             cleanedTitle.isNotBlank() -> cleanedTitle
             cleanedMessage.isNotBlank() -> cleanedMessage
-            else -> "任务已完成"
+            else -> context.getString(R.string.task_completed_default)
         }
         return text.limitForOverlay()
     }

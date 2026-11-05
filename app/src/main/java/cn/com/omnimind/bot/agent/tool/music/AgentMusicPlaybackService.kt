@@ -668,13 +668,14 @@ class AgentMusicPlaybackService : Service() {
             snapshot.positionMs > 0L -> formatDuration(snapshot.positionMs)
             else -> ""
         }
+        val localizedContext = cn.com.omnimind.baselib.i18n.AppLocaleManager.localizedContext(this)
         val stateLabel = when (snapshot.state) {
-            AgentMusicPlaybackStateStore.STATE_PREPARING -> "准备中"
-            AgentMusicPlaybackStateStore.STATE_PLAYING -> "播放中"
-            AgentMusicPlaybackStateStore.STATE_PAUSED -> "已暂停"
-            AgentMusicPlaybackStateStore.STATE_COMPLETED -> "已完成"
-            AgentMusicPlaybackStateStore.STATE_ERROR -> "播放失败"
-            else -> "已停止"
+            AgentMusicPlaybackStateStore.STATE_PREPARING -> localizedContext.getString(R.string.music_state_preparing)
+            AgentMusicPlaybackStateStore.STATE_PLAYING -> localizedContext.getString(R.string.music_state_playing)
+            AgentMusicPlaybackStateStore.STATE_PAUSED -> localizedContext.getString(R.string.music_state_paused)
+            AgentMusicPlaybackStateStore.STATE_COMPLETED -> localizedContext.getString(R.string.music_state_completed)
+            AgentMusicPlaybackStateStore.STATE_ERROR -> localizedContext.getString(R.string.music_state_error)
+            else -> localizedContext.getString(R.string.music_state_stopped)
         }
         return listOf(stateLabel, progress)
             .filter { it.isNotBlank() }
