@@ -1,4 +1,11 @@
 <resources>
+    <string name="system_install_notification_channel">System installation</string>
+    <string name="system_install_notification_channel_description">Background system and base tools installation progress</string>
+    <string name="system_install_notification_running">Installing system</string>
+    <string name="system_install_notification_preparing">Preparing the system and base tools</string>
+    <string name="system_install_notification_failed">System installation incomplete</string>
+    <string name="system_install_notification_retry_hint">Tap to retry</string>
+    <string name="system_install_notification_retry">Retry installation</string>
     <string name="app_name">Omnibot</string>
     <string name="omni_app_name">Omnibot</string>
     <string name="quick_log_widget_title">Memory</string>

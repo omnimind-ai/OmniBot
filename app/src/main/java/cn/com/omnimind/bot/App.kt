@@ -173,9 +173,8 @@ class App : BaseApplication() {
             // local MCP listener or background MCP work at all.
             McpServerManager.stopServer()
         }
-        // Terminal entry points prepare their own runtime before creating a
-        // session. Avoid competing with the first frame (or a background-only
-        // process start) to install/check an environment that may not be used.
+        // MainActivity starts the shared environment installer after Flutter's
+        // first frame. Background-only process starts do not trigger setup.
         OmniLog.d(
             "AppStartup",
             "App onCreate total cost: ${SystemClock.elapsedRealtime() - appStartTime}ms"

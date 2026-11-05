@@ -88,6 +88,7 @@ class OmniRootToolbar extends StatelessWidget implements PreferredSizeWidget {
       closeButtonKey: search?.closeButtonKey,
       searchFieldKey: search?.fieldKey,
       clearButtonKey: search?.clearButtonKey,
+      showClearButton: search?.showClearButton ?? true,
       trailingSearchWidget: search?.trailing,
     ),
   );
@@ -109,6 +110,7 @@ class OmniRootToolbarSearch {
     this.closeButtonKey,
     this.fieldKey,
     this.clearButtonKey,
+    this.showClearButton = true,
     this.trailing,
   });
 
@@ -125,5 +127,6 @@ class OmniRootToolbarSearch {
   final Key? closeButtonKey;
   final Key? fieldKey;
   final Key? clearButtonKey;
+  final bool showClearButton;
   final Widget? trailing;
 }

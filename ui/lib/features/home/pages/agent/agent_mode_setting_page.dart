@@ -19,6 +19,7 @@ import 'package:ui/widgets/agent_brand_icon.dart';
 import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:ui/widgets/omni_root_toolbar.dart';
 import 'package:ui/widgets/omni_segmented_slider.dart';
+import 'package:ui/widgets/navigation/open_container.dart';
 import 'package:ui/widgets/settings_detail_sheet.dart';
 import 'package:ui/widgets/settings_ui.dart';
 
@@ -685,20 +686,29 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
     }
   }
 
-  Future<void> _openAgentConfig(AcpAgentProfile agent) async {
-    if (_packageOperations.containsKey(agent.id)) return;
+  Future<Object?> _openAgentConfig(
+    AcpAgentProfile agent,
+    OmniContainerSource source,
+  ) async {
+    if (_packageOperations.containsKey(agent.id)) return null;
+    final extra = {omniContainerExtraKey: source};
     if (agent.id == 'na-cloud') {
-      await GoRouterManager.pushForResult<Object?>('/home/na/personal');
+      await GoRouterManager.pushForResult<Object?>(
+        '/home/na/personal',
+        extra: extra,
+      );
       if (mounted) await _load();
-      return;
+      return null;
     }
-    if (!agent.configurationAvailable) return;
+    if (!agent.configurationAvailable) return null;
     final changed = await GoRouterManager.pushForResult<bool>(
       '/home/agent_config/${Uri.encodeComponent(agent.id)}',
+      extra: extra,
     );
     if (changed == true && mounted) {
       await _load();
     }
+    return changed;
   }
 
   String _pluginActionKey(OmniPluginActionItem action) =>
@@ -763,6 +773,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
             searchButtonKey: const Key('agent-search-button'),
             closeButtonKey: const Key('agent-close-search'),
             fieldKey: const Key('agent-contact-search'),
+            showClearButton: false,
           ),
           actions: [
             IconButton(
@@ -904,7 +915,14 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
     title: title,
     translateTitle: false,
     dividerIndent: 76,
-    children: [for (final agent in agents) _buildAgentTile(agent)],
+    children: [
+      for (var index = 0; index < agents.length; index++)
+        _buildAgentTile(
+          agents[index],
+          first: index == 0,
+          last: index == agents.length - 1,
+        ),
+    ],
   );
 
   Widget _buildGeneralSettings() => OmniSettingsGroup(
@@ -944,7 +962,11 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
     ],
   );
 
-  Widget _buildAgentTile(AcpAgentProfile agent) {
+  Widget _buildAgentTile(
+    AcpAgentProfile agent, {
+    required bool first,
+    required bool last,
+  }) {
     final palette = context.omniPalette;
     final status = _statusPresentation(
       agent.status,
@@ -979,7 +1001,7 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
         agent.status != 'online' ||
         agent.packageVersion?.updateAvailable == true ||
         agent.packageVersion?.error != null;
-    return _AgentContactTile(
+    Widget buildTile(VoidCallback? onTap) => _AgentContactTile(
       tileKey: Key('agent-config-${agent.id}'),
       leading: AgentBrandIcon(
         agentId: agent.id,
@@ -1026,9 +1048,26 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
           : null,
       navigationKey: Key('agent-navigation-${agent.id}'),
       busy: busy,
-      onTap: (agent.id != 'na-cloud' && !agent.configurationAvailable) || busy
-          ? null
-          : () => _openAgentConfig(agent),
+      onTap: onTap,
+    );
+    if ((agent.id != 'na-cloud' && !agent.configurationAvailable) || busy) {
+      return buildTile(null);
+    }
+    final rowShape = RoundedRectangleBorder(
+      borderRadius: BorderRadius.vertical(
+        top: first ? const Radius.circular(22) : Radius.zero,
+        bottom: last ? const Radius.circular(22) : Radius.zero,
+      ),
+    );
+    return OmniOpenContainer(
+      key: ValueKey('agent-open-${agent.id}'),
+      closedBuilder: (rowContext, open) => Material(
+        color: rowContext.omniPalette.surfacePrimary,
+        shape: rowShape,
+        clipBehavior: Clip.antiAlias,
+        child: buildTile(open),
+      ),
+      onOpen: (source) => _openAgentConfig(agent, source),
     );
   }
 

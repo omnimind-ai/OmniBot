@@ -9,7 +9,7 @@ import '../onboarding_l10n.dart';
 import '../onboarding_permission_controller.dart';
 import '../widgets/onboarding_page_scaffold.dart';
 
-/// Step 4: grant the app permissions that power floating reminders,
+/// Grant the app permissions that power floating reminders,
 /// background execution, and app detection.
 class OnboardingPermissionsPage extends StatelessWidget {
   const OnboardingPermissionsPage({

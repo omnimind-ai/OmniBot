@@ -18,6 +18,7 @@ import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/liquid_glass_controller.dart';
 import 'package:ui/widgets/flclash/liquid_glass.dart';
 import 'package:ui/widgets/startup_account_prompt.dart';
+import 'package:ui/widgets/startup_environment_notice.dart';
 import 'package:ui/widgets/omnibot_error_widget.dart';
 
 import 'core/router/go_router_manager.dart';
@@ -218,9 +219,11 @@ class _MyAppState extends ConsumerState<MyApp> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    StartupAccountPrompt(
-                      routeListenable: _router.routeInformationProvider,
-                      child: child ?? const SizedBox.shrink(),
+                    StartupEnvironmentNotice(
+                      child: StartupAccountPrompt(
+                        routeListenable: _router.routeInformationProvider,
+                        child: child ?? const SizedBox.shrink(),
+                      ),
                     ),
                   ],
                 ),

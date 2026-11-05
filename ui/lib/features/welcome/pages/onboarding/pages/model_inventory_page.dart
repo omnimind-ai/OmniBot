@@ -9,7 +9,7 @@ import '../onboarding_provider_controller.dart';
 import '../widgets/onboarding_common.dart';
 import '../widgets/onboarding_page_scaffold.dart';
 
-/// Step 6: review the fetched models and optionally add one manually.
+/// Review the fetched models and optionally add one manually.
 class OnboardingModelInventoryPage extends StatelessWidget {
   const OnboardingModelInventoryPage({
     super.key,

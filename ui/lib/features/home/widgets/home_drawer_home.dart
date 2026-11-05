@@ -43,14 +43,14 @@ extension _HomeDrawerHome on HomeDrawerState {
       setState(() {
         _homeAgentCatalog = catalog;
         final filters = _homeFilters;
-        // Refresh the name as well as availability without resetting a valid
-        // selection. An unavailable Agent falls back to the first usable one.
+        // Preserve the explicit filter owner across catalog refreshes. A stale
+        // selection returns to Xiaowan, never whichever Agent probes first.
         _homeFilter =
             filters
                 .where((filter) => filter.id == _homeFilter.id)
                 .firstOrNull ??
             filters.firstWhere(
-              (filter) => filter.agentId != null,
+              (filter) => filter.id == _HomeConversationFilter.xiaowan.id,
               orElse: () => _HomeConversationFilter.chat,
             );
       });
@@ -67,8 +67,9 @@ extension _HomeDrawerHome on HomeDrawerState {
         .where(
           (profile) =>
               profile.enabled &&
-              profile.installed == true &&
-              profile.status.trim().toLowerCase() != 'missing',
+              (profile.id == _HomeConversationFilter.xiaowan.id ||
+                  (profile.installed == true &&
+                      profile.status.trim().toLowerCase() != 'missing')),
         )
         .toList(growable: false);
     return [

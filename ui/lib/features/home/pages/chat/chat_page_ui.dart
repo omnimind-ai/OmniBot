@@ -1026,54 +1026,64 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                     AppBackgroundTextColorMode.custom
             ? context.omniPalette.textSecondary
             : visualProfile.secondaryTextColor,
-        child: ChatMessageList(
-          messages: resolvedMessages,
-          hideToolCards: chatOnly,
-          activeAgentTurnIds: activeAgentTurnIds,
-          useAcpPresentation: useAcpPresentation,
-          activeAcpAgentId: activeAcpAgentId,
-          onRetryAgentMessage: this._retryFailedAgentTurn,
-          showEmptyGreeting:
-              homeGreetingSettings.greetingEnabled &&
-              (_resolvedThreadTarget ?? widget.threadTarget)
-                      ?.isNewConversation ==
-                  true,
-          emptyGreetingQuickPrompts: homeGreetingSettings.quickPrompts,
-          emptyGreetingPinnedQuickPromptIds:
-              homeGreetingSettings.pinnedQuickPromptIds,
-          onQuickPromptSelected: _applyHomeQuickPrompt,
-          emptyGreetingAgentName: mode == ChatPageMode.agent
-              ? _activeAcpAgentDisplayName
-              : null,
-          emptyGreetingAgentWorkspaceName: mode == ChatPageMode.agent
-              ? _remoteCodexWorkspaceNameForGreeting()
-              : null,
-          onEmptyGreetingAgentWorkspaceTap: mode == ChatPageMode.agent
-              ? () => unawaited(_openRemoteCodexWorkspacePicker())
-              : null,
-          scrollController: _scrollControllerForMode(mode),
-          navigator: _modeState(mode).messageListNavigator,
-          onInternalInputFocusChanged: (hasFocus) {
-            _handleMessageListInputFocusChanged(mode, hasFocus);
-          },
-          onBeforeTaskExecute: handleBeforeTaskExecute,
-          onCancelTask: _onCancelTaskFromCard,
-          onRequestAuthorize: mode == ChatPageMode.openclaw
-              ? null
-              : _requestAuthorizeForExecution,
-          onUserMessageLongPressStart: switch (mode) {
-            ChatPageMode.normal => this._handleUserMessageLongPressStart,
-            ChatPageMode.agent => this._handleUserMessageLongPressStart,
-            ChatPageMode.openclaw => null,
-          },
-          onLatestUserMessageEditTap: mode == ChatPageMode.openclaw
-              ? null
-              : this._startEditingLatestUserMessage,
-          onLoadMore: loadMoreMessages,
-          hasMore: hasMoreMessages,
-          visualProfile: visualProfile,
-          appearanceConfig: appearanceConfig,
-        ),
+        child: _isWaitingForXiaowanEnvironment
+            ? ChatEnvironmentPreparation(
+                preparation: _terminalPreparation,
+                textColor:
+                    !appearanceConfig.isActive &&
+                        appearanceConfig.chatTextColorMode !=
+                            AppBackgroundTextColorMode.custom
+                    ? context.omniPalette.textSecondary
+                    : visualProfile.secondaryTextColor,
+              )
+            : ChatMessageList(
+                messages: resolvedMessages,
+                hideToolCards: chatOnly,
+                activeAgentTurnIds: activeAgentTurnIds,
+                useAcpPresentation: useAcpPresentation,
+                activeAcpAgentId: activeAcpAgentId,
+                onRetryAgentMessage: this._retryFailedAgentTurn,
+                showEmptyGreeting:
+                    homeGreetingSettings.greetingEnabled &&
+                    (_resolvedThreadTarget ?? widget.threadTarget)
+                            ?.isNewConversation ==
+                        true,
+                emptyGreetingQuickPrompts: homeGreetingSettings.quickPrompts,
+                emptyGreetingPinnedQuickPromptIds:
+                    homeGreetingSettings.pinnedQuickPromptIds,
+                onQuickPromptSelected: _applyHomeQuickPrompt,
+                emptyGreetingAgentName: mode == ChatPageMode.agent
+                    ? _activeAcpAgentDisplayName
+                    : null,
+                emptyGreetingAgentWorkspaceName: mode == ChatPageMode.agent
+                    ? _remoteCodexWorkspaceNameForGreeting()
+                    : null,
+                onEmptyGreetingAgentWorkspaceTap: mode == ChatPageMode.agent
+                    ? () => unawaited(_openRemoteCodexWorkspacePicker())
+                    : null,
+                scrollController: _scrollControllerForMode(mode),
+                navigator: _modeState(mode).messageListNavigator,
+                onInternalInputFocusChanged: (hasFocus) {
+                  _handleMessageListInputFocusChanged(mode, hasFocus);
+                },
+                onBeforeTaskExecute: handleBeforeTaskExecute,
+                onCancelTask: _onCancelTaskFromCard,
+                onRequestAuthorize: mode == ChatPageMode.openclaw
+                    ? null
+                    : _requestAuthorizeForExecution,
+                onUserMessageLongPressStart: switch (mode) {
+                  ChatPageMode.normal => this._handleUserMessageLongPressStart,
+                  ChatPageMode.agent => this._handleUserMessageLongPressStart,
+                  ChatPageMode.openclaw => null,
+                },
+                onLatestUserMessageEditTap: mode == ChatPageMode.openclaw
+                    ? null
+                    : this._startEditingLatestUserMessage,
+                onLoadMore: loadMoreMessages,
+                hasMore: hasMoreMessages,
+                visualProfile: visualProfile,
+                appearanceConfig: appearanceConfig,
+              ),
       ),
     );
   }

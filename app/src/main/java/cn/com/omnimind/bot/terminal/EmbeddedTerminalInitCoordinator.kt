@@ -99,8 +99,10 @@ object EmbeddedTerminalInitCoordinator {
 
     fun startInBackground(context: Context): Boolean {
         val deferred = synchronized(stateLock) {
-            val current = activeRun?.takeIf { !it.isCompleted }
-            if (current != null) {
+            // Activity recreation, cached engines and repeated display callbacks
+            // must not restart setup or erase a failure before it can be shown.
+            // Explicit retries continue to use prepare(), the same run owner.
+            if (embeddedTerminalInitState.startedAt != 0L || activeRun?.isCompleted == false) {
                 return false
             }
             CompletableDeferred<TermuxLiveEnvironmentResult>().also {
@@ -109,6 +111,7 @@ object EmbeddedTerminalInitCoordinator {
             }
         }
         val appContext = context.applicationContext
+        EmbeddedTerminalInstallService.observe(appContext)
         val job = workerScope.launch {
             runPreparation(appContext, deferred)
         }
@@ -136,6 +139,7 @@ object EmbeddedTerminalInitCoordinator {
             }
         }
         if (shouldStartNow) {
+            EmbeddedTerminalInstallService.observe(appContext)
             val job = workerScope.launch {
                 runPreparation(appContext, deferred, selectedPackageIds)
             }
@@ -168,6 +172,7 @@ object EmbeddedTerminalInitCoordinator {
                 resetEmbeddedTerminalInitStateLocked()
             }
         }
+        EmbeddedTerminalInstallService.observe(appContext)
         val job = workerScope.launch {
             runDistributionPreparation(appContext, distribution, deferred)
         }
@@ -254,7 +259,14 @@ object EmbeddedTerminalInitCoordinator {
                 success = false,
                 finalMessage = failureMessage
             )
-            deferred.completeExceptionally(error)
+            deferred.complete(
+                TermuxLiveEnvironmentResult(
+                    success = false,
+                    wrapperReady = false,
+                    sharedStorageReady = false,
+                    message = failureMessage
+                )
+            )
         } finally {
             synchronized(stateLock) {
                 if (activeRun === deferred) {
@@ -426,6 +438,10 @@ object EmbeddedTerminalInitCoordinator {
             "progress" to explicitProgress,
             "error" to error
         )
+        dispatchProgress(payload)
+    }
+
+    private fun dispatchProgress(payload: Map<String, Any?>) {
         val currentListeners = synchronized(listenerLock) {
             listeners.toList()
         }
@@ -547,9 +563,22 @@ object EmbeddedTerminalInitCoordinator {
                 progress = if (success) 1.0 else current.progress.coerceAtLeast(0.02),
                 stage = normalizedMessage,
                 updatedAt = now,
-                completedAt = now
+                completedAt = now,
+                phase = if (success) "ready" else current.phase.takeIf { it == "cancelled" } ?: "error",
+                error = normalizedMessage.takeUnless { success }
             )
         }
+        // Publish after committing the terminal snapshot. Consumers may read
+        // the snapshot from this callback, including when startup had no waiter.
+        dispatchProgress(
+            mapOf(
+                "kind" to if (success) "status" else "error",
+                "message" to normalizedMessage,
+                "timestamp" to System.currentTimeMillis(),
+                "phase" to if (success) "ready" else "error",
+                "error" to normalizedMessage.takeUnless { success }
+            )
+        )
     }
 
     private fun normalizeEmbeddedTerminalInitLines(message: String): List<String> {

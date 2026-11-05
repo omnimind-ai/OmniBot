@@ -65,9 +65,9 @@ class OnboardingCompletionPage extends StatelessWidget {
                                 child: Icon(
                                   LucideIcons.check,
                                   size: compact ? 30 : 38,
-                                  color: Theme.of(
-                                    context,
-                                  ).colorScheme.onPrimary,
+                                  color: Theme.of(context)
+                                      .colorScheme
+                                      .onPrimary,
                                 ),
                               ),
                             ),
@@ -75,7 +75,7 @@ class OnboardingCompletionPage extends StatelessWidget {
                             OnboardingEntrance(
                               index: 1,
                               child: Text(
-                                onbTr(context, '一切准备就绪', 'Everything is ready'),
+                                onbTr(context, '教程已完成', 'Guide completed'),
                                 textAlign: TextAlign.center,
                                 style: Theme.of(context)
                                     .textTheme
@@ -93,8 +93,8 @@ class OnboardingCompletionPage extends StatelessWidget {
                               child: Text(
                                 onbTr(
                                   context,
-                                  '你已经完成首次使用教程。现在可以创建对话、调用 Agent，并在真实项目中开始工作。',
-                                  'You have completed the first-use guide. Start a conversation, use an agent, and work on a real project.',
+                                  '现在可以开始使用。小万所需的系统与基础工具会在后台自动准备。',
+                                  'You can start exploring. The system and basic tools for Xiaowan are prepared automatically in the background.',
                                 ),
                                 textAlign: TextAlign.center,
                                 style: Theme.of(context).textTheme.bodyMedium
@@ -112,7 +112,11 @@ class OnboardingCompletionPage extends StatelessWidget {
                                   Expanded(
                                     child: _Capability(
                                       icon: LucideIcons.squareTerminal,
-                                      label: onbTr(context, '本地环境', 'Local setup'),
+                                      label: onbTr(
+                                        context,
+                                        '后台准备',
+                                        'Background setup',
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 9),

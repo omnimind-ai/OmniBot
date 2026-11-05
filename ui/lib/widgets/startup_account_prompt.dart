@@ -74,16 +74,8 @@ class _StartupAccountPromptState extends State<StartupAccountPrompt> {
 
   Future<void> _checkAccount() async {
     if (_checked || GoRouterManager.isSubEngine) return;
-    final welcomeCompleted =
-        StorageService.getBool(
-          StorageKeys.welcomeCompleted,
-          defaultValue: false,
-        ) ??
-        false;
-    // Keep the launch-level prompt out of the onboarding flow. Do not mark the
-    // check as complete yet: navigation after the final tutorial action notifies
-    // the route listener and checks the account again in the same app launch.
-    if (!welcomeCompleted) return;
+    // First launch opens the usable home. The dismissible account sheet is
+    // independent of the optional tutorial and of background installation.
     _checked = true;
     final promptDismissed =
         StorageService.getBool(

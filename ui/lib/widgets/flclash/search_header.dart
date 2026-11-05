@@ -67,6 +67,7 @@ class FlClashSearchHeader extends StatefulWidget
     this.fieldKey,
     this.searchFieldKey,
     this.clearButtonKey,
+    this.showClearButton = true,
     this.trailingSearchWidget,
   }) : assert(!enableSearch || (onSearch != null && onClose != null));
 
@@ -91,6 +92,7 @@ class FlClashSearchHeader extends StatefulWidget
   final Key? fieldKey;
   final Key? searchFieldKey;
   final Key? clearButtonKey;
+  final bool showClearButton;
   final Widget? trailingSearchWidget;
 
   @override
@@ -299,6 +301,7 @@ class _FlClashSearchHeaderState extends State<FlClashSearchHeader>
                 onChanged: widget.onChanged,
                 hintText: widget.hintText,
                 clearButtonKey: widget.clearButtonKey,
+                showClearButton: widget.showClearButton,
                 clearTooltip: widget.clearTooltip,
                 trailing: widget.trailingSearchWidget,
               );
@@ -375,8 +378,9 @@ class _FlClashSearchHeaderState extends State<FlClashSearchHeader>
                       cancel: _button(
                         IconButton(
                           key: widget.closeButtonKey,
-                          tooltip: MaterialLocalizations.of(context)
-                              .closeButtonTooltip,
+                          tooltip: MaterialLocalizations.of(
+                            context,
+                          ).closeButtonTooltip,
                           onPressed: widget.onClose,
                           icon: const Icon(LucideIcons.x),
                         ),
@@ -576,6 +580,7 @@ class _SearchField extends StatelessWidget {
     this.onChanged,
     this.hintText,
     this.clearButtonKey,
+    this.showClearButton = true,
     this.clearTooltip,
     this.trailing,
   });
@@ -585,6 +590,7 @@ class _SearchField extends StatelessWidget {
   final ValueChanged<String>? onChanged;
   final String? hintText;
   final Key? clearButtonKey;
+  final bool showClearButton;
   final String? clearTooltip;
   final Widget? trailing;
 
@@ -599,7 +605,8 @@ class _SearchField extends StatelessWidget {
     return ListenableBuilder(
       listenable: controller,
       builder: (_, _) {
-        final empty = controller.text.isEmpty;
+        final showClear = showClearButton && controller.text.isNotEmpty;
+        final hasSuffix = showClear || trailing != null;
         return TextField(
           key: fieldKey,
           controller: controller,
@@ -625,15 +632,13 @@ class _SearchField extends StatelessWidget {
             border: pill,
             enabledBorder: pill,
             focusedBorder: pill,
-            contentPadding: EdgeInsetsDirectional.only(
-              end: empty && trailing == null ? 12 : 0,
-            ),
+            contentPadding: EdgeInsetsDirectional.only(end: hasSuffix ? 0 : 12),
             prefixIcon: const Padding(
               padding: EdgeInsetsDirectional.only(start: 12),
               child: Icon(LucideIcons.search, size: 20),
             ),
             prefixIconConstraints: const BoxConstraints.tightFor(width: 41),
-            suffixIcon: empty && trailing == null
+            suffixIcon: !hasSuffix
                 ? null
                 : Row(
                     mainAxisSize: MainAxisSize.min,
@@ -643,7 +648,7 @@ class _SearchField extends StatelessWidget {
                           padding: const EdgeInsets.only(right: 8),
                           child: trailing!,
                         ),
-                      if (!empty)
+                      if (showClear)
                         SizedBox(
                           width: 49,
                           child: IconButton(

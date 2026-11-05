@@ -3,12 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/features/home/pages/agent/agent_mode_setting_page.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
+import 'package:ui/widgets/navigation/open_container.dart';
 import 'package:ui/widgets/settings_detail_sheet.dart';
 import 'package:ui/widgets/settings_ui.dart';
 
@@ -215,6 +218,14 @@ void main() {
       find.byKey(const Key('agent-contact-search')),
       'codex',
     );
+    await tester.pumpAndSettle();
+    final searchField = tester.widget<TextField>(
+      find.byKey(const Key('agent-contact-search')),
+    );
+    expect(searchField.focusNode!.hasFocus, isTrue);
+    expect(searchField.decoration!.suffixIcon, isNull);
+    expect(find.byIcon(LucideIcons.circleX), findsNothing);
+    expect(find.byKey(const Key('agent-close-search')), findsOneWidget);
     await tester.pumpWidget(page(false));
     await tester.pumpAndSettle();
     expect(catalogReads, 1);
@@ -264,6 +275,129 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byKey(const Key('agent-contact-search')), findsNothing);
   });
+
+  testWidgets(
+    'Agent rows expand through GoRouter and preserve return refresh',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(390, 1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      var catalogReads = 0;
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+            if (call.method != 'agent/list') return null;
+            catalogReads++;
+            return {
+              'agents': [
+                {
+                  ..._agent('na-cloud', 'Na', 'na-cloud', 'online'),
+                  'configurationAvailable': false,
+                },
+                _agent('codex-acp', 'Codex', 'codex-acp', 'online'),
+              ],
+            };
+          });
+      final admittedPaths = <String>[];
+      Page<dynamic> destination(GoRouterState state) {
+        admittedPaths.add(state.uri.path);
+        final source = (state.extra! as Map)[omniContainerExtraKey];
+        expect(source, isA<OmniContainerSource>());
+        return (source as OmniContainerSource).createPage<dynamic>(
+          key: state.pageKey,
+          child: const Scaffold(
+            key: Key('agent-row-destination'),
+            body: Text('Agent destination'),
+          ),
+        );
+      }
+
+      final router = GoRouter(
+        navigatorKey: GoRouterManager.rootNavigatorKey,
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (_, _) => const AgentModeSettingPage(embedded: true),
+          ),
+          GoRoute(
+            path: '/home/na/personal',
+            pageBuilder: (_, state) => destination(state),
+          ),
+          GoRoute(
+            path: '/home/agent_config/:agentId',
+            pageBuilder: (_, state) => destination(state),
+          ),
+        ],
+      );
+      addTearDown(router.dispose);
+      await tester.pumpWidget(
+        MaterialApp.router(
+          routerConfig: router,
+          theme: AppTheme.lightTheme,
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(catalogReads, 1);
+      for (final scenario in [
+        (
+          id: 'na-cloud',
+          path: '/home/na/personal',
+          result: false,
+          reload: true,
+        ),
+        (
+          id: 'codex-acp',
+          path: '/home/agent_config/codex-acp',
+          result: false,
+          reload: false,
+        ),
+        (
+          id: 'codex-acp',
+          path: '/home/agent_config/codex-acp',
+          result: true,
+          reload: true,
+        ),
+      ]) {
+        final row = find.byKey(Key('agent-config-${scenario.id}'));
+        final source = find.ancestor(
+          of: row,
+          matching: find.byType(OmniOpenContainer),
+        );
+        final sourceRect = tester.getRect(source);
+        final readsBeforeOpen = catalogReads;
+        await tester.tap(row);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(admittedPaths.last, scenario.path);
+        final detail = find.byKey(const Key('agent-row-destination'));
+        expect(detail, findsOneWidget);
+        final route = ModalRoute.of(tester.element(detail))!;
+        expect(route.transitionDuration, const Duration(milliseconds: 300));
+        expect(route.animation!.isAnimating, isTrue);
+        final full = Offset.zero & tester.getSize(find.byType(MaterialApp));
+        final opening = Rect.lerp(
+          sourceRect,
+          full,
+          Curves.fastOutSlowIn.transform(route.animation!.value),
+        )!;
+        expect(tester.getTopLeft(detail).dx, closeTo(opening.left, 0.01));
+        expect(tester.getTopLeft(detail).dy, closeTo(opening.top, 0.01));
+        await tester.pumpAndSettle();
+        expect(catalogReads, readsBeforeOpen);
+        router.pop(scenario.result);
+        await tester.pumpAndSettle();
+        expect(detail, findsNothing);
+        expect(router.canPop(), isFalse);
+        expect(tester.getRect(source), sourceRect);
+        expect(catalogReads, readsBeforeOpen + (scenario.reload ? 1 : 0));
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 
   for (final brightness in Brightness.values) {
     for (final scale in [1.0, 1.5, 2.0]) {

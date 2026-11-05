@@ -1,9 +1,6 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/constants/storage_keys.dart';
 import 'package:ui/features/home/pages/chat/chat_page.dart';
@@ -24,13 +21,9 @@ void main() {
   );
   const assistsChannel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
   const accountChannel = MethodChannel('cn.com.omnimind.bot/account');
-  late String savedDistribution;
-  late List<String> requestedPackageIds;
-  late Map<String, dynamic> terminalSnapshot;
-  Completer<void>? prepareGate;
+  late List<String> terminalCalls;
   late bool accountSignedIn;
   late int loginCalls;
-  late int cancelRequests;
 
   Map<String, dynamic> profilePayload({
     String apiKey = '',
@@ -79,25 +72,9 @@ void main() {
     }
   }
 
-  Future<void> openToolsPage(WidgetTester tester) async {
-    await tester.tap(find.byKey(const ValueKey('tutorial-system-next')));
-    await tester.pumpAndSettle();
-    await showFinder(
-      tester,
-      find.byKey(const ValueKey('tutorial-development-next')),
-    );
-    await tester.tap(find.byKey(const ValueKey('tutorial-development-next')));
-    await tester.pumpAndSettle();
-  }
-
   Future<void> openPermissionsPage(WidgetTester tester) async {
-    await openToolsPage(tester);
-    final skipEnvironment = find.byKey(
-      const ValueKey('tutorial-skip-environment'),
-    );
-    await showFinder(tester, skipEnvironment);
-    await tester.tap(skipEnvironment);
     await tester.pumpAndSettle();
+    expect(find.text('开启应用权限'), findsOneWidget);
   }
 
   Future<void> openProviderPage(WidgetTester tester) async {
@@ -116,60 +93,19 @@ void main() {
     ModelsDevCatalogService.setCatalogForTesting(
       const ModelsDevCatalog(providers: {}),
     );
-    savedDistribution = '';
-    requestedPackageIds = <String>[];
-    terminalSnapshot = <String, dynamic>{
-      'running': false,
-      'completed': false,
-      'success': null,
-      'progress': 0.0,
-      'stage': '',
-      'logLines': <String>[],
-    };
-    prepareGate = null;
+    terminalCalls = <String>[];
     accountSignedIn = false;
     loginCalls = 0;
-    cancelRequests = 0;
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(terminalChannel, (call) async {
+      terminalCalls.add(call.method);
       switch (call.method) {
-        case 'getEmbeddedTerminalDistribution':
-          return 'alpine';
-        case 'getEmbeddedTerminalInitSnapshot':
-          return terminalSnapshot;
         case 'isBackgroundRunAllowed':
         case 'isOverlayPermission':
         case 'isInstalledAppsPermissionGranted':
         case 'isPublicStorageAccessGranted':
           return false;
-        case 'setEmbeddedTerminalDistribution':
-          savedDistribution = (call.arguments as Map)['distribution']
-              .toString();
-          return savedDistribution;
-        case 'cancelEmbeddedTerminalInit':
-          cancelRequests++;
-          prepareGate?.complete();
-          return true;
-        case 'prepareTermuxLiveWrapper':
-          requestedPackageIds = ((call.arguments as Map)['packageIds'] as List)
-              .map((item) => item.toString())
-              .toList(growable: false);
-          if (prepareGate != null) {
-            await prepareGate!.future;
-          }
-          if (cancelRequests > 0) {
-            return <String, dynamic>{
-              'success': false,
-              'message': '安装已取消，下载进度已保留',
-            };
-          }
-          return <String, dynamic>{
-            'success': true,
-            'wrapperReady': true,
-            'sharedStorageReady': true,
-            'message': 'ready',
-          };
       }
       return null;
     });
@@ -258,286 +194,42 @@ void main() {
     messenger.setMockMethodCallHandler(accountChannel, null);
   });
 
-  testWidgets('Pi selection uses the shared terminal installer', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(390, 900);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    await tester.pumpWidget(buildTestApp());
-    await tester.pump(const Duration(milliseconds: 50));
-    await openToolsPage(tester);
-    final pi = find.byKey(const ValueKey('tutorial-tool-pi'));
-    await showFinder(tester, pi);
-    await tester.tap(pi);
-    await tester.pump();
-    final start = find.byKey(const ValueKey('tutorial-environment-primary'));
-    await showFinder(tester, start);
-    await tester.tap(start);
-    await tester.pump(const Duration(milliseconds: 500));
-    expect(requestedPackageIds, contains('pi'));
-    expect(requestedPackageIds, isNot(contains('codex')));
-    await tester.pumpWidget(const SizedBox.shrink());
-    await tester.pump(const Duration(milliseconds: 100));
-  });
-
   testWidgets(
-    'environment setup uses short pages and a circular progress page',
+    'tutorial opens permissions without environment choices or setup',
     (tester) async {
-      tester.view.physicalSize = const Size(390, 600);
+      tester.view.physicalSize = const Size(390, 700);
       tester.view.devicePixelRatio = 1;
       addTearDown(tester.view.resetPhysicalSize);
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(buildTestApp());
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(find.text('选择本地 Linux 系统'), findsOneWidget);
-      expect(find.text('首次使用指南'), findsNothing);
-      expect(find.text('1/3'), findsNothing);
-      expect(
-        find.descendant(
-          of: find.byKey(const ValueKey('tutorial-system-page')),
-          matching: find.byType(Scrollable),
-        ),
-        findsNothing,
-      );
-      expect(
-        find.byKey(const ValueKey('tutorial-distribution-alpine')),
-        findsOne,
-      );
-      expect(
-        find.byKey(const ValueKey('tutorial-distribution-ubuntu')),
-        findsOne,
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('tutorial-distribution-ubuntu')),
-      );
-      await tester.pump();
-
-      await tester.tap(find.byKey(const ValueKey('tutorial-system-next')));
-      await tester.pumpAndSettle();
-      expect(find.text('选择开发环境'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('tutorial-environment-general')),
-        findsOne,
-      );
-      expect(find.text('聊天 Agent 助手'), findsOneWidget);
-
-      final developmentNext = find.byKey(
-        const ValueKey('tutorial-development-next'),
-      );
-      await showFinder(tester, developmentNext);
-      await tester.tap(developmentNext);
       await tester.pumpAndSettle();
 
-      expect(find.text('配置 Agent 与连接工具'), findsOneWidget);
-      expect(find.text('Ubuntu · 聊天 Agent 助手'), findsOneWidget);
-      expect(find.text('Codex CLI'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('tutorial-tool-codex')));
-      await tester.pump();
-      expect(find.text('Agent / 工具: Codex CLI'), findsOneWidget);
-
-      final backArrow = find.byKey(const ValueKey('tutorial-bottom-back'));
-      final initialBackRect = tester.getRect(backArrow);
-      final initialNextRect = tester.getRect(
-        find.byKey(const ValueKey('tutorial-skip-environment')),
-      );
-      void expectStableNavigation(String nextKey) {
-        expect(tester.getRect(backArrow), initialBackRect);
-        expect(tester.getRect(find.byKey(ValueKey(nextKey))), initialNextRect);
-      }
-
-      final startSetup = find.byKey(
-        const ValueKey('tutorial-environment-primary'),
-      );
-      prepareGate = Completer<void>();
-      await showFinder(tester, startSetup);
-      await tester.tap(startSetup);
-      terminalSnapshot = <String, dynamic>{
-        ...terminalSnapshot,
-        'running': true,
-        'progress': 0.24,
-        'stage': '正在初始化宿主终端运行时',
-      };
-      await tester.pump(const Duration(milliseconds: 420));
-      await tester.pump();
-
-      expectStableNavigation('tutorial-environment-continue');
-      final cancel = find.byKey(const ValueKey('tutorial-environment-cancel'));
-      expect(cancel.hitTestable(), findsOneWidget);
-      expect(tester.getCenter(cancel).dy, initialBackRect.center.dy);
-      expect(
-        find.ancestor(of: cancel, matching: find.byType(Scrollable)),
-        findsNothing,
-      );
-      expect(find.text('正在准备 Ubuntu 系统'), findsOneWidget);
-      expect(find.byIcon(LucideIcons.loaderCircle), findsNothing);
-      final activeMilestone = find.byKey(
-        const ValueKey('tutorial-environment-active-milestone-spinner'),
-      );
-      expect(activeMilestone, findsOneWidget);
-      expect(
-        tester
-            .widget<CircularProgressIndicator>(
-              find.descendant(
-                of: activeMilestone,
-                matching: find.byType(CircularProgressIndicator),
-              ),
-            )
-            .value,
-        isNull,
-      );
-      for (var index = 0; index < 3; index++) {
-        final leadingMilestone = tester.getRect(
-          find.byKey(ValueKey('tutorial-environment-milestone-node-$index')),
-        );
-        final trailingMilestone = tester.getRect(
-          find.byKey(
-            ValueKey('tutorial-environment-milestone-node-${index + 1}'),
-          ),
-        );
-        final connector = tester.getRect(
-          find.byKey(
-            ValueKey('tutorial-environment-milestone-connector-$index'),
-          ),
-        );
-        expect(connector.left, closeTo(leadingMilestone.right, 0.01));
-        expect(connector.right, closeTo(trailingMilestone.left, 0.01));
-      }
-      final firstProgress = tester
-          .widget<CircularProgressIndicator>(
-            find.byKey(const ValueKey('tutorial-environment-progress-ring')),
-          )
-          .value!;
-      expect(firstProgress, greaterThan(0.02));
-
-      terminalSnapshot = <String, dynamic>{
-        ...terminalSnapshot,
-        'progress': 0.72,
-        'stage': '正在安装所选开发工具：nodejs, npm, git, python, pip, uv',
-      };
-      await tester.pump(const Duration(milliseconds: 750));
-      await tester.pump();
-
-      expect(find.text('正在安装开发工具'), findsOneWidget);
-      expect(find.text('安装组件'), findsOneWidget);
-      final secondProgress = tester
-          .widget<CircularProgressIndicator>(
-            find.byKey(const ValueKey('tutorial-environment-progress-ring')),
-          )
-          .value!;
-      expect(secondProgress, greaterThan(firstProgress));
-      expectStableNavigation('tutorial-environment-continue');
-      final progressScroll = find.descendant(
-        of: find.byKey(const ValueKey('tutorial-environment-progress')),
-        matching: find.byType(Scrollable),
-      );
-      await tester.drag(progressScroll, const Offset(0, -260));
-      await tester.pump(const Duration(milliseconds: 100));
-      expect(
-        tester.state<ScrollableState>(progressScroll).position.pixels,
-        greaterThan(0),
-      );
-      expectStableNavigation('tutorial-environment-continue');
-      expect(cancel.hitTestable(), findsOneWidget);
-
-      prepareGate!.complete();
-      await tester.pump(const Duration(milliseconds: 700));
-      await tester.pumpAndSettle();
-
-      expect(savedDistribution, 'ubuntu');
-      expect(
-        requestedPackageIds,
-        containsAll(<String>['nodejs', 'python', 'git', 'codex']),
-      );
-      expect(
-        find.byKey(const ValueKey('tutorial-environment-progress')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const ValueKey('tutorial-environment-progress-ring')),
-        findsOneWidget,
-      );
-      expect(find.byType(LinearProgressIndicator), findsNothing);
-      expect(find.text('开发环境已准备完成'), findsOneWidget);
-      expect(find.text('继续配置模型'), findsNothing);
+      expect(find.text('开启应用权限'), findsOneWidget);
+      expect(find.text('选择本地 Linux 系统'), findsNothing);
+      expect(find.text('选择开发环境'), findsNothing);
+      expect(find.text('配置 Agent 与连接工具'), findsNothing);
+      expect(terminalCalls, isNot(contains('setEmbeddedTerminalDistribution')));
+      expect(terminalCalls, isNot(contains('prepareTermuxLiveWrapper')));
+      expect(terminalCalls, isNot(contains('cancelEmbeddedTerminalInit')));
       expect(
         tester
             .widget<IconButton>(
-              find.byKey(const ValueKey('tutorial-environment-continue')),
+              find.byKey(const ValueKey('tutorial-permissions-next')),
             )
             .onPressed,
         isNotNull,
       );
-      expectStableNavigation('tutorial-environment-continue');
-      expect(cancel, findsNothing);
-      await tester.tap(
-        find.byKey(const ValueKey('tutorial-environment-continue')),
-      );
+
+      await tester.tap(find.byKey(const ValueKey('tutorial-permissions-next')));
       await tester.pumpAndSettle();
-      expect(find.text('开启应用权限'), findsOneWidget);
-      expectStableNavigation('tutorial-permissions-next');
+      expect(find.text('登录与注册'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );
 
   testWidgets(
-    'cancelling setup keeps navigation fixed through the failure state',
-    (tester) async {
-      tester.view.physicalSize = const Size(390, 700);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      await tester.pumpWidget(buildTestApp());
-      await tester.pump(const Duration(milliseconds: 50));
-      await openToolsPage(tester);
-      final back = find.byKey(const ValueKey('tutorial-bottom-back'));
-      final backRect = tester.getRect(back);
-      final nextRect = tester.getRect(
-        find.byKey(const ValueKey('tutorial-skip-environment')),
-      );
-      prepareGate = Completer<void>();
-      await tester.tap(
-        find.byKey(const ValueKey('tutorial-environment-primary')),
-      );
-      await tester.pump(const Duration(milliseconds: 420));
-      final cancel = find.byKey(const ValueKey('tutorial-environment-cancel'));
-      expect(tester.getRect(back), backRect);
-      expect(
-        tester.getRect(
-          find.byKey(const ValueKey('tutorial-environment-continue')),
-        ),
-        nextRect,
-      );
-      await tester.tap(cancel);
-      await tester.pumpAndSettle();
-      expect(cancelRequests, 1);
-      expect(cancel, findsNothing);
-      expect(
-        find.byKey(const ValueKey('tutorial-environment-retry')),
-        findsOneWidget,
-      );
-      final skip = find.byKey(
-        const ValueKey('tutorial-skip-environment-progress'),
-      );
-      expect(tester.getRect(back), backRect);
-      expect(tester.getRect(skip), nextRect);
-      await tester.tap(skip);
-      await tester.pumpAndSettle();
-      expect(find.text('开启应用权限'), findsOneWidget);
-      expect(tester.getRect(back), backRect);
-      expect(
-        tester.getRect(find.byKey(const ValueKey('tutorial-permissions-next'))),
-        nextRect,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
-
-  testWidgets(
-    'tutorial pages use dots circular arrows and horizontal swipe navigation',
+    'tutorial dots and arrows retain navigation after simplification',
     (tester) async {
       tester.view.physicalSize = const Size(390, 700);
       tester.view.devicePixelRatio = 1;
@@ -545,144 +237,71 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
 
       await tester.pumpWidget(buildTestApp());
-      await tester.pump(const Duration(milliseconds: 50));
-
-      double expectInlineHeading(String title) {
-        final headingRect = tester.getRect(
-          find.byKey(const ValueKey('tutorial-page-heading')),
-        );
-        final iconRect = tester.getRect(
-          find.byKey(const ValueKey('tutorial-page-leading-icon')),
-        );
-        final titleRect = tester.getRect(
-          find.byKey(const ValueKey('tutorial-page-title')),
-        );
-        expect(find.text(title), findsOneWidget);
-        expect(headingRect.top, greaterThanOrEqualTo(20));
-        expect(iconRect.right, lessThan(titleRect.left));
-        expect((iconRect.center.dy - titleRect.center.dy).abs(), lessThan(1));
-        return headingRect.top;
-      }
-
-      final initialHeadingTop = expectInlineHeading('选择本地 Linux 系统');
-
+      await tester.pumpAndSettle();
       final navigation = find.byKey(
         const ValueKey('tutorial-pagination-navigation'),
       );
-      expect(navigation, findsOneWidget);
       final initialNavigationRect = tester.getRect(navigation);
-      expect(
-        find.byKey(const ValueKey('tutorial-bottom-back')),
-        findsOneWidget,
-      );
-      expect(
-        tester
-            .widget<IconButton>(
-              find.byKey(const ValueKey('tutorial-bottom-back')),
-            )
-            .onPressed,
-        isNull,
-      );
-      for (var index = 0; index < tutorialNavigationPages.length; index += 1) {
+      final back = find.byKey(const ValueKey('tutorial-bottom-back'));
+      expect(tester.widget<IconButton>(back).onPressed, isNull);
+      for (var index = 0; index < tutorialNavigationPages.length; index++) {
         expect(
           find.byKey(ValueKey<String>('tutorial-page-dot-$index')),
           findsOneWidget,
         );
       }
 
-      final systemNext = find.byKey(const ValueKey('tutorial-system-next'));
-      expect(tester.widget<IconButton>(systemNext).onPressed, isNotNull);
-      expect(
-        tester
-            .widget<Material>(
-              find
-                  .ancestor(of: systemNext, matching: find.byType(Material))
-                  .first,
-            )
-            .shape,
-        isA<CircleBorder>(),
-      );
-
       await tester.drag(
         find.byKey(const ValueKey('tutorial-page-swipe-surface')),
         const Offset(-300, 0),
       );
-      await tester.pump(const Duration(milliseconds: 80));
-      expect(navigation, findsOneWidget);
-      expect(tester.getRect(navigation), initialNavigationRect);
       await tester.pumpAndSettle();
-      expect(find.text('选择开发环境'), findsOneWidget);
-      expect(expectInlineHeading('选择开发环境'), initialHeadingTop);
+      expect(find.text('登录与注册'), findsOneWidget);
       expect(tester.getRect(navigation), initialNavigationRect);
+      await tester.tap(back);
+      await tester.pumpAndSettle();
+      expect(find.text('开启应用权限'), findsOneWidget);
 
+      await tester.tap(find.byKey(const ValueKey('tutorial-page-dot-1')));
+      await tester.pumpAndSettle();
+      expect(find.text('登录与注册'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('tutorial-provider-next')));
+      await tester.pumpAndSettle();
+      expect(find.text('选择模型服务商'), findsOneWidget);
       await tester.drag(
         find.byKey(const ValueKey('tutorial-page-swipe-surface')),
         const Offset(300, 0),
       );
-      await tester.pump(const Duration(milliseconds: 80));
-      expect(navigation, findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(find.text('登录与注册'), findsOneWidget);
       expect(tester.getRect(navigation), initialNavigationRect);
-      await tester.pumpAndSettle();
-      expect(find.text('选择本地 Linux 系统'), findsOneWidget);
-      expect(tester.getRect(navigation), initialNavigationRect);
-
-      await tester.tap(find.byKey(const ValueKey('tutorial-page-dot-1')));
-      await tester.pumpAndSettle();
-      expect(find.text('选择开发环境'), findsOneWidget);
-
-      await tester.tap(find.byKey(const ValueKey('tutorial-development-next')));
-      await tester.pumpAndSettle();
-      expect(find.text('配置 Agent 与连接工具'), findsOneWidget);
-      expect(find.text('暂不配置，先设置模型'), findsNothing);
-      final stickyAction = find.byKey(
-        const ValueKey('tutorial-sticky-primary-action'),
-      );
-      final skipEnvironment = find.byKey(
-        const ValueKey('tutorial-skip-environment'),
-      );
-      expect(stickyAction, findsOneWidget);
-      expect(tester.widget<IconButton>(skipEnvironment).onPressed, isNotNull);
-      final stickyActionRect = tester.getRect(stickyAction);
-      final toolsNavigationRect = tester.getRect(navigation);
-      expect(stickyActionRect.bottom, lessThan(toolsNavigationRect.top));
-      expect(
-        toolsNavigationRect.top - stickyActionRect.bottom,
-        lessThanOrEqualTo(8),
-      );
-      expect(toolsNavigationRect, initialNavigationRect);
       expect(tester.takeException(), isNull);
     },
   );
 
-  testWidgets('tutorial pagination stays stable on a narrow viewport', (
+  testWidgets('tutorial pagination stays usable on a narrow viewport', (
     tester,
   ) async {
     tester.view.physicalSize = const Size(320, 640);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-
     await tester.pumpWidget(buildTestApp());
-    await tester.pump(const Duration(milliseconds: 50));
-
+    await tester.pumpAndSettle();
     expect(
-      find.byKey(const ValueKey('tutorial-pagination-navigation')),
+      find.byKey(
+        ValueKey<String>(
+          'tutorial-page-dot-${tutorialNavigationPages.length - 1}',
+        ),
+      ),
       findsOneWidget,
     );
-    expect(find.byKey(const ValueKey('tutorial-page-dot-8')), findsOneWidget);
-    expect(tester.takeException(), isNull);
-
     await tester.drag(
       find.byKey(const ValueKey('tutorial-page-swipe-surface')),
       const Offset(-260, 0),
     );
     await tester.pumpAndSettle();
-
-    expect(find.text('选择开发环境'), findsOneWidget);
-    expect(
-      find.byKey(const ValueKey('tutorial-pagination-navigation')),
-      findsOneWidget,
-    );
+    expect(find.text('登录与注册'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
@@ -1088,7 +707,7 @@ void main() {
       find.byKey(const ValueKey('tutorial-completion-page')),
       findsOneWidget,
     );
-    expect(find.text('一切准备就绪'), findsOneWidget);
+    expect(find.text('教程已完成'), findsOneWidget);
     expect(
       find.byKey(const ValueKey('tutorial-start-exploring')),
       findsOneWidget,

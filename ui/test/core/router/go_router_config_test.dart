@@ -42,7 +42,7 @@ void main() {
     expect(routeNames, isNot(contains('home/first_use_tutorial/plugins')));
   });
 
-  testWidgets('fresh launch starts in the first-use tutorial', (tester) async {
+  testWidgets('fresh launch starts in the conversation list', (tester) async {
     GoRouter? router;
     addTearDown(() {
       router?.dispose();
@@ -60,7 +60,7 @@ void main() {
     );
 
     expect(router, isNotNull);
-    expect(router!.routeInformationProvider.value.uri.path, '/welcome/choice');
+    expect(router!.routeInformationProvider.value.uri.path, '/home/home');
   });
 
   testWidgets('completed onboarding starts in the conversation list', (
@@ -87,9 +87,7 @@ void main() {
     expect(router!.routeInformationProvider.value.uri.path, '/home/home');
   });
 
-  testWidgets('sub-engine launch bypasses the onboarding guard', (
-    tester,
-  ) async {
+  testWidgets('sub-engine launch starts in its requested home', (tester) async {
     GoRouterManager.setSubEngine(true);
     GoRouter? router;
     addTearDown(() {
@@ -111,10 +109,9 @@ void main() {
     expect(router!.routeInformationProvider.value.uri.path, '/home/home');
   });
 
-  testWidgets('explicit native initial route preserves its chat target', (
+  testWidgets('fresh native launch preserves its requested chat target', (
     tester,
   ) async {
-    await StorageService.setBool(StorageKeys.welcomeCompleted, true);
     const destination =
         '/home/chat?conversationId=42&mode=agent&agentId=codex&requestKey=native';
     GoRouterManager.setInitialRoute(destination);
@@ -134,6 +131,42 @@ void main() {
 
     expect(router!.routeInformationProvider.value.uri.toString(), destination);
   });
+
+  for (final completed in [false, true]) {
+    testWidgets('tutorial stays optional with completed=$completed', (
+      tester,
+    ) async {
+      await StorageService.setBool(StorageKeys.welcomeCompleted, completed);
+      GoRouter? router;
+      addTearDown(() => router?.dispose());
+      await tester.pumpWidget(
+        ProviderScope(
+          child: Consumer(
+            builder: (context, ref, child) {
+              router ??= GoRouterManager.createRouter(ref);
+              return const SizedBox.shrink();
+            },
+          ),
+        ),
+      );
+
+      router!.go('/home/first_use_tutorial/setup');
+      await tester.pump();
+      expect(
+        router!.routeInformationProvider.value.uri.path,
+        '/home/first_use_tutorial/setup',
+      );
+      router!.go('/welcome/choice');
+      await tester.pump();
+      expect(
+        router!.routeInformationProvider.value.uri.path,
+        '/welcome/choice',
+      );
+      router!.go('/home/settings');
+      await tester.pump();
+      expect(router!.routeInformationProvider.value.uri.path, '/home/settings');
+    });
+  }
 
   test(
     'ordinary home remains home and legacy thread targets resolve to chat',
@@ -183,25 +216,23 @@ void main() {
           GoRoute(
             path: GoRouterManager.homeRoute,
             name: 'home/home',
-            pageBuilder: (context, state) =>
-                GoRouterManager.buildPage(
-                  key: state.pageKey,
-                  name: state.name,
-                  child: const Scaffold(body: Text('Conversation list')),
-                ),
+            pageBuilder: (context, state) => GoRouterManager.buildPage(
+              key: state.pageKey,
+              name: state.name,
+              child: const Scaffold(body: Text('Conversation list')),
+            ),
           ),
           GoRoute(
             path: GoRouterManager.chatRoute,
             name: 'home/chat',
-            pageBuilder: (context, state) =>
-                GoRouterManager.buildPage(
-                  key: state.pageKey,
-                  name: state.name,
-                  child: _ChatOwnerProbe(
-                    target: state.uri.queryParameters['conversationId'] ?? '',
-                    onCreate: () => createdChatOwners++,
-                  ),
-                ),
+            pageBuilder: (context, state) => GoRouterManager.buildPage(
+              key: state.pageKey,
+              name: state.name,
+              child: _ChatOwnerProbe(
+                target: state.uri.queryParameters['conversationId'] ?? '',
+                onCreate: () => createdChatOwners++,
+              ),
+            ),
           ),
           GoRoute(
             path: '/home/settings',
@@ -261,7 +292,10 @@ void main() {
         await tester.pumpAndSettle();
         expect(find.text('Chat 43'), findsOneWidget);
         expect(createdChatOwners, 2);
-        expect(router.routerDelegate.currentConfiguration.matches, hasLength(2));
+        expect(
+          router.routerDelegate.currentConfiguration.matches,
+          hasLength(2),
+        );
         GoRouterManager.pop();
         await tester.pumpAndSettle();
         expect(find.text('Conversation list'), findsOneWidget);

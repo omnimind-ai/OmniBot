@@ -96,12 +96,13 @@ internal data class AcpAgentHealth(
     val capabilities: Map<String, Any?> = emptyMap(),
     val preparationRevision: String? = null,
 ) {
-    /** Na is bundled in the app, so command discovery cannot describe its health. */
+    /** In-app ACP implementations are present before environment/cloud preparation. */
     fun forAgent(agentId: String): AcpAgentHealth {
-        if (agentId != NA_AGENT_ID) return this
+        if (agentId != NA_AGENT_ID && agentId != AcpAgentProfileStore.XIAOWAN_AGENT_ID) return this
         return if (status == STATUS_MISSING) {
-            // Older versions probed Na as an external executable. Discard that
-            // invalid result without claiming that its cloud service is online.
+            // External command discovery cannot describe bundled ACP code.
+            // Correct presence without claiming its dependencies are ready or
+            // that a cloud/account check has succeeded.
             copy(
                 status = STATUS_UNCHECKED,
                 installed = true,
