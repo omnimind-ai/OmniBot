@@ -593,50 +593,101 @@ void main() {
     expect(tester.takeException(), isNull);
   }
 
-  testWidgets(
-    'Xiaowan keeps its draft before system readiness and reveals after setup',
-    (tester) async {
-      environmentSnapshot = {'running': true, 'completed': false};
-      await EmbeddedTerminalPreparationService.instance.refresh();
-      await pumpChat(
-        tester,
-        const ConversationThreadTarget.newConversation(agentId: 'xiaowan-acp'),
-        settle: false,
+  for (final installation in <String, Map<String, Object?>>{
+    'idle': {},
+    'running': {'running': true, 'completed': false},
+    'failed': {'running': false, 'completed': true, 'success': false},
+  }.entries) {
+    for (final existing in [false, true]) {
+      testWidgets(
+        'Xiaowan sends with ${installation.key} installation (existing=$existing)',
+        (tester) async {
+          allowConversationCreation = true;
+          environmentSnapshot = installation.value;
+          await EmbeddedTerminalPreparationService.instance.refresh();
+          const conversationId = 805;
+          if (existing) {
+            conversations = [
+              historyConversation(conversationId, ConversationMode.agent),
+            ];
+            historyPages[conversationId] = historyMessage(conversationId);
+          }
+          await pumpChat(
+            tester,
+            existing
+                ? const ConversationThreadTarget.existing(
+                    conversationId: conversationId,
+                    mode: ConversationMode.agent,
+                  )
+                : const ConversationThreadTarget.newConversation(
+                    agentId: 'xiaowan-acp',
+                  ),
+          );
+          expect(find.byType(ChatMessageList), findsOneWidget);
+          if (existing) {
+            expect(find.text('已加载历史消息 $conversationId'), findsOneWidget);
+          } else {
+            expect(find.byType(ChatEmptyGreeting), findsOneWidget);
+          }
+          expectNoSessionAdmission();
+          const query = '终端安装不影响对话发送';
+          composer(tester).controller.text = query;
+          composer(tester).onSendMessage();
+          await tester.pumpAndSettle();
+          final prompt = agentCalls.singleWhere(
+            (call) => call.method == 'session/prompt',
+          );
+          expect((prompt.arguments as Map)['text'], query);
+          expect(
+            assistCalls.where((call) => call.method == 'createConversation'),
+            hasLength(existing ? 0 : 1),
+          );
+          if (!existing) {
+            expect(
+              agentCalls.where((call) => call.method == 'session/new'),
+              hasLength(1),
+            );
+          }
+          final messages = tester
+              .widget<ChatMessageList>(find.byType(ChatMessageList))
+              .messages;
+          expect(
+            messages.where((message) => message.text == query),
+            hasLength(1),
+          );
+          if (existing) {
+            expect(
+              messages.map((message) => message.text),
+              contains('已加载历史消息 $conversationId'),
+            );
+          }
+          // Installation completion must not create a session or replay a prompt.
+          final sessionCount = agentCalls
+              .where((call) => call.method == 'session/new')
+              .length;
+          environmentSnapshot = {
+            'running': false,
+            'completed': true,
+            'success': true,
+          };
+          await EmbeddedTerminalPreparationService.instance.refresh();
+          await tester.pumpAndSettle();
+          expect(
+            agentCalls.where((call) => call.method == 'session/prompt'),
+            hasLength(1),
+          );
+          expect(
+            agentCalls.where((call) => call.method == 'session/new'),
+            hasLength(sessionCount),
+          );
+          await disposeChat(tester);
+        },
       );
-      await pumpHistoryFrames(tester);
-      expect(
-        find.byKey(const ValueKey('chat-environment-preparation')),
-        findsOneWidget,
-      );
-      expect(find.text('正在后台安装系统与基础工具…'), findsOneWidget);
-      expect(find.text('OmniBot'), findsOneWidget);
-      expect(find.byType(ShaderMask), findsOneWidget);
-      composer(tester).controller.text = '安装期间保留的输入';
-      composer(tester).onSendMessage();
-      await pumpHistoryFrames(tester);
-      expectNoSessionAdmission();
-      expect(composer(tester).controller.text, '安装期间保留的输入');
+    }
+  }
 
-      environmentSnapshot = {
-        'running': false,
-        'completed': true,
-        'success': true,
-      };
-      await EmbeddedTerminalPreparationService.instance.refresh();
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('chat-environment-preparation')),
-        findsNothing,
-      );
-      expect(find.byType(ChatEmptyGreeting), findsOneWidget);
-      expect(composer(tester).controller.text, '安装期间保留的输入');
-      expectNoSessionAdmission();
-      await disposeChat(tester);
-    },
-  );
-
   testWidgets(
-    'an initial Xiaowan task stays in the draft until the user submits after setup',
+    'an initial Xiaowan task submits once while system installation runs',
     (tester) async {
       allowConversationCreation = true;
       environmentSnapshot = {'running': true, 'completed': false};
@@ -648,11 +699,22 @@ void main() {
           initialMessage: '安装期间收到的任务',
           requestKey: 'task-during-installation',
         ),
-        settle: false,
       );
-      await pumpHistoryFrames(tester);
-      expect(composer(tester).controller.text, '安装期间收到的任务');
-      expectNoSessionAdmission();
+      final prompt = agentCalls.singleWhere(
+        (call) => call.method == 'session/prompt',
+      );
+      expect((prompt.arguments as Map)['text'], '安装期间收到的任务');
+      expect(
+        agentCalls.where((call) => call.method == 'session/new'),
+        hasLength(1),
+      );
+      expect(
+        tester
+            .widget<ChatMessageList>(find.byType(ChatMessageList))
+            .messages
+            .where((message) => message.text == '安装期间收到的任务'),
+        hasLength(1),
+      );
       environmentSnapshot = {
         'running': false,
         'completed': true,
@@ -660,14 +722,10 @@ void main() {
       };
       await EmbeddedTerminalPreparationService.instance.refresh();
       await tester.pumpAndSettle();
-      expect(composer(tester).controller.text, '安装期间收到的任务');
-      expectNoSessionAdmission();
-      composer(tester).onSendMessage();
-      await tester.pumpAndSettle();
-      final prompt = agentCalls.singleWhere(
-        (call) => call.method == 'session/prompt',
+      expect(
+        agentCalls.where((call) => call.method == 'session/prompt'),
+        hasLength(1),
       );
-      expect((prompt.arguments as Map)['text'], '安装期间收到的任务');
       await disposeChat(tester);
     },
   );
@@ -679,27 +737,16 @@ void main() {
     const ConversationThreadTarget.newConversation(agentId: 'na-cloud'),
   ]) {
     testWidgets(
-      'incoming ${target.mode.storageValue}/${target.agentId} never shows system wait during bootstrap',
+      'incoming ${target.mode.storageValue}/${target.agentId} keeps its draft while installation runs',
       (tester) async {
         environmentSnapshot = {'running': true, 'completed': false};
         await EmbeddedTerminalPreparationService.instance.refresh();
         initializeGate = Completer<void>();
         await pumpChat(tester, target, settle: false);
-        expect(
-          find.byKey(const ValueKey('chat-environment-preparation')),
-          findsNothing,
-        );
         await pumpHistoryFrames(tester);
-        expect(
-          find.byKey(const ValueKey('chat-environment-preparation')),
-          findsNothing,
-        );
         initializeGate!.complete();
         await tester.pumpAndSettle();
-        expect(
-          find.byKey(const ValueKey('chat-environment-preparation')),
-          findsNothing,
-        );
+        expect(find.byType(ChatEmptyGreeting), findsOneWidget);
         expectNoSessionAdmission();
         await disposeChat(tester);
       },
@@ -719,10 +766,7 @@ void main() {
       await pumpChat(tester, null, settle: false);
       await pumpHistoryFrames(tester);
       expect(selector(tester).selectedId, 'xiaowan-acp');
-      expect(
-        find.byKey(const ValueKey('chat-environment-preparation')),
-        findsOneWidget,
-      );
+      expect(find.byType(ChatEmptyGreeting), findsOneWidget);
       expectNoSessionAdmission();
       await disposeChat(tester);
     },
@@ -739,64 +783,45 @@ void main() {
       );
       await pumpChat(tester, null);
       expect(selector(tester).selectedId, 'na-cloud');
-      expect(
-        find.byKey(const ValueKey('chat-environment-preparation')),
-        findsNothing,
-      );
-      expectNoSessionAdmission();
-      await disposeChat(tester);
-    },
-  );
-
-  testWidgets(
-    'system failure offers retry while other conversation modes stay available',
-    (tester) async {
-      environmentSnapshot = {
-        'running': false,
-        'completed': true,
-        'success': false,
-      };
-      await EmbeddedTerminalPreparationService.instance.refresh();
-      await pumpChat(
-        tester,
-        const ConversationThreadTarget.newConversation(agentId: 'xiaowan-acp'),
-        settle: false,
-      );
-      await pumpHistoryFrames(tester);
-      expect(find.text('系统安装失败，请重试安装'), findsOneWidget);
-      expect(
-        find.byKey(const ValueKey('chat-environment-retry')),
-        findsOneWidget,
-      );
-      composer(tester).controller.text = '可切换的输入';
-      // Invoke the existing selector action directly because the waiting label
-      // intentionally animates continuously and cannot pumpAndSettle.
-      selector(tester).onSelected('na-cloud');
-      await pumpHistoryFrames(tester);
-      await tester.pumpAndSettle();
-      expect(
-        find.byKey(const ValueKey('chat-environment-preparation')),
-        findsNothing,
-      );
-      expect(composer(tester).controller.text, '可切换的输入');
-      expect(selector(tester).selectedId, 'na-cloud');
-      expectNoSessionAdmission();
-      await disposeChat(tester);
-
-      await pumpChat(
-        tester,
-        const ConversationThreadTarget.newConversation(
-          mode: ConversationMode.chatOnly,
-        ),
-      );
-      expect(
-        find.byKey(const ValueKey('chat-environment-preparation')),
-        findsNothing,
-      );
       expect(find.byType(ChatEmptyGreeting), findsOneWidget);
+      expectNoSessionAdmission();
       await disposeChat(tester);
     },
   );
+
+  testWidgets('system failure leaves mode switching and the draft available', (
+    tester,
+  ) async {
+    environmentSnapshot = {
+      'running': false,
+      'completed': true,
+      'success': false,
+    };
+    await EmbeddedTerminalPreparationService.instance.refresh();
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.newConversation(agentId: 'xiaowan-acp'),
+      settle: false,
+    );
+    await pumpHistoryFrames(tester);
+    expect(find.byType(ChatEmptyGreeting), findsOneWidget);
+    composer(tester).controller.text = '可切换的输入';
+    await chooseMode(tester, 'na-cloud');
+    expect(find.byType(ChatEmptyGreeting), findsOneWidget);
+    expect(composer(tester).controller.text, '可切换的输入');
+    expect(selector(tester).selectedId, 'na-cloud');
+    expectNoSessionAdmission();
+    await disposeChat(tester);
+
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.newConversation(
+        mode: ConversationMode.chatOnly,
+      ),
+    );
+    expect(find.byType(ChatEmptyGreeting), findsOneWidget);
+    await disposeChat(tester);
+  });
 
   for (final value in ['off', 'none', 'on', 'High']) {
     testWidgets('ACP reasoning value $value survives settings and prompt admission', (
