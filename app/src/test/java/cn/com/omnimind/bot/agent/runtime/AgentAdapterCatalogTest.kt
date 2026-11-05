@@ -9,6 +9,45 @@ import org.junit.Test
 /** Exercise the actual shipped catalog, so a new profile cannot bypass mapping coverage. */
 class AgentAdapterCatalogTest {
     @Test
+    fun shippedCatalogLocalizesLabelsWhilePreservingChineseAndRuntimeDefinitions() {
+        val source = File("src/main/assets/acp/agents.json").readText()
+        val assetReader = { path: String -> File("src/main/assets/$path").readText() }
+        val english = AcpAgentCatalog.parse(source, isEnglishLocale = true, assetReader = assetReader)
+        val chinese = AcpAgentCatalog.parse(source, assetReader = assetReader)
+
+        val englishXiaowan = requireNotNull(english.definition("xiaowan-acp"))
+        assertEquals("Omnibot", englishXiaowan.name)
+        assertEquals(
+            "Omnibot's built-in capabilities through the official ACP Agent interface",
+            englishXiaowan.description,
+        )
+        val englishNa = requireNotNull(english.definition("na-cloud"))
+        assertEquals("Na", englishNa.name)
+        assertEquals(
+            "Cloud personal assistant with its own models, long-term memory, and tasks",
+            englishNa.description,
+        )
+
+        val chineseXiaowan = requireNotNull(chinese.definition("xiaowan-acp"))
+        assertEquals("小万", chineseXiaowan.name)
+        assertEquals("小万内置能力通过官方 ACP Agent 接口提供", chineseXiaowan.description)
+        val chineseNa = requireNotNull(chinese.definition("na-cloud"))
+        assertEquals("Na", chineseNa.name)
+        assertEquals("云端个人助手 · 独立模型、长期记忆与任务", chineseNa.description)
+
+        assertEquals(chinese.officialIds, english.officialIds)
+        assertEquals(chinese.retiredAgentIds, english.retiredAgentIds)
+        english.agents.forEach { translated ->
+            val original = requireNotNull(chinese.definition(translated.id))
+            assertEquals(
+                translated.id,
+                original,
+                translated.copy(name = original.name, description = original.description),
+            )
+        }
+    }
+
+    @Test
     fun everyShippedHarnessHasAnExplicitConfigurationOwner() {
         val evidenceDirectory = File("build/reports/harness-adapters")
         evidenceDirectory.mkdirs()

@@ -5,7 +5,9 @@
     {
       "id": "xiaowan-acp",
       "name": "小万",
+      "nameEn": "Omnibot",
       "description": "小万内置能力通过官方 ACP Agent 接口提供",
+      "descriptionEn": "Omnibot's built-in capabilities through the official ACP Agent interface",
       "command": "omnibot-xiaowan-acp",
       "builtIn": true,
       "runtime": {
@@ -17,7 +19,9 @@
     {
       "id": "na-cloud",
       "name": "Na",
+      "nameEn": "Na",
       "description": "云端个人助手 · 独立模型、长期记忆与任务",
+      "descriptionEn": "Cloud personal assistant with its own models, long-term memory, and tasks",
       "command": "na-cloud",
       "arguments": [],
       "enabled": true,

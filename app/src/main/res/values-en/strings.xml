@@ -42,8 +42,8 @@
     <string name="update_cloud_service_check_failed">Unable to verify cloud service minimum version, please connect to the network and check for updates</string>
     <string name="update_version_too_old">Current version is too old, please upgrade to v%s or higher to use account and official cloud services</string>
     <!-- Permissions -->
-    <string name="permission_accessibility">Accessibility permission</string>
-    <string name="permission_overlay">Overlay permission</string>
+    <string name="permission_accessibility">Accessibility</string>
+    <string name="permission_overlay">Overlay</string>
     <string name="permission_accessibility_missing">Accessibility permission missing</string>
     <string name="permission_automation_both_required">Please enable accessibility and overlay permissions first. Visual execution needs them to interact with the UI and display the task control bar.</string>
     <string name="permission_automation_accessibility_required">Please enable accessibility permission first. Visual execution needs it to tap, swipe, and type.</string>
