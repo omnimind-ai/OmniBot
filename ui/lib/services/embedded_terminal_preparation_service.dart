@@ -140,8 +140,8 @@ class EmbeddedTerminalPreparationService extends ChangeNotifier {
   @override
   void removeListener(VoidCallback listener) {
     super.removeListener(listener);
-    // The launch notice normally observes for the app's lifetime. A standalone
-    // chat/tutorial must also release polling when its last UI owner leaves.
+    // The launch notice normally observes for the app's lifetime. Release
+    // polling whenever the last installation UI observer leaves.
     if (!hasListeners) stopObserving();
   }
 
