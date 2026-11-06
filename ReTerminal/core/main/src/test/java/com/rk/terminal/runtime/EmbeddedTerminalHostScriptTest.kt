@@ -1,27 +1,29 @@
 package com.rk.terminal.runtime
 
 import java.io.File
-import org.junit.Assert.assertFalse
+import java.util.concurrent.TimeUnit
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class EmbeddedTerminalHostScriptTest {
     @Test
-    fun finalProotProcessKeepsCallerStdio() {
+    fun hostWrapperPreservesStdioExitStatusAndProcessCleanup() {
         val workingDirectory = File(requireNotNull(System.getProperty("user.dir")))
-        val script = listOf(
-            workingDirectory.resolve(
-                "ReTerminal/core/main/src/main/assets/init-host.sh"
-            ),
-            workingDirectory.resolve("src/main/assets/init-host.sh")
-        ).firstOrNull(File::isFile)?.readText()
-            ?: error("Embedded terminal init-host.sh asset is missing.")
+        val contract = generateSequence(workingDirectory) { it.parentFile }
+            .map { it.resolve("scripts/test-terminal-host-stop.py") }
+            .firstOrNull(File::isFile)
+            ?: error("Embedded terminal host contract test is missing.")
 
-        assertTrue(
-            script.contains(
-                "exec \"\$LINKER\" \"\$PREFIX/local/bin/proot\" \$ARGS"
-            )
-        )
-        assertFalse(script.contains("run_child \$LINKER \"\$PREFIX/local/bin/proot\""))
+        val process = ProcessBuilder("python3", contract.absolutePath)
+            .redirectErrorStream(true)
+            .start()
+        try {
+            assertTrue("Host contract test timed out", process.waitFor(30, TimeUnit.SECONDS))
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            assertEquals(output, 0, process.exitValue())
+        } finally {
+            if (process.isAlive) process.destroyForcibly()
+        }
     }
 }

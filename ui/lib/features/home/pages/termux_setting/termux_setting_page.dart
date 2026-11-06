@@ -309,7 +309,13 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   }
 
   void _handleTerminalInitProgress(EmbeddedTerminalInitProgress progress) {
-    if (!mounted || !_isDistributionSwitching) return;
+    if (!mounted) return;
+    if (!_isDistributionSwitching) {
+      if (progress.phase == 'ready') {
+        unawaited(_refreshCompletedDistribution());
+      }
+      return;
+    }
     final switchingDistribution = _switchingDistribution;
     if (progress.distribution != null &&
         progress.distribution != switchingDistribution) {
@@ -321,6 +327,27 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _distributionSwitchStage = progress.message;
       }
     });
+  }
+
+  Future<void> _refreshCompletedDistribution() async {
+    final request = _distributionRequest;
+    try {
+      // Download readiness precedes verification and selection. Only a completed
+      // native request can change the system shown after a notification retry.
+      final snapshot = await getEmbeddedTerminalInitSnapshot();
+      if (!mounted ||
+          _isDistributionSwitching ||
+          request != _distributionRequest ||
+          !snapshot.completed ||
+          snapshot.success != true ||
+          snapshot.distribution == null ||
+          snapshot.distribution == _selectedDistribution) {
+        return;
+      }
+      await _loadDistributionAndInventory(selectMissingByDefault: true);
+    } catch (_) {
+      // An observation failure does not change the selected distribution.
+    }
   }
 
   Future<void> _cancelDistributionSwitch() async {
@@ -392,15 +419,14 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
       _selectedPackageIds = <String>{};
     });
+    var switched = false;
     try {
       final saved = await switchEmbeddedTerminalDistribution(distribution);
       if (!mounted) return;
       setState(() {
         _selectedDistribution = saved;
       });
-      await _refreshInventory(selectMissingByDefault: true);
-      await _refreshAutoStartTasks();
-      if (!mounted) return;
+      switched = true;
       showToast(
         LegacyTextLocalizer.localize(
             '终端系统已切换为 ${saved == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}'),
@@ -414,7 +440,6 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         error.message ?? LegacyTextLocalizer.localize('切换终端系统失败'),
         type: ToastType.error,
       );
-      await _refreshInventory();
     } catch (_) {
       if (!mounted) return;
       setState(() {
@@ -424,7 +449,6 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         LegacyTextLocalizer.localize('切换终端系统失败'),
         type: ToastType.error,
       );
-      await _refreshInventory();
     } finally {
       if (mounted) {
         setState(() {
@@ -436,16 +460,23 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         });
       }
     }
+    // The native switch has finished. Component detection has its own loading
+    // state and must not keep a completed or failed download cancellable.
+    if (!mounted) return;
+    await _refreshInventory(selectMissingByDefault: switched);
+    if (switched && mounted) {
+      await _refreshAutoStartTasks();
+    }
   }
 
   Future<void> _refreshInventory({bool selectMissingByDefault = false}) async {
-    if (!await waitForPageReady()) return;
     final request = ++_inventoryRequest;
     final distribution = _selectedDistribution;
     bool isCurrent() =>
         mounted &&
         request == _inventoryRequest &&
         distribution == _selectedDistribution;
+    if (!await waitForPageReady() || !isCurrent()) return;
     if (mounted) {
       setState(() {
         _isDetecting = true;

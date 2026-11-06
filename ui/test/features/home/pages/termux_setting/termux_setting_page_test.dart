@@ -10,6 +10,7 @@ import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/theme/app_theme.dart';
+import 'package:ui/widgets/flclash/page_activity.dart';
 import 'package:ui/widgets/omni_segmented_slider.dart';
 
 void main() {
@@ -29,6 +30,9 @@ void main() {
   late bool switchShouldFail;
   late bool cancelCalled;
   late Future<Map<String, dynamic>> Function() readInventory;
+  late String nativeDistribution;
+  late Map<String, dynamic> initSnapshot;
+  FlClashPageActivityController? pageActivity;
 
   setUp(() async {
     workspaceDirectory = await Directory.systemTemp.createTemp(
@@ -45,7 +49,10 @@ void main() {
     switchHandlerDone = Completer<void>();
     switchShouldFail = false;
     cancelCalled = false;
+    pageActivity = null;
     readInventory = () async => {'packages': <String, dynamic>{}};
+    nativeDistribution = 'alpine';
+    initSnapshot = {};
 
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
@@ -56,7 +63,9 @@ void main() {
     messenger.setMockMethodCallHandler(terminalChannel, (call) async {
       switch (call.method) {
         case 'getEmbeddedTerminalDistribution':
-          return 'alpine';
+          return nativeDistribution;
+        case 'getEmbeddedTerminalInitSnapshot':
+          return initSnapshot;
         case 'getEmbeddedTerminalSetupInventory':
           return readInventory();
         case 'getEmbeddedTerminalAutoStartTasks':
@@ -68,7 +77,9 @@ void main() {
             throw PlatformException(code: 'DOWNLOAD_FAILED', message: '下载失败');
           }
           switchHandlerDone.complete();
-          return 'ubuntu';
+          nativeDistribution =
+              (call.arguments as Map)['distribution'] as String;
+          return nativeDistribution;
         case 'cancelEmbeddedTerminalInit':
           cancelCalled = true;
           return true;
@@ -90,12 +101,22 @@ void main() {
   });
 
   Widget buildTestApp() {
+    Widget page = const TermuxSettingPage();
+    final activity = pageActivity;
+    if (activity != null) {
+      page = FlClashPageActivityScope(
+        controller: activity,
+        index: 0,
+        isActive: true,
+        child: page,
+      );
+    }
     return MaterialApp(
       locale: const Locale('zh'),
       theme: AppTheme.lightTheme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: const TermuxSettingPage(),
+      home: page,
     );
   }
 
@@ -109,6 +130,84 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
   }
+
+  Future<void> emitReady(WidgetTester tester) async {
+    await tester.binding.defaultBinaryMessenger.handlePlatformMessage(
+      terminalEventsChannel.name,
+      const StandardMethodCodec().encodeSuccessEnvelope({
+        'kind': 'status',
+        'phase': 'ready',
+        'distribution': 'ubuntu',
+        'message': 'Ubuntu ready',
+      }),
+      (_) {},
+    );
+    await tester.pump();
+  }
+
+  testWidgets('全局重试仅在原生切换完成后更新当前发行版', (tester) async {
+    readInventory = () async => {
+      'packages': {
+        'nodejs': {'ready': true, 'version': '$nativeDistribution-detected'},
+      },
+    };
+    await pumpTestPage(tester);
+    expect(find.text('alpine-detected'), findsOneWidget);
+
+    initSnapshot = {'running': true, 'distribution': 'ubuntu'};
+    await emitReady(tester);
+    expect(find.text('alpine-detected'), findsOneWidget);
+    expect(
+      tester
+          .widget<OmniSegmentedSlider<EmbeddedTerminalDistribution>>(
+            find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
+          )
+          .value,
+      EmbeddedTerminalDistribution.alpine,
+    );
+
+    nativeDistribution = 'ubuntu';
+    initSnapshot = {
+      'completed': true,
+      'success': true,
+      'distribution': 'ubuntu',
+    };
+    await emitReady(tester);
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('ubuntu-detected'), findsOneWidget);
+    expect(
+      tester
+          .widget<OmniSegmentedSlider<EmbeddedTerminalDistribution>>(
+            find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
+          )
+          .value,
+      EmbeddedTerminalDistribution.ubuntu,
+    );
+  });
+
+  testWidgets('页面自己的切换仍等待方法返回，不被就绪事件提前结束', (tester) async {
+    await pumpTestPage(tester);
+    await tester.tap(find.text('Ubuntu'));
+    await tester.pump();
+    initSnapshot = {
+      'completed': true,
+      'success': true,
+      'distribution': 'ubuntu',
+    };
+    await emitReady(tester);
+    expect(find.text('取消下载'), findsOneWidget);
+    expect(
+      tester
+          .widget<OmniSegmentedSlider<EmbeddedTerminalDistribution>>(
+            find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
+          )
+          .onChanged,
+      isNull,
+    );
+    switchGate.complete();
+    await tester.runAsync(() => switchHandlerDone.future);
+    await tester.pump();
+  });
 
   testWidgets('Ubuntu 准备期间展示取消入口', (tester) async {
     await pumpTestPage(tester);
@@ -268,5 +367,151 @@ void main() {
           find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
         );
     expect(selector.value, EmbeddedTerminalDistribution.alpine);
+  });
+
+  for (final fails in [false, true]) {
+    testWidgets('切换${fails ? '失败' : '完成'}后检测未结束也退出下载状态', (tester) async {
+      final inventory = Completer<Map<String, dynamic>>();
+      var inventoryCalls = 0;
+      readInventory = () async => inventoryCalls++ == 0
+          ? {'packages': <String, dynamic>{}}
+          : inventory.future;
+      switchShouldFail = fails;
+      await pumpTestPage(tester);
+
+      await tester.tap(find.text('Ubuntu'));
+      await tester.pump();
+      expect(find.text('取消下载'), findsOneWidget);
+
+      switchGate.complete();
+      await tester.runAsync(() async {
+        await switchHandlerDone.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await tester.pump();
+
+      final selector = tester
+          .widget<OmniSegmentedSlider<EmbeddedTerminalDistribution>>(
+            find.byType(OmniSegmentedSlider<EmbeddedTerminalDistribution>),
+          );
+      expect(
+        selector.value,
+        fails
+            ? EmbeddedTerminalDistribution.alpine
+            : EmbeddedTerminalDistribution.ubuntu,
+      );
+      expect(selector.onChanged, isNotNull);
+      expect(find.text('取消下载'), findsNothing);
+      expect(find.byType(LinearProgressIndicator), findsNothing);
+      expect(inventoryCalls, 2);
+      expect(inventory.isCompleted, isFalse);
+
+      inventory.complete({
+        'packages': {
+          'nodejs': {'ready': true, 'version': 'detected-after-switch'},
+        },
+      });
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('detected-after-switch'), findsOneWidget);
+    });
+  }
+
+  for (final failOld in [false, true]) {
+    testWidgets('可在上次切换检测期间再次切换并忽略旧检测${failOld ? '异常' : '成功'}', (tester) async {
+      final oldInventory = Completer<Map<String, dynamic>>();
+      var inventoryCalls = 0;
+      readInventory = () async {
+        switch (++inventoryCalls) {
+          case 1:
+            return {'packages': <String, dynamic>{}};
+          case 2:
+            return oldInventory.future;
+          default:
+            return {
+              'packages': {
+                'nodejs': {'ready': true, 'version': 'alpine-current'},
+              },
+            };
+        }
+      };
+      await pumpTestPage(tester);
+      await tester.tap(find.text('Ubuntu'));
+      switchGate.complete();
+      await tester.runAsync(() async {
+        await switchHandlerDone.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await tester.pump();
+      expect(inventoryCalls, 2);
+
+      switchGate = Completer<void>();
+      switchHandlerDone = Completer<void>();
+      await tester.tap(find.text('Alpine'));
+      await tester.pump();
+      expect(find.text('取消下载'), findsOneWidget);
+      switchGate.complete();
+      await tester.runAsync(() async {
+        await switchHandlerDone.future;
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      });
+      await tester.pump();
+      expect(find.text('alpine-current'), findsOneWidget);
+
+      if (failOld) {
+        oldInventory.completeError(
+          PlatformException(code: 'OLD', message: 'ubuntu-stale-error'),
+        );
+      } else {
+        oldInventory.complete({
+          'packages': {
+            'nodejs': {'ready': false, 'version': 'ubuntu-stale'},
+          },
+        });
+      }
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 100));
+      expect(find.text('alpine-current'), findsOneWidget);
+      expect(find.text('ubuntu-stale'), findsNothing);
+      expect(find.text('ubuntu-stale-error'), findsNothing);
+    });
+  }
+
+  testWidgets('等待页面恢复的旧检测不会在下一次切换中启动', (tester) async {
+    final activity = FlClashPageActivityController(selectedIndex: 0);
+    pageActivity = activity;
+    addTearDown(activity.dispose);
+    var inventoryCalls = 0;
+    readInventory = () async {
+      inventoryCalls++;
+      return {'packages': <String, dynamic>{}};
+    };
+    await pumpTestPage(tester);
+    await tester.tap(find.text('Ubuntu'));
+    activity.update(selectedIndex: 0, transitioning: true);
+    switchGate.complete();
+    await tester.runAsync(() async {
+      await switchHandlerDone.future;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    });
+    await tester.pump();
+    expect(inventoryCalls, 1);
+
+    switchGate = Completer<void>();
+    switchHandlerDone = Completer<void>();
+    await tester.tap(find.text('Alpine'));
+    await tester.pump();
+    activity.update(selectedIndex: 0, transitioning: false);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(inventoryCalls, 1);
+
+    switchGate.complete();
+    await tester.runAsync(() async {
+      await switchHandlerDone.future;
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+    });
+    await tester.pump();
+    expect(inventoryCalls, 2);
   });
 }

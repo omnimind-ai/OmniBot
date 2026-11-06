@@ -12,7 +12,7 @@ class EmbeddedTerminalPreparationService extends ChangeNotifier {
     Future<Map<String, dynamic>> Function()? prepare,
   }) : _loadSnapshot = loadSnapshot ?? getEmbeddedTerminalInitSnapshot,
        _progressStream = progressStream,
-       _prepare = prepare ?? prepareTermuxLiveWrapper;
+       _prepare = prepare ?? retryEmbeddedTerminalInit;
 
   static final instance = EmbeddedTerminalPreparationService();
 

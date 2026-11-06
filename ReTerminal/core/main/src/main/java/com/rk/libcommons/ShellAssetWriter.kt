@@ -4,6 +4,14 @@ import android.content.Context
 import java.io.File
 
 object ShellAssetWriter {
+    fun writeTerminalShellAssets(context: Context): File {
+        val bin = localBinDir()
+        listOf("init-host", "init", "ubuntu-repositories").forEach { name ->
+            writeExecutableShellAsset(context, "$name.sh", bin.resolve(name))
+        }
+        return bin.resolve("init-host")
+    }
+
     fun writeExecutableShellAsset(context: Context, assetName: String, target: File) {
         writeShellAsset(context, assetName, target)
         target.setExecutable(true, false)

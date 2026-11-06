@@ -19,6 +19,7 @@ import androidx.core.content.ContextCompat
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.activity.MainActivity
+import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -33,6 +34,20 @@ class EmbeddedTerminalInstallService : Service() {
         internal const val NOTIFICATION_ID = 2048122
         internal const val ACTION_OBSERVE = "cn.com.omnimind.bot.terminal.OBSERVE_INSTALLATION"
         internal const val ACTION_RETRY = "cn.com.omnimind.bot.terminal.RETRY_INSTALLATION"
+        private const val EXTRA_REQUEST_KIND = "requestKind"
+        private const val EXTRA_DISTRIBUTION = "distribution"
+        private const val EXTRA_PACKAGE_IDS = "packageIds"
+
+        internal fun retryRequest(intent: Intent?): EmbeddedTerminalInitCoordinator.PreparationRequest? =
+            when (intent?.getStringExtra(EXTRA_REQUEST_KIND)) {
+                "switch" -> TerminalDistribution.supported
+                    .firstOrNull { it.id == intent.getStringExtra(EXTRA_DISTRIBUTION) }
+                    ?.let { EmbeddedTerminalInitCoordinator.PreparationRequest.Switch(it) }
+                "prepare" -> EmbeddedTerminalInitCoordinator.PreparationRequest.Prepare(
+                    intent.getStringArrayListExtra(EXTRA_PACKAGE_IDS)?.toList()
+                )
+                else -> null
+            }
 
         fun observe(context: Context) {
             runCatching {
@@ -118,7 +133,16 @@ class EmbeddedTerminalInstallService : Service() {
                 val retry = PendingIntent.getForegroundService(
                     context,
                     NOTIFICATION_ID,
-                    Intent(context, EmbeddedTerminalInstallService::class.java).setAction(ACTION_RETRY),
+                    Intent(context, EmbeddedTerminalInstallService::class.java).apply {
+                        action = ACTION_RETRY
+                        // The notification can outlive the application process.
+                        // Preserve the request instead of retrying the selected system.
+                        putExtra(EXTRA_REQUEST_KIND, snapshot["requestKind"] as? String)
+                        putExtra(EXTRA_DISTRIBUTION, snapshot["distribution"] as? String)
+                        (snapshot["packageIds"] as? List<*>)?.let { ids ->
+                            putStringArrayListExtra(EXTRA_PACKAGE_IDS, ArrayList(ids.filterIsInstance<String>()))
+                        }
+                    },
                     PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
                 val retryHint = context.getString(R.string.system_install_notification_retry_hint)
@@ -185,7 +209,7 @@ class EmbeddedTerminalInstallService : Service() {
                 // A notification click is the same explicit preparation request
                 // as the in-app retry; the coordinator coalesces concurrent calls.
                 requestScope.launch {
-                    EmbeddedTerminalInitCoordinator.prepare(applicationContext)
+                    EmbeddedTerminalInitCoordinator.retry(applicationContext, retryRequest(intent))
                 }
                 refreshFromCoordinator()
             }

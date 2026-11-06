@@ -5,6 +5,14 @@ from pathlib import Path
 
 SCRIPT=Path(__file__).resolve().parents[1]/'ReTerminal/core/main/src/main/assets/init-host.sh'
 
+def restore_host_signals():
+    # JVM test workers can pass ignored or blocked signals to subprocesses.
+    # Give the host shell its normal launch state so its traps can be tested.
+    signals = (signal.SIGHUP, signal.SIGINT, signal.SIGQUIT, signal.SIGTERM)
+    for sig in signals:
+        signal.signal(sig, signal.SIG_DFL)
+    signal.pthread_sigmask(signal.SIG_UNBLOCK, signals)
+
 class HostStopTest(unittest.TestCase):
     def test_stop_reaches_runtime_cleanup_and_preserves_stdin(self):
         self.run_contract(cancel=True)
@@ -45,6 +53,7 @@ class HostStopTest(unittest.TestCase):
                                  'OMNIBOT_TERMINAL_DISTRIBUTION': distribution,
                                  'OMNIBOT_TERMINAL_NO_INSTALL': '1'},
                             capture_output=True, text=True, timeout=3,
+                            preexec_fn=restore_host_signals,
                         )
                         self.assertNotEqual(result.returncode, 0)
                         self.assertIn('maintenance requires an installed', result.stderr)
@@ -70,7 +79,7 @@ if line.strip() == 'EXIT7':
 while True: time.sleep(.1)
 ''')
             linker.chmod(0o755)
-            process=subprocess.Popen(['/bin/sh',str(SCRIPT)],env={**os.environ,'PREFIX':directory,'LINKER':str(linker),'OMNIBOT_TERMINAL_DISTRIBUTION':'alpine','OMNIBOT_TERMINAL_NO_INSTALL':'1' if maintenance else '0','OMNIBOT_HOST_WORKSPACE':'','OMNIBOT_MT_STORAGE_HOST':''},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1)
+            process=subprocess.Popen(['/bin/sh',str(SCRIPT)],env={**os.environ,'PREFIX':directory,'LINKER':str(linker),'OMNIBOT_TERMINAL_DISTRIBUTION':'alpine','OMNIBOT_TERMINAL_NO_INSTALL':'1' if maintenance else '0','OMNIBOT_HOST_WORKSPACE':'','OMNIBOT_MT_STORAGE_HOST':''},stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True,bufsize=1,preexec_fn=restore_host_signals)
             runtime=None
             def line():
                 with selectors.DefaultSelector() as ready:

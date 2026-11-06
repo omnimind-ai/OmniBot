@@ -414,6 +414,13 @@ Future<bool> cancelEmbeddedTerminalInit() async {
       false;
 }
 
+Future<Map<String, dynamic>> retryEmbeddedTerminalInit() async {
+  final result = await spePermission.invokeMethod<Map<dynamic, dynamic>>(
+    'retryEmbeddedTerminalInit',
+  );
+  return Map<String, dynamic>.from(result ?? const {});
+}
+
 Future<EmbeddedTerminalRuntimeStatus> getEmbeddedTerminalRuntimeStatus() async {
   final result = await spePermission.invokeMethod<Map<dynamic, dynamic>>(
     'getEmbeddedTerminalRuntimeStatus',

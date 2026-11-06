@@ -190,7 +190,7 @@ class AgentRuntimeManager private constructor(
     private val managedAgentUpdates = ManagedAgentUpdates(
         probe = { profiles, distributionId ->
             check(TerminalDistribution.selected().id == distributionId &&
-                EmbeddedRuntimeInstaller.isCurrentDistributionReady(appContext)) {
+                EmbeddedRuntimeInstaller.isDistributionReady(appContext, TerminalDistribution.selected())) {
                 "Prepare the terminal environment before checking installed Agent versions"
             }
             val result = TerminalManager.getInstance(appContext).executeHiddenCommand(
@@ -210,7 +210,7 @@ class AgentRuntimeManager private constructor(
         profiles = acpAgentProfileStore::list,
         currentDistribution = { TerminalDistribution.selected().id },
         disconnect = { profile ->
-            if (!EmbeddedRuntimeInstaller.isCurrentDistributionReady(appContext)) {
+            if (!EmbeddedRuntimeInstaller.isDistributionReady(appContext, TerminalDistribution.selected())) {
                 throw ManagedAgentUninstallException(
                     "agent_uninstall_terminal_unavailable", "The terminal environment is unavailable.",
                 )
@@ -684,7 +684,7 @@ class AgentRuntimeManager private constructor(
                 if (method == "agent/checkUpdates") {
                     managedAgentUpdates.check(acpAgentProfileStore.list(), distributionId)
                 }
-                if (EmbeddedRuntimeInstaller.isCurrentDistributionReady(appContext)) {
+                if (EmbeddedRuntimeInstaller.isDistributionReady(appContext, TerminalDistribution.selected())) {
                     acpAgentProfileStore.list().filter { it.id != NA_AGENT_ID }.forEach { profile ->
                         localRuntimeFor(profile.id).refreshAvailability()
                     }
@@ -2229,7 +2229,7 @@ class AgentRuntimeManager private constructor(
                 "agent_uninstall_distribution_changed", "Terminal environment changed. Refresh Agent settings.",
             )
         }
-        if (!EmbeddedRuntimeInstaller.isCurrentDistributionReady(appContext)) {
+        if (!EmbeddedRuntimeInstaller.isDistributionReady(appContext, TerminalDistribution.selected())) {
             throw ManagedAgentUninstallException(
                 "agent_uninstall_terminal_unavailable", "The terminal environment is unavailable.",
             )

@@ -45,24 +45,10 @@ configure_apk_repositories() {
         > /etc/apk/repositories
 }
 
-configure_apt_repositories() {
-    if [ -z "$OMNIBOT_UBUNTU_APT_REPOSITORY_BASE" ]; then
-        return 0
-    fi
-
-    codename="$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release 2>/dev/null | tr -d '"' | head -n 1)"
-    [ -n "$codename" ] || codename=noble
-    mkdir -p /etc/apt/sources.list.d
-    printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates %s-backports\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: http://ports.ubuntu.com/ubuntu-ports\nSuites: %s-security\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' \
-        "$OMNIBOT_UBUNTU_APT_REPOSITORY_BASE" \
-        "$codename" "$codename" "$codename" "$codename" \
-        > /etc/apt/sources.list.d/ubuntu.sources
-}
-
 if [ "$TERMINAL_DISTRIBUTION" = "alpine" ]; then
     configure_apk_repositories || true
 elif [ "$TERMINAL_DISTRIBUTION" = "ubuntu" ]; then
-    configure_apt_repositories || true
+    /bin/sh "$BIN/ubuntu-repositories" "$OMNIBOT_UBUNTU_APT_REPOSITORY_BASE"
 fi
 
 suppress_ubuntu_sudo_group_probe() {
