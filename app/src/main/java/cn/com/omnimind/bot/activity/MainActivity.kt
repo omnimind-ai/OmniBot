@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.activity
 
 import android.app.ActivityManager
+import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ActivityInfo
@@ -27,6 +28,7 @@ import cn.com.omnimind.bot.util.SchemeUtil
 import cn.com.omnimind.bot.util.TaskRuntimeSettings
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.platform.PlatformPlugin
 import kotlinx.coroutines.launch
 
 class MainActivity : FlutterActivity() {
@@ -51,6 +53,11 @@ class MainActivity : FlutterActivity() {
 
     override fun shouldDestroyEngineWithHost(): Boolean {
         return false
+    }
+
+    override fun providePlatformPlugin(activity: Activity?, flutterEngine: FlutterEngine): PlatformPlugin {
+        val channel = App.getMainPlatformChannel()
+        return PlatformPlugin(this, channel, this).also { channel.replaySystemUi() }
     }
 
     override fun onFlutterUiDisplayed() {

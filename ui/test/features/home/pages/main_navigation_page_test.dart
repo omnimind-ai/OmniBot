@@ -34,6 +34,7 @@ void main() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late List<String> agentCalls;
   late List<String> assistCalls;
+  late List<Map<String, Object?>> conversations;
   GoRouter? router;
 
   setUp(() async {
@@ -47,6 +48,7 @@ void main() {
     AppUpdateService.statusNotifier.value = null;
     agentCalls = [];
     assistCalls = [];
+    conversations = [];
     messenger.setMockMethodCallHandler(agentChannel, (call) async {
       agentCalls.add(call.method);
       return switch (call.method) {
@@ -90,7 +92,8 @@ void main() {
     messenger.setMockMethodCallHandler(assistChannel, (call) async {
       assistCalls.add(call.method);
       return switch (call.method) {
-        'getConversations' || 'agentSkillList' || 'getMessages' => <Object?>[],
+        'getConversations' => conversations,
+        'agentSkillList' || 'getMessages' => <Object?>[],
         'getWorkspaceLongMemory' => {'content': ''},
         'getWorkspaceMemoryEmbeddingConfig' => {
           'enabled': false,
@@ -171,6 +174,133 @@ void main() {
 
   int agentReads() =>
       agentCalls.where((method) => method == 'agent/list').length;
+
+  void populateConversations() {
+    final now = DateTime.now().millisecondsSinceEpoch;
+    conversations = List.generate(
+      20,
+      (index) => {
+        'id': index + 1,
+        'mode': 'agent',
+        'agentId': 'xiaowan-acp',
+        'title': '悬浮列表会话 ${index + 1}',
+        'lastMessage': '会话内容',
+        'status': 0,
+        'messageCount': 1,
+        'createdAt': now - index * 1000,
+        'updatedAt': now - index * 1000,
+      },
+    );
+  }
+
+  for (final scenario in [
+    (size: const Size(390, 844), scale: 1.0),
+    (size: const Size(390, 844), scale: 2.0),
+    (size: const Size(768, 1024), scale: 1.0),
+  ]) {
+    testWidgets('home list extends under navigation at $scenario', (
+      tester,
+    ) async {
+      populateConversations();
+      tester.platformDispatcher.textScaleFactorTestValue = scenario.scale;
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await pumpShell(tester, size: scenario.size);
+      final list = find.descendant(
+        of: find.byType(HomeDrawer),
+        matching: find.byType(CustomScrollView),
+      );
+      expect(tester.getRect(list).bottom, scenario.size.height);
+      final fab = find.byKey(const ValueKey('home-new-conversation'));
+      if (scenario.size.width < 600) {
+        expect(
+          tester.getRect(list).bottom,
+          greaterThan(tester.getRect(find.byType(FlClashNavigationDock)).top),
+        );
+        expect(
+          tester.getRect(fab).bottom,
+          lessThan(tester.getRect(find.byType(FlClashNavigationDock)).top),
+        );
+      }
+      final scrollable = find.descendant(
+        of: list,
+        matching: find.byType(Scrollable),
+      );
+      final position = tester.state<ScrollableState>(scrollable).position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final lastRow = find.byKey(
+        const ValueKey('home-source-row-agent:20'),
+      );
+      expect(lastRow, findsOneWidget);
+      expect(tester.getRect(lastRow).bottom, lessThan(tester.getRect(fab).top));
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
+    'home search flows under dock and avoids keyboard and selection bar',
+    (tester) async {
+      populateConversations();
+      await pumpShell(tester);
+      final dock = find.byType(FlClashNavigationDock);
+      final dockTop = tester.getRect(dock).top;
+      await tester.tap(find.byKey(const ValueKey('home-search-button')));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('home-search-input')),
+        '悬浮列表会话',
+      );
+      await tester.pump(const Duration(milliseconds: 350));
+      await tester.pumpAndSettle();
+      final results = find.descendant(
+        of: find.byType(HomeDrawer),
+        matching: find.byType(ListView),
+      );
+      expect(tester.getRect(results).bottom, 844);
+      final position = tester
+          .state<ScrollableState>(
+            find.descendant(of: results, matching: find.byType(Scrollable)),
+          )
+          .position;
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      // The search header and rows have different heights; finish scrolling
+      // after the lazy list replaces its initial extent estimate.
+      position.jumpTo(position.maxScrollExtent);
+      await tester.pumpAndSettle();
+      final lastRow = find.byKey(
+        const ValueKey('home-source-row-agent:20'),
+      );
+      expect(
+        tester.getRect(lastRow).bottom,
+        lessThan(
+          tester
+              .getRect(find.byKey(const ValueKey('home-new-conversation')))
+              .top,
+        ),
+      );
+
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      addTearDown(tester.view.resetViewInsets);
+      await tester.pumpAndSettle();
+      expect(dock, findsNothing);
+      expect(tester.getRect(results).bottom, 544);
+      tester.view.resetViewInsets();
+      await tester.pumpAndSettle();
+      position.jumpTo(0);
+      await tester.pumpAndSettle();
+      await tester.longPress(find.text('悬浮列表会话 1'));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('home-drawer-context-select')),
+      );
+      await tester.pumpAndSettle();
+      final archive = find.byKey(const ValueKey('home-selection-archive'));
+      expect(archive.hitTestable(), findsOneWidget);
+      expect(tester.getRect(archive).bottom, lessThan(dockTop));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'dock selection slides both root pages while the dock stays put',

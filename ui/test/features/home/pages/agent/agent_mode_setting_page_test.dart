@@ -70,6 +70,88 @@ void main() {
         .setMockMethodCallHandler(pluginPlatformChannel, null);
   });
 
+  testWidgets('catalog order survives grouping, filters and search', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1100, 2400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(agentRuntimeChannel, (call) async {
+          if (call.method != 'agent/list') return null;
+          return {
+            'agents': [
+              _agent('xiaowan-acp', '小万', 'xiaowan', 'online'),
+              _agent('na-cloud', 'Na', 'na-cloud', 'offline'),
+              _agent('claude-code-acp', 'Claude Code', 'claude', 'online'),
+              _agent('codex-acp', 'Codex', 'codex', 'online'),
+              _agent('opencode-acp', 'OpenCode', 'opencode', 'missing'),
+              _agent('pi-acp', 'Pi', 'pi', 'online'),
+              _agent('kimi-code-acp', 'Kimi Code', 'kimi', 'missing'),
+              {
+                ..._agent('custom-z', 'Z Agent', 'z', 'online'),
+                'builtIn': false,
+              },
+              {
+                ..._agent('custom-a', 'A Agent', 'a', 'online'),
+                'builtIn': false,
+              },
+            ],
+          };
+        });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
+        home: const AgentModeSettingPage(embedded: true),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    void expectOrder(List<String> names) {
+      for (var index = 1; index < names.length; index++) {
+        expect(
+          tester.getTopLeft(find.text(names[index - 1])).dy,
+          lessThan(tester.getTopLeft(find.text(names[index])).dy),
+          reason: '${names[index - 1]} must precede ${names[index]}',
+        );
+      }
+    }
+
+    expectOrder([
+      '小万',
+      'Na',
+      'Claude Code',
+      'Codex',
+      'OpenCode',
+      'Pi',
+      'Kimi Code',
+      'Z Agent',
+      'A Agent',
+    ]);
+    await tester.tap(find.text('可用 6'));
+    await tester.pumpAndSettle();
+    expectOrder(['小万', 'Claude Code', 'Codex', 'Pi', 'Z Agent', 'A Agent']);
+    expect(find.text('Na'), findsNothing);
+    await tester.tap(find.text('不可用 3'));
+    await tester.pumpAndSettle();
+    expectOrder(['Na', 'OpenCode', 'Kimi Code']);
+    await tester.tap(find.text('全部 9'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const Key('agent-search-button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('agent-contact-search')),
+      'code',
+    );
+    await tester.pumpAndSettle();
+    expectOrder(['Claude Code', 'Codex', 'OpenCode', 'Kimi Code']);
+    expect(tester.takeException(), isNull);
+  });
+
   for (final scenario in [
     (width: 1100.0, scale: 1.0, inline: true),
     (width: 500.0, scale: 1.0, inline: false),
@@ -205,8 +287,8 @@ void main() {
       const Size(44, 44),
     );
     expect(
-      tester.getTopLeft(find.text('Claude Code')).dy,
-      lessThan(tester.getTopLeft(find.text('Codex')).dy),
+      tester.getTopLeft(find.text('Codex')).dy,
+      lessThan(tester.getTopLeft(find.text('Claude Code')).dy),
     );
     await tester.tap(find.text('可用 1'));
     await tester.pumpAndSettle();
