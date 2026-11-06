@@ -22,6 +22,14 @@ const double _kScheduledChildConversationItemInset =
     _kScheduledConversationLeadingInset + 26;
 
 extension _HomeDrawerConversationList on HomeDrawerState {
+  double get _conversationListBottomPadding {
+    if (!widget.homePage) return 0;
+    final overlayInset = widget.conversationSidebar || _isSelectingConversations
+        ? 0.0
+        : MediaQuery.paddingOf(context).bottom;
+    return 112 + overlayInset;
+  }
+
   bool _isCurrentConversationRow(ConversationModel conversation) {
     final target = widget.selectedThreadTarget;
     return !_isSelectingConversations &&
@@ -100,7 +108,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
           : _buildEmptySearchResult();
     }
     return ListView.builder(
-      padding: EdgeInsets.only(bottom: widget.homePage ? 112 : 0),
+      padding: EdgeInsets.only(bottom: _conversationListBottomPadding),
       itemCount: results.length + 1,
       itemBuilder: (context, index) => index == 0
           ? _buildSearchResultHeader(results.length)
@@ -177,7 +185,9 @@ extension _HomeDrawerConversationList on HomeDrawerState {
       slivers: [
         ...sections,
         if (widget.homePage)
-          const SliverToBoxAdapter(child: SizedBox(height: 112)),
+          SliverToBoxAdapter(
+            child: SizedBox(height: _conversationListBottomPadding),
+          ),
       ],
     );
   }

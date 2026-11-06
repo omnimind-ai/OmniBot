@@ -124,6 +124,9 @@ extension _HomeDrawerHome on HomeDrawerState {
             : palette.pageBackground,
         resizeToAvoidBottomInset: true,
         body: SafeArea(
+          // The home dock overlays scrolling content. Reserve its inset at
+          // the end of the list instead of clipping the whole viewport.
+          bottom: widget.conversationSidebar || _isSelectingConversations,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
