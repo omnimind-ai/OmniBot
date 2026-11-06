@@ -1,24 +1,68 @@
 package com.ai.assistance.operit.terminal
 
+import android.content.Context
+import com.rk.terminal.runtime.EmbeddedRuntimeInstaller
+import com.rk.terminal.runtime.TerminalDistribution
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.mockito.Mockito.mock
+import org.mockito.Mockito.`when`
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InterruptedIOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.Files
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 class TerminalManagerTest {
+    @Test
+    fun `preparing Ubuntu does not reuse Alpine readiness`() = runBlocking {
+        val directory = Files.createTempDirectory("terminal-distribution-test").toFile()
+        try {
+            val files = directory.resolve("files").apply { mkdirs() }
+            listOf("proot", "libtalloc.so.2", "alpine.tar.gz").forEach {
+                files.resolve(it).writeText("fixture")
+            }
+            val context = mock(Context::class.java)
+            `when`(context.filesDir).thenReturn(files)
+
+            assertTrue(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.alpine))
+            assertFalse(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.ubuntu))
+
+            val manager = TerminalManager::class.java.getDeclaredConstructor(Context::class.java)
+                .apply { isAccessible = true }.newInstance(context)
+            val progress = mutableListOf<EmbeddedRuntimeInstaller.RuntimeInstallProgress>()
+            try {
+                manager.initializeEnvironment(TerminalDistribution.ubuntu) {
+                    progress += it
+                    // Admission is the regression boundary; stop before asset or network I/O.
+                    throw CancellationException("Stop after installer admission")
+                }
+            } catch (_: CancellationException) {
+                // initializeEnvironment must propagate cancellation from the installer.
+            }
+            assertEquals(listOf("ubuntu"), progress.map { it.distribution })
+            assertEquals(listOf("checking"), progress.map { it.phase })
+
+            files.resolve("ubuntu.tar.gz").writeText("fixture")
+            assertTrue(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.ubuntu))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
     @Test
     fun `cancellation terminates a blocking hidden process`() = runBlocking {
         val process = BlockingProcess()

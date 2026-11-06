@@ -6,6 +6,7 @@ import android.app.Notification
 import android.app.NotificationManager
 import android.content.Intent
 import cn.com.omnimind.bot.termux.TermuxLiveEnvironmentResult
+import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.*
@@ -36,8 +37,11 @@ class EmbeddedTerminalInstallServiceTest {
     fun reservePreparation() {
         previousState = stateField.get(coordinator)
         previousRun = runField.get(coordinator)
-        coordinator.javaClass.getDeclaredMethod("resetEmbeddedTerminalInitStateLocked")
-            .apply { isAccessible = true }.invoke(coordinator)
+        coordinator.javaClass.getDeclaredMethod(
+            "resetEmbeddedTerminalInitStateLocked",
+            EmbeddedTerminalInitCoordinator.PreparationRequest::class.java
+        )
+            .apply { isAccessible = true }.invoke(coordinator, EmbeddedTerminalInitCoordinator.PreparationRequest.Switch(TerminalDistribution.ubuntu))
         shadowOf(application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
     }
 
@@ -95,6 +99,34 @@ class EmbeddedTerminalInstallServiceTest {
         assertEquals(notification.contentIntent, notification.actions.single().actionIntent)
         assertNull(notification.extras.getCharSequence(Notification.EXTRA_BIG_TEXT))
         assertNull(shadowOf(application).nextStartedActivity)
+    }
+
+    @Test
+    fun `failed Ubuntu switch notification restores its request without coordinator memory`() {
+        val notification = EmbeddedTerminalInstallService.buildNotification(application, mapOf(
+            "completed" to true, "success" to false,
+            "requestKind" to "switch", "distribution" to "ubuntu"
+        ))
+        val retryIntent = shadowOf(notification.contentIntent).savedIntent
+        // Simulate the in-memory coordinator being absent after process recreation.
+        stateField.set(coordinator, previousState)
+        assertEquals(
+            EmbeddedTerminalInitCoordinator.PreparationRequest.Switch(TerminalDistribution.ubuntu),
+            EmbeddedTerminalInstallService.retryRequest(retryIntent)
+        )
+    }
+
+    @Test
+    fun `package retry notification preserves explicit package selection`() {
+        val notification = EmbeddedTerminalInstallService.buildNotification(application, mapOf(
+            "completed" to true, "success" to false,
+            "requestKind" to "prepare", "distribution" to "alpine",
+            "packageIds" to listOf("nodejs", "git")
+        ))
+        assertEquals(
+            EmbeddedTerminalInitCoordinator.PreparationRequest.Prepare(listOf("nodejs", "git")),
+            EmbeddedTerminalInstallService.retryRequest(shadowOf(notification.contentIntent).savedIntent)
+        )
     }
 
     @Test

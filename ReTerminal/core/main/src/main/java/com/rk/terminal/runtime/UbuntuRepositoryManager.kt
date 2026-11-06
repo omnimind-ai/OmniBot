@@ -35,17 +35,7 @@ object UbuntuRepositoryManager {
 
     fun buildRepositorySetupCommand(source: Int): String {
         val mainBaseUrl = shellSingleQuote(baseUrlFor(source))
-        val securityBaseUrl = shellSingleQuote(OFFICIAL_BASE_URL)
-        return """
-            ( set -e;
-              . /etc/os-release;
-              codename="${'$'}{VERSION_CODENAME:-$DEFAULT_CODENAME}";
-              main_base=$mainBaseUrl;
-              security_base=$securityBaseUrl;
-              mkdir -p /etc/apt/sources.list.d;
-              printf 'Types: deb\nURIs: %s\nSuites: %s %s-updates %s-backports\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n\nTypes: deb\nURIs: %s\nSuites: %s-security\nComponents: main universe restricted multiverse\nSigned-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg\n' "${'$'}main_base" "${'$'}codename" "${'$'}codename" "${'$'}codename" "${'$'}security_base" "${'$'}codename" > /etc/apt/sources.list.d/ubuntu.sources
-            )
-        """.trimIndent()
+        return "/bin/sh \"${'$'}BIN/ubuntu-repositories\" $mainBaseUrl"
     }
 
     fun applySelectedRepositoryToInstalledRootfs(): ApplyResult {
@@ -76,12 +66,14 @@ object UbuntuRepositoryManager {
             appendLine("URIs: ${baseUrlFor(source)}")
             appendLine("Suites: $normalizedCodename $normalizedCodename-updates $normalizedCodename-backports")
             appendLine("Components: main universe restricted multiverse")
+            appendLine("Architectures: arm64")
             appendLine("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg")
             appendLine()
             appendLine("Types: deb")
             appendLine("URIs: $OFFICIAL_BASE_URL")
             appendLine("Suites: $normalizedCodename-security")
             appendLine("Components: main universe restricted multiverse")
+            appendLine("Architectures: arm64")
             appendLine("Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg")
         }
     }

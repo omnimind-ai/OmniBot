@@ -9,7 +9,6 @@ import com.rk.libcommons.ShellAssetWriter
 import com.rk.libcommons.TerminalCommand
 import com.rk.libcommons.application
 import com.rk.libcommons.child
-import com.rk.libcommons.createFileIfNot
 import com.rk.libcommons.localBinDir
 import com.rk.libcommons.localDir
 import com.rk.libcommons.localLibDir
@@ -58,15 +57,7 @@ object MkSession {
             val distribution = TerminalDistribution.fromWorkingMode(workingMode)
             val workingDir = launchCommand?.workingDir ?: terminalHomeDir(workingMode).path
 
-            val initFile: File = localBinDir().child("init-host")
-            ShellAssetWriter.writeExecutableShellAsset(this, "init-host.sh", initFile)
-
-
-            localBinDir().child("init").apply {
-                ShellAssetWriter.writeExecutableShellAsset(this@with, "init.sh", this)
-            }
-
-
+            val initFile = ShellAssetWriter.writeTerminalShellAssets(this)
             val env = mutableListOf(
                 "PATH=${System.getenv("PATH")}:/sbin:${localBinDir().absolutePath}",
                 "HOME=/sdcard",

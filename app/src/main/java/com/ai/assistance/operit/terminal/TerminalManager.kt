@@ -108,11 +108,11 @@ class TerminalManager private constructor(
         distribution: TerminalDistribution.Spec = TerminalDistribution.selected(),
         onProgress: suspend (RuntimeInstallProgress) -> Unit = {}
     ): Boolean {
-        // Hidden ACP probes run during Agent switching. Once the selected
+        // Hidden ACP probes run during Agent switching. Once the requested
         // runtime is already installed, do not queue behind the full runtime
         // installer (which may be preparing OmniFlow or another terminal
         // session concurrently).
-        if (EmbeddedRuntimeInstaller.isCurrentDistributionReady(context)) {
+        if (EmbeddedRuntimeInstaller.isDistributionReady(context, distribution)) {
             return runCatching {
                 ensureShellScripts()
                 true
@@ -523,12 +523,7 @@ class TerminalManager private constructor(
     }
 
     private fun ensureShellScripts(): File {
-        val initHost = localBinDir().resolve("init-host")
-        ShellAssetWriter.writeExecutableShellAsset(context, "init-host.sh", initHost)
-
-        val init = localBinDir().resolve("init")
-        ShellAssetWriter.writeExecutableShellAsset(context, "init.sh", init)
-        return initHost
+        return ShellAssetWriter.writeTerminalShellAssets(context)
     }
 
     private fun handleSessionChanged(handle: ManagedSession) {

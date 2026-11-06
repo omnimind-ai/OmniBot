@@ -127,8 +127,7 @@ class EnvironmentSetupLogicTest {
 
         val ubuntuRepositorySetup = commands.first()
         assertTrue(ubuntuRepositorySetup.contains("mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"))
-        assertTrue(ubuntuRepositorySetup.contains("ports.ubuntu.com/ubuntu-ports"))
-        assertTrue(ubuntuRepositorySetup.contains("ubuntu.sources"))
+        assertTrue(ubuntuRepositorySetup.contains("ubuntu-repositories"))
 
         val nodeRepositorySetup = commands.first { it.contains("deb.nodesource.com/node_22.x") }
         assertTrue(nodeRepositorySetup.contains("nodesource-repo.gpg.key"))

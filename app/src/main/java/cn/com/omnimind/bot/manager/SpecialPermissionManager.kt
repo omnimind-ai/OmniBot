@@ -644,7 +644,7 @@ class SpecialPermissionManager(private val context: Context) {
                     return@launch
                 }
 
-                val preparation = EmbeddedTerminalInitCoordinator.prepareDistribution(
+                val preparation = EmbeddedTerminalInitCoordinator.switchDistribution(
                     context = context,
                     distribution = distribution
                 )
@@ -659,9 +659,6 @@ class SpecialPermissionManager(private val context: Context) {
                     return@launch
                 }
 
-                TerminalManager.getInstance(context).closeAllSessions()
-                com.rk.settings.Settings.terminal_distribution = distribution.workingMode
-                com.rk.settings.Settings.working_Mode = distribution.workingMode
                 withContext(Dispatchers.Main) { result.success(distribution.id) }
             } catch (e: Exception) {
                 OmniLog.e(TAG, "Error switching terminal distribution", e)
@@ -938,6 +935,27 @@ class SpecialPermissionManager(private val context: Context) {
                         "Failed to prepare embedded terminal runtime.",
                         e.message
                     )
+                }
+            }
+        }
+    }
+
+    fun retryEmbeddedTerminalInit(result: MethodChannel.Result) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                val status = EmbeddedTerminalInitCoordinator.retry(context)
+                withContext(Dispatchers.Main) {
+                    result.success(mapOf(
+                        "success" to status.success,
+                        "wrapperReady" to status.wrapperReady,
+                        "sharedStorageReady" to status.sharedStorageReady,
+                        "message" to status.message
+                    ))
+                }
+            } catch (error: Exception) {
+                OmniLog.e(TAG, "Error retrying embedded terminal preparation", error)
+                withContext(Dispatchers.Main) {
+                    result.error("RETRY_PREPARATION_FAILED", error.message, null)
                 }
             }
         }
