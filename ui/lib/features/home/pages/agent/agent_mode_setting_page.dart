@@ -746,10 +746,9 @@ class _AgentModeSettingPageState extends State<AgentModeSettingPage>
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
     final agents = _visibleAgents;
-    final managed = agents.where((agent) => agent.builtIn).toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final custom = agents.where((agent) => !agent.builtIn).toList()
-      ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+    // Grouping and filtering preserve the shared catalog's display order.
+    final managed = agents.where((agent) => agent.builtIn).toList();
+    final custom = agents.where((agent) => !agent.builtIn).toList();
     return PopScope(
       canPop: !widget.active || !_searchVisible,
       onPopInvokedWithResult: (didPop, _) {
