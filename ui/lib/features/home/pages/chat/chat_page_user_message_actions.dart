@@ -201,6 +201,10 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
         await _respondToPendingAgentUserInput(messageText)) {
       return;
     }
+    if (_canAcceptActivePromptInput) {
+      await _submitActivePromptInput(text: text);
+      return;
+    }
     await _sendMessage(text: text);
   }
 

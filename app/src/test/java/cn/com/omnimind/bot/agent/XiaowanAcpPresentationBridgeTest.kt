@@ -6,6 +6,7 @@ import cn.com.omnimind.baselib.llm.SceneModelBindingEntry
 import cn.com.omnimind.bot.agent.ToolExecutionResult
 import cn.com.omnimind.bot.agent.AgentFinalResponse
 import cn.com.omnimind.bot.agent.AgentResult
+import cn.com.omnimind.bot.agent.ArtifactRef
 import cn.com.omnimind.bot.agent.runtime.buildXiaowanPromptParts
 import com.agentclientprotocol.model.MessageId
 import com.agentclientprotocol.model.PromptResponse
@@ -30,6 +31,29 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
+    @Test
+    fun `ACP keeps artifact purpose and logs remain explicitly linkable`() = runBlocking {
+        val file = ArtifactRef(
+            id = "report", uri = "omnibot://workspace/report.txt", title = "report.txt",
+            mimeType = "text/plain", size = 10, sourceTool = "file_write",
+            workspacePath = "/workspace/report.txt", androidPath = "/data/report.txt", previewKind = "text",
+        )
+        val log = file.copy(id = "log", sourceTool = "terminal_execute", purpose = ArtifactRef.PURPOSE_EXECUTION_LOG)
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext()) { updates += it }
+        bridge.onToolCallStart("terminal", "terminal_execute", JsonObject(emptyMap()), "terminal")
+        bridge.onToolCallComplete("terminal", "terminal_execute", ToolExecutionResult.TerminalResult(
+            toolName = "terminal_execute", summaryText = "done", previewJson = "{}", rawResultJson = "{}",
+            artifacts = listOf(log, file),
+        ))
+        val payload = (updates.last() as SessionUpdate.ToolCallUpdate).rawOutput!!.jsonObject
+        val artifacts = payload["artifacts"] as JsonArray
+        assertEquals("execution_log", artifacts[0].jsonObject["purpose"]!!.jsonPrimitive.content)
+        assertEquals("deliverable", artifacts[1].jsonObject["purpose"]!!.jsonPrimitive.content)
+        assertEquals(log.renderMarkdown, artifacts[0].jsonObject["renderMarkdown"]!!.jsonPrimitive.content)
+        assertTrue(log.renderMarkdown.contains(log.uri))
+    }
+
     @Test
     fun `tool titles follow the context language through completion`() = runBlocking {
         for ((locale, title) in listOf(

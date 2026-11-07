@@ -16,6 +16,7 @@ import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.bot.BuildConfig
 import cn.com.omnimind.bot.R
 import cn.com.omnimind.bot.agent.AgentCallback
+import cn.com.omnimind.bot.agent.AgentPromptInbox
 import cn.com.omnimind.bot.agent.AgentConversationModePolicy
 import cn.com.omnimind.bot.agent.AgentModelOverride
 import cn.com.omnimind.bot.agent.AgentResult
@@ -33,6 +34,7 @@ import com.agentclientprotocol.client.ClientInfo
 import com.agentclientprotocol.common.Event
 import com.agentclientprotocol.common.SessionCreationParameters
 import com.agentclientprotocol.model.AgentCapabilities
+import com.agentclientprotocol.model.AcpMethod
 import com.agentclientprotocol.model.ContentBlock
 import com.agentclientprotocol.model.CloseSessionResponse
 import com.agentclientprotocol.model.DeleteSessionResponse
@@ -43,6 +45,7 @@ import com.agentclientprotocol.model.McpCapabilities
 import com.agentclientprotocol.model.ModelId
 import com.agentclientprotocol.model.ModelInfo
 import com.agentclientprotocol.model.PromptResponse
+import com.agentclientprotocol.model.PromptRequest
 import com.agentclientprotocol.model.PromptCapabilities
 import com.agentclientprotocol.model.SessionCapabilities
 import com.agentclientprotocol.model.SessionCloseCapabilities
@@ -87,6 +90,8 @@ import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import java.util.UUID
 import java.time.Instant
 import java.nio.charset.StandardCharsets
@@ -174,6 +179,17 @@ internal class XiaowanAcpConnection(
                 },
             )
         Agent(serverProtocol, agentSupport)
+        // A negotiated ACP extension shares the same SDK transport and
+        // session ownership as session/prompt. It never opens another turn.
+        serverProtocol.setRequestHandlerRaw(
+            AcpMethod.AcpRequestResponseMethod(
+                "_session/steering", PromptRequest.serializer(), PromptResponse.serializer(),
+            ),
+            kotlin.coroutines.EmptyCoroutineContext,
+        ) { request ->
+            agentSupport.steer(request.params as? JsonObject
+                ?: throw IllegalArgumentException("Steering params must be an object"))
+        }
         return clientTransport
     }
 
@@ -322,8 +338,18 @@ private class XiaowanAgentSupport(
                 version = BuildConfig.VERSION_NAME,
                 title = "小万",
             ),
-            _meta = JsonNull,
+            _meta = buildJsonObject {
+                put("steering", buildJsonObject { put("supported", true) })
+            },
         )
+    }
+
+    fun steer(params: JsonObject): JsonObject {
+        val id = params["sessionId"]?.jsonPrimitive?.contentOrNull
+            ?: throw IllegalArgumentException("Steering sessionId is required")
+        val session = activeSessions[id]
+            ?: throw IllegalArgumentException("ACP session is not loaded: $id")
+        return session.steer(params)
     }
 
     override suspend fun createSession(
@@ -644,6 +670,16 @@ internal fun buildXiaowanModelsFromBinding(
 private fun ModelProviderProfile.toSessionSnapshot(): ModelProviderProfile =
     copy(customHeaders = customHeaders.toMap())
 
+internal fun xiaowanSteeringUserUpdate(entry: AgentPromptInbox.Entry): SessionUpdate.UserMessageChunk =
+    SessionUpdate.UserMessageChunk(
+        content = ContentBlock.Text(entry.text),
+        messageId = MessageId("${entry.requestId}-user"),
+        _meta = buildJsonObject {
+            put("steering", true)
+            put("requestId", entry.requestId)
+        },
+    )
+
 private class XiaowanAgentSession(
     private val context: Context,
     scope: CoroutineScope,
@@ -666,6 +702,8 @@ private class XiaowanAgentSession(
     private val promptMutex = Mutex()
     @Volatile
     private var activePromptJob: Job? = null
+    @Volatile
+    private var activePromptInbox: AgentPromptInbox? = null
     private val closed = AtomicBoolean(false)
     private val closeMutex = Mutex()
     // Guarded by closeMutex. Admission closes before cleanup starts; resource
@@ -720,6 +758,7 @@ private class XiaowanAgentSession(
     ): Flow<Event> = channelFlow {
         check(!closed.get()) { "Xiaowan ACP session is closed: ${sessionId.value}" }
         var promptJob: Job? = null
+        var promptInbox: AgentPromptInbox? = null
         try {
             promptMutex.withLock {
         // Admission may have waited behind another prompt/configuration. Close
@@ -828,6 +867,15 @@ private class XiaowanAgentSession(
             send(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN)))
             return@runXiaowanPromptWorker
         }
+        promptInbox = AgentPromptInbox(
+            (_meta as? JsonObject)?.get("hostTurnId")?.jsonPrimitive?.contentOrNull,
+            publishAccepted = { entry ->
+                // User input and PromptResponse share one ordered channel.
+                // An independently launched protocol notification could be
+                // overtaken by a fast final model response.
+                trySend(Event.SessionUpdateEvent(xiaowanSteeringUserUpdate(entry))).getOrThrow()
+            },
+        ).also { activePromptInbox = it }
         val result = executor.processUserMessage(
             userMessage = text,
             conversationHistory = emptyList(),
@@ -846,6 +894,7 @@ private class XiaowanAgentSession(
             },
             historyMessagesOverride = messages.toList().takeIf { conversationId == null },
             acpSessionId = sessionId.value,
+            promptInbox = promptInbox,
         )
         if (result is AgentResult.Error) {
             val error = result.exception
@@ -858,6 +907,9 @@ private class XiaowanAgentSession(
                     role = "user",
                     content = JsonPrimitive(text),
                 )
+                messages += promptInbox?.acceptedEntries().orEmpty().map {
+                    ChatCompletionMessage(role = "user", content = JsonPrimitive(it.text))
+                }
                 messages += ChatCompletionMessage(
                     role = "assistant",
                     content = JsonPrimitive(response),
@@ -894,6 +946,8 @@ private class XiaowanAgentSession(
             // the owning prompt fails. Throwing here cancels the buffer instead.
             close(error)
         } finally {
+            promptInbox?.close()
+            if (activePromptInbox === promptInbox) activePromptInbox = null
             if (activePromptJob === promptJob) {
                 activePromptJob = null
             }
@@ -907,7 +961,47 @@ private class XiaowanAgentSession(
         // projects the official cancel result through the existing lifecycle.
         // Propagating a CancellationException from this callback can abort the
         // Android process while the JSON-RPC request is being handled.
+        activePromptInbox?.close()
         activePromptJob?.cancelAndJoin()
+    }
+
+    fun steer(params: JsonObject): JsonObject {
+        val meta = params["_meta"] as? JsonObject
+        val steeringMeta = meta?.get("steering") as? JsonObject
+        val idleBehavior = steeringMeta?.get("idleBehavior")?.jsonPrimitive?.contentOrNull
+        require(idleBehavior == null || idleBehavior == "promptRequired") {
+            "Unsupported steering idleBehavior"
+        }
+        val content = params["prompt"] as? JsonArray
+            ?: throw IllegalArgumentException("Steering prompt must be a content-block list")
+        require(content.isNotEmpty()) { "Steering prompt is empty" }
+        val text = content.joinToString("\n") { block ->
+            val item = block as? JsonObject
+                ?: throw IllegalArgumentException("Malformed steering content block")
+            require(item["type"]?.jsonPrimitive?.contentOrNull == "text") {
+                "Steering accepts text; queue attachments through session/prompt"
+            }
+            item["text"]?.jsonPrimitive?.contentOrNull
+                ?.takeIf { it.isNotBlank() }
+                ?: throw IllegalArgumentException("Steering text is empty")
+        }
+        val requestId = meta?.get("requestId")?.jsonPrimitive?.contentOrNull
+            ?: UUID.randomUUID().toString()
+        val expectedTurnId = meta?.get("expectedTurnId")?.jsonPrimitive?.contentOrNull
+        val inbox = activePromptInbox
+        val admission = if (closed.get() || activePromptJob?.isActive != true || inbox == null) {
+            AgentPromptInbox.Admission.PROMPT_REQUIRED
+        } else {
+            inbox.offer(AgentPromptInbox.Entry(requestId, text), expectedTurnId)
+        }
+        return buildJsonObject {
+            put("outcome", if (admission == AgentPromptInbox.Admission.PROMPT_REQUIRED)
+                "promptRequired" else "injected")
+            if (admission == AgentPromptInbox.Admission.PROMPT_REQUIRED) put("reason", "noRunningTurn")
+            put("sessionId", sessionId.value)
+            inbox?.hostTurnId?.let { put("turnId", it) }
+            put("requestId", requestId)
+        }
     }
 
     override suspend fun close(_meta: JsonElement?): CloseSessionResponse =

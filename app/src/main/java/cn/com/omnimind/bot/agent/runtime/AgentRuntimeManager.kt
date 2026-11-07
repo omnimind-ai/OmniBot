@@ -626,6 +626,14 @@ class AgentRuntimeManager private constructor(
             // Resolve the operation before process admission. Unknown methods
             // cannot launch an Agent as a side effect of reporting an error.
             val operation = runtime.prepareRequest(method, ownedArgs)
+            if (method == "_session/steering") {
+                require(identity.explicitSessionMatchesConversation) {
+                    "agent_owner_conflict: The requested ACP session belongs to another conversation."
+                }
+                // Steering only addresses the existing prompt. Reconnecting
+                // here could move an old correction into a new transport.
+                return operation()
+            }
             ensureLocalAcpConnected(method, ownedArgs, identity)
             return operation()
         }

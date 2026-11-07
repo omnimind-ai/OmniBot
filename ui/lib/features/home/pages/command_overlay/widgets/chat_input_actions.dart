@@ -93,7 +93,9 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
               ? null
               : (_) {
                   if (widget.controller.text.trim().isNotEmpty) {
-                    widget.onSendMessage();
+                    (widget.isProcessing && widget.onQueueMessage != null
+                        ? widget.onQueueMessage!
+                        : widget.onSendMessage)();
                   } else {
                     widget.onRequestFocus?.call();
                     widget.focusNode.requestFocus();
@@ -107,9 +109,13 @@ extension _ChatInputActionSupport on _ChatInputAreaStateBase {
           contextMenuBuilder: (context, editableTextState) =>
               TextInputContextMenu(editableTextState: editableTextState),
           decoration: InputDecoration(
-            hintText: Localizations.localeOf(context).languageCode == 'en'
-                ? 'Describe your task…'
-                : '描述你的任务…',
+            hintText: widget.isProcessing && widget.onQueueMessage != null
+                ? (Localizations.localeOf(context).languageCode == 'en'
+                      ? 'Add a follow-up…'
+                      : '继续输入任务或补充要求…')
+                : (Localizations.localeOf(context).languageCode == 'en'
+                      ? 'Describe your task…'
+                      : '描述你的任务…'),
             hintStyle: TextStyle(
               fontSize: multiline ? 15.0 : 14.0,
               color: hintColor,

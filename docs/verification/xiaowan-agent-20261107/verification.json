@@ -1,0 +1,22 @@
+{
+  "baselineCommit": "611a2388391590993f0520d36866207f415c02d0",
+  "baselineApkSha256": "5234a7227dcdccc5a035d62e646660435fd002429d5f1f6aa1fb86fe21279af8",
+  "screenshotBuildSha256": "2045548444d1b77860acd9ed7562896db762c73a6c450ab8b8da4c112696df0a",
+  "finalApkSha256": "dba167f0531276523b76ccfd80824a954a5eb6ae29e9c5d172526a86b364fca8",
+  "finalApkBytes": 183219658,
+  "version": "0.7.0.4",
+  "model": "deepseek-flash",
+  "deviceModel": "PJD110",
+  "finalDeviceRetest": "not_run_user_requested_no_more_adb",
+  "nativeTests": 190,
+  "nativeFailures": 0,
+  "nativeErrors": 0,
+  "flutterAnalyze": {
+    "exitCode": 0,
+    "errors": 0,
+    "warnings": 53,
+    "infos": 490
+  },
+  "flutterTests": 449,
+  "flutterFailures": 0
+}

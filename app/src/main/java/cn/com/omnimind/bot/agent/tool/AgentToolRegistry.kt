@@ -36,6 +36,7 @@ class AgentToolRegistry(
         val displayName: String,
         val toolType: String,
         val serverName: String? = null,
+        val supportsParallel: Boolean = false,
     )
 
     private val tag = "AgentToolRegistry"
@@ -206,6 +207,8 @@ class AgentToolRegistry(
             displayName = displayName,
             toolType = toolType,
             serverName = serverName,
+            supportsParallel = toolType != "plugin" && serverName == null &&
+                AgentToolExecutionPolicy.supportsParallelRead(name),
         )
         ChatCompletionTool(
             function = ChatCompletionFunction(

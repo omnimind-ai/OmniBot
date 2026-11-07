@@ -8,6 +8,25 @@ import org.junit.Test
 class AgentContextBudgetTest {
     private fun msg(role: String, text: String) = ChatCompletionMessage(role = role, content = JsonPrimitive(text))
 
+    @Test fun explicitActiveInputsPreserveOriginalGoalAndRepeatedCorrections() {
+        val goal = msg("user", "Produce the report and save the attachment")
+        val firstCorrection = msg("user", "Use blue")
+        val secondCorrection = msg("user", "Use blue")
+        val history = listOf(msg("user", "unrelated old task"), msg("assistant", "old result"),
+            goal, msg("assistant", "working"), firstCorrection, msg("assistant", "progress"), secondCorrection,
+            msg("assistant", "recent"))
+        val rebuilt = AgentContextBudget.rebuild(history, 7, "checkpoint",
+            listOf(goal, firstCorrection, secondCorrection))
+        val inputs = rebuilt.filter { it.role == "user" }
+        assertEquals(3, inputs.size)
+        assertTrue(inputs[0] === goal)
+        assertTrue(inputs[1] === firstCorrection)
+        assertTrue(inputs[2] === secondCorrection)
+        assertFalse(rebuilt.any { it.contentText().contains("unrelated old task") })
+        val second = AgentContextBudget.rebuild(rebuilt, 3, "next checkpoint", listOf(goal, firstCorrection, secondCorrection))
+        assertEquals(listOf(goal, firstCorrection, secondCorrection), second.filter { it.role == "user" })
+    }
+
     @Test fun usageIncludesNewToolResultsAndMissingUsageStillEstimates() {
         val messages = listOf(msg("user", "task"), msg("assistant", "working"), msg("tool", "x".repeat(12000)))
         assertEquals(123004, AgentContextBudget.estimate(messages, 120000, 2))

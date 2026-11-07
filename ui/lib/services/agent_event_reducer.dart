@@ -809,6 +809,7 @@ class AgentEventReducer {
 
     if (method == 'item/userMessage/delta') {
       final isReplay = params['replay'] == true;
+      final isSteering = params['steering'] == true;
       final delta =
           _extractText(params['delta']) ??
           _extractText(params['text']) ??
@@ -818,7 +819,11 @@ class AgentEventReducer {
           _string(params['entryId']) ??
           '${itemId ?? parentTaskId}-user-message';
       if (delta.isNotEmpty) {
-        final text = (runtime.currentAcpUserMessages[entryId] ?? '') + delta;
+        // Steering carries one complete text input with a stable request id.
+        // A replayed acknowledgement must not concatenate the user's prompt.
+        final text = isSteering
+            ? delta
+            : (runtime.currentAcpUserMessages[entryId] ?? '') + delta;
         runtime.currentAcpUserMessages[entryId] = text;
         final messageId = '$entryId-agent-user';
 
@@ -827,7 +832,7 @@ class AgentEventReducer {
         // local dispatch id is the only reliable bridge between the host
         // message and the official ACP turn; never deduplicate historical
         // prompts by text alone.
-        if (!isReplay) {
+        if (!isReplay && !isSteering) {
           final dispatchIds = <String>{
             if (runtime.currentDispatchTurnId?.trim().isNotEmpty == true)
               runtime.currentDispatchTurnId!.trim(),
@@ -868,12 +873,24 @@ class AgentEventReducer {
           type: 1,
           user: 1,
           content: <String, dynamic>{'id': messageId, 'text': text},
+          streamMeta: isSteering
+              ? <String, dynamic>{
+                  'sessionId': sessionId,
+                  'turnId': turnId,
+                  'runId': parentTaskId,
+                  'messageId': entryId,
+                  'kind': 'user_message',
+                  'steeringRequestId': params['steeringRequestId'],
+                }
+              : null,
           createAt: existingIndex >= 0
               ? runtime.messages[existingIndex].createAt
               : DateTime.now(),
         );
         if (existingIndex >= 0) {
           runtime.messages[existingIndex] = message;
+        } else if (isSteering) {
+          runtime.messages.insert(0, message);
         } else {
           runtime.messages.add(message);
         }
@@ -2700,6 +2717,12 @@ class AgentEventReducer {
           ? index.toString()
           : rawArtifactId;
       final cardId = '$parentCardId-artifact-$artifactId';
+      // Execution evidence stays available on the owning tool's details.
+      // Only an explicit purpose suppresses a standalone deliverable card.
+      if (_string(artifact['purpose']) == 'execution_log') {
+        runtime.messages.removeWhere((message) => message.id == cardId);
+        continue;
+      }
       final existingIndex = runtime.messages.indexWhere(
         (message) => message.id == cardId,
       );
@@ -4647,11 +4670,8 @@ class AgentEventReducer {
 
   String? _approvalKind(Map<String, dynamic> params) {
     final toolCall = _approvalToolCall(params);
-    return _firstString([
-      toolCall?['kind'],
-      params['kind'],
-      params['type'],
-    ])?.toLowerCase();
+    return _firstString([toolCall?['kind'], params['kind'], params['type']])
+        ?.toLowerCase();
   }
 
   bool _containsApprovalDetail(List<String> parts, String value) {
@@ -5169,6 +5189,10 @@ Map<String, dynamic>? _projectAcpSessionUpdate({
           if (scopedEntryId != null) 'entryId': scopedEntryId,
           'delta': _extractStreamingText(update['content']) ?? '',
           'replay': isReplay,
+          if (_asStringMap(update['_meta'])?['steering'] == true)
+            'steering': true,
+          if (_asStringMap(update['_meta'])?['steering'] == true)
+            'steeringRequestId': _asStringMap(update['_meta'])?['requestId'],
         }),
       };
     case 'tool_call':
@@ -5483,9 +5507,8 @@ List<Map<String, dynamic>> _acpContentItems(Object? value) {
 }
 
 String _acpTerminalOutputDelta(Map<String, dynamic> update) {
-  final encoding = _string(
-    update['encoding'] ?? update['dataEncoding'],
-  )?.toLowerCase();
+  final encoding = _string(update['encoding'] ?? update['dataEncoding'])
+      ?.toLowerCase();
   if (encoding == 'base64') {
     return _decodeBase64Output(update['data'] ?? update['output']) ?? '';
   }
@@ -5686,6 +5709,7 @@ List<Map<String, dynamic>> _acpAssistantArtifacts(
       'uri': uri,
       if (mimeType != null) 'mimeType': mimeType,
       if (block['size'] != null) 'size': block['size'],
+      if (_string(block['purpose']) != null) 'purpose': block['purpose'],
       if (mimeType?.toLowerCase().startsWith('text/') == true)
         'previewKind': 'text',
     });

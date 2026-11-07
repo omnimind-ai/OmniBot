@@ -63,6 +63,21 @@ class ChatConversationRuntimeState {
   ConversationModel? conversation;
   final ObservableChatMessageList messages = ObservableChatMessageList();
 
+  // Unsubmitted composer drafts, scoped to this Conversation. They acquire
+  // an ACP turn only when the previous official prompt has returned.
+  final List<ChatQueuedPrompt> pendingPrompts = <ChatQueuedPrompt>[];
+  bool promptQueuePaused = false;
+  bool _drainingPromptQueue = false;
+  final Set<String> _pendingPromptAdmissions = <String>{};
+  Future<void>? _promptAdmissionTail;
+  int _promptInputGeneration = 0;
+  bool isSteeringInputPending = false;
+  ({String id, String text, String sessionId, String turnId})?
+  _unconfirmedSteeringInput;
+
+  String? get unconfirmedSteeringText => _unconfirmedSteeringInput?.text;
+  String? get unconfirmedSteeringId => _unconfirmedSteeringInput?.id;
+
   /// The native history cursor belongs to this Conversation, not the selected
   /// page mode. Null means no storage page has been read yet; live ACP items
   /// alone cannot prove that all older history has been loaded.

@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="cn.com.omnimind.bot.agent.AgentOrchestratorTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2026-11-07T08:10:26.010Z" hostname="oceandeMacBook-Air.local" time="0.488">
+  <properties/>
+  <testcase name="reportsSerialAndBoundedReadSchedulingWithIdenticalResults" classname="cn.com.omnimind.bot.agent.AgentOrchestratorTest" time="0.487"/>
+  <system-out><![CDATA[AGENT_READ_SCHEDULING_BENCHMARK calls=4 simulated_read_ms=80 serial_ms=372.3 bounded_ms=89.4 serial_max_active=1 bounded_max_active=4 ordered_results=true
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>

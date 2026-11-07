@@ -22,6 +22,8 @@ import okhttp3.sse.EventSourceListener
 import java.util.concurrent.atomic.AtomicBoolean
 
 interface AgentContextCompactionController {
+    /** Canonical input instances owned by the active host prompt, never inferred from text. */
+    fun setActivePromptInputs(messages: List<ChatCompletionMessage>) = Unit
     suspend fun resolvePromptTokenThreshold(conversationId: Long?): Int
 
     suspend fun resolveOutputTokenBudget(conversationId: Long?): Int? = null
@@ -54,6 +56,11 @@ open class AgentConversationContextCompactor(
         explicitNulls = false
     }
 ) : AgentContextCompactionController {
+    private var activePromptInputs: List<ChatCompletionMessage> = emptyList()
+
+    override fun setActivePromptInputs(messages: List<ChatCompletionMessage>) {
+        activePromptInputs = messages.toList()
+    }
     data class CompactionOutcome(
         val compacted: Boolean,
         val summary: String? = null,
@@ -80,6 +87,9 @@ MUST PRESERVE (never omit or shorten):
 - Errors encountered and how they were resolved
 - Important constraints, rules, or user preferences mentioned
 - Any tool calls and their results that affect current state
+- The original unfinished goal and later user corrections, in chronological order; a correction changes only its stated scope unless the user explicitly replaces the goal
+- Distinguish verified tool outcomes from assumptions, proposals, failures, and unknown state; never promote a plan to completed work
+- Preserve stable memory references and saved tool-output paths needed for pending work; do not copy entire retrieved memory bodies or repeat completed effects
 
 Use this EXACT checkpoint structure:
 
@@ -322,7 +332,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
             val previousSummary = bounded.firstOrNull(AgentConversationHistorySupport::isContextSummaryMessage)
                 ?.let(AgentConversationHistorySupport::extractContextSummaryText)
             val summary = summarizeWithinBudget(previousSummary, prefix, capacity)
-            val rebuilt = AgentContextBudget.rebuild(bounded, cut, summary)
+            val rebuilt = AgentContextBudget.rebuild(bounded, cut, summary, activePromptInputs)
             check(AgentContextBudget.estimate(rebuilt) <= messageBudget) {
                 "压缩后上下文仍超过预算；原始历史已保留，未发送超限请求。"
             }
@@ -357,14 +367,17 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                 return@map message
             }
             val text = message.contentText()
-            val path = offloadToolOutput.invoke(text) // An I/O failure must not discard the original result.
+            // Reuse an existing body reference instead of creating a chain of
+            // offload files that merely point at earlier offload files.
+            val path = AgentContextToolReferences.offloadedPath(message)
+                ?: offloadToolOutput.invoke(text) // I/O failure must not discard the original result.
             // This output has exhausted the shared recent-output budget. Keeping
             // a per-result excerpt here accumulates without a bound after restore.
-            val reference = "Earlier tool output saved in full to $path. Read it with file_read if needed."
+            val reference = AgentContextToolReferences.offloadedNotice(message.toolCallId, path)
             // Keep only the newest result's small control fields, within the same
             // shared budget. Older results do not accumulate per-result previews.
             val metadata = if (preserveMetadata) toolOutputMetadata(text) else null
-            val candidate = metadata?.let { "$reference\nCurrent result metadata (body omitted): $it" }
+            val candidate = metadata?.let { AgentContextToolReferences.offloadedNotice(message.toolCallId, path, it) }
             val notice = candidate?.takeIf {
                 tokens + AgentContextBudget.textTokens(it) <= budget
             } ?: reference
@@ -392,9 +405,12 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
         check(inputTokens < resolveAutoCompactionTrigger(summaryCapacity)) {
             "待压缩内容仍超过摘要请求预算；原始历史已保留，请减小输入或使用更大上下文模型。"
         }
-        return requestCompactedSummary(request, ((capacity - resolveAutoCompactionTrigger(capacity)) * 0.8).toInt().coerceAtLeast(1)).trim().also {
+        val outputBudget = ((capacity - resolveAutoCompactionTrigger(capacity)) * 0.8).toInt().coerceAtLeast(1)
+        val references = AgentContextToolReferences.checkpointSuffix(bounded, minOf(512, outputBudget / 5))
+        val referenceTokens = AgentContextBudget.textTokens(references).toInt()
+        return requestCompactedSummary(request, (outputBudget - referenceTokens).coerceAtLeast(1)).trim().also {
             check(it.isNotEmpty()) { "上下文压缩未返回有效摘要；未发送原始超限上下文。" }
-        }
+        } + references
     }
 
     open suspend fun compactConversationContext(

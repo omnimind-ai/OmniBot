@@ -185,6 +185,7 @@ class OmniAgentExecutor(
         continueMode: Boolean = false,
         historyMessagesOverride: List<ChatCompletionMessage>? = null,
         acpSessionId: String? = null,
+        promptInbox: AgentPromptInbox? = null,
     ): AgentResult {
         var toolRouter: AgentToolRouter? = null
         var pluginSession: OmniPluginSession? = null
@@ -326,6 +327,7 @@ class OmniAgentExecutor(
                 toolImageContinuationPolicy = toolImageContinuationPolicy
             )
 
+            val activePromptMessage = buildCurrentUserMessage(userMessage, attachments)
             orchestrator.run(
                 AgentOrchestrator.Input(
                     callback = callback,
@@ -334,8 +336,6 @@ class OmniAgentExecutor(
                             conversationId = conversationId,
                             conversationMode = conversationMode
                         ),
-                        userMessage = userMessage,
-                        attachments = attachments,
                         continueMode = continueMode,
                         workspaceDescriptor = workspaceDescriptor,
                         installedSkills = installedSkills,
@@ -346,11 +346,14 @@ class OmniAgentExecutor(
                         memoryContext = promptIdentityContext,
                         terminalDistribution = terminalDistribution,
                         conversationMode = conversationMode,
-                        historyMessagesOverride = historyMessagesOverride
+                        historyMessagesOverride = historyMessagesOverride,
+                        currentUserMessage = activePromptMessage
                     ),
+                    activePromptMessage = activePromptMessage.takeUnless { continueMode },
                     conversationId = conversationId,
                     promptCacheKey = promptCacheKey,
                     contextCompactor = contextCompactorFactory(),
+                    promptInbox = promptInbox,
                     executionEnv = DefaultAgentExecutionEnvironment(
                         acpSessionId = acpSessionId,
                         agentRunId = agentRunId,
@@ -383,8 +386,6 @@ class OmniAgentExecutor(
 
     private fun buildInitialMessages(
         promptSeed: AgentConversationHistoryRepository.PromptSeed,
-        userMessage: String,
-        attachments: List<Map<String, Any?>>,
         continueMode: Boolean,
         workspaceDescriptor: AgentWorkspaceDescriptor,
         installedSkills: List<SkillIndexEntry>,
@@ -394,7 +395,8 @@ class OmniAgentExecutor(
         memoryContext: WorkspaceMemoryPromptContext?,
         terminalDistribution: TerminalDistribution.Spec = TerminalDistribution.alpine,
         conversationMode: String = AgentConversationModePolicy.AGENT_MODE,
-        historyMessagesOverride: List<ChatCompletionMessage>? = null
+        historyMessagesOverride: List<ChatCompletionMessage>? = null,
+        currentUserMessage: ChatCompletionMessage,
     ): List<ChatCompletionMessage> {
         val locale = AppLocaleManager.resolvePromptLocale(context)
         val chatOnly = AgentConversationModePolicy.isChatOnlyMode(conversationMode)
@@ -437,7 +439,7 @@ class OmniAgentExecutor(
             } else {
                 historyMessages
             },
-            currentUserMessage = buildCurrentUserMessage(userMessage, attachments),
+            currentUserMessage = currentUserMessage,
             continueMode = continueMode
         )
     }

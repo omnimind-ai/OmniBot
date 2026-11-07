@@ -69,16 +69,23 @@ internal object AgentContextBudget {
         return valid.lastOrNull { messages.getOrNull(it)?.role == "user" } ?: valid.firstOrNull()
     }
 
-    fun rebuild(messages: List<ChatCompletionMessage>, firstKept: Int, summary: String): List<ChatCompletionMessage> {
+    fun rebuild(messages: List<ChatCompletionMessage>, firstKept: Int, summary: String,
+        activePromptInputs: List<ChatCompletionMessage> = emptyList()): List<ChatCompletionMessage> {
         val systems = messages.takeWhile { it.role == "system" }
             .filterNot(AgentConversationHistorySupport::isContextSummaryMessage)
         val latestUser = messages.indexOfLast { it.role == "user" }
+        val tail = messages.drop(firstKept)
         return buildList {
             addAll(systems)
             add(AgentConversationHistorySupport.buildContextSummaryAssistantMessage(summary))
             // The active request remains exact even when its early tool steps were summarized.
-            if (latestUser >= 0 && latestUser < firstKept) add(messages[latestUser])
-            addAll(messages.drop(firstKept))
+            // Preserve every accepted input in this prompt, including repeated
+            // identical corrections. Identity is supplied by the prompt owner;
+            // content equality must not deduplicate distinct user submissions.
+            activePromptInputs.filter { input -> tail.none { it === input } }.forEach(::add)
+            if (latestUser >= 0 && latestUser < firstKept &&
+                activePromptInputs.none { it === messages[latestUser] }) add(messages[latestUser])
+            addAll(tail)
         }
     }
 }

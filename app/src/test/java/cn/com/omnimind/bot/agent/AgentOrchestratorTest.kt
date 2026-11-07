@@ -4,10 +4,12 @@ import cn.com.omnimind.baselib.llm.ChatCompletionUsage
 import cn.com.omnimind.bot.agent.runtime.acpEventBridgeTestContext
 import cn.com.omnimind.baselib.llm.contentText
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -23,6 +25,186 @@ import org.junit.Test
 import java.util.Locale
 
 class AgentOrchestratorTest {
+    @Test
+    fun reportsSerialAndBoundedReadSchedulingWithIdenticalResults() = runBlocking {
+        data class Measurement(val elapsedMs: Double, val maximumActive: Int, val resultIds: List<String?>)
+        suspend fun measure(parallel: Boolean): Measurement {
+            val calls = (1..4).map { toolCall("file_read", id = "measured-read-$it") }
+            val llm = FakeLlmClient(listOf(assistantTurn(toolCalls = calls), assistantTurn(content = "done")))
+            var active = 0
+            var maximumActive = 0
+            val executor = object : AgentToolExecutor {
+                override suspend fun execute(toolCall: AssistantToolCall, args: JsonObject,
+                    runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor, env: AgentExecutionEnvironment,
+                    callback: AgentCallback, toolHandle: AgentToolExecutionHandle): ToolExecutionResult {
+                    active++
+                    maximumActive = maxOf(maximumActive, active)
+                    try {
+                        delay(80)
+                        return successfulContextResult(toolCall.function.name)
+                    } finally { active-- }
+                }
+            }
+            val baseCatalog = FakeToolCatalog()
+            val catalog = object : AgentToolCatalog by baseCatalog {
+                override fun runtimeDescriptor(toolName: String) =
+                    baseCatalog.runtimeDescriptor(toolName).copy(supportsParallel = parallel)
+            }
+            val start = System.nanoTime()
+            val result = AgentOrchestrator(llm, catalog, executor, AgentEventAdapter(eventJson), "test-model")
+                .run(AgentOrchestrator.Input(RecordingCallback(), initialMessages("read four independent files"),
+                    FakeExecutionEnvironment("read four independent files")))
+            val elapsedMs = (System.nanoTime() - start) / 1_000_000.0
+            assertTrue(result is AgentResult.Success)
+            assertEquals(0, active)
+            val resultIds = llm.requests.last().messages.filter { it.role == "tool" }.map { it.toolCallId }
+            assertEquals(calls.map { it.id }, resultIds)
+            return Measurement(elapsedMs, maximumActive, resultIds)
+        }
+
+        val serial = measure(parallel = false)
+        val bounded = measure(parallel = true)
+        assertEquals(1, serial.maximumActive)
+        assertEquals(4, bounded.maximumActive)
+        assertEquals(serial.resultIds, bounded.resultIds)
+        // Report wall time without a flaky speedup threshold. This isolates
+        // scheduling: fake model, four identical suspending 80 ms reads, no I/O.
+        println(String.format(Locale.US,
+            "AGENT_READ_SCHEDULING_BENCHMARK calls=4 simulated_read_ms=80 serial_ms=%.1f bounded_ms=%.1f serial_max_active=%d bounded_max_active=%d ordered_results=true",
+            serial.elapsedMs, bounded.elapsedMs, serial.maximumActive, bounded.maximumActive))
+    }
+
+    @Test
+    fun unexpectedExclusiveFailureRetainsUnknownOutcomeAndDoesNotReplayEffect() = runBlocking {
+        val calls = listOf(toolCall("file_write", id = "write"), toolCall("file_read", id = "not-started"))
+        val llm = FakeLlmClient(listOf(assistantTurn(toolCalls = calls)))
+        var writes = 0
+        val executor = object : AgentToolExecutor {
+            override suspend fun execute(toolCall: AssistantToolCall, args: JsonObject,
+                runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor, env: AgentExecutionEnvironment,
+                callback: AgentCallback, toolHandle: AgentToolExecutionHandle): ToolExecutionResult {
+                writes++
+                error("write outcome unavailable")
+            }
+        }
+        val input = AgentOrchestrator.Input(RecordingCallback(), initialMessages("write once"), FakeExecutionEnvironment("write once"))
+        val result = AgentOrchestrator(llm, FakeToolCatalog(), executor, AgentEventAdapter(eventJson), "test-model").run(input)
+        assertTrue(result is AgentResult.Error)
+        assertEquals(1, writes)
+        assertEquals(1, llm.requests.size)
+        assertEquals(calls.map { it.id }, input.memory.snapshot().filter { it.role == "tool" }.map { it.toolCallId })
+    }
+
+    @Test
+    fun cancellingAReadGroupKeepsCompletedSiblingAndPairsUnstartedCallsWithoutReplay() = runBlocking {
+        val calls = listOf(toolCall("file_read", id = "cancelled"), toolCall("file_read", id = "completed"),
+            toolCall("file_write", id = "never-started"))
+        val llm = FakeLlmClient(listOf(assistantTurn(toolCalls = calls)))
+        val completed = CompletableDeferred<Unit>()
+        val callback = object : RecordingCallback() {
+            override suspend fun onToolCallComplete(toolCallId: String, toolName: String, result: ToolExecutionResult) {
+                super.onToolCallComplete(toolCallId, toolName, result)
+                if (toolCallId == "completed") completed.complete(Unit)
+            }
+        }
+        val started = mutableListOf<String>()
+        val executor = object : AgentToolExecutor {
+            override suspend fun execute(toolCall: AssistantToolCall, args: JsonObject,
+                runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor, env: AgentExecutionEnvironment,
+                callback: AgentCallback, toolHandle: AgentToolExecutionHandle): ToolExecutionResult {
+                started += toolCall.id
+                if (toolCall.id == "cancelled") {
+                    completed.await()
+                    throw CancellationException("cancel prompt")
+                }
+                return successfulContextResult(toolCall.function.name)
+            }
+        }
+        val input = AgentOrchestrator.Input(callback, initialMessages("inspect then write"), FakeExecutionEnvironment("inspect then write"))
+        val result = withTimeout(3000) {
+            AgentOrchestrator(llm, FakeToolCatalog(), executor, AgentEventAdapter(eventJson), "test-model").run(input)
+        }
+        assertTrue(result is AgentResult.Error)
+        assertEquals(listOf("cancelled", "completed"), started)
+        val replay = input.memory.snapshot().filter { it.role == "tool" }
+        assertEquals(calls.map { it.id }, replay.map { it.toolCallId })
+        assertTrue(replay.single { it.toolCallId == "completed" }.contentText().contains("succeeded"))
+        assertEquals(1, llm.requests.size)
+    }
+
+    @Test
+    fun independentReadsUseBoundedRollingSlotsAndKeepModelResultOrder() = runBlocking {
+        val calls = (1..9).map { toolCall("file_read", id = "read-$it") }
+        val llm = FakeLlmClient(listOf(assistantTurn(toolCalls = calls), assistantTurn(content = "done")))
+        val firstWaveStarted = CompletableDeferred<Unit>()
+        val releaseSlowRead = CompletableDeferred<Unit>()
+        val completed = mutableListOf<String>()
+        var active = 0
+        var maximumActive = 0
+        val executor = object : AgentToolExecutor {
+            override suspend fun execute(toolCall: AssistantToolCall, args: JsonObject,
+                runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor, env: AgentExecutionEnvironment,
+                callback: AgentCallback, toolHandle: AgentToolExecutionHandle): ToolExecutionResult {
+                active++
+                maximumActive = maxOf(maximumActive, active)
+                if (active == 4) firstWaveStarted.complete(Unit)
+                try {
+                    firstWaveStarted.await()
+                    if (toolCall.id == "read-1") releaseSlowRead.await()
+                    if (toolCall.id == "read-5") releaseSlowRead.complete(Unit)
+                    completed += toolCall.id
+                    if (toolCall.id == "read-3") error("one read failed")
+                    return successfulContextResult(toolCall.function.name)
+                } finally { active-- }
+            }
+        }
+        val result = withTimeout(3000) {
+            AgentOrchestrator(llm, FakeToolCatalog(), executor, AgentEventAdapter(eventJson), "test-model")
+                .run(AgentOrchestrator.Input(RecordingCallback(), initialMessages("read independent files"),
+                    FakeExecutionEnvironment("read independent files")))
+        }
+        assertTrue(result is AgentResult.Success)
+        assertEquals(4, maximumActive)
+        assertTrue(completed.indexOf("read-5") < completed.indexOf("read-1"))
+        assertEquals(0, active)
+        val results = llm.requests.last().messages.filter { it.role == "tool" }
+        assertEquals(calls.map { it.id }, results.map { it.toolCallId })
+        assertTrue(results.single { it.toolCallId == "read-3" }.contentText().contains("one read failed"))
+    }
+
+    @Test
+    fun exclusiveWriteAndUnknownToolsSeparateIndependentReadGroups() = runBlocking {
+        val calls = listOf(toolCall("file_read", id = "before-1"), toolCall("file_read", id = "before-2"),
+            toolCall("file_write", id = "write"), toolCall("plugin_read", id = "unknown"),
+            toolCall("file_read", id = "after"))
+        val llm = FakeLlmClient(listOf(assistantTurn(toolCalls = calls), assistantTurn(content = "done")))
+        val completed = mutableListOf<String>()
+        var activeReads = 0
+        val executor = object : AgentToolExecutor {
+            override suspend fun execute(toolCall: AssistantToolCall, args: JsonObject,
+                runtimeDescriptor: AgentToolRegistry.RuntimeToolDescriptor, env: AgentExecutionEnvironment,
+                callback: AgentCallback, toolHandle: AgentToolExecutionHandle): ToolExecutionResult {
+                if (toolCall.id.startsWith("before")) {
+                    activeReads++
+                    delay(10)
+                    activeReads--
+                } else {
+                    assertEquals(0, activeReads)
+                    assertTrue(completed.containsAll(listOf("before-1", "before-2")))
+                    if (toolCall.id == "unknown") assertTrue("write" in completed)
+                    if (toolCall.id == "after") assertTrue("unknown" in completed)
+                }
+                completed += toolCall.id
+                return successfulContextResult(toolCall.function.name)
+            }
+        }
+        val result = AgentOrchestrator(llm, FakeToolCatalog(), executor, AgentEventAdapter(eventJson), "test-model")
+            .run(AgentOrchestrator.Input(RecordingCallback(), initialMessages("read then change then verify"),
+                FakeExecutionEnvironment("read then change then verify")))
+        assertTrue(result is AgentResult.Success)
+        assertEquals(calls.map { it.id }, llm.requests.last().messages.filter { it.role == "tool" }.map { it.toolCallId })
+    }
+
     @Test
     fun dispatchedGeneralAgentUsesParentApprovalAndDoesNotDisposeParentRouter() = runBlocking {
         for (allow in listOf(false, true)) {
@@ -2546,7 +2728,8 @@ class AgentOrchestratorTest {
             return AgentToolRegistry.RuntimeToolDescriptor(
                 name = toolName,
                 displayName = toolName,
-                toolType = if (toolName.startsWith("terminal")) "terminal" else "builtin"
+                toolType = if (toolName.startsWith("terminal")) "terminal" else "builtin",
+                supportsParallel = AgentToolExecutionPolicy.supportsParallelRead(toolName)
             )
         }
 

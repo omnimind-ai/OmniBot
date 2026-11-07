@@ -144,6 +144,9 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
         return Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            if (widget.pendingPrompts != null) widget.pendingPrompts!,
+            if (widget.isProcessing && widget.onQueueMessage != null)
+              _buildActivePromptActions(),
             if (widget.attachments.isNotEmpty) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 7),
@@ -155,6 +158,38 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
           ],
         );
       },
+    );
+  }
+
+  Widget _buildActivePromptActions() {
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    final hasText = widget.controller.text.trim().isNotEmpty;
+    final enabled = !widget.isSubmittingActiveInput;
+    return Align(
+      alignment: Alignment.centerRight,
+      child: Wrap(
+        spacing: 4,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          TextButton.icon(
+            key: const ValueKey('chat-input-queue-message'),
+            onPressed: enabled && (hasText || widget.attachments.isNotEmpty)
+                ? widget.onQueueMessage
+                : null,
+            icon: const Icon(LucideIcons.listPlus, size: 15),
+            label: Text(english ? 'Queue next' : '排队发送'),
+          ),
+          if (widget.onSteerMessage != null)
+            TextButton.icon(
+              key: const ValueKey('chat-input-steer-message'),
+              onPressed: enabled && hasText && widget.attachments.isEmpty
+                  ? widget.onSteerMessage
+                  : null,
+              icon: const Icon(LucideIcons.cornerDownRight, size: 15),
+              label: Text(english ? 'Add to current task' : '补充当前任务'),
+            ),
+        ],
+      ),
     );
   }
 
