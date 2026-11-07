@@ -265,7 +265,7 @@ class OmniAgentExecutor(
                         explicitModel = modelOverride?.modelId,
                         explicitProtocolType = modelOverride?.protocolType,
                         explicitWireApi = modelOverride?.wireApi,
-                        explicitProviderProfileId = modelOverride?.oauthProfileId,
+                        explicitProviderProfileId = modelOverride?.let { if (it.protocolType == "gemini_interactions") it.providerProfileId else it.oauthProfileId },
                     )
                 )
             }.getOrDefault(AgentToolImageContinuationPolicy.DEFAULT)

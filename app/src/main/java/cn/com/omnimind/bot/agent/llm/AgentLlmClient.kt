@@ -109,7 +109,7 @@ class HttpAgentLlmClient(
             explicitModel = explicitModel,
             explicitProtocolType = explicitProtocolType,
             explicitWireApi = explicitWireApi,
-            explicitProviderProfileId = modelOverride?.oauthProfileId,
+            explicitProviderProfileId = modelOverride?.let { if (it.protocolType == "gemini_interactions") it.providerProfileId else it.oauthProfileId },
         )
     },
     private val refreshPlatformSessionOp: suspend () -> Boolean = {
@@ -767,7 +767,7 @@ class HttpAgentLlmClient(
                 explicitProtocolType = modelOverride?.protocolType,
                 explicitWireApi = modelOverride?.wireApi,
                 forceHttp1 = forceHttp1,
-                explicitProviderProfileId = modelOverride?.oauthProfileId,
+                explicitProviderProfileId = modelOverride?.let { if (it.protocolType == "gemini_interactions") it.providerProfileId else it.oauthProfileId },
             )
             OmniLog.i(
                 tag,

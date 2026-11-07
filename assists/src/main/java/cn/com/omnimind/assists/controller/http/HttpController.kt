@@ -1,5 +1,8 @@
 package cn.com.omnimind.assists.controller.http
 
+import cn.com.omnimind.baselib.llm.GeminiProvider
+import cn.com.omnimind.baselib.llm.ProviderProtocol
+
 import cn.com.omnimind.assists.api.bean.ResultBean
 import cn.com.omnimind.baselib.account.AiRequestTransportPolicy
 import cn.com.omnimind.baselib.account.AiTransportRoute
@@ -58,6 +61,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -65,6 +69,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.ResponseBody.Companion.toResponseBody
 import okhttp3.sse.EventSource
@@ -328,10 +333,13 @@ object HttpController {
                 }
                 delegate.onEvent(eventSource, id, type, data)
                 runCatching {
+                    val diagnosticData = if (requestLogSeed?.protocolType == ProviderProtocol.GEMINI && data != "[DONE]") {
+                        ChatCompletionProtocolMetadata.withoutReplayData(completionJson.parseToJsonElement(data)).toString()
+                    } else data
                     // Diagnostic retention is bounded independently of model output.
                     if (!requireResponsesCompleted || diagnosticChars + data.length <= 1024 * 1024) {
-                        appendStreamLogChunk(fullContent, data)
-                        data.trim()
+                        appendStreamLogChunk(fullContent, diagnosticData)
+                        diagnosticData.trim()
                             .takeIf { it.isNotEmpty() && it != "[DONE]" }
                             ?.let(rawEvents::add)
                         diagnosticChars += data.length
@@ -404,12 +412,17 @@ object HttpController {
                         logResponseBody("$label (partial)", fullContent.toString())
                     }
                     requestLogSeed?.let { seed ->
+                        val diagnosticFallback = if (seed.protocolType == ProviderProtocol.GEMINI) {
+                            fallbackBody?.let { raw -> runCatching {
+                                ChatCompletionProtocolMetadata.withoutReplayData(completionJson.parseToJsonElement(raw)).toString()
+                            }.getOrDefault("[Unparsed Gemini response omitted]") }
+                        } else fallbackBody
                         persistAiRequestLog(
                             seed = seed,
                             success = requireResponsesCompleted && responsesCompleted && responsesFailure == null,
                             statusCode = response?.code ?: responseCode,
                             responseJson = AiRequestLogStore.buildStreamResponseJson(rawEvents)
-                                .ifBlank { AiRequestLogStore.prettyJsonOrRaw(fallbackBody) },
+                                .ifBlank { AiRequestLogStore.prettyJsonOrRaw(diagnosticFallback) },
                             errorMessage = if (requireResponsesCompleted && responsesCompleted && responsesFailure == null) null
                                 else responsesFailure ?: t?.message,
                         )
@@ -933,7 +946,7 @@ object HttpController {
         val explicitHeaders = ProviderCustomHeaderUtils.sanitizeCustomHeaders(explicitCustomHeaders)
         val explicitResolvedModel = explicitModel?.trim()?.takeIf { it.isNotEmpty() }
         val explicitProtocol = explicitProtocolType
-            ?.let(DeepSeekProvider::normalizeProtocolType)
+            ?.let(ProviderProtocol::normalize)
         val explicitWire = explicitWireApi?.let(OpenAiWireApi::normalize)
         val providerConfig = if (explicitBase == null) {
             ModelProviderConfigStore.getConfig()
@@ -1010,6 +1023,7 @@ object HttpController {
         val selectedProfile = selectRequestProvider(
             explicitProviderProfileId = explicitProviderProfileId,
             explicitProfile = explicitProviderProfileId?.let(ModelProviderConfigStore::getProfile),
+            expectedProtocolType = explicitProtocol,
             bindingApplied = bindingApplied,
             bindingProfileMissing = bindingProfileMissing,
             boundProfile = boundProfile,
@@ -1038,7 +1052,7 @@ object HttpController {
         }
         val protocolType = when {
             explicitProtocol != null -> explicitProtocol
-            explicitBase != null -> DeepSeekProvider.normalizeProtocolType(null)
+            explicitBase != null -> ProviderProtocol.normalize(null)
             bindingApplied -> boundProfile?.protocolType?.ifEmpty { "openai_compatible" } ?: "openai_compatible"
             else -> ModelProviderConfigStore.getEditingProfile().protocolType.ifEmpty { "openai_compatible" }
         }
@@ -1135,11 +1149,14 @@ object HttpController {
         bindingProfileMissing: Boolean,
         boundProfile: ModelProviderProfile?,
         defaultProfile: ModelProviderProfile?,
+        expectedProtocolType: String? = null,
     ): ModelProviderProfile? {
         if (explicitProviderProfileId != null) {
             checkNotNull(explicitProfile) { "Provider 配置不存在，请重新选择" }
-            check(ChatGptOAuthProvider.isOAuth(explicitProfile.sourceType)) {
-                "ChatGPT Provider 已更改，请重新选择"
+            check(if (expectedProtocolType == ProviderProtocol.GEMINI) {
+                explicitProfile.protocolType == ProviderProtocol.GEMINI && !ChatGptOAuthProvider.isOAuth(explicitProfile.sourceType)
+            } else ChatGptOAuthProvider.isOAuth(explicitProfile.sourceType)) {
+                "Provider 已更改，请重新选择"
             }
             return explicitProfile
         }
@@ -1243,6 +1260,52 @@ object HttpController {
             builder.post(requestBody)
         }
         return builder
+    }
+
+    private fun buildGeminiRequest(
+        baseUrl: String, apiKey: String?, customHeaders: Map<String, String>, payload: KxJsonObject? = null,
+    ): Request.Builder = buildJsonRequestBuilder(
+        url = GeminiInteractionsRequest.url(baseUrl),
+        headers = ProviderCustomHeaderUtils.mergeHeaders(buildMap {
+            put("Content-Type", "application/json")
+            if (!apiKey.isNullOrBlank()) put("x-goog-api-key", apiKey.trim())
+        }, customHeaders),
+        requestBody = payload?.let { completionJson.toStreamingRequestBody(it).asSingleAttemptInferenceBody() },
+    )
+
+    private suspend fun postGeminiSceneRequest(
+        resolved: ResolvedSceneRequest, request: ChatCompletionRequest,
+    ): SceneChatCompletionResponse = withContext(Dispatchers.IO) {
+        val source = GeminiProvider.replaySource(resolved.providerProfileId, resolved.apiBase.orEmpty())
+        val payload = GeminiInteractionsRequest.build(request.copy(model = resolved.resolvedModel, stream = false), source)
+        val wireRequest = buildGeminiRequest(resolved.apiBase.orEmpty(), resolved.apiKey, resolved.customHeaders, payload).build()
+        sceneCompletionClient.newCall(wireRequest).execute().use { response ->
+            if (!response.isSuccessful) return@withContext buildFailureSceneResponse(
+                response.code.toString(), extractAvailabilityMessage(response.body?.string()), resolved.responseParser, resolved.routeTag
+            )
+            val root = completionJson.parseToJsonElement(response.body?.string().orEmpty()) as KxJsonObject
+            val chunks = GeminiInteractionsStream(source).complete(root)
+            val normalized = chunks.dropLast(1).map { completionJson.parseToJsonElement(it) as KxJsonObject }
+            val finalChunk = normalized.last()
+            val state = finalChunk[ChatCompletionProtocolMetadata.GEMINI_STREAM_STATE_FIELD] as KxJsonObject
+            val steps = state["steps"] as KxJsonArray
+            fun output(type: String, field: String): String = steps.mapNotNull { it as? KxJsonObject }
+                .filter { it.text("type") == type }.joinToString("") { step ->
+                    (step[field] as? KxJsonArray).orEmpty().joinToString("") { (it as KxJsonObject).text("text") }
+                }
+            val toolCalls = steps.mapNotNull { it as? KxJsonObject }.filter { it.text("type") == "function_call" }
+                .map { AssistantToolCall(it.text("id"), function = AssistantToolCallFunction(it.text("name"), it["arguments"].toString())) }
+            val seed = AiRequestLogSeed("gemini/interactions", resolved.resolvedModel, ProviderProtocol.GEMINI,
+                wireRequest.url.toString(), stream = false, requestJson = ChatCompletionProtocolMetadata.withoutReplayData(payload).toString(),
+                conversationId = conversationIdFromPromptCacheKey(request.promptCacheKey))
+            recordTokenUsageFromResponse(seed, finalChunk.toString())
+            val diagnostic = ChatCompletionProtocolMetadata.withoutReplayData(root).toString()
+            persistAiRequestLog(seed, true, response.code, diagnostic, null)
+            SceneChatCompletionResponse(true, "200", "success", resolved.responseParser, resolved.routeTag,
+                content = output("model_output", "content"), reasoning = output("thought", "summary"),
+                finishReason = if (toolCalls.isEmpty()) "stop" else "tool_calls", toolCalls = toolCalls,
+                rawResponseBody = diagnostic)
+        }
     }
 
     // ---- Anthropic protocol helpers ----
@@ -3580,7 +3643,7 @@ object HttpController {
         resolved: ResolvedSceneRequest,
         event: EventSourceListener,
     ): EventSource = withContext(Dispatchers.IO) {
-        if (resolved.oauthProfileId != null) {
+        if (resolved.oauthProfileId != null || resolved.protocolType == ProviderProtocol.GEMINI) {
             return@withContext postOpenAIChatCompletionsStreamRequest(
                 resolved = resolved,
                 requestBody = completionJson.encodeToJsonElement(chatRequest.copy(stream = true)) as KxJsonObject,
@@ -3698,6 +3761,23 @@ object HttpController {
         event: EventSourceListener,
         forceHttp1: Boolean = false
     ): EventSource = withContext(Dispatchers.IO) {
+        if (resolved.protocolType == ProviderProtocol.GEMINI) {
+            val request = completionJson.decodeFromJsonElement<ChatCompletionRequest>(requestBody)
+                .copy(model = resolved.resolvedModel, stream = true)
+            val source = GeminiProvider.replaySource(resolved.providerProfileId, resolved.apiBase.orEmpty())
+            val payload = GeminiInteractionsRequest.build(request, source)
+            val wireRequest = buildGeminiRequest(resolved.apiBase.orEmpty(), resolved.apiKey, resolved.customHeaders, payload)
+                .header("Accept", "text/event-stream").build()
+            val seed = AiRequestLogSeed(
+                label = "gemini/interactions", model = request.model, protocolType = ProviderProtocol.GEMINI,
+                url = wireRequest.url.toString(), stream = true,
+                requestJson = ChatCompletionProtocolMetadata.withoutReplayData(payload).toString(),
+                conversationId = conversationIdFromPromptCacheKey(request.promptCacheKey),
+            )
+            return@withContext EventSources.createFactory(openAIStreamClient(forceHttp1)).newEventSource(
+                wireRequest, GeminiInteractionsStream.listener(source, createLoggingEventListener("gemini/interactions", event, seed))
+            )
+        }
         if (resolved.protocolType == "anthropic") {
             // Parse the incoming OpenAI JSON back into a request and convert to Anthropic format
             val parsedRequest = runCatching {
@@ -4143,6 +4223,9 @@ object HttpController {
             )
         }
 
+        if (resolved.protocolType == ProviderProtocol.GEMINI) {
+            return@withContext postGeminiSceneRequest(resolved, request)
+        }
         if (resolved.protocolType == "anthropic") {
             val anthropicJson = convertToAnthropicRequestJson(
                 request.copy(model = resolved.resolvedModel, stream = false)
@@ -4361,7 +4444,7 @@ object HttpController {
                     requestBodyJson = baseRequestJson.toString(),
                     resolvedModel = normalizedModel,
                     providerCapabilities = DeepSeekProvider.requestCapabilities(
-                        protocolType = DeepSeekProvider.normalizeProtocolType(null),
+                        protocolType = ProviderProtocol.normalize(null),
                         apiBase = normalizedApiBase,
                         model = normalizedModel,
                     ),
@@ -4370,7 +4453,7 @@ object HttpController {
                 buildOpenAICompatibleRequestBody(
                     requestBodyJson = baseRequestJson.toString(),
                     resolvedModel = normalizedModel,
-                    protocolType = DeepSeekProvider.normalizeProtocolType(null),
+                    protocolType = ProviderProtocol.normalize(null),
                     apiBase = normalizedApiBase
                 )
             }
@@ -4459,7 +4542,14 @@ object HttpController {
             return ModelAvailabilityCheckResult(response.success, response.code.toIntOrNull(),
                 if (response.success) "OK" else response.message)
         }
-        return if (DeepSeekProvider.normalizeProtocolType(protocolType) == "anthropic") {
+        if (ProviderProtocol.normalize(protocolType) == ProviderProtocol.GEMINI) {
+            val resolved = resolveSceneRequest(model, apiBase, apiKey, customHeaders, model, protocolType)
+            val result = postGeminiSceneRequest(resolved, ChatCompletionRequest(
+                model = model, messages = listOf(ChatCompletionMessage("user", JsonPrimitive("Reply with OK.")))
+            ))
+            return ModelAvailabilityCheckResult(result.success, result.code.toIntOrNull(), result.message)
+        }
+        return if (ProviderProtocol.normalize(protocolType) == "anthropic") {
             checkAnthropicModelAvailability(
                 model = model,
                 apiBase = apiBase,
@@ -4497,6 +4587,28 @@ object HttpController {
         }
         val normalizedApiBase = normalizeApiBase(apiBase)
             ?: return@withContext emptyList()
+        if (protocolType == ProviderProtocol.GEMINI) {
+            val models = linkedMapOf<String, ProviderModelOption>()
+            val tokens = mutableSetOf<String>()
+            var token: String? = null
+            do {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                val url = GeminiInteractionsRequest.modelsUrl(normalizedApiBase).toHttpUrl().newBuilder()
+                    .addQueryParameter("pageSize", "1000").apply { token?.let { addQueryParameter("pageToken", it) } }.build()
+                val request = buildGeminiRequest(normalizedApiBase, apiKey, customHeaders).url(url).get().build()
+                val page = providerModelsClient.newCall(request).execute().use { response ->
+                    check(response.isSuccessful) { "获取 Gemini 模型列表失败 (${response.code})" }
+                    val body = response.peekBody(8L * 1024 * 1024 + 1).string()
+                    check(body.toByteArray().size <= 8 * 1024 * 1024) { "Gemini model directory exceeds size limit" }
+                    GeminiModelCatalog.parse(body)
+                }
+                page.models.forEach { models.putIfAbsent(it.id, it) }
+                token = page.nextPageToken
+                check(token == null || tokens.add(token!!)) { "Gemini model directory returned a repeated page token" }
+                check(tokens.size <= 100) { "Gemini model directory exceeds page limit" }
+            } while (token != null)
+            return@withContext models.values.toList()
+        }
         val request = if (protocolType == "anthropic") {
             buildAnthropicRequestBuilder(
                 url = buildAnthropicModelsUrl(normalizedApiBase),

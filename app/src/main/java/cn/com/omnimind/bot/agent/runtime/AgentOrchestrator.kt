@@ -117,6 +117,7 @@ class AgentOrchestrator(
         // Tool intent and reasoning are visible even when a tool result does
         // not count as the final user-facing answer.
         var hasVisibleModelOutput = false
+        var lastModelMessage: ChatCompletionMessage? = null
         var lastAssistantContent = ""
         var accumulatedAssistantContent = ""
         var lastFinishReason: String? = null
@@ -273,6 +274,7 @@ class AgentOrchestrator(
                         ?.takeIf { it.isNotBlank() },
                     protocolState = turn.message.protocolState
                 )
+                lastModelMessage = assistantMessageForMemory
                 memory.add(assistantMessageForMemory)
                 latestPromptTokens?.let { promptTokens ->
                     callback.onPromptTokenUsageChanged(
@@ -536,7 +538,8 @@ class AgentOrchestrator(
                 completionTokens = lastTurnUsage?.completionTokens,
                 cachedTokens = lastTurnUsage?.cachedTokens,
                 cacheCreationTokens = lastTurnUsage?.cacheCreationTokens,
-                totalTokens = lastTurnUsage?.totalTokens
+                totalTokens = lastTurnUsage?.totalTokens,
+                modelMessage = lastModelMessage?.takeIf { it.toolCalls.isNullOrEmpty() },
             ),
             outputKind = outputKind.value,
             hasUserVisibleOutput = hasUserFacingOutput,
@@ -707,6 +710,7 @@ class AgentOrchestrator(
             toolCallId = toolCall.id,
             content = content,
             protocolState = ChatCompletionProtocolState(
+                toolResultIsError = !isSuccessfulToolResult(result),
                 anthropic = AnthropicMessageProtocolState(
                     toolResultIsError = !isSuccessfulToolResult(result)
                 )

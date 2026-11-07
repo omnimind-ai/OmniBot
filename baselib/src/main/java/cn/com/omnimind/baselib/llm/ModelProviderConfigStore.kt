@@ -32,6 +32,7 @@ object ModelProviderConfigStore {
     private const val DEFAULT_PROFILE_ID = "profile-1"
     private const val DEFAULT_PROFILE_NAME = "Provider 1"
     private val canonicalEndpointSuffixes = listOf(
+        "/interactions",
         "/v1/chat/completions",
         "/chat/completions",
         "/v1/responses",
@@ -664,7 +665,7 @@ object ModelProviderConfigStore {
     }
 
     private fun normalizeProtocolType(value: String?): String {
-        return DeepSeekProvider.normalizeProtocolType(value)
+        return ProviderProtocol.normalize(value)
     }
 
     private fun normalizeWireApi(value: String?): String {

@@ -1,6 +1,7 @@
 package cn.com.omnimind.bot.agent
 
-import cn.com.omnimind.baselib.llm.DeepSeekProvider
+import cn.com.omnimind.baselib.llm.ProviderProtocol
+
 import cn.com.omnimind.baselib.llm.ChatGptOAuthProvider
 import cn.com.omnimind.baselib.llm.ModelProviderConfigStore
 import cn.com.omnimind.baselib.llm.ModelProviderProfile
@@ -84,7 +85,7 @@ fun AgentModelOverride.normalizedOrNull(): AgentModelOverride? {
         customHeaders = ProviderCustomHeaderUtils
             .sanitizeCustomHeaders(customHeaders)
             .mapValues { (_, value) -> value.trim() },
-        protocolType = DeepSeekProvider.normalizeProtocolType(protocolType),
+        protocolType = ProviderProtocol.normalize(protocolType),
         wireApi = OpenAiWireApi.normalize(wireApi),
         contextLimit = contextLimit?.takeIf { it > 0 },
     )

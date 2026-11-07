@@ -13,7 +13,9 @@ object ProviderReasoningCatalog {
         context: Context,
         profile: ModelProviderProfile,
         model: ProviderModelOption,
-    ): ProviderModelOption = snapshot(context)?.enrich(profile, model) ?: model
+    ): ProviderModelOption = if (profile.protocolType == ProviderProtocol.GEMINI) {
+        GeminiProvider.enrich(model)
+    } else snapshot(context)?.enrich(profile, model) ?: model
 
     private fun snapshot(context: Context): Snapshot? = bundled ?: synchronized(this) {
         bundled ?: runCatching {

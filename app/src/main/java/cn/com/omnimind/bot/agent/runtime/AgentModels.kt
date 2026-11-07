@@ -21,7 +21,8 @@ data class AgentFinalResponse(
     val completionTokens: Int? = null,
     val cachedTokens: Int? = null,
     val cacheCreationTokens: Int? = null,
-    val totalTokens: Int? = null
+    val totalTokens: Int? = null,
+    val modelMessage: cn.com.omnimind.baselib.llm.ChatCompletionMessage? = null,
 )
 
 /**

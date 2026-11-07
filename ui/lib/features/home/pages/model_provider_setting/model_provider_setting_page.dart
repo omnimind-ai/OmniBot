@@ -62,6 +62,15 @@ class _SelectionOption {
 
 const List<_ProviderTypeOption> _kProviderTypeOptions = <_ProviderTypeOption>[
   _ProviderTypeOption(
+    value: 'gemini_interactions',
+    label: 'Gemini',
+    sourceType: 'custom',
+    baseUrl: 'https://generativelanguage.googleapis.com/v1',
+    providerName: 'Gemini',
+    protocolType: 'gemini_interactions',
+    wireApi: 'chat_completions',
+  ),
+  _ProviderTypeOption(
     value: ChatGptOAuthService.sourceType,
     label: 'ChatGPT',
     sourceType: ChatGptOAuthService.sourceType,
@@ -263,6 +272,8 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage>
     if (officialProvider != null) {
       return officialProvider.key;
     }
+    if (_selectedProtocolType == 'gemini_interactions')
+      return 'gemini_interactions';
     if (_selectedProtocolType == 'anthropic') {
       return 'anthropic';
     }
@@ -898,6 +909,11 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage>
       return null;
     }
 
+    if (_selectedProtocolType == 'gemini_interactions') {
+      return ModelProviderConfigService.buildGeminiInteractionsRequestUrl(
+        input,
+      );
+    }
     if (_selectedProtocolType == 'anthropic') {
       return ModelProviderConfigService.buildAnthropicMessagesRequestUrl(input);
     }

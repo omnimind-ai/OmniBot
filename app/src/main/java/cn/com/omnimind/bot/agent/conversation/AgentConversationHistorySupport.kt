@@ -357,6 +357,8 @@ internal object AgentConversationHistorySupport {
                         if (canonicalAssistant == null) {
                             replayMessages += buildToolReplayMessages(entry)
                         } else {
+                            val canonicalMessageId = payload["modelAssistantMessageId"]?.toString()
+                            val canonicalTaskId = payload["taskId"]?.toString()
                             val group = relevantEntries
                                 .asSequence()
                                 .drop(index)
@@ -365,7 +367,10 @@ internal object AgentConversationHistorySupport {
                                 }
                                 .map { candidate -> candidate to readMap(candidate.payloadJson) }
                                 .filter { (_, payload) ->
-                                    payload["modelAssistantMessageJson"]?.toString() == canonicalAssistantJson
+                                    if (!canonicalMessageId.isNullOrBlank()) {
+                                        payload["modelAssistantMessageId"]?.toString() == canonicalMessageId &&
+                                            payload["taskId"]?.toString() == canonicalTaskId
+                                    } else payload["modelAssistantMessageJson"]?.toString() == canonicalAssistantJson
                                 }
                                 .toList()
                             val resultByCallId = group.mapNotNull { (candidate, payload) ->
@@ -676,6 +681,8 @@ internal object AgentConversationHistorySupport {
             "args" to chooseText("args"),
             "argsJson" to chooseText("argsJson"),
             "modelToolCallId" to chooseText("modelToolCallId"),
+            "modelAssistantMessageId" to rawText(incoming, "modelAssistantMessageId")
+                .ifEmpty { rawText(existing, "modelAssistantMessageId") },
             "modelAssistantMessageJson" to rawText(incoming, "modelAssistantMessageJson")
                 .ifEmpty { rawText(existing, "modelAssistantMessageJson") },
             "modelToolResultMessageJson" to rawText(incoming, "modelToolResultMessageJson")
@@ -714,6 +721,10 @@ internal object AgentConversationHistorySupport {
 
     private fun buildAssistantPromptMessages(entry: AgentConversationEntry): List<ChatCompletionMessage> {
         val payload = readMap(entry.payloadJson)
+        val replay = (payload["content"] as? Map<*, *>)?.get("modelReplay") as? Map<*, *>
+        replay?.get("modelAssistantMessageJson")?.toString()?.let(::decodeCanonicalMessage)?.let {
+            return listOf(it)
+        }
         val content = buildPromptContentFromMessagePayload(payload) ?: return emptyList()
         if (content.isBlankJsonPrimitive()) return emptyList()
         return listOf(
@@ -730,7 +741,13 @@ internal object AgentConversationHistorySupport {
         assistantIndex: Int,
         assistantEntry: AgentConversationEntry
     ): Boolean {
-        val assistantTaskId = extractAssistantReplayTaskId(assistantEntry.entryId) ?: return false
+        val assistantPayload = readMap(assistantEntry.payloadJson)
+        val replay = (assistantPayload["content"] as? Map<*, *>)?.get("modelReplay")
+        val assistantTaskId = if (replay != null) {
+            (assistantPayload["streamMeta"] as? Map<*, *>)?.get("parentTaskId")?.toString()
+                ?: extractAssistantReplayTaskId(assistantEntry.entryId)
+        } else extractAssistantReplayTaskId(assistantEntry.entryId)
+        if (assistantTaskId == null) return false
         for (index in assistantIndex + 1 until entries.size) {
             val nextEntry = entries[index]
             if (nextEntry.entryType == AgentConversationHistoryRepository.ENTRY_TYPE_USER_MESSAGE) {
@@ -739,7 +756,8 @@ internal object AgentConversationHistorySupport {
             if (nextEntry.entryType != AgentConversationHistoryRepository.ENTRY_TYPE_TOOL_EVENT) {
                 continue
             }
-            if (extractToolReplayTaskId(nextEntry.entryId) == assistantTaskId) {
+            if ((if (replay != null) readMap(nextEntry.payloadJson)["taskId"]?.toString() else null)
+                    == assistantTaskId || extractToolReplayTaskId(nextEntry.entryId) == assistantTaskId) {
                 return true
             }
         }
@@ -1287,6 +1305,7 @@ internal object AgentConversationHistorySupport {
             ),
             "modelToolCallId" to payload["modelToolCallId"]?.toString()?.trim()
                 ?.takeIf { it.isNotEmpty() },
+            "modelAssistantMessageId" to payload["modelAssistantMessageId"],
             "modelAssistantMessageJson" to payload["modelAssistantMessageJson"]
                 ?.toString()
                 ?.takeIf { it.isNotBlank() },
@@ -1372,6 +1391,7 @@ internal object AgentConversationHistorySupport {
                 default = entry.status == AgentConversationHistoryRepository.STATUS_SUCCESS
             ),
             "modelToolCallId" to payload["modelToolCallId"]?.toString().orEmpty(),
+            "modelAssistantMessageId" to payload["modelAssistantMessageId"],
             "modelAssistantMessageJson" to assistantJson,
             "modelToolResultMessageJson" to resultJson,
             "payloadCompacted" to true,

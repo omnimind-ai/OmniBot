@@ -12,6 +12,18 @@ import org.junit.Test
 
 class AgentConfigAdaptersTest {
     @Test
+    fun geminiNativeProviderIsRejectedBeforeExternalAgentConfiguration() {
+        val provider = AgentProviderCredentials("https://generativelanguage.googleapis.com/v1", "test-key", protocolType = "gemini_interactions")
+        for (adapter in listOf(AcpHarnessAdapters.codex, AcpHarnessAdapters.claudeCode, AcpHarnessAdapters.standard)) {
+            val failure = runCatching { AgentConfigAdapterRegistry.map(AgentProviderMappingInput(
+                agentId = "external", provider = provider, model = "gemini-3.8-flash", harnessAdapter = adapter,
+            )) }.exceptionOrNull()
+            assertTrue(failure is IllegalArgumentException)
+            assertTrue(failure!!.message!!.contains("built-in Agent"))
+        }
+    }
+
+    @Test
     fun harnessModelSelectionUsesAdvertisedValuesWithoutLosingModelNamespace() {
         assertEquals("omnibot/org/model", AcpHarnessAdapters.openCode.resolveModelValue(
             "org/model", listOf("omnibot/org/model")))

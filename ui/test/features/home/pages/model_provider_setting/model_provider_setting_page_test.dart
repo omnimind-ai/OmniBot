@@ -852,6 +852,48 @@ void main() {
     expect(baseUrlField.decoration?.hintText, contains('末尾加 #'));
   });
 
+  testWidgets(
+    'Gemini profile shows Interactions URL and hides OpenAI wire settings',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return profilePayload(
+              baseUrl: 'https://generativelanguage.googleapis.com/v1',
+              protocolType: 'gemini_interactions',
+            );
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          darkTheme: AppTheme.darkTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(
+        find.descendant(
+          of: find.byKey(const Key('provider-protocol-type-button')),
+          matching: find.text('Gemini'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.text('https://generativelanguage.googleapis.com/v1/interactions'),
+        findsOneWidget,
+      );
+      expect(find.byKey(const Key('provider-wire-api-button')), findsNothing);
+    },
+  );
+
   testWidgets('anthropic profile shows full messages request url', (
     tester,
   ) async {

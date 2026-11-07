@@ -76,6 +76,12 @@ Note: `Memory embedding` requires an embedding model. For the best overall exper
 
 The app usually initializes the Alpine environment automatically on startup, and you can also manage that environment from the same settings area.
 
+### Native Gemini connection
+
+Select **Gemini** in model provider settings, enter an API key, and keep the default base URL `https://generativelanguage.googleapis.com/v1`. Select a model for the built-in Agent. This connection uses the Interactions API for streamed replies, images, thinking levels, and local/MCP tools. External Agents require a Provider using their supported protocol.
+
+Interactions use `store=false`. Original model steps and signatures are saved in local conversation history for subsequent turns and reopening a conversation. Older history without signatures is supplied as text. Context compaction preserves the active tool cycle. Google Search, Deep Research, and server-side background tasks are not enabled by this connection.
+
 <h2 id="use-cases">Use Cases</h2>
 
 ### Personal context

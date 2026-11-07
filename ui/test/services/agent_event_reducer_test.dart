@@ -31,6 +31,82 @@ void main() {
     runtime.dispose();
   });
 
+  test(
+    'Gemini replay metadata persists on the existing assistant and tool items',
+    () {
+      const replay = {
+        'modelAssistantMessageJson': '{"role":"assistant","_omnibot_protocol_state":{"gemini":{"steps":[]}}}',
+      };
+      void send(Map<String, dynamic> update) {
+        reducer.reduce(
+          runtime: runtime,
+          event: {
+            'method': 'session/update',
+            'turnId': 'gemini-turn',
+            'params': {
+              'sessionId': 'gemini-session',
+              'turnId': 'gemini-turn',
+              'update': update,
+            },
+          },
+        );
+      }
+
+      send({
+        'sessionUpdate': 'agent_message_chunk',
+        'messageId': 'answer',
+        'content': {'type': 'text', 'text': 'answer'},
+      });
+      send({
+        'sessionUpdate': 'agent_message_chunk',
+        'messageId': 'answer',
+        'content': {'type': 'text', 'text': ''},
+        '_meta': {
+          'cn.com.omnimind.agent': {'modelReplay': replay},
+        },
+      });
+      expect(runtime.messages.single.text, 'answer');
+      expect(runtime.messages.single.content!['modelReplay'], replay);
+      expect(
+        ChatMessageModel.fromJson(runtime.messages.single.toJson())
+            .content!['modelReplay'],
+        replay,
+      );
+      send({
+        'sessionUpdate': 'tool_call',
+        'toolCallId': 'call',
+        'kind': 'read',
+        'title': 'Read',
+        'status': 'completed',
+        'rawInput': {'path': 'a'},
+        'rawOutput': 'done',
+      });
+      final toolReplay = {
+        ...replay,
+        'modelAssistantMessageId': 'model-message',
+        'modelToolCallId': 'call',
+        'modelToolResultMessageJson':
+            '{"role":"tool","tool_call_id":"call","content":"done"}',
+      };
+      send({
+        'sessionUpdate': 'tool_call_update',
+        'toolCallId': 'call',
+        '_meta': {
+          'cn.com.omnimind.agent': {'modelReplay': toolReplay},
+        },
+      });
+      final card = runtime.messages
+          .singleWhere((message) => message.cardData?['toolCallId'] == 'call')
+          .cardData!;
+      expect(card['modelAssistantMessageId'], 'model-message');
+      expect(
+        card['modelToolResultMessageJson'],
+        toolReplay['modelToolResultMessageJson'],
+      );
+      expect(card['status'], 'success');
+    },
+  );
+
   for (final reason in ['cancelled', 'error', 'end_turn']) {
     test(
       'official $reason settles only unresolved requests owned by that turn',

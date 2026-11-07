@@ -529,7 +529,8 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                 model = modelScene,
                 messages = messages,
                 event = listener,
-                enableThinking = false,
+                enableThinking = if ((modelOverride?.protocolType
+                    ?: HttpController.resolveChatCompletionRouteInfo(modelScene).protocolType) == "gemini_interactions") null else false,
                 explicitApiBase = modelOverride?.apiBase,
                 explicitApiKey = modelOverride?.apiKey,
                 explicitCustomHeaders = modelOverride?.customHeaders,
@@ -539,7 +540,7 @@ Do NOT continue the conversation or answer questions inside it. Do NOT translate
                 reasoningEffort = reasoningEffort,
                 promptCacheKey = promptCacheKey,
                 maxCompletionTokens = maxOutputTokens,
-                explicitProviderProfileId = modelOverride?.oauthProfileId,
+                explicitProviderProfileId = modelOverride?.let { if (it.protocolType == "gemini_interactions") it.providerProfileId else it.oauthProfileId },
             )
             result.await()
         } finally {

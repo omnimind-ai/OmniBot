@@ -454,6 +454,7 @@ class ModelProviderConfigService {
     'transfer-encoding',
   };
   static const List<String> _kCanonicalEndpointSuffixes = <String>[
+    '/interactions',
     '/v1/chat/completions',
     '/chat/completions',
     '/v1/responses',
@@ -467,6 +468,13 @@ class ModelProviderConfigService {
     '/v1',
     '/compatible-mode/v1',
   ];
+  static String? buildGeminiInteractionsRequestUrl(String input) {
+    final normalized = normalizeApiBase(input);
+    if (normalized == null) return null;
+    final base = _stripDirectRequestUrlMarker(normalized);
+    return _hasDirectRequestUrlMarker(normalized) ? base : '$base/interactions';
+  }
+
   static String _canonicalProfileId(String profileId) {
     return profileId.trim();
   }

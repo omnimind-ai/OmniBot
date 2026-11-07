@@ -76,6 +76,12 @@ OmniBot 是一个基于 Android 原生 Kotlin 与 Flutter 构建的端侧 AI Age
 
 一般情况下，应用启动时会自动初始化 Alpine 环境，你也可以在这里自行管理环境。
 
+### Gemini 原生连接
+
+在模型服务商设置中选择 **Gemini**，填写 API Key，默认地址为 `https://generativelanguage.googleapis.com/v1`，再为内置 Agent 选择模型。连接使用 Interactions API，支持流式回复、图片输入、思考档位和本地/MCP 工具。外部 Agent 暂不接受此连接类型；使用它们时请选择相应兼容协议的 Provider。
+
+会话使用 `store=false`，由本地历史保存模型原始步骤及签名，支持重新打开会话后续接。旧记录没有签名时作为历史文本提供；上下文压缩保留当前工具循环。Google Search、Deep Research 和服务端后台任务不在此连接的功能范围内。
+
 <h2 id="use-cases">使用场景</h2>
 
 ### 个人上下文

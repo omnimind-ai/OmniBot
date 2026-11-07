@@ -75,7 +75,7 @@ class AgentConversationHistoryRepository(
         internal fun preserveFullToolPayload(existing: Map<String, Any?>, incoming: Map<String, Any?>): Map<String, Any?> {
             if (incoming["payloadCompacted"] == true && existing.isNotEmpty()) return existing
             return incoming.toMutableMap().apply {
-                listOf("toolCallId", "sessionId", "turnId", "modelToolCallId",
+                listOf("toolCallId", "sessionId", "turnId", "modelToolCallId", "modelAssistantMessageId",
                     "modelAssistantMessageJson", "modelToolResultMessageJson").forEach { key ->
                     // Presentation snapshots may have empty placeholders before
                     // the canonical tool messages arrive. Only retain real values.
@@ -83,6 +83,17 @@ class AgentConversationHistoryRepository(
                         ?.let { put(key, it) }
                 }
             }
+        }
+
+        internal fun preserveModelReplay(existing: Map<String, Any?>, incoming: Map<String, Any?>): Map<String, Any?> {
+            val previousContent = existing["content"] as? Map<*, *> ?: return incoming
+            val replay = previousContent["modelReplay"] ?: return incoming
+            val content = (incoming["content"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value }.orEmpty()
+            val incomingReplay = content["modelReplay"] as? Map<*, *>
+            val canonical = incomingReplay?.takeIf {
+                !it["modelAssistantMessageJson"]?.toString().isNullOrBlank()
+            } ?: replay
+            return incoming + ("content" to (content + ("modelReplay" to canonical)))
         }
 
         internal fun resolveCompactionToolCutoff(
@@ -230,9 +241,10 @@ class AgentConversationHistoryRepository(
         attachments: List<Map<String, Any?>> = emptyList(),
         streamMeta: Map<String, Any?>? = null,
         turnUsage: Map<String, Any?>? = null,
+        modelReplay: Map<String, Any?>? = null,
         createdAt: Long = System.currentTimeMillis()
     ) {
-        val payload = AgentConversationHistorySupport.buildTextMessagePayload(
+        var payload = AgentConversationHistorySupport.buildTextMessagePayload(
             messageId = entryId,
             user = 2,
             text = text,
@@ -246,6 +258,10 @@ class AgentConversationHistoryRepository(
             turnUsage = turnUsage,
             createdAt = createdAt
         )
+        if (modelReplay != null) {
+            val content = (payload["content"] as? Map<*, *>)?.entries?.associate { it.key.toString() to it.value }.orEmpty()
+            payload = payload + ("content" to (content + ("modelReplay" to modelReplay)))
+        }
         upsertMessageEntry(
             conversationId = conversationId,
             conversationMode = conversationMode,
@@ -479,7 +495,7 @@ class AgentConversationHistoryRepository(
                     gson.toJson(preserveFullToolPayload(existingToolPayload, restoredToolPayload))
                 }
             } else {
-                gson.toJson(message)
+                gson.toJson(preserveModelReplay(existingEntry?.let { AgentConversationHistorySupport.readMap(it.payloadJson) }.orEmpty(), message))
             }
             upsertEntry(
                 AgentConversationEntry(
@@ -752,7 +768,7 @@ class AgentConversationHistoryRepository(
                 incomingPayload = payload
             )
         } else {
-            payload
+            preserveModelReplay(existing?.let { AgentConversationHistorySupport.readMap(it.payloadJson) }.orEmpty(), payload)
         }
         upsertEntry(
             AgentConversationEntry(

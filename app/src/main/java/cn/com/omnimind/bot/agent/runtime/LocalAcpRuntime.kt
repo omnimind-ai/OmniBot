@@ -3816,7 +3816,7 @@ internal class LocalAcpRuntime(
             ?: implicitTurnId
             ?: if (isReplay && update.isTurnScoped()) replayTurnId(threadId) else null
         if (resolvedTurnId == null && update.isTurnScoped()) {
-            Log.w(TAG, "Dropping turn-scoped ACP update with no resolvable turn: $update")
+            Log.w(TAG, "Dropping turn-scoped ACP update with no resolvable turn: ${update::class.simpleName}")
             return
         }
 
