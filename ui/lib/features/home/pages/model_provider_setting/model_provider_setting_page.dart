@@ -663,17 +663,13 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage>
         primary: true,
         actions: [
           Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: TextButton.icon(
-              key: const Key('provider-list-add-button'),
-              onPressed: () => unawaited(_openAddProvider()),
-              icon: const Icon(LucideIcons.plus, size: 16),
-              label: Text(
-                _text('添加服务商', 'Add Provider'),
-                style: const TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
-                ),
+            padding: const EdgeInsets.only(right: 16),
+            child: Center(
+              child: OmniCircleButton(
+                key: const Key('provider-list-add-button'),
+                icon: LucideIcons.plus,
+                tooltip: _text('添加服务商', 'Add Provider'),
+                onPressed: () => unawaited(_openAddProvider()),
               ),
             ),
           ),

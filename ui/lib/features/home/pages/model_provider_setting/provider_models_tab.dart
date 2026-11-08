@@ -1321,67 +1321,66 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
         .toList();
     final hasSelection = _selectedModelIds.isNotEmpty;
 
-    return SafeArea(
-      top: false,
-      child: Container(
-        key: const Key('provider-model-batch-bar'),
-        margin: const EdgeInsets.fromLTRB(18, 8, 18, 16),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        decoration: BoxDecoration(
-          color: palette.surfacePrimary,
-          borderRadius: BorderRadius.circular(16),
-          border: Border.all(color: palette.borderSubtle, width: 0.8),
-          boxShadow: [
-            BoxShadow(
-              color: palette.shadowColor.withValues(alpha: 0.14),
-              blurRadius: 12,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          alignment: WrapAlignment.spaceEvenly,
-          children: [
+    final bottomInset = MediaQuery.viewPaddingOf(context).bottom;
+
+    return Container(
+      key: const Key('provider-model-batch-bar'),
+      margin: EdgeInsets.fromLTRB(18, 8, 18, 16 + bottomInset),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: palette.surfacePrimary,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: palette.borderSubtle, width: 0.8),
+        boxShadow: [
+          BoxShadow(
+            color: palette.shadowColor.withValues(alpha: 0.14),
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        alignment: WrapAlignment.spaceEvenly,
+        children: [
+          TextButton.icon(
+            key: const Key('provider-batch-show-chat-button'),
+            onPressed: hasSelection
+                ? () => unawaited(
+                    widget.onBatchSetVisibleInChat(_selectedModelIds, true),
+                  )
+                : null,
+            icon: const Icon(LucideIcons.eye, size: 15),
+            label: Text(_text('在聊天中显示', 'Show in Chat')),
+          ),
+          TextButton.icon(
+            key: const Key('provider-batch-hide-chat-button'),
+            onPressed: hasSelection
+                ? () => unawaited(
+                    widget.onBatchSetVisibleInChat(_selectedModelIds, false),
+                  )
+                : null,
+            icon: const Icon(LucideIcons.eyeOff, size: 15),
+            label: Text(_text('从聊天隐藏', 'Hide from Chat')),
+          ),
+          if (selectedManualIds.isNotEmpty)
             TextButton.icon(
-              key: const Key('provider-batch-show-chat-button'),
-              onPressed: hasSelection
-                  ? () => unawaited(
-                      widget.onBatchSetVisibleInChat(_selectedModelIds, true),
-                    )
-                  : null,
-              icon: const Icon(LucideIcons.eye, size: 15),
-              label: Text(_text('在聊天中显示', 'Show in Chat')),
-            ),
-            TextButton.icon(
-              key: const Key('provider-batch-hide-chat-button'),
-              onPressed: hasSelection
-                  ? () => unawaited(
-                      widget.onBatchSetVisibleInChat(_selectedModelIds, false),
-                    )
-                  : null,
-              icon: const Icon(LucideIcons.eyeOff, size: 15),
-              label: Text(_text('从聊天隐藏', 'Hide from Chat')),
-            ),
-            if (selectedManualIds.isNotEmpty)
-              TextButton.icon(
-                key: const Key('provider-batch-delete-manual-button'),
-                onPressed: () =>
-                    unawaited(_confirmAndDeleteManualModels(selectedManualIds)),
-                style: TextButton.styleFrom(
-                  foregroundColor: AppColors.alertRed,
-                ),
-                icon: const Icon(LucideIcons.trash2, size: 15),
-                label: Text(
-                  _text(
-                    '删除手动模型 (${selectedManualIds.length})',
-                    'Delete Manual (${selectedManualIds.length})',
-                  ),
+              key: const Key('provider-batch-delete-manual-button'),
+              onPressed: () =>
+                  unawaited(_confirmAndDeleteManualModels(selectedManualIds)),
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.alertRed,
+              ),
+              icon: const Icon(LucideIcons.trash2, size: 15),
+              label: Text(
+                _text(
+                  '删除手动模型 (${selectedManualIds.length})',
+                  'Delete Manual (${selectedManualIds.length})',
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
   }

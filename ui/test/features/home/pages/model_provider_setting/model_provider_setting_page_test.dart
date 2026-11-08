@@ -1472,4 +1472,47 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'both provider list and detail screens apply edge-to-edge top status bar inset and symmetric action padding',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.padding = const FakeViewPadding(top: 48, bottom: 34);
+      tester.view.viewPadding = const FakeViewPadding(top: 48, bottom: 34);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetPadding);
+      addTearDown(tester.view.resetViewPadding);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // List page top action is below the 48px status bar and 16px from right edge.
+      final listAddRect = tester.getRect(
+        find.byKey(const Key('provider-list-add-button')),
+      );
+      expect(listAddRect.top, greaterThanOrEqualTo(48));
+      expect(390 - listAddRect.right, closeTo(16, 1.0));
+
+      await openFirstProviderDetail(tester);
+
+      // Detail page title and more button are below the 48px status bar,
+      // and the more button is 16px from the right edge (not overlapping battery).
+      final detailTitleRect = tester.getRect(
+        find.byKey(const Key('provider-config-title-text')),
+      );
+      final detailMoreRect = tester.getRect(
+        find.byKey(const Key('provider-detail-more-button')),
+      );
+      expect(detailTitleRect.top, greaterThanOrEqualTo(48));
+      expect(detailMoreRect.top, greaterThanOrEqualTo(48));
+      expect(390 - detailMoreRect.right, closeTo(16, 1.0));
+    },
+  );
 }

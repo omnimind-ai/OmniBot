@@ -1736,6 +1736,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(
+        primary: true,
         onBackPressed: () => Navigator.of(context).maybePop(),
         titleWidget: ValueListenableBuilder<TextEditingValue>(
           valueListenable: _nameController,
@@ -1751,17 +1752,27 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
               key: const Key('provider-config-title-text'),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w600,
+                color: palette.textPrimary,
+              ),
             );
           },
         ),
         actions: [
           if (!_isNew && !_readOnly)
-            OmniCircleButton.popup(
-              key: const Key('provider-detail-more-button'),
-              icon: LucideIcons.ellipsis,
-              tooltip: _text('更多操作', 'More actions'),
-              onOpen: (anchorContext) =>
-                  unawaited(_openDetailHeaderMoreMenu(anchorContext)),
+            Padding(
+              padding: const EdgeInsets.only(right: 16),
+              child: Center(
+                child: OmniCircleButton.popup(
+                  key: const Key('provider-detail-more-button'),
+                  icon: LucideIcons.ellipsis,
+                  tooltip: _text('更多操作', 'More actions'),
+                  onOpen: (anchorContext) =>
+                      unawaited(_openDetailHeaderMoreMenu(anchorContext)),
+                ),
+              ),
             ),
         ],
       ),
