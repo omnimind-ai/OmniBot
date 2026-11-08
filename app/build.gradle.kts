@@ -206,7 +206,7 @@ android {
         targetSdk = 37
         // Keep the Android version code monotonic for installable updates.
         versionCode = 21
-        versionName = "0.7.0.4"
+        versionName = "0.7.0.5"
         buildConfigField("String", "IMAGE_BASE_URL", buildConfigString(omnibotImageBaseUrl))
         buildConfigField("String", "CLOUD_URL", buildConfigString(omnibotCloudUrl))
         buildConfigField("String", "IMAGE_MODEL", buildConfigString(omnibotImageModel))
