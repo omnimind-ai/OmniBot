@@ -1209,6 +1209,15 @@ void main() {
         profileId: 'provider-1',
       );
       expect(hiddenIds, ['gpt-4o-mini']);
+      final enabledStored =
+          await ModelProviderConfigService.getStoredModelOptionsForProfile(
+            'provider-1',
+          );
+      expect(enabledStored.map((m) => m.id), ['gpt-4o']);
+      final chatGroups = await ModelProviderConfigService.loadChatModelGroups(
+        refresh: false,
+      );
+      expect(chatGroups.single.models.map((m) => m.id), ['gpt-4o']);
       expect(
         find.byKey(const ValueKey<String>('provider-model-gpt-4o-mini')),
         findsOneWidget,

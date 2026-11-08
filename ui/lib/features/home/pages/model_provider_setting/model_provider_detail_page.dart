@@ -1256,6 +1256,14 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       _manualModels = enriched[0];
       _remoteModels = enriched[1];
     });
+    if (enriched[1].isNotEmpty) {
+      unawaited(
+        ModelProviderConfigService.saveDiscoveredModelsForProfile(
+          profile,
+          enriched[1],
+        ),
+      );
+    }
     _notifyModelsChanged();
   }
 
@@ -1316,6 +1324,10 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       final models = await ModelProviderConfigService.fetchModels(
         profileId: savedProfile.id,
         providerName: savedProfile.name,
+      );
+      await ModelProviderConfigService.saveDiscoveredModelsForProfile(
+        savedProfile,
+        models,
       );
       if (!mounted ||
           _profile?.id != savedProfile.id ||
@@ -1491,8 +1503,8 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       if (!mounted) return true;
       showToast(
         visible
-            ? _text('已设为在聊天中显示', 'Shown in chat')
-            : _text('已从聊天选择器隐藏', 'Hidden from chat selector'),
+            ? _text('已启用模型', 'Model enabled')
+            : _text('已关闭模型', 'Model disabled'),
         type: ToastType.success,
       );
       return true;
@@ -1500,7 +1512,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       if (!mounted) return false;
       setState(() => _hiddenChatModelIds = previous);
       showToast(
-        _text('更新聊天模型显示状态失败', 'Failed to update chat model visibility'),
+        _text('更新模型启用状态失败', 'Failed to update model status'),
         type: ToastType.error,
       );
       return false;
@@ -1532,15 +1544,15 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       if (!mounted) return;
       showToast(
         visible
-            ? _text('已开启所选模型在聊天中显示', 'Enabled selected models in chat')
-            : _text('已隐藏所选聊天模型', 'Hidden selected models from chat'),
+            ? _text('已启用所选模型', 'Enabled selected models')
+            : _text('已关闭所选模型', 'Disabled selected models'),
         type: ToastType.success,
       );
     } catch (_) {
       if (!mounted) return;
       setState(() => _hiddenChatModelIds = previous);
       showToast(
-        _text('更新聊天模型显示状态失败', 'Failed to update chat model visibility'),
+        _text('更新模型启用状态失败', 'Failed to update model status'),
         type: ToastType.error,
       );
     }

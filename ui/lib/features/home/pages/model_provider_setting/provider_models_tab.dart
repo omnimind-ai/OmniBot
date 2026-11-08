@@ -188,16 +188,16 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
         buildProviderActionMenuItem(
           value: 'show_all',
           enabled: hasModels && widget.hiddenChatModelIds.isNotEmpty,
-          icon: LucideIcons.eye,
-          label: _text('全部在聊天中显示', 'Show All in Chat'),
+          icon: LucideIcons.circleCheck,
+          label: _text('全部启用', 'Enable All'),
         ),
         buildProviderActionMenuItem(
           value: 'hide_all',
           enabled:
               hasModels &&
               widget.allModelItems.any((m) => _isModelVisibleInChat(m.id)),
-          icon: LucideIcons.eyeOff,
-          label: _text('全部从聊天中隐藏', 'Hide All from Chat'),
+          icon: LucideIcons.ban,
+          label: _text('全部关闭', 'Disable All'),
         ),
         if (hasMultipleGroups)
           buildProviderActionMenuItem(
@@ -248,8 +248,8 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
           content: Text(
             manualIds.length == 1
                 ? _text(
-                    '确定要删除手动添加的模型“${manualIds.first}”吗？如果只是不想在聊天模型选择器中看到它，可改为关闭“在聊天中显示”。',
-                    'Delete manually added model "${manualIds.first}"? If you only want to hide it from the chat model selector, turn off "Show in Chat" instead.',
+                    '确定要删除手动添加的模型“${manualIds.first}”吗？如果只是暂时不用，可改为关闭该模型。',
+                    'Delete manually added model "${manualIds.first}"? If you only want to disable it across scenes and chat, turn off its switch instead.',
                   )
                 : _text(
                     '确定要删除选中的 ${manualIds.length} 个手动模型吗？远端获取的模型不会被删除。',
@@ -318,8 +318,8 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
         : totalCount == 0
         ? _text('暂未获取模型', 'No models yet')
         : _text(
-            '共 $totalCount 个模型 · $visibleInChatCount 个在聊天中显示',
-            '$totalCount models · $visibleInChatCount shown in chat',
+            '共 $totalCount 个模型 · 已启用 $visibleInChatCount 个',
+            '$totalCount models · $visibleInChatCount enabled',
           );
 
     return Column(
@@ -743,8 +743,8 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
           const SizedBox(height: 6),
           Text(
             _text(
-              '从服务商拉取远端模型目录，或手动添加指定的模型 ID；开启“在聊天中显示”的模型会出现在聊天模型选择器中。',
-              'Fetch the model catalog from the provider or add model IDs manually. Models with "Show in Chat" enabled appear in the chat model selector.',
+              '从服务商拉取远端模型目录，或手动添加指定的模型 ID；已启用的模型可在对话与各场景模型配置中选择使用。',
+              'Fetch the model catalog from the provider or add model IDs manually. Enabled models are available in chat and scene model settings.',
             ),
             textAlign: TextAlign.center,
             style: TextStyle(
@@ -1061,10 +1061,10 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
                     children: [
                       Tooltip(
                         message: visibleInChat
-                            ? _text('在聊天中显示（点击隐藏）', 'Shown in chat (tap to hide)')
-                            : _text('已从聊天隐藏（点击显示）', 'Hidden from chat (tap to show)'),
+                            ? _text('已启用（点击关闭）', 'Enabled (tap to disable)')
+                            : _text('已关闭（点击启用）', 'Disabled (tap to enable)'),
                         child: Semantics(
-                          label: _text('在聊天中显示 ${item.id}', 'Show ${item.id} in chat'),
+                          label: _text('启用模型 ${item.id}', 'Enable ${item.id}'),
                           child: OmniSettingsSwitch(
                             key: Key(
                               'provider-chat-model-visibility-toggle-${item.id}',
@@ -1351,8 +1351,8 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
                     widget.onBatchSetVisibleInChat(_selectedModelIds, true),
                   )
                 : null,
-            icon: const Icon(LucideIcons.eye, size: 15),
-            label: Text(_text('在聊天中显示', 'Show in Chat')),
+            icon: const Icon(LucideIcons.circleCheck, size: 15),
+            label: Text(_text('启用', 'Enable')),
           ),
           TextButton.icon(
             key: const Key('provider-batch-hide-chat-button'),
@@ -1361,8 +1361,8 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
                     widget.onBatchSetVisibleInChat(_selectedModelIds, false),
                   )
                 : null,
-            icon: const Icon(LucideIcons.eyeOff, size: 15),
-            label: Text(_text('从聊天隐藏', 'Hide from Chat')),
+            icon: const Icon(LucideIcons.ban, size: 15),
+            label: Text(_text('关闭', 'Disable')),
           ),
           if (selectedManualIds.isNotEmpty)
             TextButton.icon(
@@ -1701,7 +1701,7 @@ class _ModelDetailSheetState extends State<_ModelDetailSheet> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          _text('在聊天中显示', 'Show in Chat'),
+                          _text('启用模型', 'Enable Model'),
                           style: TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.w600,
@@ -1711,8 +1711,8 @@ class _ModelDetailSheetState extends State<_ModelDetailSheet> {
                         const SizedBox(height: 2),
                         Text(
                           _text(
-                            '开启后，该模型会出现在聊天页的模型选择器中',
-                            'When enabled, this model appears in the chat model selector',
+                            '开启后，该模型可在对话与各场景模型配置中选择使用',
+                            'When enabled, this model can be selected in chat and scene model settings',
                           ),
                           style: TextStyle(
                             fontSize: 11.5,
@@ -1910,8 +1910,8 @@ class _ModelDetailSheetState extends State<_ModelDetailSheet> {
               const SizedBox(height: 12),
               Text(
                 _text(
-                  '提示：远端获取的模型来自服务商目录；若不想在聊天中使用，关闭上方“在聊天中显示”即可，不会误删配置。',
-                  'Tip: Fetched models come from the provider catalog. Turn off "Show in Chat" above to hide a model without deleting your configuration.',
+                  '提示：远端获取的模型来自服务商目录；若暂不使用，关闭上方“启用模型”即可，关闭后在对话和场景配置中均不会出现。',
+                  'Tip: Fetched models come from the provider catalog. Turn off "Enable Model" above to disable a model across chat and scene settings without deleting your configuration.',
                 ),
                 style: TextStyle(
                   fontSize: 11.5,
