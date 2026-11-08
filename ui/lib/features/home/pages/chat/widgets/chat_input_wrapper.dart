@@ -10,6 +10,10 @@ class ChatInputWrapper extends StatelessWidget {
   final String? unavailableMessage;
   final Future<void> Function({String? text}) onSendMessage;
   final VoidCallback onCancelTask;
+  final VoidCallback? onQueueMessage;
+  final VoidCallback? onSteerMessage;
+  final bool isSubmittingActiveInput;
+  final Widget? pendingPrompts;
   final void Function(bool) onPopupVisibilityChanged;
   final FutureOr<void> Function()? onTerminalTap;
   final bool? openClawEnabled;
@@ -54,6 +58,10 @@ class ChatInputWrapper extends StatelessWidget {
     this.unavailableMessage,
     required this.onSendMessage,
     required this.onCancelTask,
+    this.onQueueMessage,
+    this.onSteerMessage,
+    this.isSubmittingActiveInput = false,
+    this.pendingPrompts,
     required this.onPopupVisibilityChanged,
     this.onTerminalTap,
     this.openClawEnabled,
@@ -115,6 +123,10 @@ class ChatInputWrapper extends StatelessWidget {
             isProcessing: isProcessing,
             onSendMessage: onSendMessage,
             onCancelTask: onCancelTask,
+            onQueueMessage: onQueueMessage,
+            onSteerMessage: onSteerMessage,
+            isSubmittingActiveInput: isSubmittingActiveInput,
+            pendingPrompts: pendingPrompts,
             onPopupVisibilityChanged: onPopupVisibilityChanged,
             onTerminalTap: onTerminalTap,
             openClawEnabled: openClawEnabled,

@@ -1401,6 +1401,18 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           !_hasPendingAgentUserInputRequest,
                       onSendMessage: this._handleComposerSendMessage,
                       onCancelTask: _onCancelTask,
+                      onQueueMessage: _canAcceptActivePromptInput
+                          ? () => unawaited(_submitActivePromptInput())
+                          : null,
+                      onSteerMessage:
+                          _canAcceptActivePromptInput &&
+                              _agentRuntimeStatus.acpCapabilities.steering
+                          ? () =>
+                                unawaited(_submitActivePromptInput(steer: true))
+                          : null,
+                      isSubmittingActiveInput:
+                          _activeRuntime?.isSteeringInputPending ?? false,
+                      pendingPrompts: _buildPendingPromptQueue(),
                       onPopupVisibilityChanged: _onPopupVisibilityChanged,
                       topBanner: _showNewConversationModeSelector
                           ? NewConversationModeSelector(

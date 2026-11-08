@@ -11,8 +11,12 @@ import cn.com.omnimind.baselib.llm.ChatCompletionTool
 import cn.com.omnimind.baselib.llm.contentText
 import cn.com.omnimind.baselib.util.OmniLog
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -25,6 +29,7 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.put
+import java.util.concurrent.ConcurrentHashMap
 
 class AgentOrchestrator(
     private val llmClient: AgentLlmClient,
@@ -47,10 +52,15 @@ class AgentOrchestrator(
         val conversationId: Long? = null,
         val promptCacheKey: String? = null,
         val contextCompactor: AgentContextCompactionController? = null,
+        val promptInbox: AgentPromptInbox? = null,
+        activePromptMessage: ChatCompletionMessage? = null,
     ) {
         // One owner for the mutable request context. Retaining the initial list
         // here would pin all restored payloads after compaction replaces them.
         internal val memory: AgentChatMemory = MutableListChatMemory(initialMessages)
+        internal val activePromptInputs = mutableListOf<ChatCompletionMessage>().apply {
+            activePromptMessage?.let(::add)
+        }
     }
 
     private val json = Json {
@@ -139,6 +149,12 @@ class AgentOrchestrator(
 
         try {
             roundLoop@ while (true) {
+                input.promptInbox?.drain()?.forEach { entry ->
+                    val message = ChatCompletionMessage(role = "user", content = JsonPrimitive(entry.text))
+                    input.activePromptInputs += message
+                    memory.add(message)
+                }
+                input.contextCompactor?.setActivePromptInputs(input.activePromptInputs)
                 completedModelRounds += 1
                 val round = completedModelRounds
                 val assistantContentPrefix = accumulatedAssistantContent
@@ -289,6 +305,10 @@ class AgentOrchestrator(
                 usageMessageCount = memory.snapshot().size
 
                 if (toolCalls.isEmpty()) {
+                    // Sealing admission and checking the inbox are one atomic
+                    // operation so an accepted correction cannot fall between
+                    // the final model response and the ACP PromptResponse.
+                    val steering = input.promptInbox?.drainOrSeal().orEmpty()
                     val fallbackMessage = lastAssistantContent.ifBlank {
                         "我已完成思考，但暂时无法生成回复，请重试。"
                     }
@@ -300,6 +320,15 @@ class AgentOrchestrator(
                     )
                     outputKind = AgentOutputKind.CHAT_MESSAGE
                     hasUserFacingOutput = true
+                    if (steering.isNotEmpty()) {
+                        steering.forEach { entry ->
+                            val message = ChatCompletionMessage(role = "user", content = JsonPrimitive(entry.text))
+                            input.activePromptInputs += message
+                            memory.add(message)
+                        }
+                        accumulatedAssistantContent = ""
+                        continue@roundLoop
+                    }
                     terminated = true
                     break
                 }
@@ -403,69 +432,104 @@ class AgentOrchestrator(
                     validatedCalls.add(toolCall)
                 }
 
-                // Phase B — execute the calls in the model's declared order.
-                // The runtime does not add a second tool scheduler: a tool
-                // result is committed before the next model-selected call so
-                // identity, cancellation, and user-visible activity stay in
-                // one straightforward ACP prompt loop.
+                // Phase B — overlap only catalog-approved independent reads.
+                // Exclusive calls are barriers in the model's declared order.
+                // This stays inside the same prompt and cancellation scope;
+                // completed results enter memory in their original order.
                 if (!advanceToNextRound && validatedCalls.isNotEmpty()) {
                     logInfo(
                         tag,
                         "round=$round model_tool_calls=${validatedCalls.size}"
                     )
 
-                    for (call in validatedCalls) {
-                        val desc = descriptorMap.getValue(call.id)
-                        val args = parsedArgsMap.getValue(call.id)
-                        val result = executeSingleTool(
-                            env = input.executionEnv,
-                            callback = callback,
-                            toolCall = call,
-                            descriptor = desc,
-                            parsedArgs = args
-                        )
-                        callback.onToolCallComplete(
-                            call.id,
-                            call.function.name,
-                            result
-                        )
-                        appendToolResultMessage(
-                            memory = memory,
-                            env = input.executionEnv,
-                            callback = callback,
-                            assistantMessage = assistantMessageForMemory,
-                            toolCall = call,
-                            descriptor = desc,
-                            result = result
-                        )
-                        writtenToolCallIds += call.id
-
-                        if (!terminated && !advanceToNextRound && eventAdapter.hasUserVisibleOutput(result)) {
-                            hasUserFacingOutput = true
+                    val batches = AgentToolExecutionPolicy.batches(validatedCalls) {
+                        descriptorMap.getValue(it.id).supportsParallel
+                    }
+                    batchLoop@ for (batch in batches) {
+                        val completedResults = ConcurrentHashMap<String, ToolExecutionResult>()
+                        val startedCallIds = ConcurrentHashMap.newKeySet<String>()
+                        val results = try { coroutineScope {
+                            val permits = Semaphore(AgentToolExecutionPolicy.MAX_PARALLEL_READS)
+                            batch.map { call ->
+                                async {
+                                    permits.withPermit {
+                                        startedCallIds += call.id
+                                        val result = executeSingleTool(
+                                            env = input.executionEnv,
+                                            callback = callback,
+                                            toolCall = call,
+                                            descriptor = descriptorMap.getValue(call.id),
+                                            parsedArgs = parsedArgsMap.getValue(call.id),
+                                        )
+                                        completedResults[call.id] = result
+                                        callback.onToolCallComplete(call.id, call.function.name, result)
+                                        result
+                                    }
+                                }
+                            }.map { it.await() }
+                        } } catch (failure: Exception) {
+                            // Structured failure joins every child before settling
+                            // replay history. Keep completed siblings and pair
+                            // remaining calls without claiming they executed.
+                            withContext(NonCancellable) {
+                                for (call in toolCalls) {
+                                    if (call.id in writtenToolCallIds) continue
+                                    val result = completedResults[call.id] ?: ToolExecutionResult.Error(
+                                        call.function.name,
+                                        if (call.id in startedCallIds) t(
+                                            "请求已终止，未收到此操作的最终结果；状态未知，不要自动重放。",
+                                            "The prompt ended before this operation returned a result; its outcome is unknown. Do not replay it automatically."
+                                        ) else t("请求已终止，此工具尚未开始执行。",
+                                            "This tool did not start before the prompt ended.")
+                                    )
+                                    appendToolResultMessage(memory, input.executionEnv, callback,
+                                        assistantMessageForMemory, call, descriptorMap.getValue(call.id), result)
+                                    writtenToolCallIds += call.id
+                                }
+                            }
+                            throw failure
                         }
-                        if (!terminated && !advanceToNextRound) {
-                            val mappedKind = eventAdapter.mapOutputKind(result)
-                            if (mappedKind != AgentOutputKind.NONE) {
-                                outputKind = mappedKind
+                        for ((index, call) in batch.withIndex()) {
+                            val desc = descriptorMap.getValue(call.id)
+                            val result = results[index]
+                            appendToolResultMessage(
+                                memory = memory,
+                                env = input.executionEnv,
+                                callback = callback,
+                                assistantMessage = assistantMessageForMemory,
+                                toolCall = call,
+                                descriptor = desc,
+                                result = result
+                            )
+                            writtenToolCallIds += call.id
+
+                            if (!terminated && !advanceToNextRound && eventAdapter.hasUserVisibleOutput(result)) {
+                                hasUserFacingOutput = true
+                            }
+                            if (!terminated && !advanceToNextRound) {
+                                val mappedKind = eventAdapter.mapOutputKind(result)
+                                if (mappedKind != AgentOutputKind.NONE) {
+                                    outputKind = mappedKind
+                                }
+                            }
+                            if (!terminated && isUserStoppedVlmTask(call.function.name, result)) {
+                                terminated = true
+                                pendingToolCallBackfillReason = t(
+                                    "GUI 任务已被用户停止，当前 assistant 消息中的剩余 tool_call 未继续处理。",
+                                    "The GUI task was stopped by the user, so the remaining tool calls in this assistant message were not processed."
+                                )
+                            }
+                            if (!terminated && eventAdapter.isConversationStoppingResult(result)) {
+                                terminated = true
+                                pendingToolCallBackfillReason = t(
+                                    "工具 ${call.function.name} 的结果已结束当前对话，当前 assistant 消息中的剩余 tool_call 未继续处理。",
+                                    "The result of tool ${call.function.name} ended the conversation, so the remaining tool calls in this assistant message were not processed."
+                                )
                             }
                         }
-                        if (!terminated && isUserStoppedVlmTask(call.function.name, result)) {
-                            terminated = true
-                            pendingToolCallBackfillReason = t(
-                                "GUI 任务已被用户停止，当前 assistant 消息中的剩余 tool_call 未继续处理。",
-                                "The GUI task was stopped by the user, so the remaining tool calls in this assistant message were not processed."
-                            )
-                        }
-                        if (!terminated && eventAdapter.isConversationStoppingResult(result)) {
-                            terminated = true
-                            pendingToolCallBackfillReason = t(
-                                "工具 ${call.function.name} 的结果已结束当前对话，当前 assistant 消息中的剩余 tool_call 未继续处理。",
-                                "The result of tool ${call.function.name} ended the conversation, so the remaining tool calls in this assistant message were not processed."
-                            )
-                        }
-                        if (terminated) {
-                            break
-                        }
+                        // All reads that already finished must retain their
+                        // results even if one reports a permission boundary.
+                        if (terminated) break@batchLoop
                     }
                 }
 
@@ -507,6 +571,7 @@ class AgentOrchestrator(
             callback.onError(message, retryable = true)
             return AgentResult.Error(message, e)
         } finally {
+            input.promptInbox?.close()
             if (ownsToolRouter) {
                 runCatching { toolRouter.dispose() }
             }
@@ -634,6 +699,11 @@ class AgentOrchestrator(
             } else {
                 throw error
             }
+        } catch (error: Exception) {
+            if (!descriptor.supportsParallel) throw error
+            // A failed read is one paired tool result, not a reason to lose
+            // successful siblings or replay the whole model-selected batch.
+            ToolExecutionResult.Error(toolCall.function.name, error.message ?: "Tool execution failed")
         } finally {
             toolHandle.complete()
         }

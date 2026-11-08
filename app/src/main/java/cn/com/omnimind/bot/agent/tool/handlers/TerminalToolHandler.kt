@@ -870,6 +870,7 @@ class TerminalToolHandler(
         logFile.parentFile?.mkdirs()
         logFile.writeText(transcript)
         return workspaceManager.buildArtifactForFile(logFile, sourceTool)
+            .copy(purpose = ArtifactRef.PURPOSE_EXECUTION_LOG)
     }
 
     private fun buildTerminalToolResult(
@@ -962,7 +963,8 @@ class TerminalToolHandler(
     private fun buildTerminalArtifacts(workspace: AgentWorkspaceDescriptor, sourceTool: String, terminalOutput: String): List<ArtifactRef> {
         if (terminalOutput.isBlank()) return emptyList()
         return try {
-            listOf(workspaceManager.writeOffload(agentRunId = workspace.id, extension = "log", content = terminalOutput).copy(sourceTool = sourceTool))
+            listOf(workspaceManager.writeOffload(agentRunId = workspace.id, extension = "log", content = terminalOutput)
+                .copy(sourceTool = sourceTool, purpose = ArtifactRef.PURPOSE_EXECUTION_LOG))
         } catch (_: Exception) {
             emptyList()
         }

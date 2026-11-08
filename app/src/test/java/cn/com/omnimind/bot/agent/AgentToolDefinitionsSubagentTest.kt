@@ -40,7 +40,7 @@ class AgentToolDefinitionsSubagentTest {
         )
         assertTrue(
             function["description"]?.jsonPrimitive?.contentOrNull
-                ?.contains("用户明确要求分派或并行") == true
+                ?.contains("能实质节省时间") == true
         )
         assertTrue(
             profile["description"]?.jsonPrimitive?.contentOrNull
@@ -61,7 +61,7 @@ class AgentToolDefinitionsSubagentTest {
 
         assertTrue(
             function["description"]?.jsonPrimitive?.contentOrNull
-                ?.contains("isolated contexts") == true
+                ?.contains("isolated subagents") == true
         )
         assertTrue(
             instruction["description"]?.jsonPrimitive?.contentOrNull

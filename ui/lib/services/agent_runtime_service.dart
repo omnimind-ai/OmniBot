@@ -1238,14 +1238,18 @@ class AgentRuntimeService {
     bool? enabled,
   }) async {
     if (enabled != null && (owner == null || owner.isEmpty)) {
-      throw ArgumentError('Na notification changes require their connection owner');
+      throw ArgumentError(
+        'Na notification changes require their connection owner',
+      );
     }
-    final response = NaPersonalResponse.fromMap(await _invokeMap('config/na/notifications', {
-      'agentId': 'na-cloud',
-      'operation': enabled == null ? 'read' : 'write',
-      if (owner != null) 'owner': owner,
-      if (enabled != null) 'enabled': enabled,
-    }));
+    final response = NaPersonalResponse.fromMap(
+      await _invokeMap('config/na/notifications', {
+        'agentId': 'na-cloud',
+        'operation': enabled == null ? 'read' : 'write',
+        if (owner != null) 'owner': owner,
+        if (enabled != null) 'enabled': enabled,
+      }),
+    );
     if (owner != null && response.owner != owner) {
       throw StateError('Na 连接已更改，请重新载入通知设置。');
     }
@@ -1900,6 +1904,27 @@ class AgentRuntimeService {
       return response;
     });
   }
+
+  static Future<Map<String, dynamic>> steerSession({
+    required String sessionId,
+    required int conversationId,
+    required String expectedTurnId,
+    required String requestId,
+    required String agentId,
+    required String text,
+  }) => _invokeMap('_session/steering', {
+    'sessionId': sessionId,
+    'conversationId': conversationId,
+    'agentId': agentId,
+    'prompt': [
+      {'type': 'text', 'text': text},
+    ],
+    '_meta': {
+      'requestId': requestId,
+      'expectedTurnId': expectedTurnId,
+      'steering': {'idleBehavior': 'promptRequired'},
+    },
+  });
 
   static Future<Map<String, dynamic>> cancelPrompt({
     String? sessionId,

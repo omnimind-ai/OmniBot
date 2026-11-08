@@ -7,6 +7,8 @@ import cn.com.omnimind.bot.agent.tool.handlers.SharedHelper
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
 import com.rk.terminal.runtime.TerminalDistribution
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import java.util.concurrent.atomic.AtomicBoolean
@@ -76,7 +78,16 @@ class AgentToolRouter(
         val toolCallback = callback.scopedToToolCall(toolCall.id, toolName)
         val handler = handlerMap[toolName]
         return if (handler != null) {
-            handler.execute(toolCall, args, runtimeDescriptor, env, toolCallback, toolHandle)
+            if (runtimeDescriptor.supportsParallel) {
+                // File reads must yield the prompt dispatcher while the shared
+                // loop runs another independent read. ACP callbacks serialize
+                // their own projection; request history remains loop-owned.
+                withContext(Dispatchers.IO) {
+                    handler.execute(toolCall, args, runtimeDescriptor, env, toolCallback, toolHandle)
+                }
+            } else {
+                handler.execute(toolCall, args, runtimeDescriptor, env, toolCallback, toolHandle)
+            }
         } else {
             ToolExecutionResult.Error(
                 toolName,

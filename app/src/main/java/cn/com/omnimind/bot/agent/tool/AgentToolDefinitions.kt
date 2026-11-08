@@ -470,8 +470,8 @@ object AgentToolDefinitions {
         "整理后等待工具结果，再决定是否补充长期记忆。" to
             "Wait for the tool result after the rollup, then decide whether to add more long-term memory.",
         "可选日期，格式 YYYY-MM-DD。" to "Optional date in YYYY-MM-DD format.",
-        "仅当用户明确要求分派或并行时，把多个相互独立的小任务交给具有隔离上下文的 subagent，并返回聚合结果。" to
-            "Only when the user explicitly asks to delegate or parallelize, dispatch independent subtasks to subagents with isolated contexts and return the aggregated result.",
+        "当独立调查、读取或检查能实质节省时间时，把自足子任务交给隔离上下文的 subagent 并返回聚合结果。不要拆分简单任务、强依赖步骤或共享手机/浏览器状态的操作。" to
+            "Dispatch self-contained independent research, reads, or reviews to isolated subagents when this materially saves time, and return the aggregated result. Do not split simple work, dependent steps, or shared phone/browser operations.",
         "分派后等待工具结果，再汇总给用户。" to
             "Wait for the tool result after dispatching, then summarize it for the user.",
         "要分派的子任务列表。每项都要包含自足的 instruction；profileId 为可选任务提示。" to
@@ -2215,7 +2215,7 @@ object AgentToolDefinitions {
             put("toolType", "subagent")
             put(
                 "description",
-                "仅当用户明确要求分派或并行时，把多个相互独立的小任务交给具有隔离上下文的 subagent，并返回聚合结果。"
+                "当独立调查、读取或检查能实质节省时间时，把自足子任务交给隔离上下文的 subagent 并返回聚合结果。不要拆分简单任务、强依赖步骤或共享手机/浏览器状态的操作。"
             )
             put("postToolRule", "分派后等待工具结果，再汇总给用户。")
             putJsonObject("parameters") {

@@ -118,8 +118,12 @@ data class ArtifactRef(
     val workspacePath: String,
     val androidPath: String,
     val previewKind: String,
-    val actions: List<ArtifactAction> = emptyList()
+    val actions: List<ArtifactAction> = emptyList(),
+    val purpose: String = "deliverable",
 ) {
+    companion object {
+        const val PURPOSE_EXECUTION_LOG = "execution_log"
+    }
     fun fileName(): String = File(androidPath).name
 
     val embedKind: String
@@ -158,6 +162,7 @@ data class ArtifactRef(
         "mimeType" to mimeType,
         "size" to size,
         "sourceTool" to sourceTool,
+        "purpose" to purpose,
         "workspacePath" to workspacePath,
         "androidPath" to androidPath,
         "previewKind" to previewKind,

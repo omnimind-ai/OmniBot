@@ -111,6 +111,7 @@ part 'chat_page_remote_codex.dart';
 part 'chat_page_conversation_flow.dart';
 part 'chat_page_ui.dart';
 part 'chat_page_user_message_actions.dart';
+part 'chat_page_prompt_input.dart';
 part 'adapters/agent_runtime_config_parser.dart';
 part 'adapters/remote_codex_content_parser.dart';
 part 'adapters/remote_codex_snapshot_mapper.dart';
@@ -644,6 +645,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
       runtime.isExecutingTask ? '1' : '0',
       runtime.chatIslandDisplayLayer.wireName,
       runtime.lastAgentToolType ?? '',
+      runtime.pendingPrompts.map((prompt) => prompt.id).join(','),
+      runtime.promptQueuePaused ? 'paused' : '',
+      runtime.isSteeringInputPending ? 'steering' : '',
+      runtime.unconfirmedSteeringId ?? '',
       _browserSnapshotSignature(runtime.browserSessionSnapshot),
     ].join('|');
   }
@@ -1593,6 +1598,10 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   }) async {
     final conversationId = _modeState(mode).currentConversationId;
     if (conversationId == null) return;
+    _runtimeCoordinator.pausePromptQueue(
+      conversationId: conversationId,
+      mode: _modeKey(mode),
+    );
     try {
       await AgentRuntimeService.cancelPrompt(
         conversationId: conversationId,

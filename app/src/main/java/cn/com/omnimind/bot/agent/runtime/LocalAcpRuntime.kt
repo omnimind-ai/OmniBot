@@ -1221,6 +1221,7 @@ internal class LocalAcpRuntime(
             "session/fork" -> suspend { forkAcpSession(canonicalArgs) }
             "session/list" -> suspend { listAcpSessions(canonicalArgs) }
             "session/prompt" -> suspend { promptAcpSession(canonicalArgs) }
+            "_session/steering" -> suspend { steerTurn(canonicalArgs) }
             "session/cancel" -> suspend { cancelAcpSession(canonicalArgs) }
             "session/set_mode" -> suspend { setSessionMode(canonicalArgs) }
             "session/set_config_option" -> suspend { setSessionConfigOption(canonicalArgs) }
@@ -2626,7 +2627,7 @@ internal class LocalAcpRuntime(
                 // "thinking" forever even though the turn already ended.
                 acquireForegroundTurn(threadId, turnId)
                 markTurnTiming(threadId, turnId, "prompt_sent")
-                session.prompt(blocks, promptMeta(args)).takeWhile { event ->
+                session.prompt(blocks, promptMeta(args + ("hostTurnId" to turnId))).takeWhile { event ->
                     when (event) {
                         is Event.SessionUpdateEvent -> {
                             handleSessionUpdate(threadId, turnId, event.update, activeConnection)
@@ -2814,33 +2815,43 @@ internal class LocalAcpRuntime(
 
     private suspend fun steerTurn(args: Map<String, Any?>): Map<String, Any?> {
         val threadId = resolveThreadId(args)
+        requireSessionOwnership(threadId, args.longValue("conversationId"))
+        val meta = (args["_meta"] as? Map<*, *>)?.entries
+            ?.associate { it.key.toString() to it.value }.orEmpty()
+        val expectedTurnId = args.stringValue("expectedTurnId")
+            ?: meta["expectedTurnId"]?.toString()
+        require(!expectedTurnId.isNullOrBlank()) { "Steering expectedTurnId is required" }
+        val turnId = turnOwnership.activeTurnId(threadId)
+        if (turnId == null || expectedTurnId != turnId || sessions[threadId] == null || connection?.isRunning != true) {
+            return mapOf("outcome" to "promptRequired", "reason" to "noRunningTurn", "sessionId" to threadId)
+        }
         val capabilities = capabilitiesPayload(requireAgentInfo())
         if (capabilities["steering"] != true) {
             throw UnsupportedOperationException(
                 "The selected ACP agent did not advertise steering support."
             )
         }
-        val text = args.stringValue("text")
-            ?: throw IllegalArgumentException("text is required")
+        val prompt = args["prompt"] ?: args["input"] ?: listOf(mapOf(
+            "type" to "text",
+            "text" to (args.stringValue("text") ?: throw IllegalArgumentException("prompt is required")),
+        ))
         val response = requireProtocol().sendRequestRaw(
-            MethodName("session/steer"),
+            MethodName("_session/steering"),
             buildJsonObject {
                 put("sessionId", threadId)
-                put("prompt", buildJsonArray {
-                    add(buildJsonObject {
-                        put("type", "text")
-                        put("text", text)
-                    })
-                })
+                put("prompt", anyToAcpJson(prompt))
+                put("_meta", anyToAcpJson(meta + mapOf(
+                    "expectedTurnId" to turnId,
+                    "requestId" to (args.stringValue("requestId") ?: meta["requestId"] ?: UUID.randomUUID().toString()),
+                    "steering" to mapOf("idleBehavior" to "promptRequired"),
+                )))
             },
             SessionId(threadId)
         )
-        return mapOf(
-            "ok" to true,
-            "threadId" to threadId,
-            "turnId" to turnOwnership.activeTurnId(threadId),
-            "result" to response.toString()
-        )
+        val result = (jsonToAny(response) as? Map<*, *>)?.entries
+            ?.associate { it.key.toString() to it.value }
+            ?: throw IllegalStateException("Malformed ACP steering response")
+        return result + mapOf("sessionId" to threadId, "turnId" to turnId)
     }
 
     private suspend fun interruptTurn(args: Map<String, Any?>): Map<String, Any?> {
@@ -3129,13 +3140,15 @@ internal class LocalAcpRuntime(
         if (
             conversationMode == null &&
             reasoningEffort == null &&
-            terminalEnvironment.isEmpty()
+            terminalEnvironment.isEmpty() &&
+            args.stringValue("hostTurnId") == null
         ) return null
         // This metadata is local ACP session metadata. External ACP agents may
         // ignore it; the built-in Xiaowan adapter uses it to apply the same
         // chat_only policy and run setting without introducing a second
         // transport.
         return buildJsonObject {
+            args.stringValue("hostTurnId")?.let { put("hostTurnId", it) }
             conversationMode?.let { put("conversationMode", it) }
             reasoningEffort?.let { put("reasoningEffort", it) }
             if (terminalEnvironment.isNotEmpty()) {

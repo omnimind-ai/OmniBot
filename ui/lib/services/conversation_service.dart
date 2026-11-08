@@ -6,6 +6,7 @@ import 'package:ui/models/conversation_model.dart';
 import 'package:ui/models/conversation_thread_target.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/services/assists_core_service.dart';
+import 'package:ui/features/home/pages/chat/services/chat_conversation_runtime_coordinator.dart';
 
 class ConversationService {
   static const Duration recentConversationWindow = Duration(days: 7);
@@ -250,7 +251,14 @@ class ConversationService {
   static Future<bool> deleteConversation(
     int conversationId, {
     ConversationMode? mode,
-  }) => _manage('delete', conversationId, mode: mode);
+  }) async {
+    final deleted = await _manage('delete', conversationId, mode: mode);
+    if (deleted) {
+      await ChatConversationRuntimeCoordinator.instance
+          .clearPromptInputsForConversation(conversationId);
+    }
+    return deleted;
+  }
 
   static Future<bool> archiveConversation(ConversationModel conversation) =>
       _manage('archive', conversation.id, mode: conversation.mode);

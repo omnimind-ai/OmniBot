@@ -1,0 +1,6 @@
+449 related tests passed.
+
+Command:
+cd ui && /Users/ocean/.local/share/flutter/3.47.2/bin/flutter test --no-pub --reporter compact test/features/home/pages/chat/chat_prompt_input_test.dart test/features/home/pages/command_overlay/widgets/chat_input_compact_test.dart test/features/home/pages/chat/chat_conversation_runtime_coordinator_test.dart test/services/agent_runtime_service_test.dart test/features/home/pages/chat/widgets/chat_input_wrapper_test.dart test/services/conversation_service_test.dart test/services/agent_event_reducer_test.dart
+
+00:05 +449: All tests passed!

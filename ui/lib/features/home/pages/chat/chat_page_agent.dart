@@ -1622,6 +1622,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       _unboundConfigurationSessions.remove(dispatchMode);
       _activeAgentThreadId = acpSessionId;
+      if (isDispatchTargetCurrent()) unawaited(_refreshAgentRuntimeStatus());
       final response = await AgentRuntimeService.promptSession(
         conversationId: resolvedConversationId,
         sessionId: acpSessionId,
@@ -1727,6 +1728,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         runtimeIdentity?.normalizedTurnId ?? _activeAgentTurnId?.trim();
     if (conversationId == null && sessionId == null) {
       return;
+    }
+    if (conversationId != null) {
+      _runtimeCoordinator.pausePromptQueue(
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+      );
     }
     try {
       await AgentRuntimeService.cancelPrompt(

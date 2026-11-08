@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:ui/features/home/pages/chat/chat_page_models.dart';
@@ -15,6 +16,7 @@ import 'package:ui/services/conversation_service.dart';
 import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/na_history_sync_service.dart';
 import 'package:ui/services/agent_stream_meta.dart';
+import 'package:ui/services/storage_service.dart';
 
 part 'chat_runtime_internal_support.dart';
 part 'chat_runtime_state.dart';
@@ -25,6 +27,7 @@ part 'chat_runtime_message_support.dart';
 part 'chat_runtime_streaming_support.dart';
 part 'chat_runtime_thinking_support.dart';
 part 'chat_runtime_agent_event_support.dart';
+part 'chat_runtime_prompt_input_support.dart';
 
 const String kChatRuntimeModeNormal = 'normal';
 const String kChatRuntimeModeOpenClaw = 'openclaw';
@@ -77,6 +80,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   // disposal. Keep one ordered tail per runtime so an older snapshot can
   // never finish after a newer one and move durable history backwards.
   final Map<String, Future<void>> _persistenceTails = <String, Future<void>>{};
+  final Map<String, Future<void>> _promptQueuePersistenceTails = {};
   final Set<String> _ephemeralRuntimeKeys = <String>{};
   final Set<int> _hiddenNaHistoryViews = <int>{};
 
@@ -278,6 +282,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
         runtime.chatIslandDisplayLayer = initialChatIslandDisplayLayer;
       }
       _runtimes[key] = runtime;
+      _restorePromptQueue(runtime);
     }
     if (runtime.messages.isEmpty && initialMessages != null) {
       runtime.messages.addAll(
@@ -372,6 +377,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     }
     final runtime = ensureRuntime(conversationId: conversationId, mode: mode);
     runtime.persistenceGeneration += 1;
+    if (runtime.pendingPrompts.isEmpty && !runtime.isSteeringInputPending) {
+      runtime.promptQueuePaused = false;
+    }
     runtime.isAiResponding = true;
     runtime.currentDispatchTurnId = taskId;
     runtime.agentEntryStartTimes['prompt:$taskId'] =
@@ -566,6 +574,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           runtime.lastAgentTurnId != null ||
           runtime.activeAcpTurnId != null;
       if (!hasAnotherTurn) {
+        runtime.promptQueuePaused = true;
         runtime.activeAcpSessionId = null;
         runtime.isAiResponding = false;
         runtime.isExecutingTask = false;
@@ -784,6 +793,12 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     );
     _taskBindings.remove(taskId);
     if (result.handled) {
+      _settleQueuedPrompts(
+        runtime,
+        sessionId: sessionId,
+        stopReason: stopReason,
+        error: error,
+      );
       notifyListeners();
       if (!isEphemeralRuntime(conversationId: conversationId, mode: mode)) {
         schedulePersistRuntimeConversation(
@@ -1104,6 +1119,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
     _ephemeralRuntimeKeys.clear();
     _hiddenNaHistoryViews.clear();
     _latestAgentEventProjection = null;
+    _promptQueuePersistenceTails.clear();
   }
 
   void clearConversationRuntimeSession({
@@ -1112,6 +1128,7 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
   }) {
     final runtime = runtimeFor(conversationId: conversationId, mode: mode);
     if (runtime == null) return;
+    runtime.promptQueuePaused = true;
     runtime.persistenceGeneration += 1;
     _flushRuntimeStreamingText(runtime);
     // Clearing a runtime is a lifecycle boundary, not just a UI reset. Fence

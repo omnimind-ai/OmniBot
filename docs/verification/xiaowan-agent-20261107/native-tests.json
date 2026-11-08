@@ -1,0 +1,119 @@
+{
+  "suites": [
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.XiaowanSessionCloseCleanupTest",
+      "tests": "4",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.055"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentContextToolReferencesTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.449"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.XiaowanAcpPresentationBridgeTest",
+      "tests": "44",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.039"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentSystemPromptTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.023"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.SubagentCapabilityInheritanceTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.001"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.LocalAcpRuntimeOwnershipTest",
+      "tests": "1",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.068"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.SubagentConcurrencyTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.0"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentConversationContextCompactorTest",
+      "tests": "21",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.405"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentToolDefinitionsSubagentTest",
+      "tests": "2",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.001"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentOrchestratorTest",
+      "tests": "73",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "1.935"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.XiaowanSteeringTest",
+      "tests": "3",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.002"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.runtime.XiaowanPromptWorkerTest",
+      "tests": "12",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.724"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentContextBudgetTest",
+      "tests": "5",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.044"
+    },
+    {
+      "name": "cn.com.omnimind.bot.agent.AgentPromptInboxTest",
+      "tests": "7",
+      "failures": "0",
+      "errors": "0",
+      "skipped": "0",
+      "time": "0.005"
+    }
+  ],
+  "tests": 190,
+  "failures": 0,
+  "errors": 0
+}

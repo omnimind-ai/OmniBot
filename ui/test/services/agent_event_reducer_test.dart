@@ -3223,6 +3223,77 @@ void main() {
     expect(artifact.cardData?['artifact']?['title'], 'result.txt');
   });
 
+  test(
+    'keeps execution logs in tool details and displays ordinary artifacts',
+    () {
+      final event = {
+        'method': 'session/update',
+        'turnId': 'artifact-purpose-turn',
+        'params': {
+          'sessionId': 'artifact-purpose-session',
+          'update': {
+            'sessionUpdate': 'tool_call_update',
+            'toolCallId': 'purpose-tool',
+            'kind': 'execute',
+            'title': 'Command',
+            'status': 'completed',
+            'rawOutput': {
+              'toolType': 'terminal',
+              'summary': 'done',
+              'artifacts': [
+                {
+                  'id': 'internal',
+                  'title': 'report.txt',
+                  'uri': 'workspace://report.txt',
+                  'purpose': 'execution_log',
+                  'renderMarkdown': '[report.txt](workspace://report.txt)',
+                },
+                {
+                  'id': 'default',
+                  'title': 'offload_user.log',
+                  'uri': 'workspace://offload_user.log',
+                },
+                {
+                  'id': 'deliverable',
+                  'title': 'result.txt',
+                  'uri': 'workspace://result.txt',
+                  'purpose': 'deliverable',
+                },
+              ],
+            },
+          },
+        },
+      };
+      reducer.reduce(runtime: runtime, event: event);
+      reducer.reduce(runtime: runtime, event: event);
+      final tool = runtime.messages.singleWhere(
+        (message) => message.cardData?['type'] == 'agent_tool_summary',
+      );
+      final details = tool.cardData!['artifacts'] as List;
+      expect(details, hasLength(3));
+      expect(details.first['purpose'], 'execution_log');
+      expect(
+        details.first['renderMarkdown'],
+        contains('workspace://report.txt'),
+      );
+      final cards = runtime.messages.where(
+        (message) => message.cardData?['type'] == 'artifact_card',
+      );
+      expect(cards, hasLength(2));
+      expect(
+        cards.map((message) => message.cardData!['artifact']['id']),
+        unorderedEquals(['default', 'deliverable']),
+      );
+      final restored = ChatMessageModel.fromJson(
+        jsonDecode(jsonEncode(tool.toJson())),
+      );
+      expect(
+        (restored.cardData!['artifacts'] as List).first['purpose'],
+        'execution_log',
+      );
+    },
+  );
+
   test('tracks the active ACP tool for the shared stop action', () {
     reducer.reduce(
       runtime: runtime,

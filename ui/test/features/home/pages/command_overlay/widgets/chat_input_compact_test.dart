@@ -15,6 +15,70 @@ void main() {
   );
   final send = find.byKey(const ValueKey('chat-input-send-or-stop-button'));
 
+  testWidgets(
+    'active composer queues or steers without stopping and keeps draft editable',
+    (tester) async {
+      final fixture = _ComposerFixture(tester);
+      var queued = 0;
+      var steered = 0;
+      var stopped = 0;
+      await fixture.pump(
+        isProcessing: true,
+        onQueue: () => queued++,
+        onSteer: () => steered++,
+        onCancel: () => stopped++,
+        independentSendButton: false,
+      );
+      await tester.enterText(find.byType(TextField), 'Add a requirement');
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('chat-input-steer-message')));
+      expect(steered, 1);
+      expect(stopped, 0);
+      expect(fixture.controller.text, 'Add a requirement');
+      await tester.tap(find.byKey(const ValueKey('chat-input-queue-message')));
+      expect(queued, 1);
+      await tester.testTextInput.receiveAction(TextInputAction.send);
+      expect(queued, 2);
+      expect(stopped, 0);
+      await tester.tap(send);
+      expect(stopped, 1);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'attachments can queue but cannot be silently discarded by steering',
+    (tester) async {
+      final fixture = _ComposerFixture(tester);
+      var queued = 0;
+      var steered = 0;
+      await fixture.pump(
+        isProcessing: true,
+        onQueue: () => queued++,
+        onSteer: () => steered++,
+        attachments: const [
+          ChatInputAttachment(id: 'file', name: 'file.txt', path: '/file.txt'),
+        ],
+        width: 280,
+        textScale: 1.5,
+      );
+      await tester.enterText(find.byType(TextField), 'Read file');
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<TextButton>(
+              find.byKey(const ValueKey('chat-input-steer-message')),
+            )
+            .onPressed,
+        isNull,
+      );
+      await tester.tap(find.byKey(const ValueKey('chat-input-queue-message')));
+      expect(queued, 1);
+      expect(steered, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   for (final independentSendButton in [true, false]) {
     testWidgets(
       'first tap requests IME before expansion and keeps one input connection '
@@ -752,6 +816,8 @@ class _ComposerFixture {
     bool isEditing = false,
     VoidCallback? onSend,
     VoidCallback? onCancel,
+    VoidCallback? onQueue,
+    VoidCallback? onSteer,
     VoidCallback? onCancelEditing,
     List<ChatInputAttachment> attachments = const [],
     ValueChanged<String>? onRemoveAttachment,
@@ -791,6 +857,8 @@ class _ComposerFixture {
                     onCancelUserMessageEditing: onCancelEditing,
                     onSendMessage: onSend ?? () {},
                     onCancelTask: onCancel ?? () {},
+                    onQueueMessage: onQueue,
+                    onSteerMessage: onSteer,
                     onPickImages: onPickImages,
                     onPickAttachment: onPickAttachment,
                     attachments: attachments,

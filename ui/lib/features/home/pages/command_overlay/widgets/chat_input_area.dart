@@ -143,6 +143,10 @@ class ChatInputArea extends StatefulWidget {
   final bool isProcessing;
   final VoidCallback onSendMessage;
   final VoidCallback onCancelTask;
+  final VoidCallback? onQueueMessage;
+  final VoidCallback? onSteerMessage;
+  final bool isSubmittingActiveInput;
+  final Widget? pendingPrompts;
   final ValueChanged<bool>? onPopupVisibilityChanged;
   final ValueChanged<double>? onInputHeightChanged;
   final bool? openClawEnabled;
@@ -187,6 +191,10 @@ class ChatInputArea extends StatefulWidget {
     required this.isProcessing,
     required this.onSendMessage,
     required this.onCancelTask,
+    this.onQueueMessage,
+    this.onSteerMessage,
+    this.isSubmittingActiveInput = false,
+    this.pendingPrompts,
     this.onPopupVisibilityChanged,
     this.onInputHeightChanged,
     this.openClawEnabled,
@@ -505,6 +513,10 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
     super.didUpdateWidget(oldWidget);
     _syncComposerFlowAnimation();
     if (oldWidget.attachments != widget.attachments ||
+        oldWidget.pendingPrompts != widget.pendingPrompts ||
+        oldWidget.isProcessing != widget.isProcessing ||
+        oldWidget.onSteerMessage != widget.onSteerMessage ||
+        oldWidget.onQueueMessage != widget.onQueueMessage ||
         oldWidget.useLargeComposerStyle != widget.useLargeComposerStyle ||
         oldWidget.useFrostedGlass != widget.useFrostedGlass ||
         oldWidget.selectedModelOverrideId != widget.selectedModelOverrideId ||
