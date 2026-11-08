@@ -433,6 +433,38 @@ class ProviderModelGroup {
   const ProviderModelGroup({required this.profile, required this.models});
 }
 
+class ModelAvailabilityCheckResult {
+  final bool available;
+  final int? code;
+  final String message;
+
+  const ModelAvailabilityCheckResult({
+    required this.available,
+    this.code,
+    required this.message,
+  });
+
+  factory ModelAvailabilityCheckResult.fromMap(Map<dynamic, dynamic>? map) {
+    if (map == null) {
+      return const ModelAvailabilityCheckResult(
+        available: false,
+        message: '未收到检测结果',
+      );
+    }
+    final rawCode = map['code'];
+    final parsedCode = rawCode is int
+        ? rawCode
+        : rawCode is num
+        ? rawCode.toInt()
+        : int.tryParse(rawCode?.toString() ?? '');
+    return ModelAvailabilityCheckResult(
+      available: map['available'] == true,
+      code: parsedCode,
+      message: (map['message'] ?? '').toString().trim(),
+    );
+  }
+}
+
 class ModelProviderConfigService {
   static const String _kOfficialProfileId = 'omnibot-official-ai';
   static const String _kOfficialSourceType = 'omnibot_official';
@@ -757,6 +789,52 @@ class ModelProviderConfigService {
       apiBase: normalizeApiBase(apiBase) ?? profileSnapshot?.baseUrl ?? '',
       models: models,
     );
+  }
+
+  static Future<ModelAvailabilityCheckResult> checkModelAvailability({
+    required String profileId,
+    required String model,
+    String apiBase = '',
+  }) async {
+    final result = await AssistsMessageService.assistCore
+        .invokeMethod<Map<dynamic, dynamic>>('checkProviderModelAvailability', {
+          'profileId': profileId.trim(),
+          'model': model.trim(),
+          if (apiBase.trim().isNotEmpty) 'apiBase': apiBase.trim(),
+        });
+    return ModelAvailabilityCheckResult.fromMap(result);
+  }
+
+  static List<ProviderModelOption> getCachedDiscoveredModelsForProfile(
+    ModelProviderProfileSummary profile,
+  ) {
+    final normalizedProfileId = _canonicalProfileId(profile.id);
+    if (normalizedProfileId.isEmpty) {
+      return const [];
+    }
+    final catalogs = _readJsonMap(_kCachedFetchedModelsKey);
+    final bucket = catalogs[normalizedProfileId];
+    if (bucket is! Map) {
+      return const [];
+    }
+    final cachedBase = normalizeApiBase((bucket['apiBase'] ?? '').toString());
+    final currentBase = normalizeApiBase(profile.baseUrl);
+    final cachedRevision = (bucket['profileRevision'] as num?)?.toInt();
+    if (cachedBase == null ||
+        currentBase == null ||
+        cachedBase != currentBase ||
+        (cachedRevision != null && cachedRevision != profile.revision)) {
+      return const [];
+    }
+    final rawModels = bucket['models'];
+    if (rawModels is! List) {
+      return const [];
+    }
+    return rawModels
+        .whereType<Map>()
+        .map(ProviderModelOption.fromMap)
+        .where((item) => item.id.trim().isNotEmpty)
+        .toList();
   }
 
   static Future<List<String>> getManualModelIds({

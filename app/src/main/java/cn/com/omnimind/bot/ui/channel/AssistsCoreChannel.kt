@@ -93,6 +93,9 @@ class AssistsCoreChannel {
                 "fetchProviderModels" -> {
                     assistsCoreManager!!.fetchProviderModels(call, result)
                 }
+                "checkProviderModelAvailability" -> {
+                    assistsCoreManager!!.checkProviderModelAvailability(call, result)
+                }
                 "getSceneModelCatalog" -> {
                     assistsCoreManager!!.getSceneModelCatalog(call, result)
                 }

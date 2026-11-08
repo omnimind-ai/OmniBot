@@ -4,15 +4,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_svg/flutter_svg.dart';
-import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/model_provider_setting/model_provider_setting_page.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/storage_service.dart';
 import 'package:ui/theme/app_theme.dart';
-import 'package:ui/widgets/flclash/popup.dart';
 import 'package:ui/widgets/omni_glass.dart';
 
 final _discoveryModels = <String, List<ProviderModelOption>>{};
@@ -63,48 +60,83 @@ void main() {
   );
 
   Map<String, dynamic> profilePayload({
+    String id = 'provider-1',
     String name = 'Provider 1',
     String baseUrl = 'https://api.openai.com/v1',
+    String apiKey = 'sk-demo',
+    bool hasApiKey = true,
     String sourceType = 'custom',
     String protocolType = 'openai_compatible',
     String wireApi = 'chat_completions',
+    bool configured = true,
+    bool ready = true,
   }) {
     return <String, dynamic>{
       'profiles': <Map<String, dynamic>>[
         <String, dynamic>{
-          'id': 'provider-1',
+          'id': id,
           'name': name,
           'baseUrl': baseUrl,
-          'apiKey': 'sk-demo',
+          'apiKey': apiKey,
+          'hasApiKey': hasApiKey,
           'sourceType': sourceType,
           'readOnly': false,
-          'ready': true,
+          'ready': ready,
           'statusText': '',
-          'configured': true,
+          'configured': configured,
           'protocolType': protocolType,
           'wireApi': wireApi,
         },
       ],
-      'editingProfileId': 'provider-1',
+      'editingProfileId': id,
     };
   }
 
   Map<String, dynamic> savedProfileResponse(Map<dynamic, dynamic> args) {
+    final apiKey = (args['apiKey'] ?? '').toString();
+    final baseUrl = (args['baseUrl'] ?? '').toString();
     return <String, dynamic>{
-      'id': 'provider-1',
+      'id': (args['id'] ?? 'provider-1').toString(),
       'name': (args['name'] ?? 'Provider 1').toString(),
-      'baseUrl': (args['baseUrl'] ?? '').toString(),
-      'apiKey': (args['apiKey'] ?? '').toString(),
+      'baseUrl': baseUrl,
+      'apiKey': apiKey,
+      'hasApiKey': apiKey.isNotEmpty,
       'customHeaders':
           (args['customHeaders'] as Map?) ?? const <String, String>{},
       'sourceType': (args['sourceType'] ?? 'custom').toString(),
       'readOnly': false,
       'ready': true,
       'statusText': '',
-      'configured': true,
+      'configured': baseUrl.isNotEmpty,
       'protocolType': (args['protocolType'] ?? 'openai_compatible').toString(),
       'wireApi': (args['wireApi'] ?? 'chat_completions').toString(),
     };
+  }
+
+  Future<void> openFirstProviderDetail(
+    WidgetTester tester, {
+    String profileId = 'provider-1',
+  }) async {
+    final row = find.byKey(ValueKey<String>('provider-list-item-$profileId'));
+    expect(row, findsOneWidget);
+    await tester.tap(row);
+    await tester.pumpAndSettle();
+  }
+
+  Future<void> switchToConnectionTab(WidgetTester tester) async {
+    final tab = find.byKey(const ValueKey('provider-detail-tab-connection'));
+    if (tab.evaluate().isNotEmpty) {
+      await tester.tap(tab);
+      await tester.pumpAndSettle();
+    }
+  }
+
+  Future<void> switchToModelsTab(WidgetTester tester) async {
+    final tab = find.byKey(const ValueKey('provider-detail-tab-models'));
+    if (tab.evaluate().isNotEmpty) {
+      await tester.tap(tab);
+      await tester.pumpAndSettle();
+    }
   }
 
   setUp(() async {
@@ -120,6 +152,8 @@ void main() {
       switch (call.method) {
         case 'listModelProviderProfiles':
           return profilePayload();
+        case 'setEditingModelProviderProfile':
+          return (profilePayload()['profiles'] as List).first;
         case 'fetchProviderModels':
           return (_discoveryModels[(call.arguments as Map)['profileId']] ?? [])
               .map((model) => model.toMap())
@@ -136,6 +170,230 @@ void main() {
     ModelsDevCatalogService.resetForTesting();
   });
 
+  testWidgets(
+    'provider list shows configured providers without misleading current badge and opens detail on Models tab',
+    (tester) async {
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'GPT-4o'),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('当前提供商'), findsNothing);
+      expect(find.text('当前使用中'), findsNothing);
+      expect(
+        find.byKey(const ValueKey<String>('provider-list-item-provider-1')),
+        findsOneWidget,
+      );
+      expect(find.text('Provider 1'), findsOneWidget);
+      expect(find.textContaining('api.openai.com'), findsOneWidget);
+      expect(
+        find.byKey(const Key('provider-list-add-button')),
+        findsOneWidget,
+      );
+
+      await openFirstProviderDetail(tester);
+
+      expect(find.byType(ModelProviderDetailPage), findsOneWidget);
+      expect(
+        find.byKey(const Key('provider-fetch-models-button')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'empty state guides user to add a provider and pre-fills preset connection',
+    (tester) async {
+      var saved = false;
+      Map<String, dynamic>? savedProfile;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            if (saved && savedProfile != null) {
+              return {
+                'profiles': [savedProfile!],
+                'editingProfileId': savedProfile!['id'],
+              };
+            }
+            return profilePayload(
+              id: 'profile-1',
+              name: 'Provider 1',
+              baseUrl: '',
+              apiKey: '',
+              hasApiKey: false,
+              configured: false,
+            );
+          case 'saveModelProviderProfile':
+            saved = true;
+            savedProfile = savedProfileResponse(
+              Map<dynamic, dynamic>.from(call.arguments as Map),
+            );
+            return savedProfile;
+          case 'fetchProviderModels':
+            return [
+              {'id': 'deepseek-chat', 'displayName': 'DeepSeek Chat'},
+            ];
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('provider-empty-state')), findsOneWidget);
+      expect(
+        find.byKey(const Key('provider-empty-add-button')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byKey(const Key('provider-empty-preset-deepseek')));
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ModelProviderDetailPage), findsOneWidget);
+      final nameField = tester.widget<TextField>(
+        find.byKey(const Key('provider-name-field')),
+      );
+      final urlField = tester.widget<TextField>(
+        find.byKey(const Key('provider-base-url-field')),
+      );
+      expect(nameField.controller?.text, 'DeepSeek');
+      expect(urlField.controller?.text, 'https://api.deepseek.com');
+
+      await tester.enterText(
+        find.byKey(const Key('provider-api-key-field')),
+        'sk-deepseek-key',
+      );
+      await tester.tap(find.byKey(const Key('provider-save-and-models-button')));
+      await tester.pumpAndSettle();
+
+      expect(saved, isTrue);
+      expect(savedProfile?['id'], 'profile-1');
+      expect(savedProfile?['name'], 'DeepSeek');
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-deepseek-chat')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'incomplete provider points out missing item and opens on Connection tab',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        if (call.method == 'listModelProviderProfiles') {
+          return profilePayload(
+            id: 'deepseek-official',
+            name: 'DeepSeek',
+            baseUrl: 'https://api.deepseek.com',
+            apiKey: '',
+            hasApiKey: false,
+            sourceType: 'deepseek',
+            protocolType: 'deepseek',
+          );
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Missing API Key'), findsWidgets);
+
+      await openFirstProviderDetail(tester, profileId: 'deepseek-official');
+
+      expect(
+        find.byKey(const Key('provider-connection-status-banner')),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Missing API Key'), findsOneWidget);
+      expect(find.byKey(const Key('provider-api-key-field')), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'switching between Connection and Models tabs preserves input and search query',
+    (tester) async {
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'GPT-4o'),
+        ProviderModelOption(id: 'gpt-4o-mini', displayName: 'GPT-4o mini'),
+      ];
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+
+      final searchField = find.descendant(
+        of: find.byKey(const Key('provider-model-search-field')),
+        matching: find.byType(TextField),
+      );
+      await tester.enterText(searchField, 'mini');
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o-mini')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o')),
+        findsNothing,
+      );
+
+      await switchToConnectionTab(tester);
+      await tester.enterText(
+        find.byKey(const Key('provider-name-field')),
+        'Edited OpenAI Name',
+      );
+      await tester.pump();
+
+      await switchToModelsTab(tester);
+      expect(
+        tester.widget<TextField>(searchField).controller?.text,
+        'mini',
+      );
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o-mini')),
+        findsOneWidget,
+      );
+
+      await switchToConnectionTab(tester);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('provider-name-field')))
+            .controller
+            ?.text,
+        'Edited OpenAI Name',
+      );
+    },
+  );
+
   testWidgets('model input sheet can swipe close and submit above keyboard', (
     tester,
   ) async {
@@ -151,8 +409,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openFirstProviderDetail(tester);
 
-    final addModel = find.byIcon(LucideIcons.plus).last;
+    final addModel = find.byKey(const Key('provider-add-manual-model-button'));
     await tester.ensureVisible(addModel);
     await tester.pumpAndSettle();
     await tester.tap(addModel);
@@ -164,7 +423,7 @@ void main() {
     );
     await tester.pumpAndSettle();
     expect(find.byType(OmniGlassAlertDialog), findsNothing);
-    expect(find.byType(ModelProviderSettingPage), findsOneWidget);
+    expect(find.byType(ModelProviderDetailPage), findsOneWidget);
 
     await tester.ensureVisible(addModel);
     await tester.pumpAndSettle();
@@ -187,7 +446,7 @@ void main() {
     await tester.tap(submit);
     await tester.pumpAndSettle();
     expect(find.byType(OmniGlassAlertDialog), findsNothing);
-    expect(find.byType(ModelProviderSettingPage), findsOneWidget);
+    expect(find.byType(ModelProviderDetailPage), findsOneWidget);
     expect(
       await ModelProviderConfigService.getManualModelIds(
         profileId: 'provider-1',
@@ -227,8 +486,10 @@ void main() {
           home: const ModelProviderSettingPage(),
         ),
       );
-      await tester.pump();
       await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+      await switchToConnectionTab(tester);
+
       expect(find.byKey(const Key('chatgpt-account-section')), findsOneWidget);
       expect(find.text('sample@example.com'), findsOneWidget);
       expect(find.text('ChatGPT'), findsOneWidget);
@@ -236,8 +497,8 @@ void main() {
         find.widgetWithText(TextField, 'Personal ChatGPT'),
         findsOneWidget,
       );
-      expect(find.text('API Key'), findsNothing);
-      expect(find.text('Base URL'), findsNothing);
+      expect(find.byKey(const Key('provider-api-key-field')), findsNothing);
+      expect(find.byKey(const Key('provider-base-url-field')), findsNothing);
       expect(
         find.byKey(const Key('provider-api-key-visibility-button')),
         findsNothing,
@@ -250,9 +511,12 @@ void main() {
     },
   );
 
-  for (final fieldLabel in ['API Key', 'Base URL']) {
+  for (final fieldKey in [
+    const Key('provider-api-key-field'),
+    const Key('provider-base-url-field'),
+  ]) {
     testWidgets(
-      'refresh persists the $fieldLabel draft and reopening queries again',
+      'refresh persists the $fieldKey draft and reopening queries again',
       (tester) async {
         tester.view.physicalSize = const Size(1080, 2200);
         tester.view.devicePixelRatio = 1;
@@ -291,7 +555,7 @@ void main() {
           }
           return null;
         });
-        Future<void> openPage() async {
+        Future<void> openDetail() async {
           await tester.pumpWidget(
             MaterialApp(
               theme: AppTheme.lightTheme,
@@ -299,24 +563,26 @@ void main() {
             ),
           );
           await tester.pumpAndSettle();
+          await openFirstProviderDetail(tester);
         }
 
-        await openPage();
+        await openDetail();
         operations.clear();
-        final field = find.byWidgetPredicate(
-          (widget) =>
-              widget is TextField && widget.decoration?.labelText == fieldLabel,
-        );
+
+        await switchToConnectionTab(tester);
+        final field = find.byKey(fieldKey);
         await tester.enterText(
           field,
-          fieldLabel == 'API Key'
+          fieldKey == const Key('provider-api-key-field')
               ? 'updated-test-key'
               : 'https://updated.example/v1',
         );
-        await tester.tap(find.byIcon(LucideIcons.arrowBigDown));
+
+        await switchToModelsTab(tester);
+        await tester.tap(find.byKey(const Key('provider-fetch-models-button')));
         await tester.pumpAndSettle();
 
-        expect(operations, ['save', 'fetch']);
+        expect(operations, containsAllInOrder(['save', 'fetch']));
         expect(fetchArgs?['expectedProfileRevision'], 8);
         expect(fetchArgs?.containsKey('apiKey'), isFalse);
         expect(fetchArgs?.containsKey('customHeaders'), isFalse);
@@ -325,20 +591,22 @@ void main() {
           findsOneWidget,
         );
 
+        final countBeforeReopen = operations.length;
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pumpAndSettle();
-        await openPage();
+        await openDetail();
         expect(
           find.byKey(const ValueKey('provider-model-gpt-4o')),
           findsOneWidget,
         );
-        expect(operations, ['save', 'fetch', 'fetch']);
+        expect(operations.length, greaterThan(countBeforeReopen));
+        expect(operations.last, 'fetch');
       },
     );
   }
 
   testWidgets(
-    'model discovery TLS failure stays visible and explicit retry recovers',
+    'model discovery TLS failure stays visible, retains existing models, and explicit retry recovers',
     (tester) async {
       tester.view.physicalSize = const Size(1080, 2200);
       tester.view.devicePixelRatio = 1;
@@ -347,8 +615,9 @@ void main() {
       var calls = 0;
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(assistCoreChannel, (call) async {
-            if (call.method == 'listModelProviderProfiles')
+            if (call.method == 'listModelProviderProfiles') {
               return profilePayload();
+            }
             if (call.method == 'fetchProviderModels') {
               calls++;
               if (calls == 1) {
@@ -364,6 +633,11 @@ void main() {
             }
             return null;
           });
+      await ModelProviderConfigService.saveManualModelIds(
+        profileId: 'provider-1',
+        ids: const ['manual-keep-model'],
+      );
+
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.lightTheme,
@@ -371,14 +645,24 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
-      await tester.pump(const Duration(seconds: 10));
+      await openFirstProviderDetail(tester);
+      await tester.pump(const Duration(seconds: 2));
+
       expect(calls, 1);
       expect(
         find.textContaining('Check whether your network requires sign-in'),
-        findsOneWidget,
+        findsWidgets,
       );
       expect(find.textContaining('private-server'), findsNothing);
-      await tester.tap(find.text('Retry'));
+      // Existing models are preserved even when remote fetch fails.
+      expect(
+        find.byKey(const ValueKey('provider-model-manual-keep-model')),
+        findsOneWidget,
+      );
+
+      await tester.tap(
+        find.byKey(const Key('provider-model-fetch-retry-button')),
+      );
       await tester.pumpAndSettle();
       expect(calls, 2);
       expect(
@@ -422,64 +706,29 @@ void main() {
         home: const ModelProviderSettingPage(),
       ),
     );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey<String>('provider-list-item-provider-1')),
+    );
     await tester.pump();
-    await tester.pump();
-    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
     expect(fetchCalls, 1);
+
+    await tester.tap(find.byKey(const ValueKey('provider-detail-tab-connection')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 250));
     await tester.enterText(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField && widget.decoration?.labelText == 'API Key',
-      ),
+      find.byKey(const Key('provider-api-key-field')),
       'new-draft-key',
     );
+    await tester.tap(find.byKey(const ValueKey('provider-detail-tab-models')));
+    await tester.pump();
     response.complete([
       {'id': 'gpt-4o', 'displayName': 'gpt-4o'},
     ]);
     await tester.pumpAndSettle();
     expect(find.byKey(const ValueKey('provider-model-gpt-4o')), findsNothing);
   });
-
-  testWidgets(
-    'provider page renders header actions without layout exceptions',
-    (tester) async {
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
-          home: const ModelProviderSettingPage(),
-        ),
-      );
-
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('provider-config-title')),
-          matching: find.text('Provider 1'),
-        ),
-        findsOneWidget,
-      );
-      expect(
-        find.descendant(
-          of: find.byKey(const Key('provider-protocol-type-button')),
-          matching: find.text('OpenAI'),
-        ),
-        findsOneWidget,
-      );
-      expect(find.text('模型类型'), findsNothing);
-      final profileRect = tester.getRect(
-        find.byKey(const Key('provider-config-title')),
-      );
-      final presetRect = tester.getRect(
-        find.byKey(const Key('provider-protocol-type-button')),
-      );
-      expect(presetRect.top, greaterThan(profileRect.bottom));
-      expect(presetRect.width, greaterThan(176));
-      expect(tester.takeException(), isNull);
-    },
-  );
 
   testWidgets('saved API key can be revealed without triggering a save', (
     tester,
@@ -507,13 +756,11 @@ void main() {
         home: const ModelProviderSettingPage(),
       ),
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
+    await tester.pumpAndSettle();
+    await openFirstProviderDetail(tester);
+    await switchToConnectionTab(tester);
 
-    final apiKeyFieldFinder = find.byWidgetPredicate(
-      (widget) =>
-          widget is TextField && widget.decoration?.labelText == 'API Key',
-    );
+    final apiKeyFieldFinder = find.byKey(const Key('provider-api-key-field'));
     final hiddenField = tester.widget<TextField>(apiKeyFieldFinder);
     expect(hiddenField.controller?.text, 'sk-demo');
     expect(hiddenField.obscureText, isTrue);
@@ -564,80 +811,10 @@ void main() {
         home: const ModelProviderSettingPage(),
       ),
     );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(find.text('Provider 1'), findsWidgets);
-    await tester.tap(find.byKey(const Key('provider-config-title')));
     await tester.pumpAndSettle();
+
+    expect(find.text('Provider 1'), findsOneWidget);
     expect(find.text('OmniBot 官方 AI'), findsNothing);
-  });
-
-  testWidgets('metadata refresh preserves native capabilities', (tester) async {
-    tester.view.physicalSize = const Size(1080, 2200);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    SharedPreferences.setMockInitialValues(<String, Object>{});
-    await StorageService.init();
-    await ModelProviderConfigService.saveManualModelIds(
-      profileId: 'provider-1',
-      ids: const <String>['gpt-4o'],
-    );
-    ModelsDevCatalogService.resetForTesting();
-    final loader = Completer<ModelsDevCatalog>();
-    const pathProvider = MethodChannel('plugins.flutter.io/path_provider');
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(pathProvider, (_) async => null);
-    addTearDown(() {
-      messenger.setMockMethodCallHandler(pathProvider, null);
-      if (!loader.isCompleted) {
-        loader.complete(const ModelsDevCatalog(providers: {}));
-      }
-    });
-    var loadCount = 0;
-    ModelsDevCatalogService.setCatalogLoaderForTesting(() {
-      loadCount += 1;
-      return loader.future;
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-    for (var index = 0; index < 6; index++) {
-      await tester.pump(const Duration(milliseconds: 1));
-    }
-
-    expect(find.byType(ListView), findsWidgets);
-    expect(find.byType(CircularProgressIndicator), findsNothing);
-    expect(
-      find.byKey(const ValueKey<String>('provider-model-gpt-4o')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('provider-model-reasoning-gpt-4o')),
-      findsNothing,
-    );
-    expect(loadCount, 1);
-
-    loader.complete(
-      ModelsDevCatalogService.parseCatalog(_modelsDevCatalogJson),
-    );
-    for (var index = 0; index < 4; index++) {
-      await tester.pump(const Duration(milliseconds: 1));
-    }
-
-    expect(
-      find.byKey(const Key('provider-model-reasoning-gpt-4o')),
-      findsNothing,
-    );
-    expect(find.text('128K'), findsOneWidget);
-    expect(tester.takeException(), isNull);
   });
 
   for (final reasoning in <bool?>[true, false, null]) {
@@ -674,6 +851,7 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
 
       expect(
         find.byKey(const Key('provider-model-reasoning-gpt-4o')),
@@ -751,9 +929,9 @@ void main() {
           home: const ModelProviderSettingPage(),
         ),
       );
-
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+      await switchToConnectionTab(tester);
 
       expect(
         find.descendant(
@@ -777,84 +955,10 @@ void main() {
     }
   });
 
-  testWidgets('provider menu exposes builtin providers and protocols', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(360, 800);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
-      switch (call.method) {
-        case 'listModelProviderProfiles':
-          return profilePayload();
-      }
-      return null;
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    await tester.tap(find.byKey(const Key('provider-protocol-type-button')));
-    await tester.pumpAndSettle();
-
-    final menuRect = tester.getRect(
-      find.byKey(const Key('provider-protocol-type-menu')),
-    );
-    expect(menuRect.width, greaterThanOrEqualTo(200));
-    expect(find.text('ChatGPT'), findsOneWidget);
-    expect(find.text('DeepSeek'), findsOneWidget);
-    expect(find.text('Mimo'), findsOneWidget);
-    expect(find.text('Kimi'), findsOneWidget);
-    expect(find.text('MiniMax'), findsOneWidget);
-    expect(find.text('阿里百炼'), findsOneWidget);
-    expect(find.text('OpenAI'), findsAtLeastNWidgets(1));
-    await tester.drag(
-      find.byKey(const Key('provider-protocol-type-menu')),
-      const Offset(0, -180),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('Anthropic'), findsOneWidget);
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('base url hint mentions trailing marker override', (
-    tester,
-  ) async {
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    final baseUrlField = tester.widget<TextField>(
-      find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField && widget.decoration?.labelText == 'Base URL',
-      ),
-    );
-    expect(baseUrlField.decoration?.hintText, contains('末尾加 #'));
-  });
-
   testWidgets(
-    'Gemini profile shows Interactions URL and hides OpenAI wire settings',
+    'connection tab supports builtin presets, 4 wire protocols, and collapsible Advanced Settings',
     (tester) async {
+      Map<dynamic, dynamic>? lastSavedArgs;
       final messenger =
           TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
@@ -864,6 +968,9 @@ void main() {
               baseUrl: 'https://generativelanguage.googleapis.com/v1',
               protocolType: 'gemini_interactions',
             );
+          case 'saveModelProviderProfile':
+            lastSavedArgs = Map<dynamic, dynamic>.from(call.arguments as Map);
+            return savedProfileResponse(lastSavedArgs!);
         }
         return null;
       });
@@ -871,142 +978,57 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
           home: const ModelProviderSettingPage(),
         ),
       );
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+      await switchToConnectionTab(tester);
 
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
-
+      // Full request URL is tucked inside Advanced Settings by default.
       expect(
-        find.descendant(
-          of: find.byKey(const Key('provider-protocol-type-button')),
-          matching: find.text('Gemini'),
-        ),
-        findsOneWidget,
+        find.text('https://generativelanguage.googleapis.com/v1/interactions'),
+        findsNothing,
       );
+      await tester.tap(find.byKey(const Key('provider-advanced-settings-toggle')));
+      await tester.pumpAndSettle();
       expect(
         find.text('https://generativelanguage.googleapis.com/v1/interactions'),
         findsOneWidget,
       );
-      expect(find.byKey(const Key('provider-wire-api-button')), findsNothing);
+
+      // Verify preset menu lists familiar providers.
+      await tester.tap(find.byKey(const Key('provider-protocol-type-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('ChatGPT'), findsOneWidget);
+      expect(find.text('DeepSeek'), findsOneWidget);
+      expect(find.text('Kimi'), findsOneWidget);
+      await tester.tap(find.text('DeepSeek'));
+      await tester.pumpAndSettle();
+      expect(lastSavedArgs?['sourceType'], 'deepseek');
+      expect(lastSavedArgs?['baseUrl'], 'https://api.deepseek.com');
+
+      // Test the 4 wire protocols in the API Protocol selector.
+      await tester.tap(find.byKey(const Key('provider-wire-api-button')));
+      await tester.pumpAndSettle();
+      expect(find.text('OpenAI Chat Completions'), findsWidgets);
+      expect(find.text('OpenAI Responses'), findsOneWidget);
+      expect(find.text('Anthropic Messages'), findsOneWidget);
+      expect(find.text('Gemini Interactions'), findsOneWidget);
+
+      await tester.tap(find.text('OpenAI Responses'));
+      await tester.pumpAndSettle();
+      expect(lastSavedArgs?['protocolType'], 'openai_compatible');
+      expect(lastSavedArgs?['wireApi'], 'responses');
+      expect(find.text('https://api.deepseek.com/v1/responses'), findsOneWidget);
     },
   );
 
-  testWidgets('anthropic profile shows full messages request url', (
-    tester,
-  ) async {
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
-      switch (call.method) {
-        case 'listModelProviderProfiles':
-          return profilePayload(
-            baseUrl: 'https://api.anthropic.com',
-            protocolType: 'anthropic',
-          );
-      }
-      return null;
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('provider-protocol-type-button')),
-        matching: find.text('Anthropic'),
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('https://api.anthropic.com/v1/messages'), findsOneWidget);
-    expect(find.byKey(const Key('provider-wire-api-button')), findsNothing);
-  });
-
-  testWidgets('openai compatible profile shows direct wire api choice', (
-    tester,
-  ) async {
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
-      switch (call.method) {
-        case 'listModelProviderProfiles':
-          return profilePayload(
-            baseUrl: 'https://api.openai.com/v1',
-            wireApi: 'responses',
-          );
-      }
-      return null;
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('provider-protocol-type-button')),
-        matching: find.text('OpenAI'),
-      ),
-      findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('provider-wire-api-button')),
-        matching: find.text('Responses'),
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('https://api.openai.com/v1/responses'), findsOneWidget);
-    final wireField = find.byKey(const Key('provider-wire-api-button'));
-    final fieldText = tester.element(
-      find.descendant(of: wireField, matching: find.text('Responses')),
-    );
-    final container = InputDecorator.containerOf(fieldText)!;
-    final expectedSource =
-        container.localToGlobal(Offset.zero) & container.size;
-    await tester.tap(wireField);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 80));
-    final transition = tester.widget<FlClashPopupTransition>(
-      find.byType(FlClashPopupTransition),
-    );
-    expect(transition.source!.rectIn(null), expectedSource);
-    expect(transition.source!.shape, isA<InputBorder>());
-    expect(transition.source!.glass, isFalse);
-    expect(
-      transition.source!.image.value!.height /
-          MediaQuery.devicePixelRatioOf(fieldText),
-      greaterThan(expectedSource.height),
-      reason: 'The floating label paints above the fixed input material',
-    );
-    Navigator.of(tester.element(find.byType(FlClashPopupTransition))).pop();
-    await tester.pumpAndSettle();
-    expect(tester.takeException(), isNull);
-  });
-
-  testWidgets('selecting official provider saves builtin profile payload', (
+  testWidgets('provider fields do not auto-save while focused and save on exit', (
     tester,
   ) async {
     var saveCalls = 0;
     Map<dynamic, dynamic>? savedArgs;
-    String savedWireApi = '';
     final messenger =
         TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
     messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
@@ -1018,7 +1040,6 @@ void main() {
           savedArgs = Map<dynamic, dynamic>.from(
             (call.arguments as Map?) ?? const <String, dynamic>{},
           );
-          savedWireApi = (savedArgs!['wireApi'] ?? '').toString();
           return savedProfileResponse(savedArgs!);
       }
       return null;
@@ -1027,414 +1048,162 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
         home: const ModelProviderSettingPage(),
       ),
     );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    await tester.tap(find.byKey(const Key('provider-protocol-type-button')));
     await tester.pumpAndSettle();
+    await openFirstProviderDetail(tester);
+    await switchToConnectionTab(tester);
 
-    expect(find.text('Kimi'), findsOneWidget);
-    expect(find.text('MiniMax'), findsOneWidget);
-
-    await tester.tap(find.text('Kimi'));
-    await tester.pumpAndSettle();
-
-    expect(saveCalls, 1);
-    expect(savedWireApi, 'chat_completions');
-    expect(savedArgs?['sourceType'], 'moonshot');
-    expect(savedArgs?['baseUrl'], 'https://api.moonshot.cn/v1');
-    expect(savedArgs?['protocolType'], 'openai_compatible');
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('provider-protocol-type-button')),
-        matching: find.text('Kimi'),
-      ),
-      findsOneWidget,
-    );
-  });
-
-  testWidgets(
-    'selecting ChatGPT clears credentials and fixes the official Responses endpoint',
-    (tester) async {
-      final saves = <Map<dynamic, dynamic>>[];
-      final messenger =
-          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
-        switch (call.method) {
-          case 'listModelProviderProfiles':
-            return profilePayload();
-          case 'saveModelProviderProfile':
-            final args = Map<dynamic, dynamic>.from(call.arguments as Map);
-            saves.add(args);
-            return savedProfileResponse(args);
-          case 'getChatGptAccount':
-            return {'connected': false};
-        }
-        return null;
-      });
-      await tester.pumpWidget(
-        MaterialApp(
-          theme: AppTheme.lightTheme,
-          home: const ModelProviderSettingPage(),
-        ),
-      );
-      await tester.pumpAndSettle();
-      final keyField = find.byWidgetPredicate(
-        (widget) =>
-            widget is TextField && widget.decoration?.labelText == 'API Key',
-      );
-      await tester.enterText(keyField, 'unsaved-api-key');
-      await tester.tap(find.byKey(const Key('provider-protocol-type-button')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('ChatGPT'));
-      await tester.pumpAndSettle();
-      await tester.pump(const Duration(seconds: 1));
-      final saved = saves
-          .where((args) => args['sourceType'] == 'chatgpt_oauth')
-          .single;
-      final saveCount = saves.length;
-      expect(saved['sourceType'], 'chatgpt_oauth');
-      expect(saved['baseUrl'], 'https://api.openai.com/v1');
-      expect(saved['protocolType'], 'openai_compatible');
-      expect(saved['wireApi'], 'responses');
-      expect(saved['clearApiKey'], isTrue);
-      expect(saved['clearCustomHeaders'], isTrue);
-      expect(saved.containsKey('apiKey'), isFalse);
-      expect(saved.containsKey('customHeaders'), isFalse);
-      expect(find.byKey(const Key('chatgpt-login-button')), findsOneWidget);
-      expect(find.text('API Key'), findsNothing);
-      await tester.pumpWidget(const SizedBox());
-      await tester.pump();
-      expect(saves, hasLength(saveCount));
-    },
-  );
-
-  testWidgets('provider fields do not auto-save while focused', (tester) async {
-    var saveCalls = 0;
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
-      switch (call.method) {
-        case 'listModelProviderProfiles':
-          return profilePayload();
-        case 'saveModelProviderProfile':
-          saveCalls += 1;
-          final args = Map<dynamic, dynamic>.from(
-            (call.arguments as Map?) ?? const <String, dynamic>{},
-          );
-          return savedProfileResponse(args);
-      }
-      return null;
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    final nameField = find.byWidgetPredicate(
-      (widget) =>
-          widget is TextField && widget.decoration?.labelText == 'Provider 名称',
-    );
+    final nameField = find.byKey(const Key('provider-name-field'));
     await tester.tap(nameField);
     await tester.pump();
     await tester.enterText(nameField, 'DeepSeek Pro');
-
     await tester.pump(const Duration(milliseconds: 700));
-
     expect(saveCalls, 0);
 
     FocusManager.instance.primaryFocus?.unfocus();
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 700));
-
     expect(saveCalls, 1);
-  });
 
-  testWidgets('provider page saves focused draft when leaving', (tester) async {
-    var saveCalls = 0;
-    Map<dynamic, dynamic>? savedArgs;
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
-      switch (call.method) {
-        case 'listModelProviderProfiles':
-          return profilePayload();
-        case 'saveModelProviderProfile':
-          saveCalls += 1;
-          savedArgs = Map<dynamic, dynamic>.from(
-            (call.arguments as Map?) ?? const <String, dynamic>{},
-          );
-          return savedProfileResponse(savedArgs!);
-      }
-      return null;
-    });
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    final apiKeyField = find.byWidgetPredicate(
-      (widget) =>
-          widget is TextField && widget.decoration?.labelText == 'API Key',
-    );
+    final apiKeyField = find.byKey(const Key('provider-api-key-field'));
     await tester.tap(apiKeyField);
     await tester.enterText(apiKeyField, 'sk-updated');
     await tester.pump(const Duration(milliseconds: 700));
-    expect(saveCalls, 0);
+    expect(saveCalls, 1);
 
     await tester.pumpWidget(const SizedBox.shrink());
     await tester.pump();
-
-    expect(saveCalls, 1);
+    expect(saveCalls, 2);
     expect(savedArgs?['apiKey'], 'sk-updated');
   });
 
-  testWidgets('renders models.dev grouping, context, and input modalities', (
-    tester,
-  ) async {
-    tester.view.devicePixelRatio = 1.0;
-    tester.view.physicalSize = const Size(800, 1000);
-    addTearDown(tester.view.resetDevicePixelRatio);
-    addTearDown(tester.view.resetPhysicalSize);
-
-    await seedManualModels(
-      profileId: 'provider-1',
-      apiBase: 'https://api.openai.com/v1',
-      models: const [
-        ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o'),
-        ProviderModelOption(id: 'gpt-4o-mini', displayName: 'gpt-4o-mini'),
-        ProviderModelOption(
-          id: 'claude-3-haiku',
-          displayName: 'claude-3-haiku',
-        ),
-      ],
-    );
-
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        home: const ModelProviderSettingPage(),
-      ),
-    );
-
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 50));
-
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('provider-model-group-toggle-button')),
-    );
-    await tester.pumpAndSettle();
-    expect(find.byKey(const Key('provider-logo')), findsNothing);
-    expect(
-      find.byKey(const ValueKey('provider-model-group-toggle-button')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('provider-model-group-openai')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('provider-model-group-anthropic')),
-      findsOneWidget,
-    );
-    expect(find.text('2'), findsOneWidget);
-    expect(find.text('128K'), findsNWidgets(2));
-    expect(
-      find.descendant(
-        of: find.byKey(const Key('provider-model-context-gpt-4o')),
-        matching: find.byType(SvgPicture),
-      ),
-      findsNothing,
-    );
-    expect(
-      find.byKey(const Key('provider-model-reasoning-gpt-4o')),
-      findsNothing,
-    );
-    expect(find.text('Context 128K'), findsNothing);
-    expect(find.text('Tools'), findsNothing);
-    expect(find.text('JSON'), findsNothing);
-    expect(find.text('Files'), findsNothing);
-    expect(find.text('Temp'), findsNothing);
-    expect(find.text('自动'), findsNothing);
-    expect(find.text('手动'), findsNothing);
-    expect(
-      find.byKey(const Key('provider-model-modality-text')),
-      findsNWidgets(2),
-    );
-    expect(
-      find.byKey(const Key('provider-model-modality-image')),
-      findsOneWidget,
-    );
-    expect(
-      find.byKey(const Key('provider-model-modality-pdf')),
-      findsOneWidget,
-    );
-
-    final groupBody = find.byKey(const Key('provider-model-group-body-openai'));
-    expect(tester.getSize(groupBody).height, greaterThan(0));
-    final shortLine = tester.getSize(
-      find.byKey(const Key('provider-model-group-line-openai')),
-    );
-    final longLine = tester.getSize(
-      find.byKey(const Key('provider-model-group-line-anthropic')),
-    );
-    expect(shortLine.width, greaterThan(longLine.width));
-    final shortHeaderRight = tester.getTopRight(
-      find.byKey(const Key('provider-model-group-openai')),
-    );
-    final shortIconRight = tester.getTopRight(
-      find.byKey(const Key('provider-model-group-icon-openai')),
-    );
-    expect((shortHeaderRight.dx - shortIconRight.dx).abs(), lessThan(6));
-    final shortCountRight = tester.getTopRight(
-      find.byKey(const Key('provider-model-group-count-openai')),
-    );
-    final shortLineLeft = tester.getTopLeft(
-      find.byKey(const Key('provider-model-group-line-openai')),
-    );
-    final shortLineRight = tester.getTopRight(
-      find.byKey(const Key('provider-model-group-line-openai')),
-    );
-    final shortIconLeft = tester.getTopLeft(
-      find.byKey(const Key('provider-model-group-icon-openai')),
-    );
-    expect(shortLineLeft.dx - shortCountRight.dx, closeTo(10, 0.5));
-    expect(shortIconLeft.dx - shortLineRight.dx, closeTo(6, 0.5));
-    final firstModel = find.byKey(
-      const ValueKey<String>('provider-model-gpt-4o'),
-    );
-    final secondModel = find.byKey(
-      const ValueKey<String>('provider-model-gpt-4o-mini'),
-    );
-    expect(tester.getSize(firstModel).height, 44);
-    expect(tester.getSize(secondModel).height, 44);
-    expect(tester.getSize(firstModel).width, tester.getSize(secondModel).width);
-
-    await tester.tap(
-      find.byKey(const ValueKey('provider-model-group-toggle-button')),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 260));
-    expect(tester.getSize(groupBody).height, 0);
-    expect(
-      tester
-          .getSize(find.byKey(const Key('provider-model-group-body-anthropic')))
-          .height,
-      0,
-    );
-
-    await tester.tap(
-      find.byKey(const ValueKey('provider-model-group-toggle-button')),
-    );
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 260));
-    expect(tester.getSize(groupBody).height, greaterThan(0));
-
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('provider-model-group-openai')),
-      120,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(find.byKey(const Key('provider-model-group-openai')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 260));
-    expect(tester.getSize(groupBody).height, 0);
-
-    await tester.scrollUntilVisible(
-      find.byKey(const Key('provider-model-group-openai')),
-      120,
-      scrollable: find.byType(Scrollable).first,
-    );
-    await tester.tap(find.byKey(const Key('provider-model-group-openai')));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 260));
-    expect(tester.getSize(groupBody).height, greaterThan(0));
-
-    expect(tester.takeException(), isNull);
-  });
-
   testWidgets(
-    'chat visibility popup hides fetched models without deleting rows',
+    'single model group avoids redundant vendor header while multi-group shows collapsible headers',
     (tester) async {
       tester.view.devicePixelRatio = 1.0;
       tester.view.physicalSize = const Size(800, 1000);
       addTearDown(tester.view.resetDevicePixelRatio);
       addTearDown(tester.view.resetPhysicalSize);
 
-      await seedManualModels(
-        profileId: 'provider-1',
-        apiBase: 'https://api.openai.com/v1',
-        models: const [
-          ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o'),
-          ProviderModelOption(id: 'gpt-4o-mini', displayName: 'gpt-4o-mini'),
-        ],
-      );
+      // Case 1: Single vendor group (only OpenAI models) -> no redundant group header.
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o'),
+        ProviderModelOption(id: 'gpt-4o-mini', displayName: 'gpt-4o-mini'),
+      ];
 
       await tester.pumpWidget(
         MaterialApp(
           theme: AppTheme.lightTheme,
-          darkTheme: AppTheme.darkTheme,
           home: const ModelProviderSettingPage(),
         ),
       );
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
 
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('provider-model-group-openai')),
+        findsNothing,
+      );
+
+      // Case 2: Multiple vendor groups (OpenAI + Anthropic) -> shows collapsible headers.
+      await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
-      await tester.pump(const Duration(milliseconds: 50));
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'gpt-4o'),
+        ProviderModelOption(id: 'gpt-4o-mini', displayName: 'gpt-4o-mini'),
+        ProviderModelOption(
+          id: 'claude-3-haiku',
+          displayName: 'claude-3-haiku',
+        ),
+      ];
 
-      await tester.ensureVisible(
-        find.byKey(const Key('provider-chat-model-visibility-button')),
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
       );
       await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+
       expect(
-        find.byKey(const Key('provider-chat-model-visibility-button')),
+        find.byKey(const Key('provider-model-group-openai')),
         findsOneWidget,
       );
       expect(
-        find.byKey(const ValueKey<String>('provider-model-gpt-4o-mini')),
+        find.byKey(const Key('provider-model-group-anthropic')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const ValueKey('provider-model-group-toggle-button')),
         findsOneWidget,
       );
 
+      final groupBody = find.byKey(
+        const Key('provider-model-group-body-openai'),
+      );
+      expect(tester.getSize(groupBody).height, greaterThan(0));
+
       await tester.tap(
-        find.byKey(const Key('provider-chat-model-visibility-button')),
+        find.byKey(const ValueKey('provider-model-group-toggle-button')),
       );
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 260));
+      expect(tester.getSize(groupBody).height, 0);
+    },
+  );
 
-      expect(
-        find.byKey(const Key('provider-chat-model-visibility-menu')),
-        findsOneWidget,
-      );
-      expect(
-        find.byKey(const Key('provider-chat-model-visibility-row-gpt-4o-mini')),
-        findsOneWidget,
-      );
+  testWidgets(
+    'inline chat visibility switch and model detail sheet test model availability',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(800, 1000);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
 
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'GPT-4o'),
+        ProviderModelOption(id: 'gpt-4o-mini', displayName: 'GPT-4o mini'),
+      ];
+
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return profilePayload();
+          case 'fetchProviderModels':
+            return _discoveryModels['provider-1']!
+                .map((m) => m.toMap())
+                .toList();
+          case 'checkProviderModelAvailability':
+            return {'available': true, 'code': 200, 'message': 'OK'};
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+
+      // Toggle chat visibility directly on the model row.
       await tester.tap(
         find.byKey(
           const Key('provider-chat-model-visibility-toggle-gpt-4o-mini'),
         ),
       );
-      await tester.pump();
-      await tester.pump(const Duration(milliseconds: 80));
+      await tester.pumpAndSettle();
 
       final hiddenIds = await ModelProviderConfigService.getHiddenChatModelIds(
         profileId: 'provider-1',
@@ -1445,16 +1214,262 @@ void main() {
         findsOneWidget,
       );
 
+      // Tap model row to open Model Detail sheet and run availability test.
+      await tester.tap(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('128000 tokens (128K)'), findsOneWidget);
+      await tester.tap(
+        find.byKey(const Key('provider-test-model-button-gpt-4o')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Verified: Model responded normally'), findsOneWidget);
+      Navigator.of(tester.element(find.byType(OmniGlassAlertDialog))).pop();
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('provider-model-test-passed-gpt-4o')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'delete confirmation lists affected scene bindings before deleting provider',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return {
+              'profiles': [
+                {
+                  'id': 'provider-1',
+                  'name': 'Work OpenAI',
+                  'baseUrl': 'https://api.openai.com/v1',
+                  'apiKey': 'sk-1',
+                  'hasApiKey': true,
+                  'sourceType': 'custom',
+                  'configured': true,
+                  'ready': true,
+                },
+                {
+                  'id': 'provider-2',
+                  'name': 'Backup DeepSeek',
+                  'baseUrl': 'https://api.deepseek.com',
+                  'apiKey': 'sk-2',
+                  'hasApiKey': true,
+                  'sourceType': 'deepseek',
+                  'configured': true,
+                  'ready': true,
+                },
+              ],
+              'editingProfileId': 'provider-1',
+            };
+          case 'getSceneModelBindings':
+            return [
+              {
+                'sceneId': 'scene.dispatch.model',
+                'providerProfileId': 'provider-1',
+                'modelId': 'gpt-4o',
+              },
+            ];
+          case 'deleteModelProviderProfile':
+            return {
+              'profiles': [
+                {
+                  'id': 'provider-2',
+                  'name': 'Backup DeepSeek',
+                  'baseUrl': 'https://api.deepseek.com',
+                  'apiKey': 'sk-2',
+                  'hasApiKey': true,
+                  'sourceType': 'deepseek',
+                  'configured': true,
+                  'ready': true,
+                },
+              ],
+              'editingProfileId': 'provider-2',
+            };
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byKey(const Key('provider-list-more-provider-1')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Delete Provider'));
+      await tester.pumpAndSettle();
+
+      expect(find.textContaining('Agent (gpt-4o)'), findsOneWidget);
+      await tester.tap(find.byKey(const Key('provider-confirm-delete-button')));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Work OpenAI'), findsNothing);
+      expect(find.text('Backup DeepSeek'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'save failure surfaces error banner and preserves user input in fields',
+    (tester) async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return profilePayload();
+          case 'saveModelProviderProfile':
+            throw PlatformException(
+              code: 'SAVE_MODEL_PROVIDER_PROFILE_ERROR',
+              message: 'storage write failed',
+            );
+        }
+        return null;
+      });
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+      await switchToConnectionTab(tester);
+
+      await tester.enterText(
+        find.byKey(const Key('provider-name-field')),
+        'My Unsaved Custom Name',
+      );
+      await tester.enterText(
+        find.byKey(const Key('provider-api-key-field')),
+        'sk-unsaved-secret',
+      );
+      await tester.tap(find.byKey(const Key('provider-save-button')));
+      await tester.pumpAndSettle();
+
+      // User input is preserved even after save failure.
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('provider-name-field')))
+            .controller
+            ?.text,
+        'My Unsaved Custom Name',
+      );
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('provider-api-key-field')))
+            .controller
+            ?.text,
+        'sk-unsaved-secret',
+      );
+      expect(
+        find.byKey(const Key('provider-connection-status-banner')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'batch management distinguishes hiding remote models from deleting manual models',
+    (tester) async {
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'GPT-4o'),
+      ];
+      await ModelProviderConfigService.saveManualModelIds(
+        profileId: 'provider-1',
+        ids: const ['my-manual-model'],
+      );
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openFirstProviderDetail(tester);
+
+      // Long-press a model row to enter batch selection mode.
+      await tester.longPress(
+        find.byKey(const ValueKey<String>('provider-model-my-manual-model')),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const Key('provider-model-batch-bar')),
+        findsOneWidget,
+      );
+      expect(
+        find.byKey(const Key('provider-batch-delete-manual-button')),
+        findsOneWidget,
+      );
+
+      // Delete the manual model via batch action with confirmation.
+      await tester.tap(
+        find.byKey(const Key('provider-batch-delete-manual-button')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.descendant(
+          of: find.byType(OmniGlassAlertDialog),
+          matching: find.byType(TextButton),
+        ).last,
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-my-manual-model')),
+        findsNothing,
+      );
+      // Remote model remains intact.
+      expect(
+        find.byKey(const ValueKey<String>('provider-model-gpt-4o')),
+        findsOneWidget,
+      );
+    },
+  );
+
+  testWidgets(
+    'renders cleanly in dark mode with large text scale without overflow',
+    (tester) async {
+      tester.view.devicePixelRatio = 1.0;
+      tester.view.physicalSize = const Size(360, 800);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+
+      _discoveryModels['provider-1'] = const [
+        ProviderModelOption(id: 'gpt-4o', displayName: 'GPT-4o'),
+      ];
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(1.3)),
+          child: MaterialApp(
+            theme: AppTheme.darkTheme,
+            home: const ModelProviderSettingPage(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await openFirstProviderDetail(tester);
+      expect(tester.takeException(), isNull);
+
+      await switchToConnectionTab(tester);
       expect(tester.takeException(), isNull);
     },
   );
-}
-
-Future<void> seedManualModels({
-  required String profileId,
-  required String apiBase,
-  int? profileRevision,
-  required List<ProviderModelOption> models,
-}) async {
-  _discoveryModels[profileId] = models;
 }
