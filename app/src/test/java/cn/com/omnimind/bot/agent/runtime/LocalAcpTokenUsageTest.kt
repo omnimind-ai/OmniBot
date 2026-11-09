@@ -32,7 +32,7 @@ class LocalAcpTokenUsageTest {
             val repeated = fixture.prompt()
             assertEquals(true, repeated["deduplicated"])
             assertEquals(1, fixture.records.size)
-            verify(fixture.session, times(1)).prompt(listOf(ContentBlock.Text("hello")), null)
+            verify(fixture.session, times(1)).prompt(eqNonNull(listOf(ContentBlock.Text("hello"))), any())
         } finally { fixture.scope.cancel() }
     }
 
@@ -130,7 +130,7 @@ class LocalAcpTokenUsageTest {
         val fixture = Fixture(runtime, scope, session, options, records, messages)
         `when`(bindings.getBindingByConversationId(42)).thenReturn(fixture.binding)
         `when`(bindings.getBindingByThreadId("session-usage")).thenAnswer { fixture.binding }
-        `when`(session.prompt(listOf(ContentBlock.Text("hello")), null)).thenReturn(flow {
+        `when`(session.prompt(eqNonNull(listOf(ContentBlock.Text("hello"))), any())).thenReturn(flow {
             fixture.beforeResponse()
             emit(Event.PromptResponseEvent(PromptResponse(stopReason = StopReason.END_TURN, usage = usage)))
             error("The prompt owner must stop at its first official response")
@@ -161,6 +161,7 @@ class LocalAcpTokenUsageTest {
         currentValue = SessionConfigValueId(model),
         options = SessionConfigSelectOptions.Flat(listOf(SessionConfigSelectOption(SessionConfigValueId(model), model))),
     ))
+    private fun <T> eqNonNull(value: T): T = eq(value) ?: value
     private fun LocalAcpRuntime.field(name: String): Any? = javaClass.getDeclaredField(name)
         .apply { isAccessible = true }.get(this)
     private fun LocalAcpRuntime.setField(name: String, value: Any) = javaClass.getDeclaredField(name)
