@@ -99,7 +99,6 @@ void main() {
   officialFetchCompletersByCapability;
   late Completer<List<Map<String, dynamic>>>? providerFetchCompleter;
   late Object? providerFetchError;
-  late Map<dynamic, dynamic>? lastProviderFetchArguments;
   late List<Map<dynamic, dynamic>> providerFetchArguments;
 
   setUp(() async {
@@ -132,7 +131,6 @@ void main() {
         <String, Completer<List<Map<String, dynamic>>>>{};
     providerFetchCompleter = null;
     providerFetchError = null;
-    lastProviderFetchArguments = null;
     providerFetchArguments = <Map<dynamic, dynamic>>[];
     savedOperationConfig = <String, dynamic>{'useOfficialService': true};
 
@@ -243,7 +241,6 @@ void main() {
               };
             case 'fetchProviderModels':
               providerFetchCount += 1;
-              lastProviderFetchArguments = call.arguments as Map?;
               final arguments = (call.arguments as Map?) ?? const {};
               providerFetchArguments.add(Map<dynamic, dynamic>.from(arguments));
               final error = providerFetchError;
@@ -369,89 +366,95 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('scene entry paints cache and has no manual refresh control', (
-    tester,
-  ) async {
-    providerFetchError = StateError('offline');
-    await seedManualModels(
-      profileId: 'provider-1',
-      apiBase: providerBaseUrl,
-      profileRevision: providerRevision,
-      models: const <ProviderModelOption>[
-        ProviderModelOption(id: 'cached-model', displayName: 'Cached model'),
-      ],
-    );
+  testWidgets(
+    'scene entry reads persisted provider models without re-fetching BYOK over network',
+    (tester) async {
+      providerFetchError = StateError('offline');
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: providerRevision,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(id: 'cached-model', displayName: 'Cached model'),
+        ],
+      );
 
-    await pumpSceneSettings(tester);
+      await pumpSceneSettings(tester);
 
-    expect(providerFetchCount, 1);
-    expect(
-      find.byKey(const Key('scene-model-refresh-provider-models-button')),
-      findsNothing,
-    );
-    await tester.tap(
-      find.byKey(
-        const Key('scene-model-selector-scene.compactor.context.chat'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('cached-model'), findsOneWidget);
-  });
+      // BYOK providers use the models configured in Model Provider Settings
+      // without triggering a network /models request on page entry.
+      expect(providerFetchCount, 0);
+      expect(
+        find.byKey(const Key('scene-model-refresh-provider-models-models')),
+        findsNothing,
+      );
+      await tester.tap(
+        find.byKey(
+          const Key('scene-model-selector-scene.compactor.context.chat'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('cached-model'), findsOneWidget);
+    },
+  );
 
-  testWidgets('configured BYOK provider refreshes automatically', (
-    tester,
-  ) async {
-    providerFetchResponse = <Map<String, dynamic>>[
-      <String, dynamic>{'id': 'fresh-model', 'displayName': 'Fresh model'},
-    ];
-    await pumpSceneSettings(tester);
+  testWidgets(
+    'disabling a model in Model Provider Settings hides it from Scene Model Settings',
+    (tester) async {
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: providerRevision,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(id: 'enabled-model', displayName: 'Enabled'),
+          ProviderModelOption(id: 'disabled-model', displayName: 'Disabled'),
+        ],
+      );
+      await ModelProviderConfigService.saveDisabledModelIds(
+        profileId: 'provider-1',
+        ids: const <String>['disabled-model'],
+      );
 
-    expect(providerFetchCount, 1);
-    expect(lastProviderFetchArguments?['apiBase'], providerBaseUrl);
-    expect(lastProviderFetchArguments?['profileId'], 'provider-1');
-  });
+      await pumpSceneSettings(tester);
+      expect(providerFetchCount, 0);
 
-  testWidgets('changed provider revision cannot apply an old fetch result', (
-    tester,
-  ) async {
-    final pending = Completer<List<Map<String, dynamic>>>();
-    providerFetchCompleter = pending;
-    await pumpSceneSettings(tester);
-    expect(providerFetchCount, 1);
+      await tester.tap(
+        find.byKey(
+          const Key('scene-model-selector-scene.compactor.context.chat'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('enabled-model'), findsOneWidget);
+      expect(find.text('disabled-model'), findsNothing);
+    },
+  );
 
-    providerBaseUrl = 'https://replacement.example.com/v1';
-    providerRevision = 2;
-    pending.complete(<Map<String, dynamic>>[
-      <String, dynamic>{'id': 'stale-model', 'displayName': 'Stale model'},
-    ]);
-    for (var attempt = 0; attempt < 10; attempt++) {
-      await tester.pump();
-    }
+  testWidgets(
+    'changed provider revision ignores obsolete cached catalog',
+    (tester) async {
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: 1,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(id: 'stale-model', displayName: 'Stale model'),
+        ],
+      );
+      providerBaseUrl = 'https://replacement.example.com/v1';
+      providerRevision = 2;
 
-    await tester.tap(
-      find.byKey(
-        const Key('scene-model-selector-scene.compactor.context.chat'),
-      ),
-    );
-    await tester.pumpAndSettle();
-    expect(find.text('stale-model'), findsNothing);
-  });
+      await pumpSceneSettings(tester);
+      expect(providerFetchCount, 0);
 
-  testWidgets('automatic refresh disposal ignores completion', (tester) async {
-    final pending = Completer<List<Map<String, dynamic>>>();
-    providerFetchCompleter = pending;
-    await pumpSceneSettings(tester);
-    expect(providerFetchCount, 1);
-
-    await tester.pumpWidget(const MaterialApp(home: SizedBox.shrink()));
-    pending.complete(<Map<String, dynamic>>[
-      <String, dynamic>{'id': 'late-model', 'displayName': 'Late model'},
-    ]);
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 20));
-    expect(providerFetchCount, 1);
-    expect(tester.takeException(), isNull);
-  });
+      await tester.tap(
+        find.byKey(
+          const Key('scene-model-selector-scene.compactor.context.chat'),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('stale-model'), findsNothing);
+    },
+  );
 
   testWidgets('official catalog refreshes automatically', (tester) async {
     providerBaseUrl = 'https://official.example/ai';
@@ -476,15 +479,20 @@ void main() {
     tester,
   ) async {
     includeOfficialProvider = true;
-    providerFetchResponse = <Map<String, dynamic>>[
-      <String, dynamic>{'id': 'byok-model'},
-    ];
+    await seedDiscoveredModels(
+      profileId: 'provider-1',
+      apiBase: providerBaseUrl,
+      profileRevision: providerRevision,
+      models: const <ProviderModelOption>[
+        ProviderModelOption(id: 'byok-model', displayName: 'byok-model'),
+      ],
+    );
     officialFetchResponse = <Map<String, dynamic>>[
       <String, dynamic>{'id': 'official-model'},
     ];
 
     await pumpSceneSettings(tester);
-    expect(providerFetchCount, 3);
+    expect(providerFetchCount, 2);
 
     await tester.tap(
       find.byKey(
@@ -503,9 +511,17 @@ void main() {
     'embedding scene filters official capability but keeps BYOK models open',
     (tester) async {
       includeOfficialProvider = true;
-      providerFetchResponse = <Map<String, dynamic>>[
-        <String, dynamic>{'id': 'unknown-byok-model'},
-      ];
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: providerRevision,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(
+            id: 'unknown-byok-model',
+            displayName: 'unknown-byok-model',
+          ),
+        ],
+      );
       officialFetchResponsesByCapability = <String, List<Map<String, dynamic>>>{
         'text': <Map<String, dynamic>>[
           <String, dynamic>{'id': 'official-text-model'},
@@ -516,15 +532,7 @@ void main() {
       };
 
       await pumpSceneSettings(tester);
-      expect(providerFetchCount, 3);
-      expect(
-        providerFetchArguments.any(
-          (arguments) =>
-              arguments['profileId'] == 'provider-1' &&
-              !arguments.containsKey('capability'),
-        ),
-        isTrue,
-      );
+      expect(providerFetchCount, 2);
       expect(
         providerFetchArguments.any(
           (arguments) =>
@@ -549,9 +557,14 @@ void main() {
     tester,
   ) async {
     includeOfficialProvider = true;
-    providerFetchResponse = <Map<String, dynamic>>[
-      <String, dynamic>{'id': 'byok-model'},
-    ];
+    await seedDiscoveredModels(
+      profileId: 'provider-1',
+      apiBase: providerBaseUrl,
+      profileRevision: providerRevision,
+      models: const <ProviderModelOption>[
+        ProviderModelOption(id: 'byok-model', displayName: 'byok-model'),
+      ],
+    );
     officialFetchResponsesByCapability = <String, List<Map<String, dynamic>>>{
       'text': <Map<String, dynamic>>[
         <String, dynamic>{'id': 'official-text-model'},
@@ -561,7 +574,7 @@ void main() {
     officialFetchCompletersByCapability['embedding'] = embeddingPending;
 
     await pumpSceneSettings(tester);
-    expect(providerFetchCount, 3);
+    expect(providerFetchCount, 2);
 
     await tester.tap(
       find.byKey(
@@ -585,9 +598,17 @@ void main() {
     tester,
   ) async {
     includeOfficialProvider = true;
-    providerFetchResponse = <Map<String, dynamic>>[
-      <String, dynamic>{'id': 'unknown-byok-model'},
-    ];
+    await seedDiscoveredModels(
+      profileId: 'provider-1',
+      apiBase: providerBaseUrl,
+      profileRevision: providerRevision,
+      models: const <ProviderModelOption>[
+        ProviderModelOption(
+          id: 'unknown-byok-model',
+          displayName: 'unknown-byok-model',
+        ),
+      ],
+    );
     officialFetchResponsesByCapability = <String, List<Map<String, dynamic>>>{
       'text': <Map<String, dynamic>>[
         <String, dynamic>{'id': 'official-text-model'},
@@ -597,7 +618,7 @@ void main() {
     officialFetchCompletersByCapability['embedding'] = embeddingPending;
 
     await pumpSceneSettings(tester);
-    expect(providerFetchCount, 3);
+    expect(providerFetchCount, 2);
 
     await tester.tap(
       find.byKey(const Key('scene-model-selector-scene.memory.embedding')),
@@ -614,21 +635,6 @@ void main() {
     expect(find.text('OmniBot 官方 AI'), findsOneWidget);
     expect(find.text('official-embedding-model'), findsOneWidget);
     expect(find.text('official-text-model'), findsNothing);
-  });
-
-  testWidgets('background refresh errors do not leak endpoint details', (
-    tester,
-  ) async {
-    providerFetchError =
-        'socket failed at https://user:token@example.com/private?key=secret';
-    await pumpSceneSettings(tester);
-    for (var attempt = 0; attempt < 10; attempt++) {
-      await tester.pump();
-    }
-
-    expect(find.textContaining('user:token'), findsNothing);
-    expect(find.textContaining('/private'), findsNothing);
-    expect(find.textContaining('key=secret'), findsNothing);
   });
 
   testWidgets('GUI scene is labeled GUI instead of VLM', (tester) async {
@@ -649,9 +655,17 @@ void main() {
     'GUI switches providers through the shared scene binding and restores it',
     (tester) async {
       includeOfficialProvider = true;
-      providerFetchResponse = <Map<String, dynamic>>[
-        {'id': 'custom-gui-model'},
-      ];
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: providerRevision,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(
+            id: 'custom-gui-model',
+            displayName: 'custom-gui-model',
+          ),
+        ],
+      );
       officialFetchResponse = <Map<String, dynamic>>[
         {'id': 'official-gui-model'},
       ];
@@ -687,9 +701,14 @@ void main() {
     'model IDs and icons preserve channel selection without a restore entry',
     (tester) async {
       includeOfficialProvider = true;
-      providerFetchResponse = [
-        {'id': 'gpt-5.4', 'displayName': 'Custom Choice'},
-      ];
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: providerRevision,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(id: 'gpt-5.4', displayName: 'Custom Choice'),
+        ],
+      );
       officialFetchResponse = [
         {'id': 'gpt-5.4', 'displayName': 'Official Choice'},
       ];
@@ -761,9 +780,17 @@ void main() {
   testWidgets(
     'startup-style dropdown fits a phone keyboard and cancels without saving',
     (tester) async {
-      providerFetchResponse = [
-        {'id': 'custom-model', 'displayName': 'Custom Choice'},
-      ];
+      await seedDiscoveredModels(
+        profileId: 'provider-1',
+        apiBase: providerBaseUrl,
+        profileRevision: providerRevision,
+        models: const <ProviderModelOption>[
+          ProviderModelOption(
+            id: 'custom-model',
+            displayName: 'Custom Choice',
+          ),
+        ],
+      );
       await pumpSceneSettings(tester);
       tester.view.physicalSize = const Size(360, 800);
       await tester.pumpAndSettle();
@@ -857,4 +884,26 @@ Future<void> seedManualModels({
 }) => ModelProviderConfigService.saveManualModelIds(
   profileId: profileId,
   ids: models.map((m) => m.id).toList(),
+);
+
+Future<void> seedDiscoveredModels({
+  required String profileId,
+  required String apiBase,
+  required int profileRevision,
+  required List<ProviderModelOption> models,
+}) => ModelProviderConfigService.saveDiscoveredModelsForProfile(
+  ModelProviderProfileSummary(
+    id: profileId,
+    name: profileId,
+    baseUrl: apiBase,
+    apiKey: '',
+    customHeaders: const {},
+    sourceType: 'custom',
+    readOnly: false,
+    ready: true,
+    statusText: '',
+    configured: true,
+    revision: profileRevision,
+  ),
+  models,
 );

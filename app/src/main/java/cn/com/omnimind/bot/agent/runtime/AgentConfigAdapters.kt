@@ -210,6 +210,9 @@ internal object AgentConfigAdapterRegistry {
         adapter.supportsHostManagedResponses && adapter.configAdapterId in adaptersById
 
     fun map(input: AgentProviderMappingInput): AgentProviderMapping {
+        require(cn.com.omnimind.baselib.llm.ProviderProtocol.normalize(input.provider?.protocolType) != cn.com.omnimind.baselib.llm.ProviderProtocol.GEMINI) {
+            "Gemini Interactions currently requires the built-in Agent. Select the built-in Agent or a compatible Provider."
+        }
         val normalizedInput = input.normalized(forLaunch = true)
         return adapterFor(normalizedInput)
             ?.map(normalizedInput)
@@ -245,6 +248,9 @@ internal object AgentConfigAdapterRegistry {
         providerModels: List<ProviderModelOption>,
         existingConfig: String,
     ): List<AgentConfigWrite> {
+        require(cn.com.omnimind.baselib.llm.ProviderProtocol.normalize(input.provider?.protocolType) != cn.com.omnimind.baselib.llm.ProviderProtocol.GEMINI) {
+            "Gemini Interactions currently requires the built-in Agent. Select the built-in Agent or a compatible Provider."
+        }
         val normalizedInput = input.normalized(forLaunch = true)
         return adapterFor(normalizedInput)
         ?.launchConfigWrites(

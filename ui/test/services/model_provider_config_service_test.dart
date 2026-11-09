@@ -29,6 +29,28 @@ const _modelsDevCatalogJson = '''
 ''';
 
 void main() {
+  test(
+    'Gemini endpoint normalization keeps the API version and direct URL marker',
+    () {
+      expect(
+        ModelProviderConfigService.buildGeminiInteractionsRequestUrl(
+          'https://example.test/v1/interactions',
+        ),
+        'https://example.test/v1/interactions',
+      );
+      expect(
+        ModelProviderConfigService.buildGeminiInteractionsRequestUrl(
+          'https://example.test/custom#',
+        ),
+        'https://example.test/custom',
+      );
+      expect(
+        ModelProviderConfigService.buildGeminiInteractionsRequestUrl('invalid'),
+        isNull,
+      );
+    },
+  );
+
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const assistCoreChannel = MethodChannel(
@@ -41,27 +63,20 @@ void main() {
   });
   tearDown(ModelsDevCatalogService.resetForTesting);
 
-  test(
-    'reading model preferences preserves the native launch catalog across reload',
-    () async {
-      const key = 'cached_provider_models_with_base_v2';
-      const catalog =
-          '{"provider-1":{"apiBase":"https://provider.example/v1","profileRevision":7,"models":[{"id":"model-a"},{"id":"model-b"}]}}';
-      await StorageService.setString(key, catalog);
-      await ModelProviderConfigService.getManualModelIds(
-        profileId: 'provider-1',
-      );
-      await ModelProviderConfigService.getHiddenChatModelIds(
-        profileId: 'provider-1',
-      );
-      expect(StorageService.getString(key), catalog);
-      await StorageService.init();
-      await ModelProviderConfigService.getManualModelIds(
-        profileId: 'provider-1',
-      );
-      expect(StorageService.getString(key), catalog);
-    },
-  );
+  test('reading model preferences preserves the native launch catalog across reload', () async {
+    const key = 'cached_provider_models_with_base_v2';
+    const catalog =
+        '{"provider-1":{"apiBase":"https://provider.example/v1","profileRevision":7,"models":[{"id":"model-a"},{"id":"model-b"}]}}';
+    await StorageService.setString(key, catalog);
+    await ModelProviderConfigService.getManualModelIds(profileId: 'provider-1');
+    await ModelProviderConfigService.getHiddenChatModelIds(
+      profileId: 'provider-1',
+    );
+    expect(StorageService.getString(key), catalog);
+    await StorageService.init();
+    await ModelProviderConfigService.getManualModelIds(profileId: 'provider-1');
+    expect(StorageService.getString(key), catalog);
+  });
 
   test('provider payload exposes API key for the settings editor', () {
     final payload = <String, dynamic>{

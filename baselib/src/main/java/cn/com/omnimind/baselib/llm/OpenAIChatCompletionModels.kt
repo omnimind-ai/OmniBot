@@ -76,7 +76,16 @@ data class ChatCompletionMessage(
  */
 @Serializable
 data class ChatCompletionProtocolState(
-    val anthropic: AnthropicMessageProtocolState? = null
+    val anthropic: AnthropicMessageProtocolState? = null,
+    val gemini: GeminiMessageProtocolState? = null,
+    val toolResultIsError: Boolean? = null,
+)
+
+@Serializable
+data class GeminiMessageProtocolState(
+    val version: Int = 1,
+    val sourceProvider: String,
+    val steps: JsonArray,
 )
 
 @Serializable
@@ -90,7 +99,16 @@ data class AnthropicMessageProtocolState(
 )
 
 object ChatCompletionProtocolMetadata {
+    fun withoutReplayData(value: JsonElement): JsonElement = when (value) {
+        is JsonObject -> JsonObject(value.filterKeys {
+            it !in setOf(STATE_FIELD, GEMINI_STREAM_STATE_FIELD, "signature", "modelReplay", "modelAssistantMessageJson", "modelToolResultMessageJson")
+        }.mapValues { (_, child) -> withoutReplayData(child) })
+        is JsonArray -> JsonArray(value.map(::withoutReplayData))
+        else -> value
+    }
+
     const val STATE_FIELD = "_omnibot_protocol_state"
+    const val GEMINI_STREAM_STATE_FIELD = "_omnibot_gemini_state"
     const val ANTHROPIC_STREAM_BLOCK_FIELD = "_omnibot_anthropic_content_block"
 }
 

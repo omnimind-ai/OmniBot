@@ -32,6 +32,27 @@ import kotlinx.serialization.json.JsonElement
 
 class XiaowanAcpPresentationBridgeTest {
     @Test
+    fun `Gemini canonical tool and final messages use official ACP metadata`() = runBlocking {
+        val updates = mutableListOf<SessionUpdate>()
+        val bridge = XiaowanAcpEventBridge(acpEventBridgeTestContext(), updates::add)
+        val state = cn.com.omnimind.baselib.llm.ChatCompletionProtocolState(gemini = cn.com.omnimind.baselib.llm.GeminiMessageProtocolState(
+            sourceProvider = "provider", steps = JsonArray(listOf(JsonObject(mapOf("type" to JsonPrimitive("thought"), "signature" to JsonPrimitive("opaque"))))),
+        ))
+        val assistant = cn.com.omnimind.baselib.llm.ChatCompletionMessage("assistant", protocolState = state)
+        val tool = cn.com.omnimind.baselib.llm.ChatCompletionMessage("tool", JsonPrimitive("ok"), toolCallId = "call")
+        bridge.onToolReplayReady("call", assistant, tool)
+        bridge.onToolReplayReady("call2", assistant, tool.copy(toolCallId = "call2"))
+        val replay = updates.map { (it as SessionUpdate.ToolCallUpdate)._meta!!.jsonObject["cn.com.omnimind.agent"]!!.jsonObject["modelReplay"]!!.jsonObject }
+        assertEquals(replay[0]["modelAssistantMessageId"], replay[1]["modelAssistantMessageId"])
+        assertTrue(replay[0]["modelAssistantMessageJson"].toString().contains("opaque"))
+        updates.clear()
+        bridge.onComplete(AgentResult.Success(AgentFinalResponse(content = "answer", modelMessage = assistant.copy(content = JsonPrimitive("answer")))))
+        val chunk = updates.filterIsInstance<SessionUpdate.AgentMessageChunk>().last()
+        assertTrue(chunk._meta.toString().contains("modelAssistantMessageJson"))
+        assertFalse(chunk.content.toString().contains("opaque"))
+    }
+
+    @Test
     fun `ACP keeps artifact purpose and logs remain explicitly linkable`() = runBlocking {
         val file = ArtifactRef(
             id = "report", uri = "omnibot://workspace/report.txt", title = "report.txt",

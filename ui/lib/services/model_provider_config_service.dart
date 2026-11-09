@@ -433,6 +433,38 @@ class ProviderModelGroup {
   const ProviderModelGroup({required this.profile, required this.models});
 }
 
+class ModelAvailabilityCheckResult {
+  final bool available;
+  final int? code;
+  final String message;
+
+  const ModelAvailabilityCheckResult({
+    required this.available,
+    this.code,
+    required this.message,
+  });
+
+  factory ModelAvailabilityCheckResult.fromMap(Map<dynamic, dynamic>? map) {
+    if (map == null) {
+      return const ModelAvailabilityCheckResult(
+        available: false,
+        message: '未收到检测结果',
+      );
+    }
+    final rawCode = map['code'];
+    final parsedCode = rawCode is int
+        ? rawCode
+        : rawCode is num
+        ? rawCode.toInt()
+        : int.tryParse(rawCode?.toString() ?? '');
+    return ModelAvailabilityCheckResult(
+      available: map['available'] == true,
+      code: parsedCode,
+      message: (map['message'] ?? '').toString().trim(),
+    );
+  }
+}
+
 class ModelProviderConfigService {
   static const String _kOfficialProfileId = 'omnibot-official-ai';
   static const String _kOfficialSourceType = 'omnibot_official';
@@ -454,6 +486,7 @@ class ModelProviderConfigService {
     'transfer-encoding',
   };
   static const List<String> _kCanonicalEndpointSuffixes = <String>[
+    '/interactions',
     '/v1/chat/completions',
     '/chat/completions',
     '/v1/responses',
@@ -467,6 +500,13 @@ class ModelProviderConfigService {
     '/v1',
     '/compatible-mode/v1',
   ];
+  static String? buildGeminiInteractionsRequestUrl(String input) {
+    final normalized = normalizeApiBase(input);
+    if (normalized == null) return null;
+    final base = _stripDirectRequestUrlMarker(normalized);
+    return _hasDirectRequestUrlMarker(normalized) ? base : '$base/interactions';
+  }
+
   static String _canonicalProfileId(String profileId) {
     return profileId.trim();
   }
@@ -751,6 +791,76 @@ class ModelProviderConfigService {
     );
   }
 
+  static Future<ModelAvailabilityCheckResult> checkModelAvailability({
+    required String profileId,
+    required String model,
+    String apiBase = '',
+  }) async {
+    final result = await AssistsMessageService.assistCore
+        .invokeMethod<Map<dynamic, dynamic>>('checkProviderModelAvailability', {
+          'profileId': profileId.trim(),
+          'model': model.trim(),
+          if (apiBase.trim().isNotEmpty) 'apiBase': apiBase.trim(),
+        });
+    return ModelAvailabilityCheckResult.fromMap(result);
+  }
+
+  static List<ProviderModelOption> getCachedDiscoveredModelsForProfile(
+    ModelProviderProfileSummary profile,
+  ) {
+    final normalizedProfileId = _canonicalProfileId(profile.id);
+    if (normalizedProfileId.isEmpty) {
+      return const [];
+    }
+    final catalogs = _readJsonMap(_kCachedFetchedModelsKey);
+    final bucket = catalogs[normalizedProfileId];
+    if (bucket is! Map) {
+      return const [];
+    }
+    final cachedBase = normalizeApiBase((bucket['apiBase'] ?? '').toString());
+    final currentBase = normalizeApiBase(profile.baseUrl);
+    final cachedRevision = (bucket['profileRevision'] as num?)?.toInt();
+    if (cachedBase == null ||
+        currentBase == null ||
+        cachedBase != currentBase ||
+        (cachedRevision != null && cachedRevision != profile.revision)) {
+      return const [];
+    }
+    final rawModels = bucket['models'];
+    if (rawModels is! List) {
+      return const [];
+    }
+    return rawModels
+        .whereType<Map>()
+        .map(ProviderModelOption.fromMap)
+        .where((item) => item.id.trim().isNotEmpty)
+        .toList();
+  }
+
+  static Future<void> saveDiscoveredModelsForProfile(
+    ModelProviderProfileSummary profile,
+    List<ProviderModelOption> models,
+  ) async {
+    final normalizedProfileId = _canonicalProfileId(profile.id);
+    final normalizedBase = normalizeApiBase(profile.baseUrl);
+    if (normalizedProfileId.isEmpty || normalizedBase == null) {
+      return;
+    }
+    final catalogs = _readJsonMap(_kCachedFetchedModelsKey);
+    catalogs[normalizedProfileId] = <String, dynamic>{
+      'apiBase': normalizedBase,
+      'profileRevision': profile.revision,
+      'models': models
+          .where((item) => item.id.trim().isNotEmpty)
+          .map((item) => item.toMap())
+          .toList(),
+    };
+    await StorageService.setString(
+      _kCachedFetchedModelsKey,
+      jsonEncode(catalogs),
+    );
+  }
+
   static Future<List<String>> getManualModelIds({
     required String profileId,
   }) async {
@@ -773,6 +883,15 @@ class ModelProviderConfigService {
     current[normalizedProfileId] = _normalizeModelIds(ids);
     await StorageService.setString(_kManualModelIdsKey, jsonEncode(current));
   }
+
+  static Future<List<String>> getDisabledModelIds({
+    required String profileId,
+  }) => getHiddenChatModelIds(profileId: profileId);
+
+  static Future<void> saveDisabledModelIds({
+    required String profileId,
+    required List<String> ids,
+  }) => saveHiddenChatModelIds(profileId: profileId, ids: ids);
 
   static Future<List<String>> getHiddenChatModelIds({
     required String profileId,
@@ -811,10 +930,18 @@ class ModelProviderConfigService {
     final manualModelIds = isOfficial
         ? const <String>[]
         : await getManualModelIds(profileId: normalizedProfileId);
-    const remoteModels = <ProviderModelOption>[];
-    final merged = mergeModelOptions(
-      remoteModels: remoteModels,
-      manualModelIds: manualModelIds,
+    final remoteModels = (isOfficial || resolvedProfile == null)
+        ? const <ProviderModelOption>[]
+        : getCachedDiscoveredModelsForProfile(resolvedProfile);
+    final disabledModelIds = isOfficial
+        ? const <String>[]
+        : await getHiddenChatModelIds(profileId: normalizedProfileId);
+    final merged = filterChatModelOptions(
+      models: mergeModelOptions(
+        remoteModels: remoteModels,
+        manualModelIds: manualModelIds,
+      ),
+      hiddenModelIds: disabledModelIds,
     );
     if (!enrichMetadata || merged.isEmpty) {
       return merged;
@@ -831,17 +958,9 @@ class ModelProviderConfigService {
     String profileId, {
     ModelProviderProfileSummary? profile,
   }) async {
-    final storedModels = await getStoredModelOptionsForProfile(
+    return getStoredModelOptionsForProfile(
       profileId,
       profile: profile,
-    );
-    if (profile?.sourceType == 'omnibot_official') {
-      return storedModels;
-    }
-    final hiddenModelIds = await getHiddenChatModelIds(profileId: profileId);
-    return filterChatModelOptions(
-      models: storedModels,
-      hiddenModelIds: hiddenModelIds,
     );
   }
 
@@ -877,7 +996,7 @@ class ModelProviderConfigService {
             capability: 'text',
             forceRefresh: true,
           )
-        : const <ProviderModelOption>[];
+        : getCachedDiscoveredModelsForProfile(profile);
     return filterChatModelOptions(
       models: mergeModelOptions(
         remoteModels: remote,

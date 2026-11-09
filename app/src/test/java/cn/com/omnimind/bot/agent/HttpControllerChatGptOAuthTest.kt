@@ -278,9 +278,9 @@ class HttpControllerChatGptOAuthTest {
     ): ModelProviderProfile? {
         val method = HttpController::class.java.getDeclaredMethod("selectRequestProvider",
             String::class.java, ModelProviderProfile::class.java, Boolean::class.javaPrimitiveType,
-            Boolean::class.javaPrimitiveType, ModelProviderProfile::class.java, ModelProviderProfile::class.java)
+            Boolean::class.javaPrimitiveType, ModelProviderProfile::class.java, ModelProviderProfile::class.java, String::class.java)
         method.isAccessible = true
-        return method.invoke(HttpController, explicitId, explicit, bindingApplied, bindingMissing, bound, fallback) as? ModelProviderProfile
+        return method.invoke(HttpController, explicitId, explicit, bindingApplied, bindingMissing, bound, fallback, null) as? ModelProviderProfile
     }
 
     private fun oauthPayload(raw: String): JsonObject {

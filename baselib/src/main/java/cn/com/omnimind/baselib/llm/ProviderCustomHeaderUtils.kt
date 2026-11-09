@@ -12,6 +12,7 @@ object ProviderCustomHeaderUtils {
     private val exactSensitiveHeaderNames = setOf(
         "authorization",
         "x-api-key",
+        "x-goog-api-key",
         "api-key",
         "cookie",
         "set-cookie",

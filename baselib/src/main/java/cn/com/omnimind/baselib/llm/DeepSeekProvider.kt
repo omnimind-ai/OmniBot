@@ -29,7 +29,7 @@ object DeepSeekProvider {
     }
 
     fun shouldUseOfficialAdapter(protocolType: String?, apiBase: String?): Boolean {
-        return normalizeProtocolType(protocolType) != "anthropic" && isOfficialBaseUrl(apiBase)
+        return ProviderProtocol.normalize(protocolType) != "anthropic" && isOfficialBaseUrl(apiBase)
     }
 
     /**
@@ -42,7 +42,7 @@ object DeepSeekProvider {
         apiBase: String?,
         model: String?,
     ): ProviderRequestCapabilities {
-        val normalizedProtocol = normalizeProtocolType(protocolType)
+        val normalizedProtocol = ProviderProtocol.normalize(protocolType)
         return ProviderRequestCapabilities(
             // OpenAI-compatible does not imply support for optional OpenAI fields.
             supportsChatPromptCacheKey = normalizedProtocol == "openai_compatible" &&
@@ -70,7 +70,7 @@ object DeepSeekProvider {
         apiBase: String?,
         model: String?,
     ): Boolean? {
-        if (normalizeProtocolType(protocolType) == "anthropic" || !isOfficialBaseUrl(apiBase)) {
+        if (ProviderProtocol.normalize(protocolType) == "anthropic" || !isOfficialBaseUrl(apiBase)) {
             return null
         }
         val normalizedModel = model
@@ -109,14 +109,6 @@ object DeepSeekProvider {
             }
         }
         return false
-    }
-
-    fun normalizeProtocolType(value: String?): String {
-        return when (value?.trim()?.lowercase().orEmpty()) {
-            PROTOCOL_TYPE -> PROTOCOL_TYPE
-            "anthropic" -> "anthropic"
-            else -> "openai_compatible"
-        }
     }
 
     private fun isV4Model(value: String?): Boolean =

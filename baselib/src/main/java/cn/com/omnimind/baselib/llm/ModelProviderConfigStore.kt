@@ -32,6 +32,7 @@ object ModelProviderConfigStore {
     private const val DEFAULT_PROFILE_ID = "profile-1"
     private const val DEFAULT_PROFILE_NAME = "Provider 1"
     private val canonicalEndpointSuffixes = listOf(
+        "/interactions",
         "/v1/chat/completions",
         "/chat/completions",
         "/v1/responses",
@@ -152,8 +153,8 @@ object ModelProviderConfigStore {
 
     /** Read the Provider editor's existing catalog; never refresh on session startup. */
     fun cachedModels(context: Context, profile: ModelProviderProfile): List<ProviderModelOption> = runCatching {
-        val raw = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
-            .getString("flutter.cached_provider_models_with_base_v2", null)
+        val preferences = context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+        val raw = preferences.getString("flutter.cached_provider_models_with_base_v2", null)
             ?: return@runCatching emptyList()
         val bucket = JsonParser.parseString(raw).asJsonObject[profile.id]?.asJsonObject
             ?: return@runCatching emptyList()
@@ -162,9 +163,16 @@ object ModelProviderConfigStore {
         if (base != normalizeBaseUrl(profile.baseUrl).orEmpty() || revision != profile.revision) {
             return@runCatching emptyList()
         }
+        val disabledIds = runCatching {
+            val hiddenRaw = preferences.getString("flutter.hidden_chat_provider_model_ids_v1", null)
+            if (hiddenRaw.isNullOrBlank()) emptySet()
+            else JsonParser.parseString(hiddenRaw).asJsonObject[profile.id]?.asJsonArray
+                ?.mapNotNull { it?.asString?.trim()?.takeIf(String::isNotEmpty) }
+                ?.toSet().orEmpty()
+        }.getOrDefault(emptySet())
         val discovered = bucket["models"]?.asJsonArray
             ?.map { Gson().fromJson(it, ProviderModelOption::class.java) }
-            ?.filter { !it.id.isNullOrBlank() }.orEmpty()
+            ?.filter { !it.id.isNullOrBlank() && it.id.trim() !in disabledIds }.orEmpty()
         resolveModelCapabilities(context, profile, discovered)
     }.getOrDefault(emptyList())
 
@@ -664,7 +672,7 @@ object ModelProviderConfigStore {
     }
 
     private fun normalizeProtocolType(value: String?): String {
-        return DeepSeekProvider.normalizeProtocolType(value)
+        return ProviderProtocol.normalize(value)
     }
 
     private fun normalizeWireApi(value: String?): String {

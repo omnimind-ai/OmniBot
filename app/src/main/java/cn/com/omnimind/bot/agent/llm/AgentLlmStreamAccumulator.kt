@@ -1,5 +1,6 @@
 package cn.com.omnimind.bot.agent
 
+import kotlinx.serialization.json.decodeFromJsonElement
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonNull
@@ -13,6 +14,7 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import cn.com.omnimind.baselib.util.OmniLog
+import cn.com.omnimind.baselib.llm.GeminiMessageProtocolState
 import cn.com.omnimind.baselib.llm.AnthropicMessageProtocolState
 import cn.com.omnimind.baselib.llm.ChatCompletionProtocolMetadata
 import cn.com.omnimind.baselib.llm.ChatCompletionProtocolState
@@ -47,6 +49,7 @@ class AgentLlmStreamAccumulator(
     private val inlineTextBuffer = StringBuilder()
     private val toolCallBuilders: SortedMap<Int, MutableToolCallBuilder> = TreeMap()
     private val anthropicContentBlocks: SortedMap<Int, JsonObject> = TreeMap()
+    private var geminiState: GeminiMessageProtocolState? = null
     private var providerError: StreamProviderError? = null
     private var finishReason: String? = null
     private var usage: ChatCompletionUsage? = null
@@ -69,8 +72,11 @@ class AgentLlmStreamAccumulator(
     fun consume(rawChunk: String): Boolean {
         val trimmed = rawChunk.trim()
         if (trimmed.isEmpty()) return false
-        OmniLog.d(TAG, "[stream chunk#${chunkIndex++}] raw(${trimmed.length}): ${trimmed.take(500)}")
-        lastChunkPreview = trimmed.take(500)
+        val diagnostic = if (trimmed.contains(ChatCompletionProtocolMetadata.GEMINI_STREAM_STATE_FIELD)) {
+            "[Gemini protocol replay metadata]"
+        } else trimmed.take(500)
+        OmniLog.d(TAG, "[stream chunk#${chunkIndex++}] raw(${trimmed.length}): $diagnostic")
+        lastChunkPreview = diagnostic
         splitCompositeChunk(trimmed)?.let { segments ->
             var done = false
             segments.forEach { segment ->
@@ -111,7 +117,10 @@ class AgentLlmStreamAccumulator(
         usage = decodeUsage(root["usage"]) ?: usage
         decodeTokensPerSecond = decodeTimings(root["timings"]) ?: decodeTokensPerSecond
 
-        var chunkHasPayload = consumeAnthropicContentBlock(root)
+        root[ChatCompletionProtocolMetadata.GEMINI_STREAM_STATE_FIELD]?.let {
+            geminiState = json.decodeFromJsonElement<GeminiMessageProtocolState>(it)
+        }
+        var chunkHasPayload = consumeAnthropicContentBlock(root) || geminiState != null
         val choices = root["choices"] as? JsonArray
         choices?.forEach { choiceElement ->
             val choice = choiceElement as? JsonObject ?: return@forEach
@@ -314,7 +323,7 @@ class AgentLlmStreamAccumulator(
                             finishReasonIndicatesToolCall(finishReason)
                         )
                 },
-                protocolState = anthropicContentBlocks
+                protocolState = geminiState?.let { ChatCompletionProtocolState(gemini = it) } ?: anthropicContentBlocks
                     .takeIf { captureAnthropicContentBlocks && it.isNotEmpty() }
                     ?.let { blocks ->
                         ChatCompletionProtocolState(

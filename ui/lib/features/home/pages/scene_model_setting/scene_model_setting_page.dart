@@ -210,26 +210,22 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
               );
       }
 
-      final enriched = _mergeBindingModels(
-        providerModelsByProfileId: providerModelsByProfileId,
-        bindings: bindings,
-      );
-
       if (!await waitForPageReady() || !mounted) return;
       setState(() {
         _catalog = catalog;
         _bindings = bindings;
         _profiles = profilesPayload.profiles;
         _voiceConfig = voiceConfig;
-        _providerModelsByProfileId = enriched;
+        _providerModelsByProfileId = providerModelsByProfileId;
         _officialProviderModelsByCapability = {};
       });
       _scheduleMetadataRefresh(
         profiles: profilesPayload.profiles,
-        providerModelsByProfileId: enriched,
+        providerModelsByProfileId: providerModelsByProfileId,
       );
-      // Show saved bindings and manual IDs while querying the remote catalogs.
-      unawaited(_refreshProviderModelsInBackground());
+      if (profilesPayload.profiles.any(_isOfficialProfile)) {
+        unawaited(_refreshProviderModelsInBackground());
+      }
     } catch (_) {
       if (!await waitForPageReady() || !mounted) return;
       showToast(context.l10n.sceneModelLoadFailed, type: ToastType.error);
@@ -254,30 +250,6 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
         showToast(context.trLegacy('语音设置保存失败：$error'), type: ToastType.error);
       }
     }
-  }
-
-  Map<String, List<ProviderModelOption>> _mergeBindingModels({
-    required Map<String, List<ProviderModelOption>> providerModelsByProfileId,
-    required List<SceneModelBindingEntry> bindings,
-  }) {
-    final result = {
-      for (final entry in providerModelsByProfileId.entries)
-        entry.key: [...entry.value],
-    };
-    for (final binding in bindings) {
-      final bucket = result.putIfAbsent(binding.providerProfileId, () => []);
-      final exists = bucket.any((item) => item.id == binding.modelId);
-      if (!exists) {
-        bucket.add(
-          ProviderModelOption(
-            id: binding.modelId,
-            displayName: binding.modelId,
-            ownedBy: 'binding',
-          ),
-        );
-      }
-    }
-    return result;
   }
 
   void _scheduleMetadataRefresh({
@@ -347,10 +319,6 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
     _isRefreshingModels = true;
     try {
       final snapshots = List<ModelProviderProfileSummary>.from(_profiles);
-      final nextModels = <String, List<ProviderModelOption>>{
-        for (final entry in _providerModelsByProfileId.entries)
-          entry.key: List<ProviderModelOption>.from(entry.value),
-      };
       final nextOfficialModels = {
         for (final capabilityEntry
             in _officialProviderModelsByCapability.entries)
@@ -362,6 +330,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
           },
       };
       final officialProfiles = snapshots.where(_isOfficialProfile).toList();
+      if (officialProfiles.isEmpty) {
+        return;
+      }
       final capabilityRefreshes = <String, Future<void>>{
         for (final capability in _requiredOfficialCapabilities)
           capability: _refreshOfficialCapability(
@@ -372,64 +343,17 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
           ),
       };
       _officialCapabilityRefreshes = capabilityRefreshes;
-      for (final profile in snapshots) {
-        if (!_isProviderRefreshActive(refreshGeneration)) return;
-        final isOfficial = _isOfficialProfile(profile);
-        if (!isOfficial && !profile.configured) {
-          continue;
-        }
-        if (isOfficial) {
-          continue;
-        }
-        try {
-          final remoteModels = await _fetchModelsForSnapshot(
-            profile,
-            refreshGeneration: refreshGeneration,
-          );
-          if (!_isProviderRefreshActive(refreshGeneration)) return;
-          final manualModelIds =
-              await ModelProviderConfigService.getManualModelIds(
-                profileId: profile.id,
-              );
-          nextModels[profile.id] = ModelProviderConfigService.mergeModelOptions(
-            remoteModels: remoteModels,
-            manualModelIds: manualModelIds,
-          );
-        } catch (_) {
-          nextModels[profile.id] =
-              await ModelProviderConfigService.getStoredModelOptionsForProfile(
-                profile.id,
-                profile: profile,
-                enrichMetadata: false,
-              );
-          if (_isProviderRefreshActive(refreshGeneration)) {
-            showToast(
-              '${profile.name}：模型列表加载失败，请重新打开重试',
-              type: ToastType.error,
-            );
-          }
-        }
-      }
       await Future.wait(capabilityRefreshes.values);
 
       if (!await waitForPageReady() ||
           !_isProviderRefreshActive(refreshGeneration)) {
         return;
       }
-      final merged = _mergeBindingModels(
-        providerModelsByProfileId: nextModels,
-        bindings: _bindings,
-      );
       setState(() {
-        _providerModelsByProfileId = merged;
         _officialProviderModelsByCapability = nextOfficialModels;
       });
-      _scheduleMetadataRefresh(
-        profiles: snapshots,
-        providerModelsByProfileId: merged,
-      );
     } catch (_) {
-      if (_isProviderRefreshActive(refreshGeneration)) {
+      if (mounted && _isProviderRefreshActive(refreshGeneration)) {
         showToast(context.l10n.sceneModelLoadFailed, type: ToastType.error);
       }
     } finally {
@@ -567,14 +491,11 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
       if (!mounted) return;
       setState(() {
         _bindings = bindings;
-        _providerModelsByProfileId = _mergeBindingModels(
-          providerModelsByProfileId: _providerModelsByProfileId,
-          bindings: bindings,
-        );
       });
       if (sceneId == VoicePlaybackCoordinator.sceneVoiceId) {
         await VoicePlaybackCoordinator.instance.refreshConfiguration();
       }
+      if (!mounted) return;
       showToast(
         context.l10n.sceneModelBoundToast(_sceneDisplayName(sceneId), modelId),
         type: ToastType.success,
@@ -856,7 +777,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            context.trLegacy('点击右侧按钮选择模型，也可按模型名称、ID 或服务商搜索。'),
+                            context.trLegacy(
+                              '选择各场景使用的已启用模型；模型获取与启停请在“模型提供商”中统一管理。',
+                            ),
                             style: TextStyle(
                               color: _secondaryTextColor,
                               fontSize: 12,

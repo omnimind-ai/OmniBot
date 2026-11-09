@@ -30,6 +30,7 @@ internal data class WebAgentEventUpdate(
     val assistantDelta: String? = null,
     val assistantSnapshot: String? = null,
     val assistantFinal: Boolean = false,
+    val modelReplay: Map<String, Any?>? = null,
     val reasoningEntryId: String? = null,
     val reasoningDelta: String? = null,
     val reasoningSnapshot: String? = null,
@@ -48,7 +49,8 @@ private data class WebAgentTextEntryState(
     val createdAt: Long,
     val sequence: Long,
     var text: String = "",
-    var isFinal: Boolean = false
+    var isFinal: Boolean = false,
+    var modelReplay: Map<String, Any?>? = null,
 )
 
 private data class WebAgentToolEntryState(
@@ -232,7 +234,7 @@ internal class WebAgentRunBridge(
 
         if (
             update.assistantSnapshot != null ||
-            !update.assistantDelta.isNullOrEmpty()
+            !update.assistantDelta.isNullOrEmpty() || update.modelReplay != null
         ) {
             val entryId = update.assistantEntryId
                 ?.takeIf(String::isNotBlank)
@@ -245,6 +247,7 @@ internal class WebAgentRunBridge(
             } else {
                 entry.text + update.assistantDelta.orEmpty()
             }
+            entry.modelReplay = update.modelReplay ?: entry.modelReplay
             entry.isFinal = entry.isFinal || update.assistantFinal
             persistAssistantEntry(state, entry, isError = false)
             changed = true
@@ -401,6 +404,7 @@ internal class WebAgentRunBridge(
             conversationMode = state.conversationMode,
             entryId = entry.entryId,
             text = AgentTextSanitizer.sanitizeUtf16(entry.text),
+            modelReplay = entry.modelReplay,
             isError = isError,
             streamMeta = streamMeta(
                 state = state,
@@ -490,6 +494,10 @@ internal class WebAgentRunBridge(
             entryId = entry.entryId,
             payload = linkedMapOf<String, Any?>(
                 "taskId" to entry.parentTaskId,
+                "modelAssistantMessageId" to raw["modelAssistantMessageId"],
+                "modelToolCallId" to raw["modelToolCallId"],
+                "modelAssistantMessageJson" to raw["modelAssistantMessageJson"],
+                "modelToolResultMessageJson" to raw["modelToolResultMessageJson"],
                 "agentId" to state.agentId,
                 "agentName" to state.agentName,
                 "uiStyle" to "agent_tool",
@@ -504,7 +512,7 @@ internal class WebAgentRunBridge(
                 "progress" to firstNonBlank(raw["progress"], raw["message"]).orEmpty(),
                 "argsJson" to arguments.takeIf { it.isNotEmpty() }?.let(gson::toJson),
                 "resultPreviewJson" to raw["result"]?.let(gson::toJson),
-                "rawResultJson" to gson.toJson(raw),
+                "rawResultJson" to cn.com.omnimind.baselib.llm.ChatCompletionProtocolMetadata.withoutReplayData(kotlinx.serialization.json.Json.parseToJsonElement(gson.toJson(raw))).toString(),
                 "terminalOutput" to terminalOutput,
                 "streamMeta" to streamMeta(
                     state = state,
@@ -660,6 +668,7 @@ internal fun parseWebAgentEvent(event: Map<String, Any?>): WebAgentEventUpdate {
         val updateKind = normalizeAgentEventToken(
             update["sessionUpdate"]?.toString().orEmpty()
         )
+        val modelReplay = normalizeMap(normalizeMap(normalizeMap(update["_meta"])["cn.com.omnimind.agent"])["modelReplay"]).takeIf { it.isNotEmpty() }
         val updateId = resolveAgentItemId(update, update)
         val updateParent = firstNonBlank(
             turnId,
@@ -674,6 +683,7 @@ internal fun parseWebAgentEvent(event: Map<String, Any?>): WebAgentEventUpdate {
             "agent_message_chunk" -> WebAgentEventUpdate(
                 assistantEntryId = messageEntryId,
                 assistantDelta = extractAgentText(update["content"]),
+                modelReplay = modelReplay,
                 parentTaskId = updateParent
             )
             "agent_thought_chunk" -> WebAgentEventUpdate(
@@ -684,7 +694,7 @@ internal fun parseWebAgentEvent(event: Map<String, Any?>): WebAgentEventUpdate {
             "tool_call", "tool_call_update" -> WebAgentEventUpdate(
                 parentTaskId = updateParent,
                 tool = buildToolUpdate(
-                    raw = update,
+                    raw = update + modelReplay.orEmpty(),
                     itemType = update["kind"]?.toString()
                         ?: update["title"]?.toString()
                         ?: "tool",

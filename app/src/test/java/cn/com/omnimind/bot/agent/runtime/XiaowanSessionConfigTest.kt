@@ -11,6 +11,21 @@ class XiaowanSessionConfigTest {
         "model-a",
     )
 
+    @Test fun `Gemini options follow the selected model and unknown models use defaults`() {
+        val cfg = XiaowanSessionConfig(
+            listOf(ModelInfo(ModelId("gemini-3.6-flash"), "Flash"), ModelInfo(ModelId("unknown"), "Unknown")),
+            "gemini-3.6-flash", reasoningLevels = { model ->
+                cn.com.omnimind.baselib.llm.GeminiProvider.enrich(cn.com.omnimind.baselib.llm.ProviderModelOption(model)).supportedReasoningLevels
+            },
+        )
+        cfg.set("reasoning_effort", SessionConfigOptionValue.StringValue("minimal"))
+        assertEquals("minimal", cfg.requestEffort)
+        assertThrows(IllegalArgumentException::class.java) { cfg.set("reasoning_effort", SessionConfigOptionValue.StringValue("none")) }
+        cfg.set("model", SessionConfigOptionValue.StringValue("unknown"))
+        assertNull(cfg.requestEffort)
+        assertThrows(IllegalArgumentException::class.java) { cfg.set("reasoning_effort", SessionConfigOptionValue.StringValue("high")) }
+    }
+
     @Test fun `reasoning is visible but provider defaults remain the initial request`() {
         assertEquals("default", config().effort)
         assertNull(config().requestEffort)

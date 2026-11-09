@@ -8,6 +8,7 @@ import com.agentclientprotocol.model.*
 internal class XiaowanSessionConfig(
     private var models: List<ModelInfo>,
     initialModel: String,
+    private val reasoningLevels: (String) -> List<String>? = { null },
 ) {
     var model: String = initialModel
         private set
@@ -24,7 +25,9 @@ internal class XiaowanSessionConfig(
             select("model", "Model", SessionConfigOptionCategory.MODEL, model,
                 models.map { it.modelId.value to it.name }),
             select("reasoning_effort", "Reasoning effort", SessionConfigOptionCategory.THOUGHT_LEVEL,
-                effort, listOf("default" to "Model default", "none" to "Off", "low" to "Low",
+                effort, reasoningLevels(model)?.let { levels ->
+                    listOf("default" to "Model default") + levels.map { it to it.replaceFirstChar(Char::titlecase) }
+                } ?: listOf("default" to "Model default", "none" to "Off", "low" to "Low",
                     "medium" to "Medium", "high" to "High", "max" to "Maximum")),
         )
 
@@ -37,7 +40,10 @@ internal class XiaowanSessionConfig(
             "Invalid value for ACP config option: $id"
         }
         when (id) {
-            "model" -> model = selected
+            "model" -> {
+                model = selected
+                reasoningLevels(model)?.let { if (effort !in it) effort = "default" }
+            }
             "reasoning_effort" -> effort = selected
         }
     }

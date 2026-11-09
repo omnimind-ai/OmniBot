@@ -709,7 +709,11 @@ private class XiaowanAgentSession(
     // Guarded by closeMutex. Admission closes before cleanup starts; resource
     // completion is recorded only after every close operation has succeeded.
     private var cleanupComplete = false
-    private val sessionConfig = XiaowanSessionConfig(availableModels, configuredModelId)
+    private val sessionConfig = XiaowanSessionConfig(availableModels, configuredModelId, reasoningLevels = { model ->
+        if (providerProfile.protocolType == "gemini_interactions") {
+            cn.com.omnimind.baselib.llm.GeminiProvider.enrich(cn.com.omnimind.baselib.llm.ProviderModelOption(model)).supportedReasoningLevels
+        } else null
+    })
     private val selectedModelId: String get() = sessionConfig.model
     private val executor = OmniAgentExecutor(
         context = context,
@@ -910,10 +914,12 @@ private class XiaowanAgentSession(
                 messages += promptInbox?.acceptedEntries().orEmpty().map {
                     ChatCompletionMessage(role = "user", content = JsonPrimitive(it.text))
                 }
-                messages += ChatCompletionMessage(
-                    role = "assistant",
-                    content = JsonPrimitive(response),
-                )
+                if (providerProfile.protocolType == "gemini_interactions") {
+                    messages += streamBridge.modelReplayMessages()
+                    result.response.modelMessage?.let { messages += it }
+                } else {
+                    messages += ChatCompletionMessage(role = "assistant", content = JsonPrimitive(response))
+                }
                 response
             }
             // ACP serializes the exception message, not its Kotlin cause type.
@@ -1077,7 +1083,11 @@ private class XiaowanAgentSession(
                     // session/load is history replay and is not a model refresh API.
                     refreshModels()
                 }
-                val updated = XiaowanSessionConfig(availableModels, selectedModelId)
+                val updated = XiaowanSessionConfig(availableModels, selectedModelId, reasoningLevels = { model ->
+                    if (providerProfile.protocolType == "gemini_interactions") {
+                        cn.com.omnimind.baselib.llm.GeminiProvider.enrich(cn.com.omnimind.baselib.llm.ProviderModelOption(model)).supportedReasoningLevels
+                    } else null
+                })
                 updated.set("reasoning_effort", com.agentclientprotocol.model.SessionConfigOptionValue.StringValue(sessionConfig.effort))
                 updated.set(configId.value, value)
                 AcpAgentProfileStore(context).saveSessionConfiguration(sessionId.value, mapOf(
@@ -1361,6 +1371,10 @@ internal class XiaowanAcpEventBridge(
      * second `tool_call` for the same id creates duplicate cards and leaves
      * completion status split across two local items.
      */
+    private val replayMessages = mutableListOf<ChatCompletionMessage>()
+    private val replayToolIds = mutableSetOf<String>()
+    suspend fun modelReplayMessages(): List<ChatCompletionMessage> = callbackMutex.withLock { replayMessages.toList() }
+    private val replayMessageIds = java.util.IdentityHashMap<ChatCompletionMessage, String>()
     private val seenToolCallIds = mutableSetOf<String>()
     private val startedToolCallIds = mutableSetOf<String>()
 
@@ -1843,6 +1857,30 @@ internal class XiaowanAcpEventBridge(
             emitAssistantNotice(text = question)
         }
     }
+    override suspend fun onToolReplayReady(
+        toolCallId: String,
+        assistantMessage: ChatCompletionMessage,
+        toolResultMessage: ChatCompletionMessage,
+    ) {
+        if (assistantMessage.protocolState?.gemini == null) return
+        callbackMutex.withLock {
+            val messageId = replayMessageIds.getOrPut(assistantMessage) {
+                replayMessages += assistantMessage
+                UUID.randomUUID().toString()
+            }
+            if (replayToolIds.add(toolCallId)) replayMessages += toolResultMessage
+            emitUpdate(SessionUpdate.ToolCallUpdate(
+                toolCallId = ToolCallId(toolCallId),
+                _meta = acpPresentationMeta("modelReplay" to mapOf(
+                    "modelAssistantMessageId" to messageId,
+                    "modelToolCallId" to toolCallId,
+                    "modelAssistantMessageJson" to Json.encodeToString(assistantMessage),
+                    "modelToolResultMessageJson" to Json.encodeToString(toolResultMessage),
+                )),
+            ))
+        }
+    }
+
     override suspend fun onComplete(result: AgentResult) {
         val success = result as? AgentResult.Success ?: return
         callbackMutex.withLock {
@@ -1866,6 +1904,9 @@ internal class XiaowanAcpEventBridge(
                 responseText
             }
             val meta = acpPresentationMeta(
+                "modelReplay" to success.response.modelMessage?.takeIf { it.protocolState?.gemini != null }?.let {
+                    mapOf("modelAssistantMessageJson" to Json.encodeToString(it))
+                },
                 "completion" to mapOf(
                     "success" to true,
                     "outputKind" to outputKind,

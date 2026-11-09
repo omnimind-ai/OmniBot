@@ -55,7 +55,7 @@ internal class AgentHistoryToolOutputProjection(
         val REPLAY_METADATA = setOf(
             "toolName", "displayName", "toolTitle", "toolType", "argsJson",
             "status", "success", "historyOmitted", "taskId", "sessionId", "turnId",
-            "toolCallId", "modelToolCallId", "modelAssistantMessageJson",
+            "toolCallId", "modelToolCallId", "modelAssistantMessageId", "modelAssistantMessageJson",
             "interruptedBy", "interruptionReason",
         )
     }

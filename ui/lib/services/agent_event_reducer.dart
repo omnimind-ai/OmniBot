@@ -1521,6 +1521,29 @@ class AgentEventReducer {
     if (presentation == null || presentation.isEmpty) {
       return;
     }
+    final replay = _asStringMap(presentation['modelReplay']);
+    if (replay != null) {
+      final index = runtime.messages.indexWhere(
+        (message) => message.id == entryId,
+      );
+      if (index < 0) {
+        _bufferAcpAssistantPresentation(
+          runtime,
+          parentTaskId: parentTaskId,
+          entryId: entryId,
+          key: 'modelReplay',
+          value: replay,
+        );
+      } else {
+        final existing = runtime.messages[index];
+        runtime.messages[index] = existing.copyWith(
+          content: <String, dynamic>{
+            ...?existing.content,
+            'modelReplay': replay,
+          },
+        );
+      }
+    }
     final usage = _asStringMap(presentation['usage']);
     if (usage != null) {
       _applyAcpUsage(runtime, usage);
@@ -2352,7 +2375,7 @@ class AgentEventReducer {
       existing: existingCardData,
     );
     final toolInfo = normalizeAgentToolCall(
-      raw,
+      Map<String, dynamic>.from(_withoutModelReplay(raw) as Map),
       fallbackToolType: toolType,
       fallbackTitle: title,
       fallbackStatus: status,
@@ -2421,6 +2444,14 @@ class AgentEventReducer {
       raw['subagentEvents'] ?? raw['subagentEvent'],
     );
     final cardData = <String, dynamic>{
+      for (final key in const [
+        'modelAssistantMessageId',
+        'modelToolCallId',
+        'modelAssistantMessageJson',
+        'modelToolResultMessageJson',
+      ])
+        if (raw[key] != null || existingCardData[key] != null)
+          key: raw[key] ?? existingCardData[key],
       'type': 'agent_tool_summary',
       'uiStyle': kAgentToolUiStyle,
       'taskId': taskId,
@@ -5450,6 +5481,7 @@ Map<String, dynamic> _projectAcpToolCall(
   final firstMedia = allMedia.firstOrNull;
   final standardToolType = _string(standardPresentation['toolType']);
   return <String, dynamic>{
+    ...?_asStringMap(presentation?['modelReplay']),
     'id': update['toolCallId'],
     'toolCallId': update['toolCallId'],
     if (sessionId != null) 'sessionId': sessionId,
@@ -7013,7 +7045,8 @@ double? _asDouble(dynamic value) {
 
 String _safeJson(dynamic value) {
   try {
-    return const JsonEncoder.withIndent('  ').convert(value);
+    return const JsonEncoder.withIndent('  ')
+        .convert(_withoutModelReplay(value));
   } catch (_) {
     return value?.toString() ?? '';
   }
@@ -7033,5 +7066,22 @@ String _accountSummary(Map<String, dynamic> params) {
 }
 
 String _trimTerminalOutput(String value) {
+  return value;
+}
+
+// Protocol replay is persisted separately from display/debug payloads.
+dynamic _withoutModelReplay(dynamic value) {
+  if (value is Map) {
+    return <String, dynamic>{
+      for (final entry in value.entries)
+        if (!const {
+          'modelReplay',
+          'modelAssistantMessageJson',
+          'modelToolResultMessageJson',
+        }.contains(entry.key))
+          entry.key.toString(): _withoutModelReplay(entry.value),
+    };
+  }
+  if (value is List) return value.map(_withoutModelReplay).toList();
   return value;
 }
