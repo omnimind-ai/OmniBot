@@ -126,13 +126,23 @@ extension ChatRuntimePromptInputSupport on ChatConversationRuntimeCoordinator {
   }
 
   Future<void> _writePromptInputStorage(String key, Object? value) {
-    final previous = _promptQueuePersistenceTails[key] ?? Future<void>.value();
-    final next = previous.catchError((Object _) {}).then((_) async {
+    final previous = _promptQueuePersistenceTails[key];
+    Future<void> write() async {
       final saved = value == null
           ? await StorageService.remove(key)
           : await StorageService.setJson(key, value);
       if (!saved) throw StateError('Unable to save pending input.');
-    });
+    }
+
+    late final Future<void> next;
+    next = (previous == null
+            ? write()
+            : previous.catchError((Object _) {}).then((_) => write()))
+        .whenComplete(() {
+          if (identical(_promptQueuePersistenceTails[key], next)) {
+            _promptQueuePersistenceTails.remove(key);
+          }
+        });
     _promptQueuePersistenceTails[key] = next;
     return next;
   }

@@ -1593,6 +1593,12 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
             dispatchLoadedModelSource ==
             (remoteCodex ? 'remote' : 'local-$dispatchAgentId'),
       );
+      final wasPreparedForFirstPrompt =
+          _unboundConfigurationSessions[dispatchMode]?.sessionId ==
+              dispatchSessionId &&
+          _unboundConfigurationSessions[dispatchMode]?.agentId ==
+              dispatchAgentId &&
+          dispatchSessionId != null;
       final acpSessionId = await _prepareAcpSessionForTurn(
         runtimeCoordinator: _runtimeCoordinator,
         taskId: aiMessageId,
@@ -1600,12 +1606,7 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         mode: dispatchModeKey,
         agentId: dispatchAgentId,
         existingSessionId: dispatchSessionId,
-        preparedForFirstPrompt:
-            _unboundConfigurationSessions[dispatchMode]?.sessionId ==
-                dispatchSessionId &&
-            _unboundConfigurationSessions[dispatchMode]?.agentId ==
-                dispatchAgentId &&
-            dispatchSessionId != null,
+        preparedForFirstPrompt: wasPreparedForFirstPrompt,
         isTargetCurrent: isDispatchTargetCurrent,
         model: turnModel,
         effort: dispatchReasoningEffort,
@@ -1622,7 +1623,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
       }
       _unboundConfigurationSessions.remove(dispatchMode);
       _activeAgentThreadId = acpSessionId;
-      if (isDispatchTargetCurrent()) unawaited(_refreshAgentRuntimeStatus());
+      if (!wasPreparedForFirstPrompt && isDispatchTargetCurrent()) {
+        unawaited(_refreshAgentRuntimeStatus());
+      }
       final response = await AgentRuntimeService.promptSession(
         conversationId: resolvedConversationId,
         sessionId: acpSessionId,

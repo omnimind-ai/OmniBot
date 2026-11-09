@@ -1231,6 +1231,12 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         mode: dispatchModeKey,
         persistMessages: true,
       );
+      final wasPreparedForFirstPrompt =
+          _unboundConfigurationSessions[dispatchMode]?.sessionId ==
+              dispatchSessionId &&
+          _unboundConfigurationSessions[dispatchMode]?.agentId ==
+              _kXiaowanAcpAgentId &&
+          dispatchSessionId != null;
       final acpSessionId = await _prepareAcpSessionForTurn(
         runtimeCoordinator: _runtimeCoordinator,
         taskId: aiMessageId,
@@ -1238,12 +1244,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
         mode: dispatchModeKey,
         agentId: _kXiaowanAcpAgentId,
         existingSessionId: dispatchSessionId,
-        preparedForFirstPrompt:
-            _unboundConfigurationSessions[dispatchMode]?.sessionId ==
-                dispatchSessionId &&
-            _unboundConfigurationSessions[dispatchMode]?.agentId ==
-                _kXiaowanAcpAgentId &&
-            dispatchSessionId != null,
+        preparedForFirstPrompt: wasPreparedForFirstPrompt,
         isTargetCurrent: isDispatchTargetCurrent,
         model: dispatchSelection?.modelId,
         effort: dispatchReasoningEffort,
@@ -1260,7 +1261,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       _unboundConfigurationSessions.remove(dispatchMode);
       _normalAcpSessionId = acpSessionId;
       _normalAcpSessionConversationId = resolvedConversationId;
-      if (isDispatchTargetCurrent()) unawaited(_refreshAgentRuntimeStatus());
+      if (!wasPreparedForFirstPrompt && isDispatchTargetCurrent()) {
+        unawaited(_refreshAgentRuntimeStatus());
+      }
       final response = await AgentRuntimeService.promptSession(
         conversationId: resolvedConversationId,
         sessionId: acpSessionId,

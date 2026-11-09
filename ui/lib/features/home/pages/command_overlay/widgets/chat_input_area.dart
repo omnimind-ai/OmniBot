@@ -370,38 +370,21 @@ abstract class _ChatInputAreaStateBase extends State<ChatInputArea>
             width: 20,
             height: 20,
           );
-    _addSvg = context.isDarkTheme
-        ? _buildComposerIconAsset(
-            _kInputAttachmentIconAsset,
-            width: 20,
-            height: 20,
-            color: palette.accentPrimary,
-          )
-        : _buildComposerIconAsset(
-            _kInputAttachmentIconAsset,
-            width: 20,
-            height: 20,
-            color: palette.accentPrimary,
-          );
-    _commandSvg = context.isDarkTheme
-        ? SvgPicture.string(
-            _kLucideCommandSvg,
-            width: 20,
-            height: 20,
-            colorFilter: ColorFilter.mode(
-              palette.accentPrimary,
-              BlendMode.srcIn,
-            ),
-          )
-        : SvgPicture.string(
-            _kLucideCommandSvg,
-            width: 20,
-            height: 20,
-            colorFilter: ColorFilter.mode(
-              palette.accentPrimary,
-              BlendMode.srcIn,
-            ),
-          );
+    _addSvg = _buildComposerIconAsset(
+      _kInputAttachmentIconAsset,
+      width: 20,
+      height: 20,
+      color: palette.accentPrimary,
+    );
+    _commandSvg = SvgPicture.string(
+      _kLucideCommandSvg,
+      width: 20,
+      height: 20,
+      colorFilter: ColorFilter.mode(
+        palette.accentPrimary,
+        BlendMode.srcIn,
+      ),
+    );
   }
 
   Widget _buildComposerIconAsset(
