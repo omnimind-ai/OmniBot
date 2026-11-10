@@ -64,5 +64,9 @@ class PersonalContextQueryTest {
         val list = definitions.first { it.getValue("function").jsonObject.getValue("name").jsonPrimitive.content == "calendar_event_list" }
         val parameters = list.getValue("function").jsonObject.getValue("parameters").jsonObject
         assertTrue(parameters.getValue("properties").jsonObject.containsKey("offset"))
+        val notifications = definitions.first { it.getValue("function").jsonObject.getValue("name").jsonPrimitive.content == "context_notifications_query" }
+        val notificationsDescription = notifications.getValue("function").jsonObject.getValue("description").jsonPrimitive.content
+        assertTrue(notificationsDescription.contains("Proactively query read-only context when helpful"))
+        assertFalse(notificationsDescription.contains("Query only for the user's task."))
     }
 }

@@ -48,6 +48,9 @@ class AgentSystemPromptTest {
         assertTrue(prompt.contains("完整、自足的 instruction"))
         assertTrue(prompt.contains("仅当用户明确要求持久化信息"))
         assertTrue(prompt.contains("不要为了简短、去重或摘要而改写它"))
+        assertTrue(prompt.contains("个人与设备上下文感知"))
+        assertTrue(prompt.contains("主动并发调用相关的只读个人上下文"))
+        assertTrue(prompt.contains("不要机械罗列或播报"))
         assertTrue(!prompt.contains("只写客观、简短、可复用的信息"))
         assertTrue(!prompt.contains("不要等用户明确要求分派"))
     }
@@ -103,6 +106,9 @@ class AgentSystemPromptTest {
         assertTrue(prompt.contains("complete, self-contained instructions"))
         assertTrue(prompt.contains("only when the user explicitly asks to persist information"))
         assertTrue(prompt.contains("without shortening, deduplicating, or summarizing it"))
+        assertTrue(prompt.contains("Personal and device context awareness"))
+        assertTrue(prompt.contains("proactively batch relevant read-only personal context calls"))
+        assertTrue(prompt.contains("do not mechanically recite or announce"))
         assertTrue(!prompt.contains("keep notes concrete, short, reusable, and non-duplicative"))
         assertTrue(!prompt.contains("Proactively use a listed"))
     }
