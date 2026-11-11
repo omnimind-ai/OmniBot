@@ -39,7 +39,6 @@ mixin ChatDispatchSupport<T extends StatefulWidget> on State<T> {
   void handleValidationError(String taskID, String debugMessage);
   void resetDispatchState();
   Future<void> persistConversationSnapshot({
-    bool generateSummary,
     bool markComplete,
     bool rethrowOnFailure = false,
   });

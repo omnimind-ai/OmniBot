@@ -366,6 +366,13 @@ object DatabaseHelper {
         }
     }
 
+    private val MIGRATION_19_20 = object : Migration(19, 20) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE conversations ADD COLUMN titleSource TEXT NOT NULL DEFAULT 'legacy'")
+            db.execSQL("ALTER TABLE conversations ADD COLUMN titleGenerationAttempted INTEGER NOT NULL DEFAULT 1")
+        }
+    }
+
     private val MIGRATION_18_19 = object : Migration(18, 19) {
         override fun migrate(database: SupportSQLiteDatabase) {
             database.execSQL(
@@ -393,7 +400,8 @@ object DatabaseHelper {
         MIGRATION_15_16,
         MIGRATION_16_17,
         MIGRATION_17_18,
-        MIGRATION_18_19
+        MIGRATION_18_19,
+        MIGRATION_19_20
     )
 
     fun init(context: Context) {
@@ -490,6 +498,18 @@ object DatabaseHelper {
     suspend fun insertConversation(conversation: Conversation): Long {
         return getDatabase().conversationDao().insert(conversation)
     }
+
+    suspend fun claimConversationTitleGeneration(id: Long): Boolean =
+        getDatabase().conversationDao().claimTitleGeneration(id) == 1
+
+    suspend fun setConversationTitle(id: Long, title: String, source: String): Boolean =
+        getDatabase().conversationDao().setOwnedTitle(id, title, source) == 1
+
+    suspend fun commitGeneratedConversationTitle(id: Long, sessionId: String, title: String): Boolean =
+        getDatabase().conversationDao().commitGeneratedTitle(id, sessionId, title) == 1
+
+    fun observeConversationTitleMessages(id: Long, entryIds: List<String>) =
+        getDatabase().agentConversationEntryDao().observeTitleMessages(id, entryIds)
 
     suspend fun updateConversation(conversation: Conversation, preserveLatestMetadata: Boolean = false) {
         getDatabase().conversationDao().updatePreservingCheckpoint(conversation, preserveLatestMetadata)

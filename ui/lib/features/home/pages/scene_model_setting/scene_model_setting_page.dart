@@ -37,6 +37,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
   static const List<String> _sceneOrder = [
     'scene.dispatch.model',
     'scene.voice',
+    'scene.conversation.title',
     'scene.compactor.context.chat',
     'scene.memory.embedding',
     'scene.memory.rollup',
@@ -63,6 +64,8 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
   static const String _textCapability = 'text';
   static const String _embeddingCapability = 'embedding';
 
+  bool _titleEnabled = true;
+  bool _savingTitle = false;
   bool _isLoading = true;
   bool _isRefreshingModels = false;
   Completer<void>? _providerRefreshCompleter;
@@ -109,10 +112,20 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
   Color get _secondaryTextColor => context.omniPalette.textSecondary;
   Color get _tertiaryTextColor => context.omniPalette.textTertiary;
   String _sceneDisplayName(String sceneId) {
+    if (sceneId == 'scene.conversation.title') {
+      return Localizations.localeOf(context).languageCode == 'en'
+          ? 'Conversation title'
+          : '对话标题';
+    }
     return _sceneDisplayNameMap[sceneId] ?? sceneId;
   }
 
   String _sceneTooltip(SceneCatalogItem item) {
+    if (item.sceneId == 'scene.conversation.title') {
+      return Localizations.localeOf(context).languageCode == 'en'
+          ? 'Generate a title after the first successful reply'
+          : '首次成功回答后自动生成标题';
+    }
     final mapped = _sceneTooltipMap[item.sceneId];
     if (mapped != null) {
       return context.trLegacy(mapped);
@@ -192,6 +205,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
         SceneModelConfigService.getSceneModelBindings(),
         ModelProviderConfigService.listProfiles(),
         SceneModelConfigService.getSceneVoiceConfig(),
+        SceneModelConfigService.getSceneTitleEnabled(),
       ]);
       if (!await waitForPageReady() || !mounted) return;
 
@@ -216,6 +230,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
         _bindings = bindings;
         _profiles = profilesPayload.profiles;
         _voiceConfig = voiceConfig;
+        _titleEnabled = results[4] as bool;
         _providerModelsByProfileId = providerModelsByProfileId;
         _officialProviderModelsByCapability = {};
       });
@@ -680,7 +695,60 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
   }
 
   Widget _buildSceneRow(SceneCatalogItem scene) {
-    return _buildDefaultSceneRow(scene);
+    if (scene.sceneId != 'scene.conversation.title') {
+      return _buildDefaultSceneRow(scene);
+    }
+    final english = Localizations.localeOf(context).languageCode == 'en';
+    return Column(
+      children: [
+        _buildDefaultSceneRow(scene),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  english
+                      ? 'Automatically name new conversations'
+                      : '自动为新对话生成标题',
+                  style: TextStyle(color: _secondaryTextColor, fontSize: 13),
+                ),
+              ),
+              OmniSettingsSwitch(
+                key: const Key('scene-title-enabled-switch'),
+                value: _titleEnabled,
+                enabled: !_savingTitle,
+                onToggle: _saveTitleEnabled,
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _saveTitleEnabled(bool enabled) async {
+    setState(() => _savingTitle = true);
+    try {
+      final saved = await SceneModelConfigService.saveSceneTitleEnabled(
+        enabled,
+      );
+      if (mounted) setState(() => _titleEnabled = saved);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              Localizations.localeOf(context).languageCode == 'en'
+                  ? 'Could not save setting'
+                  : '设置保存失败',
+            ),
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _savingTitle = false);
+    }
   }
 
   Widget _buildVoiceCard() {

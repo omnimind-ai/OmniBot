@@ -11,6 +11,9 @@ import okio.Buffer
 
 @Dao
 interface AgentConversationEntryDao {
+    @Query("SELECT * FROM agent_conversation_entries WHERE conversationId = :conversationId AND entryType = 'assistant_message' AND entryId IN (:entryIds) ORDER BY id DESC")
+    fun observeTitleMessages(conversationId: Long, entryIds: List<String>): kotlinx.coroutines.flow.Flow<List<AgentConversationEntry>>
+
     @Query("""
         SELECT id, conversationId, conversationMode, entryId, entryType, status,
                '' AS summary, createdAt, updatedAt

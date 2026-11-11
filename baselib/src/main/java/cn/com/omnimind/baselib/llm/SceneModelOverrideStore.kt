@@ -10,6 +10,7 @@ object SceneModelOverrideStore {
     private const val KEY_SCENE_OVERRIDE_MAP = "scene_model_override_map"
     private val allowedScenes = setOf(
         "scene.dispatch.model",
+        "scene.conversation.title",
         "scene.vlm.operation.primary",
         "scene.compactor.context.chat",
         "scene.memory.embedding",

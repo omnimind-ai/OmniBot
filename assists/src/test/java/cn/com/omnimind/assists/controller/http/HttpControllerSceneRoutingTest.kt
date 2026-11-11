@@ -5,6 +5,12 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class HttpControllerSceneRoutingTest {
+    @Test fun `title scene inherits shared model without changing other scene routing`() {
+        assertEquals("default-model", HttpController.resolveSceneDefaultModel(
+            "scene.conversation.title", "", "default-model"))
+        assertNull(HttpController.resolveSceneDefaultModel("scene.conversation.title", "", null))
+    }
+
     @Test
     fun `VLM scene inherits the shared Agent model`() {
         assertEquals(

@@ -60,6 +60,7 @@ class SceneCatalogItem {
     );
   }
 }
+
 class SceneModelOverrideEntry {
   final String sceneId;
   final String model;
@@ -204,6 +205,20 @@ class SceneOperationConfig {
 }
 
 class SceneModelConfigService {
+  static Future<bool> getSceneTitleEnabled() async {
+    final result = await AssistsMessageService.assistCore
+        .invokeMethod<Map<dynamic, dynamic>>('getSceneTitleConfig');
+    return result?['enabled'] != false;
+  }
+
+  static Future<bool> saveSceneTitleEnabled(bool enabled) async {
+    final result = await AssistsMessageService.assistCore
+        .invokeMethod<Map<dynamic, dynamic>>('saveSceneTitleConfig', {
+          'enabled': enabled,
+        });
+    return result?['enabled'] != false;
+  }
+
   static Future<List<SceneCatalogItem>> getSceneCatalog() async {
     try {
       final result = await AssistsMessageService.assistCore

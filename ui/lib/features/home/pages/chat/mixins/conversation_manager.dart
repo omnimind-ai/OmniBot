@@ -813,29 +813,8 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
 
   // ===================== 对话保存 =====================
 
-  /// 构建对话历史文本
-  String buildConversationHistoryText(List<ChatMessageModel> msgs) {
-    final buffer = StringBuffer();
-    for (final message in msgs) {
-      if (message.user == 1) {
-        final text = message.content?['text'] as String? ?? '';
-        if (text.isNotEmpty) {
-          buffer.write('用户: $text\n');
-        }
-      }
-      // else if (message.user == 2) {
-      //   final text = message.content?['text'] as String? ?? '';
-      //   if (text.isNotEmpty) {
-      //     buffer.write('助手: $text\n');
-      //   }
-      // }
-    }
-    return buffer.toString().trim();
-  }
-
   /// 持久化对话快照
   Future<void> persistConversationSnapshot({
-    bool generateSummary = false,
     bool markComplete = false,
     int? lifecycleToken,
     bool rethrowOnFailure = false,
@@ -857,9 +836,7 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     }
 
     try {
-      debugPrint(
-        "[conversation manager] 对话持久化 generateSummary: $generateSummary markComplete: $markComplete",
-      );
+      debugPrint("[conversation manager] 对话持久化 markComplete: $markComplete");
       final now = DateTime.now().millisecondsSinceEpoch;
       final lastMessage = snapshotMessages.isNotEmpty
           ? (snapshotMessages[0].text ?? '')
@@ -876,16 +853,6 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
           : userText;
 
       String? summary;
-      if (generateSummary) {
-        final conversationHistory = buildConversationHistoryText(
-          snapshotMessages,
-        );
-        summary = conversationHistory.isEmpty
-            ? null
-            : await ConversationService.generateConversationSummary(
-                conversationHistory: conversationHistory,
-              );
-      }
 
       int? targetId = snapshotConversationId;
 
@@ -1017,23 +984,17 @@ mixin ConversationManager<T extends StatefulWidget> on State<T> {
     }
   }
 
-  /// 保存对话且总结
-  Future<void> saveConversationWithSummary() async {
+  /// 保存已有对话快照
+  Future<void> saveExistingConversation() async {
     if (_hasSavedConversation) {
-      await persistConversationSnapshot(
-        generateSummary: true,
-        markComplete: true,
-      );
+      await persistConversationSnapshot(markComplete: true);
     }
   }
 
   /// 保存对话
   Future<void> saveConversation() async {
     _hasSavedConversation = true;
-    await persistConversationSnapshot(
-      generateSummary: false,
-      markComplete: true,
-    );
+    await persistConversationSnapshot(markComplete: true);
   }
 
   /// 创建新对话

@@ -356,7 +356,6 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   Future<void> _ensureActiveConversationReadyForStreaming() async {
     if (_currentConversationId == null) {
       await persistConversationSnapshot(
-        generateSummary: false,
         markComplete: false,
         rethrowOnFailure: true,
       );

@@ -96,6 +96,8 @@ class AssistsCoreChannel {
                 "checkProviderModelAvailability" -> {
                     assistsCoreManager!!.checkProviderModelAvailability(call, result)
                 }
+                "getSceneTitleConfig" -> assistsCoreManager!!.getSceneTitleConfig(call, result)
+                "saveSceneTitleConfig" -> assistsCoreManager!!.saveSceneTitleConfig(call, result)
                 "getSceneModelCatalog" -> {
                     assistsCoreManager!!.getSceneModelCatalog(call, result)
                 }
@@ -306,9 +308,6 @@ class AssistsCoreChannel {
                 }
                 "updateConversationTitle" -> {
                     assistsCoreManager!!.updateConversationTitle(call, result)
-                }
-                "generateConversationSummary" -> {
-                    assistsCoreManager!!.generateConversationSummary(call, result)
                 }
                 "completeConversation" -> {
                     assistsCoreManager!!.completeConversation(call, result)

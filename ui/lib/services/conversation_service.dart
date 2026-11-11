@@ -272,24 +272,6 @@ class ConversationService {
     ConversationMode mode = ConversationMode.agent,
   }) => _manage('rename', conversationId, mode: mode, title: newTitle);
 
-  static Future<String?> generateConversationSummary({
-    required String conversationHistory,
-  }) async {
-    try {
-      final result = await _assistCore.invokeMethod(
-        'generateConversationSummary',
-        {'conversationHistory': conversationHistory},
-      );
-      return result as String?;
-    } on PlatformException catch (e) {
-      debugPrint('生成对话摘要失败: ${e.message}');
-      return null;
-    } catch (e) {
-      debugPrint('生成对话摘要失败: $e');
-      return null;
-    }
-  }
-
   static Future<bool> completeConversation(
     int conversationId, {
     ConversationMode? mode,
