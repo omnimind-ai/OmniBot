@@ -27,6 +27,15 @@ class AgentSessionBindingMetadataTest {
         assertEquals(changed, repository.buildUpdatedConversation(changed, "New title", true, "agent", 300))
     }
 
+    @Test fun titleOnlyObservationDoesNotChangeActivityOrReplaceOwnedTitle() {
+        val renamed = repository.buildUpdatedConversation(original, "New title", null, "agent", 200)
+        assertEquals(100L, renamed.updatedAt)
+        for (source in listOf("manual", "generated")) {
+            val owned = original.copy(titleSource = source)
+            assertEquals(owned, repository.buildUpdatedConversation(owned, "Replay", null, "agent", 200))
+        }
+    }
+
     @Test fun omittedMetadataDoesNotTouchActivity() {
         assertEquals(original, repository.buildUpdatedConversation(original, null, null, "agent", 200))
     }

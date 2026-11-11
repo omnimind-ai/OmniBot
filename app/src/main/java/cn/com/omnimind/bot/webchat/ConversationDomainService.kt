@@ -369,11 +369,8 @@ class ConversationDomainService(
         check(naAccess.canRead(conversationId)) { "请登录此云端会话所属的账号。" }
         val existing = DatabaseHelper.getConversationById(conversationId)
             ?: throw IllegalArgumentException("Conversation not found")
-        val updated = existing.copy(
-            title = newTitle.ifBlank { existing.title },
-            updatedAt = System.currentTimeMillis()
-        )
-        DatabaseHelper.updateConversation(updated)
+        DatabaseHelper.setConversationTitle(conversationId, newTitle.ifBlank { existing.title }, "manual")
+        val updated = DatabaseHelper.getConversationById(conversationId) ?: return conversationToPayload(existing)
         publishConversationEvent("conversation_updated", updated)
         return conversationToPayload(updated)
     }

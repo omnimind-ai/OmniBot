@@ -446,32 +446,8 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     await _saveConversationToDb();
   }
 
-  String _buildConversationHistoryText() {
-    final buffer = StringBuffer();
-    for (final message in _messages) {
-      if (message.user == 1) {
-        final text = message.content?['text'] as String? ?? '';
-        if (text.isNotEmpty) {
-          buffer.write(
-            LegacyTextLocalizer.isEnglish ? 'User: $text\n' : '用户: $text\n',
-          );
-        }
-      }
-      // else if (message.user == 2) {
-      //   final text = message.content?['text'] as String? ?? '';
-      //   if (text.isNotEmpty) {
-      //     buffer.write('助手: $text\n');
-      //   }
-      // }
-    }
-    return buffer.toString().trim();
-  }
-
   /// 保存对话到数据库，用于持久化对话历史
-  Future<void> _saveConversationToDb({
-    bool generateSummary = false,
-    bool markComplete = false,
-  }) async {
+  Future<void> _saveConversationToDb({bool markComplete = false}) async {
     if (_messages.isEmpty) return;
 
     try {
@@ -493,15 +469,6 @@ class _ChatBotSheetState extends State<ChatBotSheet>
           : userText;
 
       String? summary;
-      if (generateSummary) {
-        debugPrint("chat bot sheet 生成对话摘要...");
-        final conversationHistory = _buildConversationHistoryText();
-        summary = conversationHistory.isEmpty
-            ? null
-            : await ConversationService.generateConversationSummary(
-                conversationHistory: conversationHistory,
-              );
-      }
 
       if (_currentConversationId == null) {
         final newId = await ConversationService.createConversation(
@@ -671,9 +638,7 @@ class _ChatBotSheetState extends State<ChatBotSheet>
     // Closing the presentation is not proof that an ACP turn completed. A
     // cancelled/unfinished turn remains an active conversation; only an ACP
     // terminal event (or an explicit user cancellation) may complete it.
-    unawaited(
-      _saveConversationToDb(generateSummary: true, markComplete: !hasLiveTurn),
-    );
+    unawaited(_saveConversationToDb(markComplete: !hasLiveTurn));
   }
 
   @override

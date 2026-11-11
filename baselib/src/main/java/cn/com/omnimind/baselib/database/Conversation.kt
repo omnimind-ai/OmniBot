@@ -12,6 +12,12 @@ data class Conversation(
     // 对话标题（用户可编辑）
     val title: String,
 
+    // Title ownership is independent of message/history snapshots.
+    @androidx.room.ColumnInfo(defaultValue = "'legacy'")
+    val titleSource: String = "temporary",
+    @androidx.room.ColumnInfo(defaultValue = "1")
+    val titleGenerationAttempted: Boolean = false,
+
     // 对话模式
     val mode: String = "normal",
 

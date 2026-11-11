@@ -542,6 +542,8 @@ internal class WebAgentRunBridge(
             "roundIndex" to sequence,
             "kind" to kind,
             "parentTaskId" to parentTaskId,
+            "sessionId" to state.threadId,
+            "turnId" to state.turnId,
             "entryId" to entryId,
             "isFinal" to isFinal,
             "agentId" to state.agentId,
@@ -677,7 +679,11 @@ internal fun parseWebAgentEvent(event: Map<String, Any?>): WebAgentEventUpdate {
             updateId,
             threadId
         )
-        val messageEntryId = agentEntryId(updateId ?: updateParent, "message")
+        val messageId = firstNonBlank(update["messageId"], update["message_id"], updateId)
+        val messageEntryId = agentEntryId(
+            if (messageId != null && turnId != null) "$turnId-$messageId" else messageId ?: updateParent,
+            "message"
+        )
         val reasoningEntryId = agentEntryId(updateId ?: updateParent, "thinking")
         return when (updateKind) {
             "agent_message_chunk" -> WebAgentEventUpdate(

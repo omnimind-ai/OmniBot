@@ -2149,11 +2149,13 @@ internal class LocalAcpRuntime(
         val orderedEntries = allEntries.map { entry ->
             val sessionId = entry["threadId"].toString()
             val activeTurnId = turnOwnership.activeTurnId(sessionId)
+            val conversation = bindingRepository.getConversationByThreadId(sessionId)
             // Host projection only: use the existing ACP session/turn owners.
             // A persisted SessionInfo alone cannot prove a loaded/running session.
             entry + mapOf(
                 // Archive belongs to the local Conversation, not ACP SessionInfo.
-                "archived" to (bindingRepository.getConversationByThreadId(sessionId)?.isArchived == true),
+                "archived" to (conversation?.isArchived == true),
+                "title" to (conversation?.title ?: entry["title"]),
                 "loaded" to sessions.containsKey(sessionId),
                 "active" to (activeTurnId != null),
                 "activeTurnId" to activeTurnId,
@@ -2201,7 +2203,7 @@ internal class LocalAcpRuntime(
     private suspend fun setThreadName(args: Map<String, Any?>): Map<String, Any?> {
         val threadId = resolveThreadId(args)
         val name = args.stringValue("name").orEmpty()
-        bindingRepository.updateTitle(threadId, name)
+        bindingRepository.updateTitle(threadId, name, "manual")
         emitAcpNotification(
             sessionId = threadId,
             update = mapOf(
@@ -2605,6 +2607,8 @@ internal class LocalAcpRuntime(
             )
             throw error
         }
+        val titleConversationId = bindingRepository.getBindingByThreadId(threadId)?.conversationId
+        val titleUserText = AcpPromptInputCompatibilityAdapter.normalize(args).stringValue("text").orEmpty()
         val completion = CompletableDeferred<Map<String, Any?>>()
         // Keep the execution job alive while it waits on this gate. That makes
         // the resource visible to session/cancel before any prompt IO starts,
@@ -2691,6 +2695,23 @@ internal class LocalAcpRuntime(
                     cancelled = cancelled,
                     error = failure,
                 )
+                val titleMessageId = lastAssistantMessageIds[turnIdentity]?.value
+                if (status == "end_turn" && promptResponseReceived && failure == null && !cancelled && titleConversationId != null) {
+                    withContext(NonCancellable) {
+                        cn.com.omnimind.bot.agent.ConversationTitleGenerator.generate(
+                            scope = scope,
+                            conversationId = titleConversationId,
+                            sessionId = threadId,
+                            turnId = turnId,
+                            userText = titleUserText,
+                            messageId = titleMessageId,
+                            isBound = { bindingRepository.getBindingByThreadId(threadId)?.conversationId == titleConversationId },
+                            publish = { title -> bindingRepository.updateTitle(
+                                threadId, title, "generated", expectedConversationId = titleConversationId
+                            ) },
+                        )
+                    }
+                }
                 finishTurn(
                     threadId = threadId,
                     turnId = turnId,
@@ -3872,9 +3893,14 @@ internal class LocalAcpRuntime(
         // project it into cards, but the wire shape remains ACP and never
         // becomes an app-owned item/turn/acp event vocabulary.
         val notification = update.toAcpSessionNotification(threadId) ?: return
+        val acceptedUpdate = if (update is SessionUpdate.SessionInfoUpdate && update.title != null) {
+            val id = bindingRepository.getBindingByThreadId(threadId)?.conversationId
+            val title = id?.let { DatabaseHelper.getConversationById(it)?.title }
+            if (title != null) notification.update + ("title" to title) else notification.update
+        } else notification.update
         emitAcpNotification(
             sessionId = notification.sessionId,
-            update = notification.update,
+            update = acceptedUpdate,
             timingThreadId = threadId,
             timingTurnId = resolvedTurnId,
             replay = isReplay,

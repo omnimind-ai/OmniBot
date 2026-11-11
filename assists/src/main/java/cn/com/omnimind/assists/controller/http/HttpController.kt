@@ -253,7 +253,7 @@ object HttpController {
         sceneDefaultModel: String?,
         sharedAgentModel: String?
     ): String? {
-        if (sceneId != SceneOperationConfigStore.SCENE_ID) {
+        if (sceneId !in setOf(SceneOperationConfigStore.SCENE_ID, "scene.conversation.title")) {
             return sceneDefaultModel?.trim()?.takeIf { it.isNotEmpty() }
         }
         return sharedAgentModel?.trim()?.takeIf { it.isNotEmpty() }
@@ -960,7 +960,7 @@ object HttpController {
         }
         val directSceneBinding = sceneProfile?.sceneId?.let(SceneModelBindingStore::getBinding)
         val sharedAgentBinding = if (
-            sceneProfile?.sceneId == SceneOperationConfigStore.SCENE_ID
+            sceneProfile?.sceneId in setOf(SceneOperationConfigStore.SCENE_ID, "scene.conversation.title")
         ) {
             SceneModelBindingStore.getBinding("scene.dispatch.model")
         } else {
@@ -982,7 +982,7 @@ object HttpController {
                 sceneId = sceneProfile.sceneId,
                 sceneDefaultModel = sceneProfile.model,
                 sharedAgentModel = if (
-                    sceneProfile.sceneId == SceneOperationConfigStore.SCENE_ID
+                    sceneProfile.sceneId in setOf(SceneOperationConfigStore.SCENE_ID, "scene.conversation.title")
                 ) {
                     sharedAgentModel
                 } else {

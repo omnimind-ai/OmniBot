@@ -14,17 +14,6 @@ extension _ChatRuntimeInternalSupport on ChatConversationRuntimeCoordinator {
     runtime.messages.removeWhere((msg) => msg.id == waitingCardId);
   }
 
-  String _buildConversationHistoryText(List<ChatMessageModel> messages) {
-    final buffer = StringBuffer();
-    for (final message in messages) {
-      if (message.user != 1) continue;
-      final text = message.content?['text'] as String? ?? '';
-      if (text.isEmpty) continue;
-      buffer.write(_isEnglish ? 'User: $text\n' : '用户: $text\n');
-    }
-    return buffer.toString().trim();
-  }
-
   ConversationMode _conversationModeFromRuntimeMode(
     String mode, {
     ConversationModel? conversation,

@@ -1796,6 +1796,22 @@ class AssistsCoreManager(private val context: Context) {
         }
     }
 
+    fun getSceneTitleConfig(call: MethodCall, result: MethodChannel.Result) {
+        result.success(mapOf("enabled" to cn.com.omnimind.baselib.llm.SceneTitleConfigStore.isEnabled()))
+    }
+
+    fun saveSceneTitleConfig(call: MethodCall, result: MethodChannel.Result) {
+        val enabled = call.argument<Boolean>("enabled") ?: true
+        workJob.launch {
+            try {
+                val saved = cn.com.omnimind.baselib.llm.SceneTitleConfigStore.save(enabled)
+                withContext(Dispatchers.Main) { result.success(mapOf("enabled" to saved)) }
+            } catch (error: Exception) {
+                withContext(Dispatchers.Main) { result.error("SAVE_TITLE_CONFIG_ERROR", error.message, null) }
+            }
+        }
+    }
+
     fun getSceneModelCatalog(call: MethodCall, result: MethodChannel.Result) {
         workJob.launch {
             try {
@@ -3496,49 +3512,6 @@ class AssistsCoreManager(private val context: Context) {
                 OmniLog.e(TAG, "更新对话标题失败: ${e.message}")
                 withContext(Dispatchers.Main) {
                     result.error("UPDATE_CONVERSATION_TITLE_ERROR", e.message, null)
-                }
-            }
-        }
-    }
-
-    /**
-     * 生成对话摘要
-     * 使用云端 qwen-flash 模型生成 10 字左右的摘要
-     */
-    fun generateConversationSummary(call: MethodCall, result: MethodChannel.Result) {
-        val conversationHistory = call.argument<String>("conversationHistory") ?: ""
-
-        workJob.launch {
-            try {
-                // 构建提示词，要求生成10字左右的摘要
-                val prompt = """
-                    你是一个聊天总结助手，请根据以下用户发送的对话内容，生成一个简洁的摘要标题，要求：
-                    1. 摘要标题长度控制在10个字左右
-                    2. 摘要标题应该体现对话的主要内容
-                    3. 不要包含特殊字符和表情符号
-                    4. 不要包含任何的人称用词
-
-                    对话内容：
-                    $conversationHistory
-
-                    请直接返回摘要标题，不要包含其他内容。
-                """.trimIndent()
-
-                // 调用 LLM 生成摘要
-                val llmResult = HttpController.postLLMRequest("scene.compactor.context.chat", prompt)
-                val summary = llmResult.message
-                    .trim()
-                    .take(10)
-                    .takeIf { it.isNotBlank() }
-                    ?: throw IllegalStateException("Conversation summary is empty")
-
-                withContext(Dispatchers.Main) {
-                    result.success(summary)
-                }
-            } catch (e: Exception) {
-                OmniLog.e(TAG, "生成对话摘要失败: ${e.message}")
-                withContext(Dispatchers.Main) {
-                    result.error("GENERATE_SUMMARY_ERROR", e.message, null)
                 }
             }
         }

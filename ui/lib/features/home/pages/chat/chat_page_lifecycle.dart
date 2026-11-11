@@ -1479,7 +1479,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (state == AppLifecycleState.paused) {
       // 根页面的系统返回由 Android 直接处理，不会再经过 Dart 的 pop 回调。
       // 在页面离开前台后异步完成会话，既保留原有语义，也不阻塞返回桌面动画。
-      unawaited(saveConversationWithSummary());
+      unawaited(saveExistingConversation());
     }
   }
 

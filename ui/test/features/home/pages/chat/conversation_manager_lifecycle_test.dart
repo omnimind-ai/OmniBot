@@ -40,10 +40,7 @@ void main() {
     );
     await key.currentState!.persistConversationSnapshot();
     expect(creates, 0);
-    await key.currentState!.persistConversationSnapshot(
-      markComplete: true,
-      generateSummary: true,
-    );
+    await key.currentState!.persistConversationSnapshot(markComplete: true);
     expect(key.currentState!.currentConversationId, isNull);
     expect(key.currentState!.messages, isEmpty);
     expect(creates, 0);

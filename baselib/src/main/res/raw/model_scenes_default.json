@@ -1,4 +1,12 @@
 {
+  "scene.conversation.title": {
+    "model": "",
+    "inherits_model_from": "scene.dispatch.model",
+    "transport": "openai_compatible",
+    "response_parser": "text_content",
+    "description": "对话标题",
+    "description_i18n": {"zh-CN": "对话标题", "en-US": "Conversation title"}
+  },
   "scene.dispatch.model": {
     "model": "",
     "prompt": null,

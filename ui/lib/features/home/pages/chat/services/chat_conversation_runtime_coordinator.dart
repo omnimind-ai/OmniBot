@@ -46,7 +46,7 @@ class _PendingPersistenceRequest {
     required this.conversationId,
     required this.mode,
     required this.timer,
-    this.generateSummary = false,
+
     this.markComplete = false,
     this.persistMessages = false,
     this.preserveActivityTime = false,
@@ -55,7 +55,7 @@ class _PendingPersistenceRequest {
   final int conversationId;
   final String mode;
   final Timer timer;
-  final bool generateSummary;
+
   final bool markComplete;
   final bool persistMessages;
   final bool preserveActivityTime;
@@ -105,8 +105,26 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
 
     AssistsMessageService.initialize();
     AssistsMessageService.conversationListChangedStream.listen((event) {
-      if (event['reason'] == 'na_history_owner_changed')
+      if (event['reason'] == 'na_history_owner_changed') {
         discardNaHistoryViews();
+        return;
+      }
+      final payload = event['conversation'];
+      if (event['reason'] != 'conversation_updated' || payload is! Map) return;
+      final id = payload['id'];
+      final title = payload['title'];
+      if (id is! num || title is! String || title.trim().isEmpty) return;
+      var changed = false;
+      for (final runtime in _runtimes.values) {
+        final conversation = runtime.conversation;
+        if (runtime.conversationId == id.toInt() &&
+            conversation != null &&
+            conversation.title != title) {
+          runtime.conversation = conversation.copyWith(title: title);
+          changed = true;
+        }
+      }
+      if (changed) _notifyRuntimeListeners();
     });
     AssistsMessageService.addOnExternalUserMessageAppendedCallback(
       _handleExternalUserMessageAppended,

@@ -78,6 +78,7 @@ void main() {
     await tester.pump(const Duration(milliseconds: 50));
   }
 
+  late bool titleEnabled;
   late Map<String, dynamic> savedOperationConfig;
   late Map<String, dynamic> codexReadConfig;
   late Map<String, dynamic>? savedCodexConfig;
@@ -132,13 +133,24 @@ void main() {
     providerFetchCompleter = null;
     providerFetchError = null;
     providerFetchArguments = <Map<dynamic, dynamic>>[];
+    titleEnabled = true;
     savedOperationConfig = <String, dynamic>{'useOfficialService': true};
 
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
           switch (call.method) {
+            case 'getSceneTitleConfig':
+              return {'enabled': titleEnabled};
+            case 'saveSceneTitleConfig':
+              titleEnabled = (call.arguments as Map)['enabled'] as bool;
+              return {'enabled': titleEnabled};
             case 'getSceneModelCatalog':
               return <Map<String, dynamic>>[
+                {
+                  'sceneId': 'scene.conversation.title',
+                  'description': '对话标题',
+                  'defaultModel': 'default-model',
+                },
                 <String, dynamic>{
                   'sceneId': 'scene.vlm.operation.primary',
                   'description': '负责 Android GUI 观察与动作决策',
@@ -313,6 +325,22 @@ void main() {
         .setMockMethodCallHandler(agentRuntimeChannel, null);
     ModelsDevCatalogService.resetForTesting();
   });
+
+  testWidgets(
+    'title generation defaults on and can be disabled independently',
+    (tester) async {
+      await pumpSceneSettings(tester);
+      await tester.pumpAndSettle();
+      final toggle = find.byKey(const Key('scene-title-enabled-switch'));
+      expect(toggle, findsOneWidget);
+      expect(tester.widget<OmniSettingsSwitch>(toggle).value, isTrue);
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(titleEnabled, isFalse);
+      expect(tester.widget<OmniSettingsSwitch>(toggle).value, isFalse);
+    },
+  );
 
   testWidgets('scene page does not wait for metadata refresh', (tester) async {
     tester.view.physicalSize = const Size(1080, 2000);
@@ -785,10 +813,7 @@ void main() {
         apiBase: providerBaseUrl,
         profileRevision: providerRevision,
         models: const <ProviderModelOption>[
-          ProviderModelOption(
-            id: 'custom-model',
-            displayName: 'Custom Choice',
-          ),
+          ProviderModelOption(id: 'custom-model', displayName: 'Custom Choice'),
         ],
       );
       await pumpSceneSettings(tester);

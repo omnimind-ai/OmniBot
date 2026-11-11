@@ -4,7 +4,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
   Future<void> persistRuntimeConversation({
     required int conversationId,
     required String mode,
-    bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
     bool preserveActivityTime = false,
@@ -37,7 +36,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
             conversationId: conversationId,
             mode: mode,
             expectedRuntime: expectedRuntime,
-            generateSummary: generateSummary,
             markComplete: markComplete,
             persistMessages: persistMessages,
             preserveActivityTime: preserveActivityTime,
@@ -67,7 +65,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     required int conversationId,
     required String mode,
     ChatConversationRuntimeState? expectedRuntime,
-    bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
     bool preserveActivityTime = false,
@@ -116,15 +113,7 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
         ? '${userText.substring(0, 20)}...'
         : userText;
 
-    String? summary = snapshotConversation?.summary;
-    if (generateSummary) {
-      final history = _buildConversationHistoryText(snapshotMessages);
-      summary = history.isEmpty
-          ? null
-          : await ConversationService.generateConversationSummary(
-              conversationHistory: history,
-            );
-    }
+    final summary = snapshotConversation?.summary;
 
     final baseConversation =
         (snapshotConversation?.mode == conversationMode
@@ -214,7 +203,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
   void schedulePersistRuntimeConversation({
     required int conversationId,
     required String mode,
-    bool generateSummary = false,
     bool markComplete = false,
     bool persistMessages = false,
     bool preserveActivityTime = false,
@@ -229,8 +217,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     // future. Merge this batch into its original timer; urgent writes may
     // advance it. The existing ordered persistence tail remains the owner.
     if (delay == Duration.zero) previous?.timer.cancel();
-    final nextGenerateSummary =
-        generateSummary || (previous?.generateSummary ?? false);
     final nextMarkComplete = markComplete || (previous?.markComplete ?? false);
     final nextPersistMessages =
         persistMessages || (previous?.persistMessages ?? false);
@@ -243,7 +229,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
             persistRuntimeConversation(
               conversationId: conversationId,
               mode: mode,
-              generateSummary: request.generateSummary,
               markComplete: request.markComplete,
               persistMessages: request.persistMessages,
               preserveActivityTime: request.preserveActivityTime,
@@ -254,7 +239,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       conversationId: conversationId,
       mode: mode,
       timer: timer,
-      generateSummary: nextGenerateSummary,
       markComplete: nextMarkComplete,
       persistMessages: nextPersistMessages,
       preserveActivityTime:
@@ -278,7 +262,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
     await persistRuntimeConversation(
       conversationId: request.conversationId,
       mode: request.mode,
-      generateSummary: request.generateSummary,
       markComplete: request.markComplete,
       persistMessages: request.persistMessages,
       preserveActivityTime: request.preserveActivityTime,
@@ -293,7 +276,6 @@ extension ChatRuntimePersistenceSupport on ChatConversationRuntimeCoordinator {
       await persistRuntimeConversation(
         conversationId: request.conversationId,
         mode: request.mode,
-        generateSummary: request.generateSummary,
         markComplete: request.markComplete,
         persistMessages: request.persistMessages,
         preserveActivityTime: request.preserveActivityTime,

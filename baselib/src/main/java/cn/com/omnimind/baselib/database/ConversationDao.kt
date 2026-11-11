@@ -39,6 +39,9 @@ interface ConversationDao {
         } else conversation
         val updated = if (current != null) {
             candidate.copy(
+                title = if (current.titleSource in setOf("manual", "generated", "agent")) current.title else candidate.title,
+                titleSource = current.titleSource,
+                titleGenerationAttempted = current.titleGenerationAttempted,
                 contextSummary = current.contextSummary,
                 contextSummaryCutoffEntryDbId = current.contextSummaryCutoffEntryDbId,
                 contextSummaryUpdatedAt = current.contextSummaryUpdatedAt,
@@ -64,6 +67,15 @@ interface ConversationDao {
 
     @Query("UPDATE conversations SET latestPromptTokens = :tokens, latestPromptTokensUpdatedAt = :at, updatedAt = MAX(updatedAt, :at) WHERE id = :id AND latestPromptTokensUpdatedAt <= :at")
     suspend fun updatePromptUsage(id: Long, tokens: Int, at: Long)
+
+    @Query("UPDATE conversations SET titleGenerationAttempted = 1 WHERE id = :id AND titleGenerationAttempted = 0 AND titleSource IN ('temporary', 'agent')")
+    suspend fun claimTitleGeneration(id: Long): Int
+
+    @Query("UPDATE conversations SET title = :title, titleSource = :source WHERE id = :id AND (:source = 'manual' OR (:source = 'agent' AND titleSource NOT IN ('manual', 'generated')))")
+    suspend fun setOwnedTitle(id: Long, title: String, source: String): Int
+
+    @Query("UPDATE conversations SET title = :title, titleSource = 'generated' WHERE id = :id AND titleGenerationAttempted = 1 AND titleSource IN ('temporary', 'agent') AND EXISTS (SELECT 1 FROM codex_thread_bindings WHERE conversationId = :id AND threadId = :sessionId)")
+    suspend fun commitGeneratedTitle(id: Long, sessionId: String, title: String): Int
 
     @Delete
     suspend fun delete(conversation: Conversation)

@@ -229,18 +229,23 @@ internal class AgentSessionBindingRepository(
         return conversationId
     }
 
-    suspend fun updateTitle(threadId: String, title: String?) {
+    suspend fun updateTitle(
+        threadId: String,
+        title: String?,
+        source: String = "agent",
+        expectedConversationId: Long? = null,
+    ) {
         val binding = getBindingByThreadId(threadId.trim()) ?: return
-        val conversation = DatabaseHelper.getConversationById(binding.conversationId) ?: return
+        if (expectedConversationId != null && binding.conversationId != expectedConversationId) return
         val normalizedTitle = title?.trim().orEmpty()
-        if (normalizedTitle.isEmpty() || normalizedTitle == conversation.title) {
-            return
+        if (normalizedTitle.isEmpty()) return
+        val changed = if (source == "generated") {
+            DatabaseHelper.commitGeneratedConversationTitle(binding.conversationId, threadId, normalizedTitle)
+        } else {
+            DatabaseHelper.setConversationTitle(binding.conversationId, normalizedTitle, source)
         }
-        val updated = conversation.copy(
-            title = normalizedTitle,
-            updatedAt = System.currentTimeMillis()
-        )
-        DatabaseHelper.updateConversation(updated)
+        if (!changed) return
+        val updated = DatabaseHelper.getConversationById(binding.conversationId) ?: return
         publishConversationEvent("conversation_updated", updated)
     }
 
@@ -303,15 +308,17 @@ internal class AgentSessionBindingRepository(
         val normalizedTitle = title?.trim().orEmpty()
         val updated = conversation.copy(
             mode = normalizeConversationMode(conversationMode),
-            title = normalizedTitle.ifEmpty { conversation.title },
+            title = if (conversation.titleSource in setOf("manual", "generated")) conversation.title else normalizedTitle.ifEmpty { conversation.title },
             isArchived = archived ?: conversation.isArchived,
         )
         // Listing/rebinding an unchanged session is observation, not activity.
-        return if (updated == conversation) conversation else updated.copy(updatedAt = updatedAt)
+        return if (updated.mode == conversation.mode && updated.isArchived == conversation.isArchived) updated else updated.copy(updatedAt = updatedAt)
     }
 
-    private fun publishConversationEvent(eventName: String, conversation: Conversation) {
-        val payload = conversationDomainService.conversationToPayload(conversation)
+    private suspend fun publishConversationEvent(eventName: String, conversation: Conversation) {
+        val committed = if (eventName == "conversation_deleted") conversation
+            else DatabaseHelper.getConversationById(conversation.id) ?: return
+        val payload = conversationDomainService.conversationToPayload(committed)
         RealtimeHub.publish(
             eventName,
             mapOf(

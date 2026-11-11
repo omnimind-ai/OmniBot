@@ -154,6 +154,46 @@ void main() {
     await Future<void>.delayed(Duration.zero);
   }
 
+  test('committed title updates cached conversation without changing turn or messages', () async {
+    coordinator.ensureInitialized();
+    final runtime = coordinator.ensureRuntime(
+      conversationId: 99119,
+      mode: kChatRuntimeModeAgent,
+      conversation: ConversationModel(
+        id: 99119,
+        title: 'Question',
+        status: 0,
+        messageCount: 1,
+        createdAt: 1,
+        updatedAt: 2,
+      ),
+      initialMessages: [ChatMessageModel.userMessage('Question')],
+    );
+    final other = coordinator.ensureRuntime(
+      conversationId: 99120,
+      mode: kChatRuntimeModeAgent,
+      conversation: ConversationModel(
+        id: 99120,
+        title: 'Other',
+        status: 0,
+        messageCount: 0,
+        createdAt: 1,
+        updatedAt: 2,
+      ),
+    );
+    final messages = List<ChatMessageModel>.from(runtime.messages);
+    final turn = runtime.currentDispatchTurnId;
+    await emitPlatformEvent('onConversationListChanged', {
+      'reason': 'conversation_updated',
+      'conversation': {'id': 99119, 'title': 'Generated title'},
+    });
+    expect(runtime.conversation!.title, 'Generated title');
+    expect(runtime.conversation!.updatedAt, 2);
+    expect(runtime.currentDispatchTurnId, turn);
+    expect(runtime.messages, messages);
+    expect(other.conversation!.title, 'Other');
+  });
+
   Future<void> emitAgentEvent(Map<String, dynamic> event) async {
     await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .handlePlatformMessage(
