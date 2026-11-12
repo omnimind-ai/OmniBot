@@ -56,6 +56,10 @@ class _StartupEnvironmentNoticeState extends State<StartupEnvironmentNotice> {
   Widget build(BuildContext context) {
     final locale = Localizations.localeOf(context);
     final palette = context.omniPalette;
+    final rawError = _preparation.snapshot?.error?.trim();
+    final localizedError = rawError != null && rawError.isNotEmpty
+        ? LegacyTextLocalizer.localize(rawError, locale: locale)
+        : null;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -82,16 +86,35 @@ class _StartupEnvironmentNoticeState extends State<StartupEnvironmentNotice> {
                       child: Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              LegacyTextLocalizer.localize(
-                                '系统安装失败',
-                                locale: locale,
-                              ),
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  LegacyTextLocalizer.localize(
+                                    '系统安装失败',
+                                    locale: locale,
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (localizedError != null) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    localizedError,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                           const SizedBox(width: 8),

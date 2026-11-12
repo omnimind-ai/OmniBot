@@ -157,6 +157,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   bool _isMountsBusy = false;
   bool _hasInitializedSelection = false;
   String? _detectError;
+  String? _startupInitError;
   int _inventoryRequest = 0;
   int _distributionRequest = 0;
   String? _autoStartError;
@@ -305,7 +306,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   void _handleTerminalInitProgress(EmbeddedTerminalInitProgress progress) {
     if (!mounted) return;
     if (!_isDistributionSwitching) {
-      if (progress.phase == 'ready') {
+      if (progress.phase == 'ready' || progress.phase == 'error') {
         unawaited(_refreshCompletedDistribution());
       }
       return;
@@ -332,13 +333,26 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       if (!mounted ||
           _isDistributionSwitching ||
           request != _distributionRequest ||
-          !snapshot.completed ||
-          snapshot.success != true ||
-          snapshot.distribution == null ||
-          snapshot.distribution == _selectedDistribution) {
+          !snapshot.completed) {
         return;
       }
-      await _loadDistributionAndInventory(selectMissingByDefault: true);
+      if (snapshot.success == true) {
+        if (_startupInitError != null) {
+          setState(() {
+            _startupInitError = null;
+          });
+        }
+        await _loadDistributionAndInventory(selectMissingByDefault: true);
+      } else if (snapshot.success == false &&
+          (snapshot.distribution == null ||
+              snapshot.distribution == _selectedDistribution)) {
+        final rawError = snapshot.error?.trim();
+        setState(() {
+          _startupInitError = rawError != null && rawError.isNotEmpty
+              ? context.trLegacy(rawError)
+              : context.trLegacy('内嵌终端环境初始化失败。');
+        });
+      }
     } catch (_) {
       // An observation failure does not change the selected distribution.
     }
@@ -376,13 +390,17 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       final success = result['success'] == true;
       if (!success) {
         final rawMsg = (result['message'] as String?)?.trim();
-        showToast(
-          rawMsg != null && rawMsg.isNotEmpty
-              ? context.trLegacy(rawMsg)
-              : context.trLegacy('修复终端环境失败'),
-          type: ToastType.error,
-        );
+        final localizedMsg = rawMsg != null && rawMsg.isNotEmpty
+            ? context.trLegacy(rawMsg)
+            : context.trLegacy('修复终端环境失败');
+        setState(() {
+          _startupInitError = localizedMsg;
+        });
+        showToast(localizedMsg, type: ToastType.error);
       } else {
+        setState(() {
+          _startupInitError = null;
+        });
         showToast(context.trLegacy('终端环境已修复'));
       }
       await _loadDistributionAndInventory(selectMissingByDefault: true);
@@ -416,11 +434,28 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     ++_inventoryRequest;
     try {
       final distribution = await getEmbeddedTerminalDistribution();
+      EmbeddedTerminalInitSnapshot? initSnapshot;
+      try {
+        initSnapshot = await getEmbeddedTerminalInitSnapshot();
+      } catch (_) {
+        initSnapshot = null;
+      }
       if (!await waitForPageReady() || request != _distributionRequest) return;
       final changed = distribution != _selectedDistribution;
+      final nextStartupError =
+          initSnapshot != null &&
+              initSnapshot.completed &&
+              initSnapshot.success == false &&
+              (initSnapshot.distribution == null ||
+                  initSnapshot.distribution == distribution)
+          ? (initSnapshot.error?.trim().isNotEmpty == true
+                ? context.trLegacy(initSnapshot.error!.trim())
+                : context.trLegacy('内嵌终端环境初始化失败。'))
+          : null;
       setState(() {
         _selectedDistribution = distribution;
         _isDistributionLoading = false;
+        _startupInitError = nextStartupError;
         if (changed) {
           _hasInitializedSelection = false;
           _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
@@ -935,12 +970,13 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       groupedItems[group]!.add(item);
     }
 
+    final visibleError = _detectError ?? _startupInitError;
     final sections = <Widget Function()>[
       _buildDistributionCard,
       _buildIntroCard,
-      if (_detectError != null)
+      if (visibleError != null)
         () => _buildErrorCard(
-          _detectError!,
+          visibleError,
           onRepair: _repairTerminalEnvironment,
           repairBusy: _isRepairingEnvironment,
         ),

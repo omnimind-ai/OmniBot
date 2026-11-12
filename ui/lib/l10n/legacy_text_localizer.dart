@@ -560,6 +560,8 @@ class LegacyTextLocalizer {
     '正在安装基础 Agent CLI 包（git、python、node 等）':
         'Installing base Agent CLI packages (git, python, node, etc.)',
     '基础 Agent CLI 包安装完成。': 'Base Agent CLI packages installed.',
+    '内嵌终端环境已初始化，但基础 Agent CLI 包安装后仍未通过校验。':
+        'Embedded terminal initialized, but base Agent CLI packages failed verification.',
     '正在检查所选开发工具': 'Checking selected development tools',
     '所选开发工具已就绪': 'Selected development tools are ready',
     '正在验证所选开发工具': 'Verifying selected development tools',
@@ -766,6 +768,16 @@ class LegacyTextLocalizer {
       RegExp(r'^环境配置完成：(.+)$'),
       (match) => 'Environment setup complete: ${match.group(1)!}',
     ),
+    (
+      RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：([\s\S]+)$'),
+      (match) =>
+          'Embedded terminal initialized, but installing base Agent CLI packages failed: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包仍缺失：(.+)$'),
+      (match) =>
+          'Embedded terminal initialized, but base Agent CLI packages are still missing: ${match.group(1)!}',
+    ),
   ];
 
   static final Map<String, String> _exactPt = <String, String>{
@@ -861,6 +873,8 @@ class LegacyTextLocalizer {
     '正在安装基础 Agent CLI 包（git、python、node 等）':
         'Instalando pacotes base de CLI (git, python, node, etc.)',
     '基础 Agent CLI 包安装完成。': 'Pacotes base de CLI instalados.',
+    '内嵌终端环境已初始化，但基础 Agent CLI 包安装后仍未通过校验。':
+        'Terminal integrado inicializado, mas os pacotes base de CLI falharam na verificação.',
     '正在检查所选开发工具': 'Verificando ferramentas de desenvolvimento selecionadas',
     '所选开发工具已就绪': 'As ferramentas selecionadas estão prontas',
     '正在验证所选开发工具': 'Validando ferramentas de desenvolvimento selecionadas',
@@ -962,6 +976,16 @@ class LegacyTextLocalizer {
           RegExp(r'^环境配置完成：(.+)$'),
           (match) =>
               'Configuração do ambiente concluída: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：([\s\S]+)$'),
+          (match) =>
+              'Terminal integrado inicializado, mas falhou ao instalar pacotes base de CLI: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包仍缺失：(.+)$'),
+          (match) =>
+              'Terminal integrado inicializado, mas ainda faltam pacotes base de CLI: ${match.group(1)!}',
         ),
       ];
 

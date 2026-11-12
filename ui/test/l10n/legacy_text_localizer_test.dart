@@ -58,5 +58,19 @@ void main() {
       ),
       'Omnibot is thinking...',
     );
+    expect(
+      LegacyTextLocalizer.localize(
+        '内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：403 Forbidden',
+        locale: const Locale('en'),
+      ),
+      'Embedded terminal initialized, but installing base Agent CLI packages failed: 403 Forbidden',
+    );
+    expect(
+      LegacyTextLocalizer.localize(
+        '内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：403 Forbidden',
+        locale: const Locale('pt', 'BR'),
+      ),
+      'Terminal integrado inicializado, mas falhou ao instalar pacotes base de CLI: 403 Forbidden',
+    );
   });
 }

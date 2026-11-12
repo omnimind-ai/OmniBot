@@ -585,4 +585,44 @@ void main() {
     );
     expect(find.text('Reparar ambiente'), findsOneWidget);
   });
+
+  testWidgets('启动基础包安装失败时即使清单探测返回 0 项也展示失败原因与修复环境入口', (tester) async {
+    initSnapshot = {
+      'completed': true,
+      'success': false,
+      'distribution': 'alpine',
+      'error': '内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：403 Forbidden',
+    };
+    readInventory = () async => {'packages': <String, dynamic>{}};
+
+    await pumpTestPage(tester, locale: const Locale('en'));
+
+    expect(
+      find.text(
+        'Embedded terminal initialized, but installing base Agent CLI packages failed: 403 Forbidden',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Repair environment'), findsOneWidget);
+
+    readInventory = () async => {
+      'packages': {
+        'nodejs': {'ready': true, 'version': 'v22.14.0'},
+      },
+    };
+    initSnapshot = {
+      'completed': true,
+      'success': true,
+      'distribution': 'alpine',
+    };
+    await tester.tap(
+      find.byKey(const ValueKey('terminal-environment-repair-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(retryInitCalled, isTrue);
+    expect(find.text('Repair environment'), findsNothing);
+    expect(find.text('v22.14.0'), findsOneWidget);
+  });
 }
