@@ -212,6 +212,156 @@ void main() {
   );
 
   testWidgets(
+    'opening either add entry and returning never creates a provider',
+    (tester) async {
+      var saveCalls = 0;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            return profilePayload();
+          case 'saveModelProviderProfile':
+            saveCalls++;
+            return savedProfileResponse(call.arguments as Map);
+        }
+        return null;
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      for (final key in [
+        'provider-list-add-button',
+        'provider-add-row-button',
+      ]) {
+        final add = find.byKey(Key(key));
+        await tester.ensureVisible(add);
+        await tester.tap(add);
+        await tester.pumpAndSettle();
+        expect(find.byType(ModelProviderDetailPage), findsOneWidget);
+        await tester.pageBack();
+        await tester.pumpAndSettle();
+        expect(saveCalls, 0);
+        expect(find.byType(ModelProviderDetailPage), findsNothing);
+        expect(find.text('Provider 1'), findsOneWidget);
+      }
+    },
+  );
+
+  for (final saveButton in <String?>[
+    null,
+    'provider-save-button',
+    'provider-save-and-models-button',
+  ]) {
+    testWidgets('new provider stays a draft until explicit save: $saveButton', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(800, 1200);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final saves = <Map<dynamic, dynamic>>[];
+      Map<String, dynamic>? saved;
+      var fetchCalls = 0;
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+        switch (call.method) {
+          case 'listModelProviderProfiles':
+            final payload = profilePayload();
+            if (saved != null) (payload['profiles'] as List).add(saved);
+            return payload;
+          case 'saveModelProviderProfile':
+            final args = Map<dynamic, dynamic>.from(call.arguments as Map);
+            saves.add(args);
+            saved = savedProfileResponse({...args, 'id': 'provider-new'});
+            return saved;
+          case 'fetchProviderModels':
+            fetchCalls++;
+            return [
+              {'id': 'deepseek-chat', 'displayName': 'DeepSeek Chat'},
+            ];
+        }
+        return null;
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: AppTheme.lightTheme,
+          home: const ModelProviderSettingPage(),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('provider-list-add-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const Key('provider-preset-chip-deepseek')));
+      await tester.pumpAndSettle();
+      expect(saves, isEmpty);
+
+      await tester.tap(find.byKey(const Key('provider-wire-api-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('OpenAI Responses'));
+      await tester.pumpAndSettle();
+      expect(saves, isEmpty);
+
+      await tester.enterText(
+        find.byKey(const Key('provider-name-field')),
+        'Work draft',
+      );
+      await tester.enterText(
+        find.byKey(const Key('provider-api-key-field')),
+        'sk-draft',
+      );
+      FocusManager.instance.primaryFocus?.unfocus();
+      await tester.pump(const Duration(milliseconds: 700));
+      expect(saves, isEmpty);
+
+      await switchToModelsTab(tester);
+      await tester.tap(find.byKey(const Key('provider-fetch-models-button')));
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const Key('provider-add-manual-model-button')),
+      );
+      await tester.pumpAndSettle();
+      expect(saves, isEmpty);
+      expect(fetchCalls, 0);
+      expect(find.byType(BottomSheet), findsNothing);
+
+      if (saveButton != null) {
+        await switchToConnectionTab(tester);
+        final save = find.byKey(Key(saveButton));
+        await tester.ensureVisible(save);
+        await tester.tap(save);
+        await tester.pumpAndSettle();
+        expect(saves, hasLength(1));
+        expect(saves.single['id'], isNull);
+        expect(saves.single['name'], 'Work draft');
+        expect(saves.single['baseUrl'], 'https://api.deepseek.com');
+        expect(saves.single['apiKey'], 'sk-draft');
+        expect(saves.single['wireApi'], 'responses');
+        expect(
+          fetchCalls,
+          saveButton == 'provider-save-and-models-button' ? 1 : 0,
+        );
+      }
+
+      await tester.pageBack();
+      await tester.pumpAndSettle();
+      expect(saves, hasLength(saveButton == null ? 0 : 1));
+      expect(find.text('Provider 1'), findsOneWidget);
+      expect(
+        find.text('Work draft'),
+        saveButton == null ? findsNothing : findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets(
     'empty state guides user to add a provider and pre-fills preset connection',
     (tester) async {
       var saved = false;

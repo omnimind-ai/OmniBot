@@ -365,9 +365,9 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     if (mounted) {
       setState(() {
         if (_saveState != ProviderSaveState.saving) {
-          _saveState = _shouldAutoSaveDraft
+          _saveState = _isNew || _shouldAutoSaveDraft
               ? ProviderSaveState.dirty
-              : (_isNew ? ProviderSaveState.idle : ProviderSaveState.saved);
+              : ProviderSaveState.saved;
           _saveErrorDiagnosis = null;
         }
       });
@@ -416,12 +416,6 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     if (_isSelectingPreset || !_shouldAutoSaveDraft) {
       return;
     }
-    // For a brand-new draft, don't auto-save if the baseUrl is still empty.
-    if (_isNew &&
-        !_isChatGptProvider &&
-        _baseUrlController.text.trim().isEmpty) {
-      return;
-    }
     _autoSaveTimer = Timer(_autoSaveDebounce, () {
       _autoSaveTimer = null;
       unawaited(_persistProfileDraft(silentToast: true));
@@ -431,12 +425,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   bool get _shouldAutoSaveDraft {
     if (_readOnly) return false;
     final current = _profile;
-    if (current == null || _isNew) {
-      return _nameController.text.trim().isNotEmpty &&
-          (_isChatGptProvider ||
-              _baseUrlController.text.trim().isNotEmpty ||
-              _apiKeyController.text.trim().isNotEmpty);
-    }
+    if (current == null || _isNew) return false;
     final normalizedBaseUrl = ModelProviderConfigService.normalizeApiBase(
       _baseUrlController.text,
     );
@@ -593,8 +582,22 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     );
   }
 
-  Future<bool> _persistProfileDraft({bool silentToast = true}) async {
+  Future<bool> _persistProfileDraft({
+    bool silentToast = true,
+    bool createIfNew = false,
+  }) async {
     if (_isSelectingPreset || _readOnly) return !_readOnly;
+    // New providers remain local drafts until a Save action admits creation.
+    // Fetching models, signing in or leaving the page must not create one.
+    if (_isNew && !createIfNew) {
+      if (_canUpdateUi) {
+        showToast(
+          _text('请先保存连接配置', 'Save connection settings first'),
+          type: ToastType.warning,
+        );
+      }
+      return false;
+    }
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
 
@@ -840,7 +843,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       _syncController(_baseUrlController, '');
     }
 
-    if (_isNew && _profile == null && !isOfficialSelection) {
+    if (_isNew) {
       setState(() {
         _isSelectingPreset = false;
         _saveState = ProviderSaveState.dirty;
@@ -935,9 +938,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     });
 
     final current = _profile;
-    if (_isNew &&
-        current == null &&
-        _baseUrlController.text.trim().isEmpty) {
+    if (_isNew) {
       setState(() => _saveState = ProviderSaveState.dirty);
       return;
     }
@@ -1719,7 +1720,10 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   Future<void> _handleSaveAndOpenModels() async {
     FocusScope.of(context).unfocus();
     final wasNew = _isNew;
-    final saved = await _persistProfileDraft(silentToast: false);
+    final saved = await _persistProfileDraft(
+      silentToast: false,
+      createIfNew: true,
+    );
     if (!saved || !mounted) return;
     setState(() {
       _currentTab = ProviderDetailTab.models;
@@ -1858,7 +1862,12 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
                       onOpenWireProtocolMenu: _openWireProtocolMenu,
                       onSave: () {
                         FocusScope.of(context).unfocus();
-                        unawaited(_persistProfileDraft(silentToast: false));
+                        unawaited(
+                          _persistProfileDraft(
+                            silentToast: false,
+                            createIfNew: true,
+                          ),
+                        );
                       },
                       onSaveAndManageModels: () =>
                           unawaited(_handleSaveAndOpenModels()),

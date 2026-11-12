@@ -125,11 +125,13 @@ class ProviderConnectionTab extends StatelessWidget {
     } else if (saveState == ProviderSaveState.dirty) {
       icon = LucideIcons.circleDot;
       accent = palette.accentPrimary;
-      title = _text(
-        context,
-        '有未保存的修改，失焦后将自动保存或点击下方按钮立即保存',
-        'Unsaved changes. Will auto-save when unfocused, or tap Save below.',
-      );
+      title = isNew
+          ? _text(context, '尚未保存，请点击下方按钮保存', 'Not saved. Tap Save below.')
+          : _text(
+              context,
+              '有未保存的修改，失焦后将自动保存或点击下方按钮立即保存',
+              'Unsaved changes. Will auto-save when unfocused, or tap Save below.',
+            );
     } else if (saveState == ProviderSaveState.saved || !isNew) {
       icon = LucideIcons.circleCheck;
       accent = const Color(0xFF2EAF67);
@@ -143,8 +145,8 @@ class ProviderConnectionTab extends StatelessWidget {
       accent = palette.accentPrimary;
       title = _text(
         context,
-        '选择服务商预设可自动填充默认地址与接口协议',
-        'Select a provider preset to pre-fill the default API URL and protocol',
+        '尚未保存，点击“保存配置”后添加服务商',
+        'Tap Save to add this provider.',
       );
     }
 

@@ -38,7 +38,7 @@ class _RouteObserver extends NavigatorObserver {
 
 void main() {
   for (final glass in [false, true]) {
-    testWidgets('compact card is a bottom half-screen sheet, glass=$glass', (
+    testWidgets('compact card fits its content at the bottom, glass=$glass', (
       tester,
     ) async {
       _phoneViewport(tester);
@@ -76,8 +76,12 @@ void main() {
       final sheet = tester.getRect(find.byType(BottomSheet));
       expect(sheet.left, 0);
       expect(sheet.right, 400);
-      expect(sheet.top, closeTo(400, 1));
+      expect(sheet.height, lessThan(400));
       expect(sheet.bottom, 800);
+      expect(
+        sheet.bottom - tester.getBottomRight(find.text('Delete')).dy,
+        lessThan(60),
+      );
       expect(find.byType(Dialog), findsNothing);
       expect(find.byType(LiquidGlass), glass ? findsOneWidget : findsNothing);
       expect(find.text('Delete').hitTestable(), findsOneWidget);
@@ -90,7 +94,10 @@ void main() {
 
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
-      await tester.dragFrom(const Offset(200, 420), const Offset(0, 350));
+      await tester.dragFrom(
+        tester.getTopLeft(find.byType(BottomSheet)) + const Offset(200, 20),
+        const Offset(0, 350),
+      );
       await tester.pumpAndSettle();
       expect(result, isNull);
       expect(find.byType(BottomSheet), findsNothing);
@@ -222,14 +229,20 @@ void main() {
       );
       await tester.tap(find.text('Open'));
       await tester.pumpAndSettle();
-      await tester.dragFrom(const Offset(200, 420), const Offset(0, 350));
+      await tester.dragFrom(
+        tester.getTopLeft(find.byType(BottomSheet)) + const Offset(200, 20),
+        const Offset(0, 350),
+      );
       await tester.pumpAndSettle();
       expect(find.text('Pending operation'), findsOneWidget);
       expect(completed, isFalse);
 
       await tester.tap(find.text('Finish operation'));
       await tester.pumpAndSettle();
-      await tester.dragFrom(const Offset(200, 420), const Offset(0, 350));
+      await tester.dragFrom(
+        tester.getTopLeft(find.byType(BottomSheet)) + const Offset(200, 20),
+        const Offset(0, 350),
+      );
       await tester.pumpAndSettle();
       expect(find.byType(BottomSheet), findsNothing);
       expect(completed, isTrue);
@@ -269,7 +282,8 @@ void main() {
       tester.getSize(find.byKey(const ValueKey('custom-body'))).width,
       closeTo(352, 1),
     );
-    expect(tester.getRect(find.byType(BottomSheet)).top, closeTo(400, 1));
+    expect(tester.getSize(find.byType(BottomSheet)).height, lessThan(150));
+    expect(tester.getRect(find.byType(BottomSheet)).bottom, 800);
     expect(tester.takeException(), isNull);
   });
 
@@ -381,10 +395,14 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text('Required confirmation'), findsOneWidget);
 
-          await tester.dragFrom(const Offset(200, 420), const Offset(0, 350));
+          final sheet = tester.getRect(find.byType(BottomSheet));
+          await tester.dragFrom(
+            sheet.topLeft + const Offset(200, 20),
+            const Offset(0, 350),
+          );
           await tester.pumpAndSettle();
           expect(find.text('Required confirmation'), findsOneWidget);
-          expect(tester.getRect(find.byType(BottomSheet)).top, closeTo(400, 1));
+          expect(tester.getRect(find.byType(BottomSheet)), sheet);
 
           await Navigator.of(sheetContext).maybePop();
           await tester.pumpAndSettle();
