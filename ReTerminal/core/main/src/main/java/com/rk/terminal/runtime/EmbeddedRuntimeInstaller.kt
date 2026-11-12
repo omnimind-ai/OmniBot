@@ -115,6 +115,7 @@ object EmbeddedRuntimeInstaller {
                 val installedFiles = installCommonAssets(context)
                 installDistribution(context, distribution, onProgress)
                 installCommonHelpers(installedFiles)
+                ProotSeccompCompatibility.probeAndConfigureIfNeeded(context, distribution)
                 emit(onProgress, "ready", distribution, "终端环境运行资源已就绪。", progress = 1.0)
                 InstallStatus(true, true, "终端环境运行资源已就绪。")
             } catch (error: CancellationException) {

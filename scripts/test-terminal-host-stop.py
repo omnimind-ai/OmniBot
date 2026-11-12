@@ -23,6 +23,37 @@ class HostStopTest(unittest.TestCase):
     def test_maintenance_launch_preserves_existing_runtime_stdio(self):
         self.run_contract(cancel=False, maintenance=True)
 
+    def test_seccomp_compat_flag_exports_proot_no_seccomp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ['local/alpine/bin/sh', 'local/alpine/etc/os-release', 'local/alpine/.omnibot-rootfs-ready']:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.touch()
+            linker = root / 'linker'
+            linker.write_text('#!' + sys.executable + '\n' + 'import os; print("PROOT_NO_SECCOMP=" + os.environ.get("PROOT_NO_SECCOMP", ""))\n')
+            linker.chmod(0o755)
+            env = {
+                **os.environ,
+                'PREFIX': directory,
+                'LINKER': str(linker),
+                'OMNIBOT_TERMINAL_DISTRIBUTION': 'alpine',
+                'OMNIBOT_HOST_WORKSPACE': '',
+                'OMNIBOT_MT_STORAGE_HOST': '',
+                'SECCOMP': '1',
+            }
+            env.pop('PROOT_NO_SECCOMP', None)
+            result = subprocess.run(
+                ['/bin/sh', str(SCRIPT)],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=3,
+                preexec_fn=restore_host_signals,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(), 'PROOT_NO_SECCOMP=1')
+
     def test_maintenance_never_initializes_missing_or_incomplete_rootfs(self):
         for distribution in ('alpine', 'ubuntu'):
             for incomplete in (False, True):

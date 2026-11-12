@@ -127,6 +127,10 @@ else
     mkdir -p "$ROOTFS_DIR"
 fi
 
+if [ "${SECCOMP:-0}" = "1" ] && [ -z "${PROOT_NO_SECCOMP:-}" ]; then
+    export PROOT_NO_SECCOMP=1
+fi
+
 trap handle_termination HUP INT TERM
 
 mkdir -p "$PREFIX/local/bin" "$PREFIX/local/lib"
