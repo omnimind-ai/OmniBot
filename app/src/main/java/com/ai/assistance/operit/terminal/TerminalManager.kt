@@ -266,8 +266,16 @@ class TerminalManager private constructor(
         installIfMissing: Boolean = true,
         onOutputChunk: suspend (String) -> Unit = {}
     ): HiddenExecResult {
-        val environmentReady = withTimeoutOrNull(
+        val environmentTimeoutMs = if (installIfMissing) {
+            maxOf(
+                HIDDEN_EXEC_INSTALL_ENVIRONMENT_TIMEOUT_MS,
+                timeoutMs ?: HIDDEN_EXEC_INSTALL_ENVIRONMENT_TIMEOUT_MS
+            )
+        } else {
             HIDDEN_EXEC_ENVIRONMENT_TIMEOUT_MS
+        }
+        val environmentReady = withTimeoutOrNull(
+            environmentTimeoutMs
         ) {
             if (installIfMissing) {
                 initializeEnvironment(distribution = distribution)
@@ -702,6 +710,7 @@ internal fun terminateHiddenExecProcess(process: Process) {
 private const val HIDDEN_EXEC_TERMINATION_GRACE_MS = 500L
 private const val HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS = 250L
 private const val HIDDEN_EXEC_ENVIRONMENT_TIMEOUT_MS = 10_000L
+private const val HIDDEN_EXEC_INSTALL_ENVIRONMENT_TIMEOUT_MS = 120_000L
 
 internal fun isExpectedHiddenExecReaderTermination(error: Throwable): Boolean {
     var current: Throwable? = error

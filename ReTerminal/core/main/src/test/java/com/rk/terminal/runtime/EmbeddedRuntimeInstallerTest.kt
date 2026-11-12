@@ -16,10 +16,14 @@ import org.junit.Assert.assertTrue
 import org.junit.Assert.assertThrows
 import org.junit.Test
 import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.IOException
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
+import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
+import java.util.zip.GZIPOutputStream
 
 class EmbeddedRuntimeInstallerTest {
     @Test
@@ -220,6 +224,108 @@ class EmbeddedRuntimeInstallerTest {
         }
     }
 
+    @Test
+    fun extractsUncompressedAlpineTarAndOverwritesStaleGuestSymlinks() = withTemporaryRootfs { rootfs ->
+        // Simulate a leftover partial symlink that used to trigger host Toybox tar's
+        // "'./bin/chattr' /system/bin/busybox not under ..." failure.
+        rootfs.resolve("bin").mkdirs()
+        Files.createSymbolicLink(rootfs.resolve("bin/chattr").toPath(), Paths.get("/bin/busybox"))
+        touch(rootfs, "root/keep-history", "keep-history")
+        touch(rootfs, "tmp/keep-temp", "keep-temp")
+
+        val archiveBytes = buildTarArchive(gzip = false) {
+            regularFile("./bin/busybox", "busybox-binary", mode = 0b111_101_101)
+            symlink("./bin/sh", "/bin/busybox")
+            symlink("./bin/chattr", "/bin/busybox")
+            symlink("./usr/bin/env", "/bin/busybox")
+            regularFile("./sbin/apk", "apk-binary", mode = 0b111_101_101)
+            regularFile("./lib/apk/db/installed", "C:Q1\n")
+            regularFile("./etc/alpine-release", "3.21.0\n")
+            regularFile("./etc/os-release", "ID=alpine\n")
+            // Read-only directory mode in archive must still remain cleanable by app UID.
+            directory("./var/empty/", mode = 0b101_101_101)
+        }
+
+        EmbeddedRuntimeInstaller.extractRootfsArchive(
+            rootfs = rootfs,
+            distribution = TerminalDistribution.alpine,
+            openStream = { ByteArrayInputStream(archiveBytes) }
+        )
+
+        assertTrue(EmbeddedRuntimeInstaller.isRootfsInstalled(rootfs, TerminalDistribution.alpine))
+        assertTrue(rootfs.resolve(EmbeddedRuntimeInstaller.ROOTFS_READY_MARKER_NAME).isFile)
+        assertEquals(
+            Paths.get("/bin/busybox"),
+            Files.readSymbolicLink(rootfs.resolve("bin/chattr").toPath())
+        )
+        assertEquals("busybox-binary", rootfs.resolve("bin/busybox").readText())
+        assertEquals("keep-history", rootfs.resolve("root/keep-history").readText())
+        assertEquals("keep-temp", rootfs.resolve("tmp/keep-temp").readText())
+    }
+
+    @Test
+    fun extractsGzippedUbuntuRootfsWithUsrmergeAndHardlinksAsRelativeSymlinks() = withTemporaryRootfs { rootfs ->
+        val longConfPath = "etc/apt/apt.conf.d/" + "99-omnibot-very-long-configuration-name-".repeat(3) + ".conf"
+        val archiveBytes = buildTarArchive(gzip = true) {
+            symlink("bin", "usr/bin")
+            directory("usr/bin/")
+            regularFile("usr/bin/dash", "dash-bin", mode = 0b111_101_101)
+            symlink("bin/sh", "dash")
+            regularFile("usr/bin/env", "env-bin", mode = 0b111_101_101)
+            regularFile("usr/bin/apt-get", "apt-get-bin", mode = 0b111_101_101)
+            regularFile("usr/bin/gunzip", "gzip-payload", mode = 0b111_101_101)
+            hardlink("usr/bin/uncompress", "usr/bin/gunzip")
+            regularFile("usr/bin/perl", "perl-payload", mode = 0b111_101_101)
+            hardlink("usr/bin/perl5.38.2", "usr/bin/perl")
+            regularFile("etc/os-release", "ID=ubuntu\n")
+            regularFile("var/lib/dpkg/status", "Package: base-files\nStatus: install ok installed\n")
+            paxRegularFile(longConfPath, "Acquire::Retries \"3\";\n")
+        }
+
+        EmbeddedRuntimeInstaller.extractRootfsArchive(
+            rootfs = rootfs,
+            distribution = TerminalDistribution.ubuntu,
+            openStream = { ByteArrayInputStream(archiveBytes) }
+        )
+
+        assertTrue(EmbeddedRuntimeInstaller.isRootfsInstalled(rootfs, TerminalDistribution.ubuntu))
+        assertTrue(Files.isSymbolicLink(rootfs.resolve("bin").toPath()))
+        assertTrue(Files.isSymbolicLink(rootfs.resolve("usr/bin/uncompress").toPath()))
+        assertEquals(
+            Paths.get("gunzip"),
+            Files.readSymbolicLink(rootfs.resolve("usr/bin/uncompress").toPath())
+        )
+        assertEquals("gzip-payload", rootfs.resolve("usr/bin/uncompress").readText())
+        assertEquals("perl-payload", rootfs.resolve("usr/bin/perl5.38.2").readText())
+        assertEquals("Acquire::Retries \"3\";\n", rootfs.resolve(longConfPath).readText())
+    }
+
+    @Test
+    fun rejectsTraversalAndCleansPartialRootfsWhilePreservingRootAndTmp() = withTemporaryRootfs { rootfs ->
+        touch(rootfs, "root/user-profile", "user-profile")
+        touch(rootfs, "tmp/socket", "socket")
+
+        val traversalArchive = buildTarArchive(gzip = false) {
+            regularFile("etc/os-release", "ID=alpine\n")
+            symlink("escape", "../../outside")
+            regularFile("escape/pwned", "nope")
+        }
+
+        assertThrows(IOException::class.java) {
+            EmbeddedRuntimeInstaller.extractRootfsArchive(
+                rootfs = rootfs,
+                distribution = TerminalDistribution.alpine,
+                openStream = { ByteArrayInputStream(traversalArchive) }
+            )
+        }
+
+        assertFalse(EmbeddedRuntimeInstaller.isRootfsInstalled(rootfs, TerminalDistribution.alpine))
+        assertFalse(rootfs.resolve(EmbeddedRuntimeInstaller.ROOTFS_READY_MARKER_NAME).exists())
+        assertFalse(rootfs.resolve("etc/os-release").exists())
+        assertEquals("user-profile", rootfs.resolve("root/user-profile").readText())
+        assertEquals("socket", rootfs.resolve("tmp/socket").readText())
+    }
+
     private fun withTemporaryRootfs(block: (File) -> Unit) {
         val rootfs = Files.createTempDirectory("omnibot-rootfs-test").toFile()
         try {
@@ -229,10 +335,127 @@ class EmbeddedRuntimeInstallerTest {
         }
     }
 
-    private fun touch(rootfs: File, relativePath: String) {
+    private fun touch(rootfs: File, relativePath: String, content: String = "test") {
         rootfs.resolve(relativePath).apply {
             parentFile?.mkdirs()
-            writeText("test")
+            writeText(content)
         }
+    }
+
+    private class TarFixtureBuilder {
+        private val raw = ByteArrayOutputStream()
+
+        fun regularFile(name: String, content: String, mode: Int = 0b110_100_100) {
+            val data = content.toByteArray(StandardCharsets.UTF_8)
+            writeHeader(name = name, mode = mode, size = data.size.toLong(), typeFlag = '0', linkName = "")
+            raw.write(data)
+            writePadding(data.size)
+        }
+
+        fun paxRegularFile(path: String, content: String, mode: Int = 0b110_100_100) {
+            val paxRecord = buildPaxRecord("path", path)
+            writeHeader(
+                name = "PaxHeader/entry",
+                mode = 0b110_100_100,
+                size = paxRecord.size.toLong(),
+                typeFlag = 'x',
+                linkName = ""
+            )
+            raw.write(paxRecord)
+            writePadding(paxRecord.size)
+
+            val data = content.toByteArray(StandardCharsets.UTF_8)
+            writeHeader(
+                name = path.takeLast(80),
+                mode = mode,
+                size = data.size.toLong(),
+                typeFlag = '0',
+                linkName = ""
+            )
+            raw.write(data)
+            writePadding(data.size)
+        }
+
+        fun directory(name: String, mode: Int = 0b111_101_101) {
+            val normalized = if (name.endsWith("/")) name else "$name/"
+            writeHeader(name = normalized, mode = mode, size = 0L, typeFlag = '5', linkName = "")
+        }
+
+        fun symlink(name: String, target: String) {
+            writeHeader(name = name, mode = 0b111_111_111, size = 0L, typeFlag = '2', linkName = target)
+        }
+
+        fun hardlink(name: String, target: String) {
+            writeHeader(name = name, mode = 0b111_101_101, size = 0L, typeFlag = '1', linkName = target)
+        }
+
+        fun toBytes(gzip: Boolean): ByteArray {
+            // End-of-archive marker: two 512-byte zero blocks.
+            raw.write(ByteArray(1024))
+            val tarBytes = raw.toByteArray()
+            if (!gzip) return tarBytes
+            val compressed = ByteArrayOutputStream()
+            GZIPOutputStream(compressed).use { it.write(tarBytes) }
+            return compressed.toByteArray()
+        }
+
+        private fun buildPaxRecord(key: String, value: String): ByteArray {
+            val body = " $key=$value\n"
+            var length = body.toByteArray(StandardCharsets.UTF_8).size + 2
+            while (true) {
+                val candidate = "$length$body".toByteArray(StandardCharsets.UTF_8)
+                if (candidate.size == length) return candidate
+                length = candidate.size
+            }
+        }
+
+        private fun writeHeader(
+            name: String,
+            mode: Int,
+            size: Long,
+            typeFlag: Char,
+            linkName: String
+        ) {
+            val block = ByteArray(512)
+            writeAscii(block, 0, 100, name)
+            writeOctal(block, 100, 8, mode.toLong())
+            writeOctal(block, 108, 8, 0L)
+            writeOctal(block, 116, 8, 0L)
+            writeOctal(block, 124, 12, size)
+            writeOctal(block, 136, 12, 1_700_000_000L)
+            for (index in 148..155) {
+                block[index] = ' '.code.toByte()
+            }
+            block[156] = typeFlag.code.toByte()
+            writeAscii(block, 157, 100, linkName)
+            writeAscii(block, 257, 6, "ustar")
+            writeAscii(block, 263, 2, "00")
+            val checksum = block.sumOf { it.toInt() and 0xFF }.toLong()
+            writeOctal(block, 148, 7, checksum)
+            block[155] = ' '.code.toByte()
+            raw.write(block)
+        }
+
+        private fun writeAscii(block: ByteArray, offset: Int, maxLen: Int, value: String) {
+            val bytes = value.toByteArray(StandardCharsets.UTF_8)
+            bytes.copyInto(block, destinationOffset = offset, startIndex = 0, endIndex = minOf(bytes.size, maxLen))
+        }
+
+        private fun writeOctal(block: ByteArray, offset: Int, length: Int, value: Long) {
+            val digits = value.toString(8).padStart(length - 1, '0')
+            writeAscii(block, offset, length - 1, digits)
+            block[offset + length - 1] = 0
+        }
+
+        private fun writePadding(size: Int) {
+            val rem = size % 512
+            if (rem != 0) {
+                raw.write(ByteArray(512 - rem))
+            }
+        }
+    }
+
+    private fun buildTarArchive(gzip: Boolean, block: TarFixtureBuilder.() -> Unit): ByteArray {
+        return TarFixtureBuilder().apply(block).toBytes(gzip)
     }
 }
