@@ -7,6 +7,10 @@ import cn.com.omnimind.bot.termux.TermuxCommandBuilder
 import cn.com.omnimind.bot.termux.TermuxLiveUpdate
 import com.ai.assistance.operit.terminal.TerminalManager
 import com.ai.assistance.operit.terminal.provider.type.HiddenExecResult
+import com.ai.assistance.operit.terminal.setup.buildAlpinePackageInstallCommand
+import com.rk.settings.AlpinePackageMirror
+import com.rk.settings.Settings
+import com.rk.settings.UbuntuPackageMirror
 import com.rk.terminal.runtime.AlpineRepositoryManager
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
@@ -167,10 +171,15 @@ object EmbeddedTerminalRuntime {
     )
     private val shellPromptRegex = Regex("""^[^\r\n]*[#$] ?$""")
 
-    private fun buildBasePackageBootstrapCommand(): String {
-        val packageBootstrap = if (TerminalDistribution.selected().workingMode == WorkingMode.UBUNTU) {
+    internal fun buildBasePackageBootstrapCommand(
+        workingMode: Int = TerminalDistribution.selected().workingMode,
+        alpineMirror: Int? = null,
+        ubuntuMirror: Int? = null
+    ): String {
+        val packageBootstrap = if (workingMode == WorkingMode.UBUNTU) {
+            val resolvedUbuntuMirror = ubuntuMirror ?: Settings.ubuntu_package_mirror
             """
-                ${UbuntuRepositoryManager.buildSelectedRepositorySetupCommand()}
+                ${UbuntuRepositoryManager.buildRepositoryUpdateWithFallbackCommand(resolvedUbuntuMirror)}
                 ${UbuntuRepositoryManager.buildNodeRepositorySetupCommand()}
                 apt-get update &&
                 DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
@@ -190,27 +199,29 @@ object EmbeddedTerminalRuntime {
                   xz-utils
             """.trimIndent()
         } else {
+            val alpinePackages = listOf(
+                "bash",
+                "ca-certificates",
+                "curl",
+                "gcompat",
+                "git",
+                "glib",
+                "nodejs",
+                "npm",
+                "procps",
+                "psmisc",
+                "python3",
+                "py3-numpy",
+                "py3-pip",
+                "py3-virtualenv",
+                "ripgrep",
+                "tmux",
+                "xz"
+            )
+            val resolvedAlpineMirror = alpineMirror ?: Settings.alpine_package_mirror
             """
-                ${AlpineRepositoryManager.buildSelectedRepositorySetupCommand()}
-                apk update &&
-                apk add --no-cache \
-                  bash \
-                  ca-certificates \
-                  curl \
-                  gcompat \
-                  git \
-                  glib \
-                  nodejs \
-                  npm \
-                  procps \
-                  psmisc \
-                  python3 \
-                  py3-numpy \
-                  py3-pip \
-                  py3-virtualenv \
-                  ripgrep \
-                  tmux \
-                  xz
+                ${AlpineRepositoryManager.buildRepositoryUpdateWithFallbackCommand(resolvedAlpineMirror)}
+                ${buildAlpinePackageInstallCommand(alpinePackages)}
             """.trimIndent()
         }
         return """

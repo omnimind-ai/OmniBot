@@ -82,4 +82,22 @@ class EmbeddedTerminalRuntimeTest {
         assertEquals("done", update.outputDelta)
         assertEquals(0, update.exitCode)
     }
+
+    @Test
+    fun basePackageBootstrapUsesMirrorFallbackForAlpineAndUbuntu() {
+        val alpineBootstrap = EmbeddedTerminalRuntime.buildBasePackageBootstrapCommand(
+            workingMode = com.rk.terminal.ui.screens.settings.WorkingMode.ALPINE,
+            alpineMirror = com.rk.settings.AlpinePackageMirror.TSINGHUA
+        )
+        assertTrue(alpineBootstrap.contains("https://mirrors.aliyun.com/alpine"))
+        assertTrue(alpineBootstrap.contains("https://dl-cdn.alpinelinux.org/alpine"))
+        assertTrue(alpineBootstrap.contains("omnibot_apk_add"))
+
+        val ubuntuBootstrap = EmbeddedTerminalRuntime.buildBasePackageBootstrapCommand(
+            workingMode = com.rk.terminal.ui.screens.settings.WorkingMode.UBUNTU,
+            ubuntuMirror = com.rk.settings.UbuntuPackageMirror.TSINGHUA
+        )
+        assertTrue(ubuntuBootstrap.contains("http://mirrors.aliyun.com/ubuntu-ports"))
+        assertTrue(ubuntuBootstrap.contains("ubuntu-repositories"))
+    }
 }

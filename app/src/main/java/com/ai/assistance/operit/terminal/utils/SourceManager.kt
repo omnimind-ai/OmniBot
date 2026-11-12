@@ -11,8 +11,8 @@ class SourceManager(
 ) {
     fun buildRepositorySetupCommand(): String {
         return when (distributionWorkingMode) {
-            WorkingMode.ALPINE -> AlpineRepositoryManager.buildSelectedRepositorySetupCommand()
-            WorkingMode.UBUNTU -> UbuntuRepositoryManager.buildSelectedRepositorySetupCommand()
+            WorkingMode.ALPINE -> AlpineRepositoryManager.buildSelectedRepositoryUpdateWithFallbackCommand()
+            WorkingMode.UBUNTU -> UbuntuRepositoryManager.buildSelectedRepositoryUpdateWithFallbackCommand()
             else -> ""
         }
     }

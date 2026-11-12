@@ -13,16 +13,30 @@ internal val ALPINE_APK_INSTALL_WITH_REPAIR_FUNCTION = """
       apk fix --no-cache || apk fix --no-cache --upgrade || true
       apk add --no-cache "${'$'}@" && return 0
 
-      if grep -q 'mirrors.tuna.tsinghua.edu.cn/alpine' /etc/apk/repositories 2>/dev/null; then
-        printf '[!] selected Alpine mirror failed; retrying with the official mirror.\n' >&2
-        sed -i 's#https://mirrors.tuna.tsinghua.edu.cn/alpine#https://dl-cdn.alpinelinux.org/alpine#g' \
-          /etc/apk/repositories
-      fi
+      omnibot_alpine_branch="${'$'}(if [ -r /etc/alpine-release ]; then cut -d. -f1,2 /etc/alpine-release | sed 's/^/v/'; else printf '%s' 'v3.21'; fi)"
+      for omnibot_mirror in 'https://mirrors.aliyun.com/alpine' 'https://dl-cdn.alpinelinux.org/alpine' 'https://mirrors.tuna.tsinghua.edu.cn/alpine'; do
+        printf '[!] selected Alpine mirror failed; retrying with %s.\n' "${'$'}omnibot_mirror" >&2
+        mkdir -p /etc/apk
+        printf '%s/%s/main\n%s/%s/community\n' \
+          "${'$'}omnibot_mirror" "${'$'}omnibot_alpine_branch" \
+          "${'$'}omnibot_mirror" "${'$'}omnibot_alpine_branch" > /etc/apk/repositories
+        if apk update && apk add --no-cache "${'$'}@"; then
+          return 0
+        fi
+      done
 
-      apk update && apk add --no-cache "${'$'}@" && return 0
       printf '[!] Alpine certificate validation failed; retrying bootstrap with certificate checks disabled.\n' >&2
-      apk --no-check-certificate update &&
-        apk --no-check-certificate add --no-cache "${'$'}@"
+      for omnibot_mirror in 'https://mirrors.aliyun.com/alpine' 'https://dl-cdn.alpinelinux.org/alpine' 'https://mirrors.tuna.tsinghua.edu.cn/alpine'; do
+        mkdir -p /etc/apk
+        printf '%s/%s/main\n%s/%s/community\n' \
+          "${'$'}omnibot_mirror" "${'$'}omnibot_alpine_branch" \
+          "${'$'}omnibot_mirror" "${'$'}omnibot_alpine_branch" > /etc/apk/repositories
+        if apk --no-check-certificate update &&
+          apk --no-check-certificate add --no-cache "${'$'}@"; then
+          return 0
+        fi
+      done
+      return 1
     }
 """.trimIndent()
 

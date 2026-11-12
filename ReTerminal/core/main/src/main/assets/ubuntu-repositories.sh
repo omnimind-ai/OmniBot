@@ -11,6 +11,7 @@ if [ "$arch" != arm64 ]; then
 fi
 
 main_base="${1:-http://ports.ubuntu.com/ubuntu-ports}"
+security_base="${2:-http://ports.ubuntu.com/ubuntu-ports}"
 codename="$(sed -n 's/^VERSION_CODENAME=//p' /etc/os-release | tr -d '"' | head -n 1)"
 [ -n "$codename" ] || codename=noble
 
@@ -30,7 +31,7 @@ Architectures: $arch
 Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
 
 Types: deb
-URIs: http://ports.ubuntu.com/ubuntu-ports
+URIs: $security_base
 Suites: $codename-security
 Components: main universe restricted multiverse
 Architectures: $arch

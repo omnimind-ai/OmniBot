@@ -306,6 +306,50 @@ class EnvironmentSetupLogicTest {
     }
 
     @Test
+    fun buildAlpinePackageInstallCommand_fallsBackToAliyunWhenSelectedMirrorReturnsForbidden() {
+        val tempDir = Files.createTempDirectory("omnibot-apk-mirror-fallback").toFile()
+        try {
+            val etcApk = File(tempDir, "etc/apk").apply { mkdirs() }
+            val releaseFile = File(tempDir, "etc/alpine-release").apply { writeText("3.21.0\n") }
+            val reposFile = File(etcApk, "repositories").apply {
+                writeText("https://mirrors.tuna.tsinghua.edu.cn/alpine/v3.21/main\n")
+            }
+            val fakeApk = File(tempDir, "apk").apply {
+                writeText(
+                    """
+                        #!/bin/sh
+                        current_repo="${'$'}(head -n 1 "${reposFile.absolutePath}")"
+                        case "${'$'}current_repo" in
+                          *mirrors.aliyun.com*) exit 0 ;;
+                          *) exit 4 ;;
+                        esac
+                    """.trimIndent()
+                )
+                setExecutable(true)
+            }
+            assertTrue(fakeApk.canExecute())
+
+            val command = buildAlpinePackageInstallCommand(listOf("nodejs", "npm"))
+                .replace("/etc/alpine-release", releaseFile.absolutePath)
+                .replace("/etc/apk", etcApk.absolutePath)
+            val process = ProcessBuilder("/bin/sh", "-c", command)
+                .redirectErrorStream(true)
+                .apply {
+                    environment()["PATH"] =
+                        tempDir.absolutePath + File.pathSeparator + environment()["PATH"]
+                }
+                .start()
+            val output = process.inputStream.bufferedReader().use { it.readText() }
+            val exitCode = process.waitFor()
+
+            assertEquals(output, 0, exitCode)
+            assertTrue(reposFile.readText().contains("https://mirrors.aliyun.com/alpine/v3.21/main"))
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun buildInventoryProbeCommand_validatesRuntimeCwdForNodeAndPython() {
         val command = EnvironmentSetupLogic.buildInventoryProbeCommand(listOf("nodejs", "python", "pip"))
 
