@@ -483,7 +483,7 @@ class AppDialog {
     String cancelText = '取消',
     String confirmText = '确认',
     bool barrierDismissible = true,
-    bool fitsContent = false,
+    bool fitsContent = true,
     double? buttonTextSize,
     Color? confirmButtonColor,
   }) {

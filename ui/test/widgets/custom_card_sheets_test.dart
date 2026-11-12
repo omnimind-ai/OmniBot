@@ -42,7 +42,7 @@ void _expectBottomPane(WidgetTester tester, double bottom) {
   final pane = tester.getRect(find.byType(OmniGlassPanel));
   expect(tester.getRect(find.byType(LiquidGlass).first), pane);
   expect(pane.bottom, closeTo(bottom, 1));
-  expect(pane.height, greaterThanOrEqualTo(bottom * 0.5));
+  expect(pane.height, lessThanOrEqualTo(bottom));
   expect(tester.takeException(), isNull);
 }
 
@@ -155,6 +155,10 @@ void main() {
     await tester.pump(const Duration(seconds: 1));
 
     _expectBottomPane(tester, 844);
+    expect(
+      tester.getSize(find.byType(OmniGlassPanel)).height,
+      lessThan(844 * 0.5),
+    );
     await tester.tapAt(const Offset(8, 8));
     await tester.dragFrom(
       tester.getTopLeft(find.byType(OmniGlassPanel)) + const Offset(100, 24),

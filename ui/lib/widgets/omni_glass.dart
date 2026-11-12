@@ -7,7 +7,7 @@ import 'package:ui/widgets/omni_glass_routes.dart';
 export 'package:ui/widgets/omni_glass_routes.dart';
 
 /// Standalone confirmations, forms and detail cards share one bottom sheet.
-/// Small cards occupy half the view; longer forms can use up to 92% of the
+/// Cards fit their content by default; longer forms can use up to 92% of the
 /// available height. The host alone owns keyboard insets and the glass pane.
 Future<T?> showOmniGlassCardSheet<T>({
   required BuildContext context,
@@ -22,7 +22,7 @@ Future<T?> showOmniGlassCardSheet<T>({
   bool? requestFocus,
   AnimationStyle? animationStyle,
   bool forceDark = false,
-  bool fitsContent = false,
+  bool fitsContent = true,
   bool showDragHandle = true,
 }) => showOmniGlassBottomSheet<T>(
   context: context,
