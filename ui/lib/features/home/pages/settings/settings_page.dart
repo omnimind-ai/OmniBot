@@ -136,7 +136,7 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
         final endpoint = info?.endpoint ?? '';
         if (info?.isLoopbackOnly == true) {
           showToast(
-            Localizations.localeOf(context).languageCode == 'en'
+            Localizations.localeOf(context).languageCode != 'zh'
                 ? 'Service is available on this device only. Connect to a local network to share it.'
                 : '服务当前仅在此设备可用，连接局域网后可供电脑访问。',
           );
@@ -177,7 +177,7 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
     final info = _mcpInfo;
     if (info == null || info.endpoint.isEmpty) return;
     final l10n = context.l10n;
-    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final isEnglish = Localizations.localeOf(context).languageCode != 'zh';
 
     showSettingsDetailSheet<void>(
       context: context,
@@ -340,7 +340,7 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
   }
 
   List<_SettingSection> _buildSections(String workspaceMemorySubtitle) {
-    final isEnglish = Localizations.localeOf(context).languageCode == 'en';
+    final isEnglish = Localizations.localeOf(context).languageCode != 'zh';
     return [
       _SettingSection(
         label: isEnglish ? 'Account' : '账号',

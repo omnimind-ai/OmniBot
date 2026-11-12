@@ -131,7 +131,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   bool get _canUpdateUi => mounted && !_isDisposing;
   bool get _isEnglish =>
       _canUpdateUi
-          ? Localizations.localeOf(context).languageCode == 'en'
+          ? Localizations.localeOf(context).languageCode != 'zh'
           : _cachedIsEnglish;
   String _text(String zh, String en) => _isEnglish ? en : zh;
 
@@ -187,7 +187,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    _cachedIsEnglish = Localizations.localeOf(context).languageCode == 'en';
+    _cachedIsEnglish = Localizations.localeOf(context).languageCode != 'zh';
   }
 
   void _initializeFromWidget() {
@@ -1922,7 +1922,7 @@ Future<bool> showDeleteProviderDialog({
   required ModelProviderProfileSummary profile,
   required int totalModelCount,
 }) async {
-  final english = Localizations.localeOf(context).languageCode == 'en';
+  final english = Localizations.localeOf(context).languageCode != 'zh';
   String t(String zh, String en) => english ? en : zh;
 
   List<SceneModelBindingEntry> affectedBindings = const [];

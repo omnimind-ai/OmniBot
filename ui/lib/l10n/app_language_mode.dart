@@ -3,7 +3,8 @@ import 'dart:ui';
 enum AppLanguageMode {
   system('system'),
   zhHans('zhHans'),
-  en('en');
+  en('en'),
+  ptBr('ptBr');
 
   const AppLanguageMode(this.storageValue);
 
@@ -30,8 +31,9 @@ class ResolvedAppLocale {
   final Locale locale;
 
   bool get isEnglish => locale.languageCode == 'en';
+  bool get isPortuguese => locale.languageCode == 'pt';
   bool get isChinese => locale.languageCode == 'zh';
-  String get brandName => isEnglish ? 'Omnibot' : '小万';
+  String get brandName => isChinese ? '小万' : 'Omnibot';
 }
 
 ResolvedAppLocale resolveAppLocale({
@@ -43,6 +45,7 @@ ResolvedAppLocale resolveAppLocale({
     AppLanguageMode.system => normalizedSystemLocale,
     AppLanguageMode.zhHans => const Locale('zh', 'CN'),
     AppLanguageMode.en => const Locale('en', 'US'),
+    AppLanguageMode.ptBr => const Locale('pt', 'BR'),
   };
 
   return ResolvedAppLocale(
@@ -53,8 +56,12 @@ ResolvedAppLocale resolveAppLocale({
 }
 
 Locale _normalizeSupportedLocale(Locale locale) {
-  if (locale.languageCode.toLowerCase() == 'zh') {
-      return const Locale('zh', 'CN');
+  final language = locale.languageCode.toLowerCase();
+  if (language == 'zh') {
+    return const Locale('zh', 'CN');
   }
-    return const Locale('en', 'US');
+  if (language == 'pt') {
+    return const Locale('pt', 'BR');
+  }
+  return const Locale('en', 'US');
 }

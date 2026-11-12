@@ -559,4 +559,30 @@ void main() {
     expect(find.text('v22.14.0'), findsOneWidget);
     expect(find.text('Repair environment'), findsNothing);
   });
+
+  testWidgets('pt-BR 环境下完整展示葡语界面与错误提示', (tester) async {
+    readInventory = () async => throw PlatformException(
+      code: 'READ_SETUP_INVENTORY_FAILED',
+      message: '环境检测失败，无法确认组件状态：Failed to extract alpine rootfs.',
+    );
+
+    await pumpTestPage(tester, locale: const Locale('pt', 'BR'));
+
+    expect(find.text('Ambiente de Terminal'), findsOneWidget);
+    expect(find.text('Sistema do terminal'), findsOneWidget);
+    expect(
+      find.text(
+        'Escolha o sistema Linux compartilhado pelo terminal e pelo Agent.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Configuração do ambiente'), findsOneWidget);
+    expect(
+      find.text(
+        'Falha na verificação do ambiente; não foi possível confirmar o status dos componentes: Failed to extract alpine rootfs.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Reparar ambiente'), findsOneWidget);
+  });
 }

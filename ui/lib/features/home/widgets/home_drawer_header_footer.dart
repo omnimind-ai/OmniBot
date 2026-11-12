@@ -95,7 +95,7 @@ extension _HomeDrawerHeaderFooter on HomeDrawerState {
         builder: (dialogContext) {
           final palette = dialogContext.omniPalette;
           final english =
-              Localizations.localeOf(dialogContext).languageCode == 'en';
+              Localizations.localeOf(dialogContext).languageCode != 'zh';
           final surface = palette.surfacePrimary;
 
           return Material(

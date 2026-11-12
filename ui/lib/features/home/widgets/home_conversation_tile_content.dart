@@ -101,7 +101,7 @@ class HomeConversationTileContent extends StatelessWidget {
       Theme.of(context).brightness,
     );
     final locale = Localizations.localeOf(context);
-    final english = locale.languageCode == 'en';
+    final english = locale.languageCode != 'zh';
     final titleStyle = TextStyle(
       fontSize: 16,
       height: 1.25,

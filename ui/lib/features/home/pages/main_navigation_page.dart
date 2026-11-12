@@ -71,7 +71,7 @@ class _MainNavigationPageState extends State<MainNavigationPage> {
 
   @override
   Widget build(BuildContext context) {
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     final media = MediaQuery.of(context);
     final keyboardVisible = media.viewInsets.bottom > 0;
     final destinations = [

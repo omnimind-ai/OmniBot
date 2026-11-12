@@ -89,7 +89,7 @@ class ProviderConnectionTab extends StatelessWidget {
   final bool isBusy;
 
   bool _isEnglish(BuildContext context) =>
-      Localizations.localeOf(context).languageCode == 'en';
+      Localizations.localeOf(context).languageCode != 'zh';
 
   String _text(BuildContext context, String zh, String en) =>
       _isEnglish(context) ? en : zh;
@@ -947,7 +947,7 @@ class _CustomHeaderEntryRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     return Container(
       padding: const EdgeInsets.fromLTRB(12, 12, 8, 10),
       decoration: BoxDecoration(

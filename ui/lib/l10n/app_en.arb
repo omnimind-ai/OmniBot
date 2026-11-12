@@ -21,6 +21,7 @@
   "languageFollowSystem": "System",
   "languageZhHans": "简体中文",
   "languageEnglish": "English",
+  "languagePortugueseBr": "Português (Brasil)",
   "settingsTitle": "Settings",
   "settingsSectionModelMemory": "Models & Memory",
   "settingsSectionServiceEnvironment": "Services & Environment",

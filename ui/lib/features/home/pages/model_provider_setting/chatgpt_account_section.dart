@@ -39,7 +39,7 @@ class _ChatGptAccountSectionState extends State<ChatGptAccountSection> {
   Timer? _expiryTimer;
 
   String _text(String zh, String en) =>
-      Localizations.localeOf(context).languageCode == 'en' ? en : zh;
+      Localizations.localeOf(context).languageCode != 'zh' ? en : zh;
 
   @override
   void initState() {
@@ -365,7 +365,7 @@ class _ChatGptAccountSectionState extends State<ChatGptAccountSection> {
           const SizedBox(height: 12),
           Text(
             _error!.message(
-              english: Localizations.localeOf(context).languageCode == 'en',
+              english: Localizations.localeOf(context).languageCode != 'zh',
             ),
             key: const Key('chatgpt-login-error'),
             style: TextStyle(color: Theme.of(context).colorScheme.error),

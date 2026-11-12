@@ -1,0 +1,84 @@
+<resources>
+    <string name="system_install_notification_channel">Instalação do sistema</string>
+    <string name="system_install_notification_channel_description">Progresso da instalação em segundo plano do sistema e ferramentas base</string>
+    <string name="system_install_notification_running">Instalando sistema</string>
+    <string name="system_install_notification_preparing">Preparando o sistema e as ferramentas base</string>
+    <string name="system_install_notification_failed">Instalação do sistema incompleta</string>
+    <string name="system_install_notification_retry_hint">Toque para tentar novamente</string>
+    <string name="system_install_notification_retry">Tentar novamente</string>
+    <string name="app_name">Omnibot</string>
+    <string name="omni_app_name">Omnibot</string>
+    <string name="quick_log_widget_title">Memória</string>
+    <string name="quick_log_widget_description">Registre memórias na tela inicial e sincronize com a memória de curto prazo</string>
+    <string name="quick_log_widget_add">Adicionar</string>
+    <string name="quick_log_widget_open">Memórias</string>
+    <string name="quick_log_widget_edit">Editar</string>
+    <string name="quick_log_widget_delete">Excluir</string>
+    <string name="quick_log_widget_empty_hint">Nenhuma memória ainda. Toque em + para criar.</string>
+    <string name="quick_log_add_task">Registrar memória</string>
+    <string name="quick_log_edit_task">Editar memória</string>
+    <string name="quick_log_delete_task">Excluir memória</string>
+    <string name="quick_log_settings_title">Configurações do widget</string>
+    <string name="quick_log_settings_done">Concluído</string>
+    <string name="quick_log_opacity">Opacidade</string>
+    <string name="quick_log_widget_color">Cor do widget</string>
+    <string name="quick_log_font_size">Tamanho da fonte</string>
+    <string name="quick_log_font_small">Pequena</string>
+    <string name="quick_log_font_regular">Normal</string>
+    <string name="quick_log_font_large">Grande</string>
+    <string name="quick_log_entry_title">Registrar memória</string>
+    <string name="quick_log_entry_subtitle">Escreva o que deseja lembrar. O Omnibot sincronizará com a memória de curto prazo.</string>
+    <string name="quick_log_entry_edit_title">Editar memória</string>
+    <string name="quick_log_entry_edit_subtitle">As alterações feitas aqui serão sincronizadas com as memórias de curto prazo.</string>
+    <string name="quick_log_entry_hint">Escreva o que deseja lembrar</string>
+    <string name="quick_log_cancel">Cancelar</string>
+    <string name="quick_log_save">Salvar</string>
+    <string name="quick_log_update">Atualizar</string>
+    <string name="quick_log_delete">Excluir</string>
+    <string name="quick_log_content_required">Escreva algo para lembrar primeiro</string>
+    <string name="quick_log_save_success">Memória salva</string>
+    <string name="quick_log_save_failed">Falha ao salvar. Tente novamente.</string>
+    <string name="quick_log_update_success">Memória atualizada</string>
+    <string name="quick_log_update_failed">Falha ao atualizar. Tente novamente.</string>
+    <string name="quick_log_delete_success">Memória excluída</string>
+    <string name="quick_log_delete_failed">Falha ao excluir. Tente novamente.</string>
+    <string name="quick_log_not_found">Esta memória não existe mais.</string>
+    <!-- App Update -->
+    <string name="update_no_version_available">Nenhuma nova versão disponível para instalar.</string>
+    <string name="update_cloud_service_policy_invalid">A política de versão do serviço em nuvem é inválida. Tente novamente mais tarde</string>
+    <string name="update_cloud_service_check_failed">Não foi possível verificar a versão mínima do serviço em nuvem. Conecte-se à internet e busque atualizações</string>
+    <string name="update_version_too_old">A versão atual é muito antiga. Atualize para v%s ou superior para usar a conta e os serviços oficiais em nuvem</string>
+    <!-- Permissions -->
+    <string name="permission_accessibility">Acessibilidade</string>
+    <string name="permission_overlay">Sobreposição</string>
+    <string name="permission_accessibility_missing">Permissão de acessibilidade ausente</string>
+    <string name="permission_automation_both_required">Ative primeiro as permissões de acessibilidade e sobreposição para execução visual.</string>
+    <string name="permission_automation_accessibility_required">Ative primeiro a permissão de acessibilidade para tocar, deslizar e digitar.</string>
+    <string name="permission_automation_overlay_required">Ative primeiro a permissão de sobreposição para exibir a barra de controle.</string>
+    <!-- Task Runtime -->
+    <string name="task_completed_default">Tarefa concluída</string>
+    <!-- Launcher Activity -->
+    <string name="launcher_app_name">Omnibot</string>
+    <string name="launcher_initializing">Inicializando...</string>
+    <!-- Tool Titles -->
+    <string name="tool_privileged_action">Ação privilegiada do Android</string>
+    <string name="tool_privileged_session_start">Iniciar sessão privilegiada</string>
+    <string name="tool_privileged_session_exec">Executar comando privilegiado</string>
+    <string name="tool_privileged_session_read">Ler saída privilegiada</string>
+    <string name="tool_privileged_session_stop">Encerrar sessão privilegiada</string>
+    <string name="tool_terminal_execute">Executar comando no terminal</string>
+    <string name="tool_file_read">Ler arquivo</string>
+    <string name="tool_file_write">Gravar arquivo</string>
+    <string name="tool_file_edit">Editar arquivo</string>
+    <string name="tool_file_list">Listar arquivos</string>
+    <string name="tool_file_search">Pesquisar arquivos</string>
+    <string name="tool_browser_use">Operação do navegador</string>
+    <string name="tool_vlm_task">Executar operação visual</string>
+    <!-- Music Playback States -->
+    <string name="music_state_preparing">Preparando</string>
+    <string name="music_state_playing">Reproduzindo</string>
+    <string name="music_state_paused">Pausado</string>
+    <string name="music_state_completed">Concluído</string>
+    <string name="music_state_error">Falha na reprodução</string>
+    <string name="music_state_stopped">Parado</string>
+</resources>

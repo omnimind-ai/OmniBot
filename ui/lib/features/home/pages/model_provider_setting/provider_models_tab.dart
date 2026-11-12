@@ -84,7 +84,7 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
   Set<String> _selectedModelIds = <String>{};
   bool _errorTechDetailExpanded = false;
 
-  bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
+  bool get _isEnglish => Localizations.localeOf(context).languageCode != 'zh';
 
   String _text(String zh, String en) => _isEnglish ? en : zh;
 
@@ -1124,7 +1124,7 @@ class _ProviderModelsTabState extends State<ProviderModelsTab> {
     final languageCode = Localizations.localeOf(context).languageCode;
     final displayLabel =
         vendor?.labelForLanguage(languageCode) ??
-        (languageCode == 'en' ? 'Other' : '其他');
+        (languageCode != 'zh' ? 'Other' : '其他');
     final labelStyle = TextStyle(
       color: palette.textTertiary,
       fontSize: 11,
@@ -1543,7 +1543,7 @@ class _ModelDetailSheetState extends State<_ModelDetailSheet> {
   late ModelTestState _testState = widget.initialTestState;
   bool _techDetailExpanded = false;
 
-  bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
+  bool get _isEnglish => Localizations.localeOf(context).languageCode != 'zh';
   String _text(String zh, String en) => _isEnglish ? en : zh;
 
   Future<void> _handleToggleChat(bool next) async {

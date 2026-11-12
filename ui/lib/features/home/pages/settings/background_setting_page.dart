@@ -603,7 +603,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
   }
 
   Widget _buildInterfaceSettings() {
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     return Consumer(
       builder: (context, ref, _) {
         final glass = ref.watch(liquidGlassSettingsProvider);
@@ -837,7 +837,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   if (constraints.maxWidth <
-                      290 * MediaQuery.textScalerOf(context).scale(1)) {
+                      440 * MediaQuery.textScalerOf(context).scale(1)) {
                     return Align(
                       alignment: Alignment.centerLeft,
                       child: OmniSettingsDropdown<AppLanguageMode>(
@@ -857,6 +857,10 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
                           OmniSettingsOption(
                             value: AppLanguageMode.en,
                             label: context.l10n.languageEnglish,
+                          ),
+                          OmniSettingsOption(
+                            value: AppLanguageMode.ptBr,
+                            label: context.l10n.languagePortugueseBr,
                           ),
                         ],
                         onChanged: (value) {
@@ -888,6 +892,11 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
                         value: AppLanguageMode.en,
                         label: context.l10n.languageEnglish,
                         id: 'en',
+                      ),
+                      OmniSegmentedOption<AppLanguageMode>(
+                        value: AppLanguageMode.ptBr,
+                        label: context.l10n.languagePortugueseBr,
+                        id: 'ptBr',
                       ),
                     ],
                     onChanged: (nextMode) {

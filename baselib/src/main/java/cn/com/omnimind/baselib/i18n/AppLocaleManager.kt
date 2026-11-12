@@ -9,7 +9,8 @@ import java.util.Locale
 enum class AppLanguageMode(val storageValue: String) {
     SYSTEM("system"),
     ZH_HANS("zhHans"),
-    EN("en");
+    EN("en"),
+    PT_BR("ptBr");
 
     companion object {
         fun fromStorageValue(raw: String?): AppLanguageMode {
@@ -77,8 +78,23 @@ object AppLocaleManager {
     ): PromptLocale {
         return when (mode) {
             AppLanguageMode.ZH_HANS -> PromptLocale.ZH_CN
-            AppLanguageMode.EN -> PromptLocale.EN_US
+            AppLanguageMode.EN, AppLanguageMode.PT_BR -> PromptLocale.EN_US
             AppLanguageMode.SYSTEM -> normalize(systemLocale)
+        }
+    }
+
+    fun resolveUiLocale(context: Context): Locale {
+        val mode = readStoredLanguageMode(context)
+        val sysLocale = systemLocale(context)
+        return when (mode) {
+            AppLanguageMode.ZH_HANS -> Locale.SIMPLIFIED_CHINESE
+            AppLanguageMode.EN -> Locale.US
+            AppLanguageMode.PT_BR -> Locale.forLanguageTag("pt-BR")
+            AppLanguageMode.SYSTEM -> when (sysLocale.language.lowercase()) {
+                "zh" -> Locale.SIMPLIFIED_CHINESE
+                "pt" -> Locale.forLanguageTag("pt-BR")
+                else -> Locale.US
+            }
         }
     }
 
@@ -118,13 +134,18 @@ object AppLocaleManager {
     }
 
     fun applyAppLocale(context: Context): Locale {
-        val locale = currentLocale(context)
+        val locale = resolveUiLocale(context)
         Locale.setDefault(locale)
         val resources = context.applicationContext.resources
         val configuration = Configuration(resources.configuration)
         configuration.setLocale(locale)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            configuration.setLocales(LocaleList(locale))
+            val locales = if (locale.language.lowercase() == "pt") {
+                LocaleList(locale, Locale.US)
+            } else {
+                LocaleList(locale)
+            }
+            configuration.setLocales(locales)
         }
         @Suppress("DEPRECATION")
         resources.updateConfiguration(configuration, resources.displayMetrics)
@@ -132,11 +153,16 @@ object AppLocaleManager {
     }
 
     fun localizedContext(context: Context): Context {
-        val locale = currentLocale(context)
+        val locale = resolveUiLocale(context)
         val configuration = Configuration(context.resources.configuration)
         configuration.setLocale(locale)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            configuration.setLocales(LocaleList(locale))
+            val locales = if (locale.language.lowercase() == "pt") {
+                LocaleList(locale, Locale.US)
+            } else {
+                LocaleList(locale)
+            }
+            configuration.setLocales(locales)
         }
         return context.createConfigurationContext(configuration)
     }

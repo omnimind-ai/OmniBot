@@ -1,5 +1,6 @@
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
 
 void main() {
@@ -24,6 +25,38 @@ void main() {
     expect(
       LegacyTextLocalizer.localize('正在下载 Ubuntu 运行资源 12.0 MB / 28.5 MB'),
       'Downloading Ubuntu runtime 12.0 MB / 28.5 MB',
+    );
+  });
+
+  test('supports pt-BR locale resolution, translations, and non-Chinese fallback', () {
+    final autoPt = resolveAppLocale(
+      mode: AppLanguageMode.system,
+      systemLocale: const Locale('pt', 'BR'),
+    );
+    expect(autoPt.locale, const Locale('pt', 'BR'));
+    expect(autoPt.isPortuguese, isTrue);
+    expect(autoPt.isChinese, isFalse);
+    expect(autoPt.brandName, 'Omnibot');
+
+    final explicitPt = resolveAppLocale(
+      mode: AppLanguageMode.ptBr,
+      systemLocale: const Locale('zh', 'CN'),
+    );
+    expect(explicitPt.locale, const Locale('pt', 'BR'));
+
+    expect(
+      LegacyTextLocalizer.localize(
+        '另一个终端环境准备任务正在运行，请稍后再试。',
+        locale: const Locale('pt', 'BR'),
+      ),
+      'Outra tarefa de preparação do terminal já está em execução. Tente novamente em instantes.',
+    );
+    expect(
+      LegacyTextLocalizer.localize(
+        '小万正在思考...',
+        locale: const Locale('pt', 'BR'),
+      ),
+      'Omnibot is thinking...',
     );
   });
 }

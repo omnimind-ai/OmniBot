@@ -36,7 +36,7 @@ class HomeSearchHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     return FlClashSearchHeader(
       title: Row(
         children: [

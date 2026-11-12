@@ -4,7 +4,7 @@ part of 'home_drawer.dart';
 
 extension _HomeDrawerSelection on HomeDrawerState {
   String _selectionText(String zh, String en) =>
-      Localizations.localeOf(context).languageCode == 'en' ? en : zh;
+      Localizations.localeOf(context).languageCode != 'zh' ? en : zh;
 
   /// Matches the rows exposed by the current search/filter and expanded groups.
   /// Offscreen rows in those groups remain selectable; folded descendants do not.
