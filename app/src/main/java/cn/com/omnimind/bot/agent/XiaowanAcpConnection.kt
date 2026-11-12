@@ -110,7 +110,7 @@ internal class XiaowanAcpConnection(
     private val scheduleToolBridge: AgentScheduleToolBridge,
     private val ensureSharedProviderBinding: suspend () -> Unit = {},
     private val conversationIdProvider: suspend (String) -> Long? = { null },
-    private val isXiaowanSession: suspend (String) -> Boolean = { true },
+    private val isXiaowanSession: suspend (String) -> Boolean = { false },
     private val deleteSession: suspend (String) -> Unit = {},
 ) : AcpRuntimeConnection {
     override val materializesPromptAttachments: Boolean = true
@@ -368,8 +368,10 @@ private class XiaowanAgentSupport(
         requirePersistedSession: Boolean = false,
     ): AgentSession {
         if (requirePersistedSession) {
-            val conversationId = conversationIdProvider(sessionId.value)
-            require(conversationId != null) {
+            // session/new persists the owner before the first prompt creates
+            // Conversation history. Provider reconnects must also restore those
+            // drafts through the same ACP session/resume boundary.
+            require(isXiaowanSession(sessionId.value)) {
                 "Xiaowan ACP session does not exist: ${sessionId.value}"
             }
         }
