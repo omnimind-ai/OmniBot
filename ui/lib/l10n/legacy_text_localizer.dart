@@ -504,6 +504,67 @@ class LegacyTextLocalizer {
     '异常': 'broken',
     '已挂载': 'mounted',
     '未确认': 'Not confirmed',
+    '运行中': 'Running',
+    '空闲': 'Idle',
+    '修复环境': 'Repair environment',
+    '正在修复终端环境…': 'Repairing terminal environment…',
+    '终端环境已修复': 'Terminal environment repaired',
+    '修复终端环境失败': 'Failed to repair terminal environment',
+    '系统安装失败': 'System installation failed',
+    '重试安装': 'Retry',
+    '关闭': 'Dismiss',
+    '另一个终端环境准备任务正在运行，请稍后再试。':
+        'Another terminal environment setup task is already running. Please try again later.',
+    '另一个终端环境正在运行，请稍后重试。':
+        'Another terminal environment setup task is already running. Please try again later.',
+    '终端环境准备已取消，已保留下载进度。':
+        'Terminal environment setup was canceled. Download progress has been kept.',
+    '检查内嵌终端环境失败': 'Failed to check the embedded terminal environment.',
+    '开始准备内嵌终端环境': 'Preparing embedded terminal environment',
+    '准备开始': 'Starting setup',
+    '内嵌终端环境和基础 Agent CLI 包均已就绪。':
+        'Embedded terminal environment and base Agent CLI packages are ready.',
+    '内嵌终端环境已就绪。': 'Embedded terminal environment is ready.',
+    '内嵌终端环境已就绪，基础 Agent CLI 包尚未完成预装。':
+        'Embedded terminal environment is ready; base Agent CLI packages are not preinstalled yet.',
+    '内嵌终端环境初始化失败。': 'Failed to initialize embedded terminal environment.',
+    '当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a。':
+        'Unsupported device ABI. The embedded terminal environment requires arm64-v8a.',
+    '正在准备 workspace 和运行目录': 'Preparing workspace and runtime directories',
+    '正在初始化宿主终端运行时': 'Initializing host terminal runtime',
+    '正在校验终端环境运行资源': 'Checking terminal runtime resources',
+    '终端环境运行资源已就绪。': 'Terminal runtime resources are ready.',
+    '安装终端环境运行资源失败。': 'Failed to install terminal runtime resources.',
+    '无法定位终端 rootfs 目录。': 'Unable to locate terminal rootfs directory.',
+    '正在安装 Alpine 离线运行资源': 'Installing offline Alpine runtime resources',
+    '正在解压 Alpine 离线运行资源': 'Extracting offline Alpine runtime resources',
+    '已找到可用的 Ubuntu 运行资源。': 'Found verified Ubuntu runtime archive.',
+    '正在解压 Ubuntu 运行资源': 'Extracting Ubuntu runtime resources',
+    '正在准备 Ubuntu 官方下载': 'Preparing official Ubuntu download',
+    '正在获取 Ubuntu 下载信息': 'Fetching Ubuntu download metadata',
+    'Ubuntu 校验失败，正在重新完整下载':
+        'Ubuntu verification failed; restarting full download',
+    'Ubuntu 运行资源校验失败，请检查网络后重试。':
+        'Ubuntu runtime verification failed. Check your network and try again.',
+    'Ubuntu 下载响应为空。': 'Ubuntu download response was empty.',
+    'Ubuntu 下载内容超过清单声明大小。':
+        'Ubuntu download exceeded the declared archive size.',
+    '环境检测失败，无法确认组件状态。':
+        'Environment check failed; unable to confirm component status.',
+    '环境配置失败，请稍后重试。':
+        'Environment setup failed. Please try again later.',
+    '正在检查基础 Agent CLI 包': 'Checking base Agent CLI packages',
+    '基础 Agent CLI 包已就绪。': 'Base Agent CLI packages are ready.',
+    '基础 Agent CLI 包检查异常，准备重新安装。':
+        'Base Agent CLI package check failed; reinstalling.',
+    '正在安装基础 Agent CLI 包（git、python、node 等）':
+        'Installing base Agent CLI packages (git, python, node, etc.)',
+    '基础 Agent CLI 包安装完成。': 'Base Agent CLI packages installed.',
+    '正在检查所选开发工具': 'Checking selected development tools',
+    '所选开发工具已就绪': 'Selected development tools are ready',
+    '正在验证所选开发工具': 'Verifying selected development tools',
+    '开发环境配置完成': 'Development environment setup complete',
+    '所选组件均已安装。': 'All selected components are already installed.',
   };
 
   static final List<(RegExp, _TextRewriter)>
@@ -640,6 +701,70 @@ class LegacyTextLocalizer {
     (
       RegExp(r'^终端系统已切换为 (Ubuntu|Alpine)$'),
       (match) => 'Terminal system switched to ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^正在准备 (Ubuntu|Alpine) 终端环境$'),
+      (match) => 'Preparing ${match.group(1)!} terminal environment',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 终端环境准备失败。$'),
+      (match) => 'Failed to prepare ${match.group(1)!} terminal environment.',
+    ),
+    (
+      RegExp(r'^正在验证 (Ubuntu|Alpine) 终端环境$'),
+      (match) => 'Verifying ${match.group(1)!} terminal environment',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 终端环境验证失败：([\s\S]+)$'),
+      (match) =>
+          '${match.group(1)!} terminal environment verification failed: ${match.group(2)!}',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 终端环境已就绪。$'),
+      (match) => '${match.group(1)!} terminal environment is ready.',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 系统已安装。$'),
+      (match) => '${match.group(1)!} system is already installed.',
+    ),
+    (
+      RegExp(r'^解压后的 (Ubuntu|Alpine) rootfs 不完整。$'),
+      (match) => 'Extracted ${match.group(1)!} rootfs is incomplete.',
+    ),
+    (
+      RegExp(r'^正在下载 Ubuntu 运行资源 (.+) / (.+)$'),
+      (match) =>
+          'Downloading Ubuntu runtime ${match.group(1)!} / ${match.group(2)!}',
+    ),
+    (
+      RegExp(r'^下载 Ubuntu 运行资源失败（HTTP (\d+)）。$'),
+      (match) => 'Failed to download Ubuntu runtime (HTTP ${match.group(1)!}).',
+    ),
+    (
+      RegExp(r'^存储空间不足：Ubuntu 初始化至少还需要 (.+)，当前可用 (.+)。$'),
+      (match) =>
+          'Insufficient storage: Ubuntu setup needs at least ${match.group(1)!}, ${match.group(2)!} available.',
+    ),
+    (
+      RegExp(r'^环境检测失败，无法确认组件状态：([\s\S]+)$'),
+      (match) =>
+          'Environment check failed; unable to confirm component status: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^环境配置失败：([\s\S]+)$'),
+      (match) => 'Environment setup failed: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^检测到基础 Agent CLI 包缺失：(.+)$'),
+      (match) => 'Missing base Agent CLI packages: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^正在安装所选开发工具：(.+)$'),
+      (match) => 'Installing selected tools: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^环境配置完成：(.+)$'),
+      (match) => 'Environment setup complete: ${match.group(1)!}',
     ),
   ];
 
