@@ -459,7 +459,7 @@ extension _HomeDrawerConversationList on HomeDrawerState {
     final yesterday = DateTime(now.year, now.month, now.day - 1);
     final weekStart = DateTime(now.year, now.month, now.day - now.weekday + 1);
     final monthStart = DateTime(now.year, now.month);
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     if (!date.isBefore(today)) return ('today', english ? 'Today' : '今天');
     if (!date.isBefore(yesterday)) {
       return ('yesterday', english ? 'Yesterday' : '昨天');

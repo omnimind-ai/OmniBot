@@ -21,6 +21,7 @@ import com.rk.terminal.App
 import com.rk.terminal.runtime.EmbeddedRuntimeInstaller
 import com.rk.terminal.runtime.EmbeddedRuntimeInstaller.RuntimeInstallProgress
 import com.rk.terminal.runtime.AlpineRepositoryManager
+import com.rk.terminal.runtime.ProotSeccompCompatibility
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
 import com.termux.terminal.TerminalEmulator
@@ -266,8 +267,16 @@ class TerminalManager private constructor(
         installIfMissing: Boolean = true,
         onOutputChunk: suspend (String) -> Unit = {}
     ): HiddenExecResult {
-        val environmentReady = withTimeoutOrNull(
+        val environmentTimeoutMs = if (installIfMissing) {
+            maxOf(
+                HIDDEN_EXEC_INSTALL_ENVIRONMENT_TIMEOUT_MS,
+                timeoutMs ?: HIDDEN_EXEC_INSTALL_ENVIRONMENT_TIMEOUT_MS
+            )
+        } else {
             HIDDEN_EXEC_ENVIRONMENT_TIMEOUT_MS
+        }
+        val environmentReady = withTimeoutOrNull(
+            environmentTimeoutMs
         ) {
             if (installIfMissing) {
                 initializeEnvironment(distribution = distribution)
@@ -285,101 +294,141 @@ class TerminalManager private constructor(
             )
         }
 
-        return withContext(Dispatchers.IO) {
-            val process = runCatching {
-                buildHiddenExecProcess(executorKey, command, distribution, installIfMissing).start()
-            }.getOrElse { error ->
-                return@withContext HiddenExecResult(
-                    output = "",
-                    exitCode = -1,
-                    state = HiddenExecResult.State.SHELL_START_FAILED,
-                    error = error.message ?: "Failed to start terminal environment shell."
-                )
-            }
-            onProcessStarted?.invoke(process)
+        val firstAttempt = executeHiddenCommandOnce(
+            command = command,
+            executorKey = executorKey,
+            timeoutMs = timeoutMs,
+            distribution = distribution,
+            onProcessStarted = onProcessStarted,
+            installIfMissing = installIfMissing,
+            onOutputChunk = onOutputChunk
+        )
+        if (
+            firstAttempt.state == HiddenExecResult.State.OK &&
+            firstAttempt.exitCode != 0 &&
+            !ProotSeccompCompatibility.isSeccompCompatEnabled(context) &&
+            ProotSeccompCompatibility.isProotSeccompExecveFailure(firstAttempt.output)
+        ) {
+            Log.w(
+                TAG,
+                "PRoot seccomp execve failure detected; enabling PROOT_NO_SECCOMP=1 and retrying once."
+            )
+            ProotSeccompCompatibility.enableAutoFallback(context)
+            return executeHiddenCommandOnce(
+                command = command,
+                executorKey = executorKey,
+                timeoutMs = timeoutMs,
+                distribution = distribution,
+                onProcessStarted = onProcessStarted,
+                installIfMissing = installIfMissing,
+                onOutputChunk = onOutputChunk
+            )
+        }
+        return firstAttempt
+    }
 
-            withCancellableHiddenExecProcess(process) {
-                coroutineScope {
-                    val outputChannel = Channel<String>(Channel.UNLIMITED)
-                    val outputBuffer = StringBuilder()
-                    val reader = launch {
-                        try {
-                            process.inputStream.bufferedReader().useLines { lines ->
-                                lines.forEach { line ->
-                                    val chunk = "$line\n"
-                                    outputBuffer.append(chunk)
-                                    outputChannel.trySend(chunk)
-                                }
+    private suspend fun executeHiddenCommandOnce(
+        command: String,
+        executorKey: String,
+        timeoutMs: Long?,
+        distribution: TerminalDistribution.Spec,
+        onProcessStarted: ((Process) -> Unit)?,
+        installIfMissing: Boolean,
+        onOutputChunk: suspend (String) -> Unit
+    ): HiddenExecResult = withContext(Dispatchers.IO) {
+        val process = runCatching {
+            buildHiddenExecProcess(executorKey, command, distribution, installIfMissing).start()
+        }.getOrElse { error ->
+            return@withContext HiddenExecResult(
+                output = "",
+                exitCode = -1,
+                state = HiddenExecResult.State.SHELL_START_FAILED,
+                error = error.message ?: "Failed to start terminal environment shell."
+            )
+        }
+        onProcessStarted?.invoke(process)
+
+        withCancellableHiddenExecProcess(process) {
+            coroutineScope {
+                val outputChannel = Channel<String>(Channel.UNLIMITED)
+                val outputBuffer = StringBuilder()
+                val reader = launch {
+                    try {
+                        process.inputStream.bufferedReader().useLines { lines ->
+                            lines.forEach { line ->
+                                val chunk = "$line\n"
+                                outputBuffer.append(chunk)
+                                outputChannel.trySend(chunk)
                             }
-                        } catch (error: Throwable) {
-                            if (error is CancellationException) {
-                                throw error
-                            }
-                            if (!isExpectedHiddenExecReaderTermination(error)) {
-                                Log.w(TAG, "Hidden exec reader terminated unexpectedly", error)
-                            }
-                        } finally {
-                            outputChannel.close()
                         }
+                    } catch (error: Throwable) {
+                        if (error is CancellationException) {
+                            throw error
+                        }
+                        if (!isExpectedHiddenExecReaderTermination(error)) {
+                            Log.w(TAG, "Hidden exec reader terminated unexpectedly", error)
+                        }
+                    } finally {
+                        outputChannel.close()
                     }
+                }
 
-                    val forwarder = launch {
-                        for (chunk in outputChannel) {
-                            onOutputChunk(chunk)
-                        }
+                val forwarder = launch {
+                    for (chunk in outputChannel) {
+                        onOutputChunk(chunk)
                     }
+                }
 
-                    suspend fun finishReaders() {
-                        // The shell wrapper can exit while npm/proot keeps an
-                        // inherited stdout pipe open.  An unbounded join here
-                        // used to turn a timed-out hidden command into a
-                        // permanently suspended ACP switch.
-                        val drained = withTimeoutOrNull(
-                            HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS
-                        ) {
-                            reader.join()
-                            true
-                        } ?: false
-                        if (!drained) {
-                            runCatching { process.inputStream.close() }
-                            runCatching { process.errorStream.close() }
-                            reader.cancel()
-                            withTimeoutOrNull(HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS) {
-                                reader.join()
-                            }
-                        }
-                        forwarder.cancel()
-                        withTimeoutOrNull(HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS) {
-                            forwarder.join()
-                        }
-                    }
-
-                    val finished = if (timeoutMs == null) {
-                        process.waitFor()
+                suspend fun finishReaders() {
+                    // The shell wrapper can exit while npm/proot keeps an
+                    // inherited stdout pipe open.  An unbounded join here
+                    // used to turn a timed-out hidden command into a
+                    // permanently suspended ACP switch.
+                    val drained = withTimeoutOrNull(
+                        HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS
+                    ) {
+                        reader.join()
                         true
-                    } else {
-                        process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                    } ?: false
+                    if (!drained) {
+                        runCatching { process.inputStream.close() }
+                        runCatching { process.errorStream.close() }
+                        reader.cancel()
+                        withTimeoutOrNull(HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS) {
+                            reader.join()
+                        }
                     }
-                    if (!finished) {
-                        terminateHiddenExecProcess(process)
-                        finishReaders()
-                        return@coroutineScope HiddenExecResult(
-                            output = outputBuffer.toString(),
-                            exitCode = -1,
-                            state = HiddenExecResult.State.TIMEOUT,
-                            error = "Command timed out after ${timeoutMs}ms",
-                            rawOutputPreview = outputBuffer.toString().takeLast(4000)
-                        )
+                    forwarder.cancel()
+                    withTimeoutOrNull(HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS) {
+                        forwarder.join()
                     }
+                }
 
+                val finished = if (timeoutMs == null) {
+                    process.waitFor()
+                    true
+                } else {
+                    process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
+                }
+                if (!finished) {
+                    terminateHiddenExecProcess(process)
                     finishReaders()
-                    HiddenExecResult(
+                    return@coroutineScope HiddenExecResult(
                         output = outputBuffer.toString(),
-                        exitCode = process.exitValue(),
-                        state = HiddenExecResult.State.OK,
+                        exitCode = -1,
+                        state = HiddenExecResult.State.TIMEOUT,
+                        error = "Command timed out after ${timeoutMs}ms",
                         rawOutputPreview = outputBuffer.toString().takeLast(4000)
                     )
                 }
+
+                finishReaders()
+                HiddenExecResult(
+                    output = outputBuffer.toString(),
+                    exitCode = process.exitValue(),
+                    state = HiddenExecResult.State.OK,
+                    rawOutputPreview = outputBuffer.toString().takeLast(4000)
+                )
             }
         }
     }
@@ -514,11 +563,10 @@ class TerminalManager private constructor(
             env["PROOT_LOADER"] = "${context.applicationInfo.nativeLibraryDir}/libproot-loader.so"
         }
         env.putAll(OmnibotTerminalEnvironment.buildTerminalEnvironment(context))
-        env.remove("PROOT_NO_SECCOMP")
-        env.remove("SECCOMP")
-        if (Settings.seccomp) {
-            env["SECCOMP"] = "1"
-        }
+        ProotSeccompCompatibility.applyEnvironment(
+            env,
+            ProotSeccompCompatibility.isSeccompCompatEnabled(context)
+        )
         return env
     }
 
@@ -702,6 +750,7 @@ internal fun terminateHiddenExecProcess(process: Process) {
 private const val HIDDEN_EXEC_TERMINATION_GRACE_MS = 500L
 private const val HIDDEN_EXEC_READER_DRAIN_TIMEOUT_MS = 250L
 private const val HIDDEN_EXEC_ENVIRONMENT_TIMEOUT_MS = 10_000L
+private const val HIDDEN_EXEC_INSTALL_ENVIRONMENT_TIMEOUT_MS = 120_000L
 
 internal fun isExpectedHiddenExecReaderTermination(error: Throwable): Boolean {
     var current: Throwable? = error

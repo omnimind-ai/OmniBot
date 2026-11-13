@@ -461,7 +461,7 @@ extension _HomeDrawerActions on HomeDrawerState {
           .modalBarrierDismissLabel,
       pageBuilder: (dialogContext, animation, secondaryAnimation) {
         final isEnglish =
-            Localizations.localeOf(dialogContext).languageCode == 'en';
+            Localizations.localeOf(dialogContext).languageCode != 'zh';
         String tr(String zh, String en) => isEnglish ? en : zh;
         return ConversationContextMenu(
           animation: animation,

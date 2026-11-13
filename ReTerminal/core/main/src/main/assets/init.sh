@@ -87,7 +87,20 @@ if [ "$HEADLESS_MODE" != "1" ] && [ "$#" -eq 0 ]; then
         done
         if [ -n "$missing_packages" ]; then
             printf '\033[34;1m[*]\033[0m Installing important packages\n'
+            ubuntu_installed=0
             if apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages; then
+                ubuntu_installed=1
+            else
+                for fallback_base in http://mirrors.aliyun.com/ubuntu-ports http://ports.ubuntu.com/ubuntu-ports; do
+                    if /bin/sh "$BIN/ubuntu-repositories" "$fallback_base" "$fallback_base" &&
+                        apt-get update &&
+                        DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $missing_packages; then
+                        ubuntu_installed=1
+                        break
+                    fi
+                done
+            fi
+            if [ "$ubuntu_installed" = "1" ]; then
                 printf '\033[32;1m[+]\033[0m Successfully installed\n'
             else
                 printf '\033[31;1m[!]\033[0m Failed to install important packages automatically\n'
@@ -104,7 +117,28 @@ if [ "$HEADLESS_MODE" != "1" ] && [ "$#" -eq 0 ]; then
         done
         if [ -n "$missing_packages" ]; then
             printf '\033[34;1m[*]\033[0m Installing important packages\n'
+            alpine_installed=0
             if apk --wait 300 add --no-cache $missing_packages; then
+                alpine_installed=1
+            else
+                alpine_branch="${OMNIBOT_ALPINE_APK_BRANCH:-}"
+                if [ -z "$alpine_branch" ] && [ -r /etc/alpine-release ]; then
+                    alpine_branch="v$(cut -d. -f1,2 /etc/alpine-release)"
+                fi
+                [ -n "$alpine_branch" ] || alpine_branch="v3.21"
+                for fallback_base in https://mirrors.aliyun.com/alpine https://dl-cdn.alpinelinux.org/alpine https://mirrors.tuna.tsinghua.edu.cn/alpine; do
+                    mkdir -p /etc/apk
+                    printf '%s/%s/main\n%s/%s/community\n' \
+                        "$fallback_base" "$alpine_branch" \
+                        "$fallback_base" "$alpine_branch" \
+                        > /etc/apk/repositories
+                    if apk --wait 300 update && apk --wait 300 add --no-cache $missing_packages; then
+                        alpine_installed=1
+                        break
+                    fi
+                done
+            fi
+            if [ "$alpine_installed" = "1" ]; then
                 printf '\033[32;1m[+]\033[0m Successfully installed\n'
             else
                 printf '\033[31;1m[!]\033[0m Failed to install important packages automatically\n'

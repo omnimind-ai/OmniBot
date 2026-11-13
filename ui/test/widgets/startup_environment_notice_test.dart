@@ -67,6 +67,7 @@ void main() {
     await service.refresh();
     await tester.pumpAndSettle();
     expect(find.text('系统安装失败'), findsOneWidget);
+    expect(find.text('network failed'), findsOneWidget);
     await tester.tap(find.text('前台操作'));
     expect(foregroundTaps, 1);
     await tester.tap(find.byKey(const ValueKey('startup-environment-dismiss')));

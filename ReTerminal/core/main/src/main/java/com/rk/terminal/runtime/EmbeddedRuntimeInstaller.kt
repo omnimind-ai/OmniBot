@@ -81,7 +81,7 @@ object EmbeddedRuntimeInstaller {
     private const val LEGACY_EXPANDED_MIN_BYTES = 64 * 1024 * 1024L
     private const val MAX_REDIRECTS = 5
     @VisibleForTesting
-    internal const val ROOTFS_READY_MARKER_NAME = ".omnibot-rootfs-ready"
+    const val ROOTFS_READY_MARKER_NAME = ".omnibot-rootfs-ready"
     private const val LEGACY_UBUNTU_SHA256 =
         "04207713ece899c3740823d33690441ad3a7f0ded1101aca744e2b0f37ac7ff2"
     private const val OFFICIAL_UBUNTU_VERSION = "24.04.4"
@@ -115,6 +115,7 @@ object EmbeddedRuntimeInstaller {
                 val installedFiles = installCommonAssets(context)
                 installDistribution(context, distribution, onProgress)
                 installCommonHelpers(installedFiles)
+                ProotSeccompCompatibility.probeAndConfigureIfNeeded(context, distribution)
                 emit(onProgress, "ready", distribution, "终端环境运行资源已就绪。", progress = 1.0)
                 InstallStatus(true, true, "终端环境运行资源已就绪。")
             } catch (error: CancellationException) {
@@ -132,33 +133,42 @@ object EmbeddedRuntimeInstaller {
         commonAssets.all { File(context.filesDir, it.outputName).isFile } &&
             isRootfsInstalled(context, distribution)
 
-    fun isDistributionReady(context: Context, distribution: TerminalDistribution.Spec): Boolean {
-        val commonReady = commonAssets.all { File(context.filesDir, it.outputName).isFile }
-        return commonReady && (
-            isRootfsInstalled(context, distribution) ||
-                File(context.filesDir, distribution.rootfsArchiveName).isFile
-            )
-    }
+    fun isDistributionReady(context: Context, distribution: TerminalDistribution.Spec): Boolean =
+        isDistributionInstalled(context, distribution)
 
     private suspend fun installDistribution(
         context: Context,
         distribution: TerminalDistribution.Spec,
         onProgress: suspend (RuntimeInstallProgress) -> Unit
     ) {
-        if (isRootfsInstalled(context, distribution)) {
+        val rootfs = rootfsDirectory(context, distribution)
+            ?: throw IOException("无法定位终端 rootfs 目录。")
+        if (isRootfsInstalled(rootfs, distribution)) {
+            if (!File(rootfs, ROOTFS_READY_MARKER_NAME).isFile) {
+                RootfsArchiveExtractor.markRootfsReadyAtomically(
+                    rootfsDir = rootfs,
+                    markerName = ROOTFS_READY_MARKER_NAME,
+                    distributionId = distribution.id
+                )
+            }
             emit(onProgress, "ready", distribution, "${distribution.displayName} 系统已安装。")
             return
         }
 
+        val currentCoroutineContext = coroutineContext
         val archive = File(context.filesDir, distribution.rootfsArchiveName)
         if (distribution.id == TerminalDistribution.alpine.id) {
-            emit(onProgress, "installing", distribution, "正在安装 Alpine 离线运行资源")
-            copyAssetIfChanged(
-                context,
-                listOf("alpine.tar.gz", "alpine.tar"),
-                archive,
-                executable = false
+            emit(onProgress, "installing", distribution, "正在解压 Alpine 离线运行资源")
+            extractRootfsArchive(
+                rootfs = rootfs,
+                distribution = distribution,
+                openStream = { openAlpineArchiveStream(context, archive) },
+                onCancelCheck = { currentCoroutineContext.ensureActive() }
             )
+            // Remove any legacy staged archive copy once the rootfs is extracted.
+            if (archive.isFile) {
+                runCatching { archive.delete() }
+            }
             return
         }
 
@@ -168,7 +178,13 @@ object EmbeddedRuntimeInstaller {
             val estimatedExpandedSize = savedExpandedSize.takeIf { it > 0L }
                 ?: maxOf(LEGACY_EXPANDED_MIN_BYTES, archive.length() * 4L)
             ensureAvailableSpace(context, estimatedExpandedSize + DISK_SAFETY_BYTES)
-            emit(onProgress, "ready", distribution, "已找到可用的 Ubuntu 运行资源。")
+            emit(onProgress, "installing", distribution, "正在解压 Ubuntu 运行资源")
+            extractRootfsArchive(
+                rootfs = rootfs,
+                distribution = distribution,
+                openStream = archive::inputStream,
+                onCancelCheck = { currentCoroutineContext.ensureActive() }
+            )
             return
         }
 
@@ -185,6 +201,58 @@ object EmbeddedRuntimeInstaller {
         }
         ensureDiskSpace(context, entry, File(context.filesDir, "${archive.name}.part"))
         downloadVerifiedArchive(context, distribution, entry, archive, onProgress)
+        emit(onProgress, "installing", distribution, "正在解压 Ubuntu 运行资源")
+        extractRootfsArchive(
+            rootfs = rootfs,
+            distribution = distribution,
+            openStream = archive::inputStream,
+            onCancelCheck = { currentCoroutineContext.ensureActive() }
+        )
+    }
+
+    @VisibleForTesting
+    internal fun extractRootfsArchive(
+        rootfs: File,
+        distribution: TerminalDistribution.Spec,
+        openStream: () -> InputStream,
+        onCancelCheck: () -> Unit = {}
+    ) {
+        rootfs.mkdirs()
+        RootfsArchiveExtractor.clearIncompleteRootfs(rootfs)
+        try {
+            openStream().use { input ->
+                RootfsArchiveExtractor.extract(
+                    rawInput = input,
+                    rootfsDir = rootfs,
+                    onCancelCheck = onCancelCheck
+                )
+            }
+            if (!hasCompleteDistributionLayout(rootfs, distribution)) {
+                throw IOException("解压后的 ${distribution.displayName} rootfs 不完整。")
+            }
+            RootfsArchiveExtractor.markRootfsReadyAtomically(
+                rootfsDir = rootfs,
+                markerName = ROOTFS_READY_MARKER_NAME,
+                distributionId = distribution.id
+            )
+        } catch (error: Throwable) {
+            runCatching { RootfsArchiveExtractor.clearIncompleteRootfs(rootfs) }
+            throw error
+        }
+    }
+
+    private fun openAlpineArchiveStream(context: Context, legacyArchive: File): InputStream {
+        val assetCandidates = listOf("alpine.tar.gz", "alpine.tar")
+        for (name in assetCandidates) {
+            val opened = runCatching { context.assets.open("$ASSET_ROOT/$name") }.getOrNull()
+            if (opened != null) {
+                return opened
+            }
+        }
+        if (legacyArchive.isFile && legacyArchive.length() > 0L) {
+            return legacyArchive.inputStream()
+        }
+        error("缺少内置终端运行资源：${assetCandidates.first()}。")
     }
 
     @VisibleForTesting
@@ -223,9 +291,13 @@ object EmbeddedRuntimeInstaller {
         writeTextIfChanged(File(localDir(), "vmstat"), vmstat)
     }
 
+    private fun rootfsDirectory(context: Context, distribution: TerminalDistribution.Spec): File? {
+        val parent = context.filesDir.parentFile ?: return null
+        return File(File(parent, "local"), distribution.rootfsDirectoryName)
+    }
+
     private fun isRootfsInstalled(context: Context, distribution: TerminalDistribution.Spec): Boolean {
-        val parent = context.filesDir.parentFile ?: return false
-        val rootfs = File(File(parent, "local"), distribution.rootfsDirectoryName)
+        val rootfs = rootfsDirectory(context, distribution) ?: return false
         return isRootfsInstalled(rootfs, distribution)
     }
 
@@ -237,15 +309,23 @@ object EmbeddedRuntimeInstaller {
         if (!rootfs.isDirectory || !hasMinimumRootfsLayout(rootfs)) return false
         if (File(rootfs, ROOTFS_READY_MARKER_NAME).isFile) return true
 
+        return hasCompleteDistributionLayout(rootfs, distribution)
+    }
+
+    private fun hasCompleteDistributionLayout(
+        rootfs: File,
+        distribution: TerminalDistribution.Spec
+    ): Boolean {
+        if (!hasMinimumRootfsLayout(rootfs)) return false
         if (!rootfsEntryExists(rootfs, "usr/bin/env")) return false
         return when (distribution.id) {
             TerminalDistribution.ubuntu.id ->
                 rootfsEntryExists(rootfs, "usr/bin/apt-get") &&
-                    File(rootfs, "var/lib/dpkg/status").isFile
+                    rootfsEntryExists(rootfs, "var/lib/dpkg/status")
             else ->
                 rootfsEntryExists(rootfs, "sbin/apk") &&
-                    File(rootfs, "lib/apk/db/installed").isFile &&
-                    File(rootfs, "etc/alpine-release").isFile
+                    rootfsEntryExists(rootfs, "lib/apk/db/installed") &&
+                    rootfsEntryExists(rootfs, "etc/alpine-release")
         }
     }
 
@@ -255,8 +335,31 @@ object EmbeddedRuntimeInstaller {
     }
 
     private fun rootfsEntryExists(rootfs: File, relativePath: String): Boolean {
-        val entry = File(rootfs, relativePath)
-        return entry.exists() || Files.isSymbolicLink(entry.toPath())
+        val rootPath = rootfs.toPath().normalize()
+        var current = rootPath
+        val parts = relativePath.split('/').filter { it.isNotEmpty() && it != "." }
+        if (parts.isEmpty()) return rootfs.isDirectory
+        for (index in 0 until parts.size - 1) {
+            var next = current.resolve(parts[index]).normalize()
+            if (!next.startsWith(rootPath)) return false
+            var hops = 0
+            while (Files.isSymbolicLink(next)) {
+                hops += 1
+                if (hops > 16) return false
+                val target = Files.readSymbolicLink(next)
+                next = if (target.isAbsolute || target.toString().startsWith("/")) {
+                    rootPath.resolve(target.toString().trimStart('/')).normalize()
+                } else {
+                    (next.parent ?: rootPath).resolve(target).normalize()
+                }
+                if (!next.startsWith(rootPath)) return false
+            }
+            if (!Files.isDirectory(next)) return false
+            current = next
+        }
+        val leaf = current.resolve(parts.last()).normalize()
+        if (!leaf.startsWith(rootPath)) return false
+        return Files.exists(leaf) || Files.isSymbolicLink(leaf)
     }
 
     private fun isTrustedExistingUbuntuArchive(context: Context, archive: File): Boolean {

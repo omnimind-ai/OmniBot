@@ -15,6 +15,7 @@ object AlpineRepositoryManager {
     private const val DEFAULT_BRANCH = "v3.21"
     private const val OFFICIAL_BASE_URL = "https://dl-cdn.alpinelinux.org/alpine"
     private const val TSINGHUA_BASE_URL = "https://mirrors.tuna.tsinghua.edu.cn/alpine"
+    private const val ALIYUN_BASE_URL = "https://mirrors.aliyun.com/alpine"
 
     fun selectedBaseUrl(): String {
         return baseUrlFor(Settings.alpine_package_mirror)
@@ -27,6 +28,15 @@ object AlpineRepositoryManager {
         }
     }
 
+    fun candidateBaseUrls(source: Int = Settings.alpine_package_mirror): List<String> {
+        return listOf(
+            baseUrlFor(source),
+            ALIYUN_BASE_URL,
+            OFFICIAL_BASE_URL,
+            TSINGHUA_BASE_URL
+        ).distinct()
+    }
+
     fun buildSelectedRepositorySetupCommand(): String {
         return buildRepositorySetupCommand(Settings.alpine_package_mirror)
     }
@@ -35,6 +45,35 @@ object AlpineRepositoryManager {
         val quotedBaseUrl = shellSingleQuote(baseUrlFor(source))
         val quotedDefaultBranch = shellSingleQuote(DEFAULT_BRANCH)
         return "( set -e; branch=\"\$(if [ -r /etc/alpine-release ]; then cut -d. -f1,2 /etc/alpine-release | sed 's/^/v/'; else printf '%s' $quotedDefaultBranch; fi)\"; base=$quotedBaseUrl; mkdir -p /etc/apk; printf '%s/%s/main\\n%s/%s/community\\n' \"\$base\" \"\$branch\" \"\$base\" \"\$branch\" > /etc/apk/repositories )"
+    }
+
+    fun buildSelectedRepositoryUpdateWithFallbackCommand(): String {
+        return buildRepositoryUpdateWithFallbackCommand(Settings.alpine_package_mirror)
+    }
+
+    fun buildRepositoryUpdateWithFallbackCommand(source: Int): String {
+        val candidates = candidateBaseUrls(source).joinToString(" ") { shellSingleQuote(it) }
+        val quotedDefaultBranch = shellSingleQuote(DEFAULT_BRANCH)
+        return """
+            (
+              branch="${'$'}(if [ -r /etc/alpine-release ]; then cut -d. -f1,2 /etc/alpine-release | sed 's/^/v/'; else printf '%s' $quotedDefaultBranch; fi)"
+              mkdir -p /etc/apk
+              for base in $candidates; do
+                printf '%s/%s/main\n%s/%s/community\n' "${'$'}base" "${'$'}branch" "${'$'}base" "${'$'}branch" > /etc/apk/repositories
+                if apk update; then
+                  exit 0
+                fi
+                printf '[!] Alpine mirror %s failed; trying next mirror.\n' "${'$'}base" >&2
+              done
+              for base in $candidates; do
+                printf '%s/%s/main\n%s/%s/community\n' "${'$'}base" "${'$'}branch" "${'$'}base" "${'$'}branch" > /etc/apk/repositories
+                if apk --no-check-certificate update; then
+                  exit 0
+                fi
+              done
+              exit 1
+            )
+        """.trimIndent()
     }
 
     fun applySelectedRepositoryToInstalledRootfs(): ApplyResult {

@@ -504,6 +504,69 @@ class LegacyTextLocalizer {
     '异常': 'broken',
     '已挂载': 'mounted',
     '未确认': 'Not confirmed',
+    '运行中': 'Running',
+    '空闲': 'Idle',
+    '修复环境': 'Repair environment',
+    '正在修复终端环境…': 'Repairing terminal environment…',
+    '终端环境已修复': 'Terminal environment repaired',
+    '修复终端环境失败': 'Failed to repair terminal environment',
+    '系统安装失败': 'System installation failed',
+    '重试安装': 'Retry',
+    '关闭': 'Dismiss',
+    '另一个终端环境准备任务正在运行，请稍后再试。':
+        'Another terminal environment setup task is already running. Please try again later.',
+    '另一个终端环境正在运行，请稍后重试。':
+        'Another terminal environment setup task is already running. Please try again later.',
+    '终端环境准备已取消，已保留下载进度。':
+        'Terminal environment setup was canceled. Download progress has been kept.',
+    '检查内嵌终端环境失败': 'Failed to check the embedded terminal environment.',
+    '开始准备内嵌终端环境': 'Preparing embedded terminal environment',
+    '准备开始': 'Starting setup',
+    '内嵌终端环境和基础 Agent CLI 包均已就绪。':
+        'Embedded terminal environment and base Agent CLI packages are ready.',
+    '内嵌终端环境已就绪。': 'Embedded terminal environment is ready.',
+    '内嵌终端环境已就绪，基础 Agent CLI 包尚未完成预装。':
+        'Embedded terminal environment is ready; base Agent CLI packages are not preinstalled yet.',
+    '内嵌终端环境初始化失败。': 'Failed to initialize embedded terminal environment.',
+    '当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a。':
+        'Unsupported device ABI. The embedded terminal environment requires arm64-v8a.',
+    '正在准备 workspace 和运行目录': 'Preparing workspace and runtime directories',
+    '正在初始化宿主终端运行时': 'Initializing host terminal runtime',
+    '正在校验终端环境运行资源': 'Checking terminal runtime resources',
+    '终端环境运行资源已就绪。': 'Terminal runtime resources are ready.',
+    '安装终端环境运行资源失败。': 'Failed to install terminal runtime resources.',
+    '无法定位终端 rootfs 目录。': 'Unable to locate terminal rootfs directory.',
+    '正在安装 Alpine 离线运行资源': 'Installing offline Alpine runtime resources',
+    '正在解压 Alpine 离线运行资源': 'Extracting offline Alpine runtime resources',
+    '已找到可用的 Ubuntu 运行资源。': 'Found verified Ubuntu runtime archive.',
+    '正在解压 Ubuntu 运行资源': 'Extracting Ubuntu runtime resources',
+    '正在准备 Ubuntu 官方下载': 'Preparing official Ubuntu download',
+    '正在获取 Ubuntu 下载信息': 'Fetching Ubuntu download metadata',
+    'Ubuntu 校验失败，正在重新完整下载':
+        'Ubuntu verification failed; restarting full download',
+    'Ubuntu 运行资源校验失败，请检查网络后重试。':
+        'Ubuntu runtime verification failed. Check your network and try again.',
+    'Ubuntu 下载响应为空。': 'Ubuntu download response was empty.',
+    'Ubuntu 下载内容超过清单声明大小。':
+        'Ubuntu download exceeded the declared archive size.',
+    '环境检测失败，无法确认组件状态。':
+        'Environment check failed; unable to confirm component status.',
+    '环境配置失败，请稍后重试。':
+        'Environment setup failed. Please try again later.',
+    '正在检查基础 Agent CLI 包': 'Checking base Agent CLI packages',
+    '基础 Agent CLI 包已就绪。': 'Base Agent CLI packages are ready.',
+    '基础 Agent CLI 包检查异常，准备重新安装。':
+        'Base Agent CLI package check failed; reinstalling.',
+    '正在安装基础 Agent CLI 包（git、python、node 等）':
+        'Installing base Agent CLI packages (git, python, node, etc.)',
+    '基础 Agent CLI 包安装完成。': 'Base Agent CLI packages installed.',
+    '内嵌终端环境已初始化，但基础 Agent CLI 包安装后仍未通过校验。':
+        'Embedded terminal initialized, but base Agent CLI packages failed verification.',
+    '正在检查所选开发工具': 'Checking selected development tools',
+    '所选开发工具已就绪': 'Selected development tools are ready',
+    '正在验证所选开发工具': 'Verifying selected development tools',
+    '开发环境配置完成': 'Development environment setup complete',
+    '所选组件均已安装。': 'All selected components are already installed.',
   };
 
   static final List<(RegExp, _TextRewriter)>
@@ -641,7 +704,290 @@ class LegacyTextLocalizer {
       RegExp(r'^终端系统已切换为 (Ubuntu|Alpine)$'),
       (match) => 'Terminal system switched to ${match.group(1)!}',
     ),
+    (
+      RegExp(r'^正在准备 (Ubuntu|Alpine) 终端环境$'),
+      (match) => 'Preparing ${match.group(1)!} terminal environment',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 终端环境准备失败。$'),
+      (match) => 'Failed to prepare ${match.group(1)!} terminal environment.',
+    ),
+    (
+      RegExp(r'^正在验证 (Ubuntu|Alpine) 终端环境$'),
+      (match) => 'Verifying ${match.group(1)!} terminal environment',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 终端环境验证失败：([\s\S]+)$'),
+      (match) =>
+          '${match.group(1)!} terminal environment verification failed: ${match.group(2)!}',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 终端环境已就绪。$'),
+      (match) => '${match.group(1)!} terminal environment is ready.',
+    ),
+    (
+      RegExp(r'^(Ubuntu|Alpine) 系统已安装。$'),
+      (match) => '${match.group(1)!} system is already installed.',
+    ),
+    (
+      RegExp(r'^解压后的 (Ubuntu|Alpine) rootfs 不完整。$'),
+      (match) => 'Extracted ${match.group(1)!} rootfs is incomplete.',
+    ),
+    (
+      RegExp(r'^正在下载 Ubuntu 运行资源 (.+) / (.+)$'),
+      (match) =>
+          'Downloading Ubuntu runtime ${match.group(1)!} / ${match.group(2)!}',
+    ),
+    (
+      RegExp(r'^下载 Ubuntu 运行资源失败（HTTP (\d+)）。$'),
+      (match) => 'Failed to download Ubuntu runtime (HTTP ${match.group(1)!}).',
+    ),
+    (
+      RegExp(r'^存储空间不足：Ubuntu 初始化至少还需要 (.+)，当前可用 (.+)。$'),
+      (match) =>
+          'Insufficient storage: Ubuntu setup needs at least ${match.group(1)!}, ${match.group(2)!} available.',
+    ),
+    (
+      RegExp(r'^环境检测失败，无法确认组件状态：([\s\S]+)$'),
+      (match) =>
+          'Environment check failed; unable to confirm component status: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^环境配置失败：([\s\S]+)$'),
+      (match) => 'Environment setup failed: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^检测到基础 Agent CLI 包缺失：(.+)$'),
+      (match) => 'Missing base Agent CLI packages: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^正在安装所选开发工具：(.+)$'),
+      (match) => 'Installing selected tools: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^环境配置完成：(.+)$'),
+      (match) => 'Environment setup complete: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：([\s\S]+)$'),
+      (match) =>
+          'Embedded terminal initialized, but installing base Agent CLI packages failed: ${match.group(1)!}',
+    ),
+    (
+      RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包仍缺失：(.+)$'),
+      (match) =>
+          'Embedded terminal initialized, but base Agent CLI packages are still missing: ${match.group(1)!}',
+    ),
   ];
+
+  static final Map<String, String> _exactPt = <String, String>{
+    '设置': 'Configurações',
+    '刷新': 'Atualizar',
+    '取消': 'Cancelar',
+    '删除': 'Excluir',
+    '保存': 'Salvar',
+    '确认': 'Confirmar',
+    '加载中': 'Carregando',
+    '加载中...': 'Carregando...',
+    '终端环境': 'Ambiente de Terminal',
+    'Alpine 环境': 'Ambiente de Terminal',
+    '终端系统': 'Sistema do terminal',
+    '选择终端与 Agent 共用的 Linux 系统。':
+        'Escolha o sistema Linux compartilhado pelo terminal e pelo Agent.',
+    '正在准备终端系统…': 'Preparando sistema do terminal…',
+    '取消下载': 'Cancelar',
+    '正在取消下载…': 'Cancelando download…',
+    '切换终端系统失败': 'Falha ao alternar o sistema do terminal',
+    '检测未完成，请重新检测以确认组件状态。':
+        'Detecção incompleta. Atualize para confirmar o status dos componentes.',
+    'Workspace 挂载': 'Montagens do Workspace',
+    '把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。':
+        'Conecte diretórios do dispositivo ao workspace para acesso direto no terminal e no chat. Remover a montagem não exclui os arquivos originais.',
+    '新增挂载': 'Adicionar montagem',
+    '还没有挂载任何宿主目录。': 'Nenhum diretório montado ainda.',
+    '选择宿主目录': 'Selecionar diretório do dispositivo',
+    '挂载名称': 'Nome da montagem',
+    '会显示为 `/workspace/<名称>`': 'Aparecerá como `/workspace/<nome>`',
+    '挂载': 'Montar',
+    '卸载挂载': 'Desmontar diretório',
+    '卸载': 'Desmontar',
+    '异常': 'inválido',
+    '已挂载': 'montado',
+    '未确认': 'Não confirmado',
+    '运行中': 'Em execução',
+    '空闲': 'Inativo',
+    '修复环境': 'Reparar ambiente',
+    '正在修复终端环境…': 'Reparando ambiente de terminal…',
+    '终端环境已修复': 'Ambiente de terminal reparado',
+    '修复终端环境失败': 'Falha ao reparar o ambiente de terminal',
+    '系统安装失败': 'Falha na instalação do sistema',
+    '重试安装': 'Tentar novamente',
+    '关闭': 'Fechar',
+    '另一个终端环境准备任务正在运行，请稍后再试。':
+        'Outra tarefa de preparação do terminal já está em execução. Tente novamente em instantes.',
+    '另一个终端环境正在运行，请稍后重试。':
+        'Outro ambiente de terminal já está em execução. Tente novamente em instantes.',
+    '终端环境准备已取消，已保留下载进度。':
+        'A preparação do ambiente de terminal foi cancelada. O progresso do download foi mantido.',
+    '检查内嵌终端环境失败': 'Falha ao verificar o ambiente de terminal integrado.',
+    '开始准备内嵌终端环境': 'Iniciando preparação do ambiente de terminal',
+    '准备开始': 'Iniciando configuração',
+    '内嵌终端环境和基础 Agent CLI 包均已就绪。':
+        'O ambiente de terminal integrado e os pacotes base de CLI do Agent estão prontos.',
+    '内嵌终端环境已就绪。': 'O ambiente de terminal integrado está pronto.',
+    '内嵌终端环境已就绪，基础 Agent CLI 包尚未完成预装。':
+        'O ambiente de terminal está pronto; os pacotes base de CLI ainda não foram pré-instalados.',
+    '内嵌终端环境初始化失败。': 'Falha ao inicializar o ambiente de terminal integrado.',
+    '当前设备 ABI 不受支持，内嵌终端环境仅支持 arm64-v8a。':
+        'ABI do dispositivo não suportada. O terminal integrado requer arm64-v8a.',
+    '正在准备 workspace 和运行目录':
+        'Preparando diretórios de workspace e execução',
+    '正在初始化宿主终端运行时': 'Inicializando runtime do terminal no dispositivo',
+    '正在校验终端环境运行资源': 'Verificando recursos do ambiente de terminal',
+    '终端环境运行资源已就绪。': 'Recursos do ambiente de terminal prontos.',
+    '安装终端环境运行资源失败。':
+        'Falha ao instalar os recursos do ambiente de terminal.',
+    '无法定位终端 rootfs 目录。':
+        'Não foi possível localizar o diretório rootfs do terminal.',
+    '正在安装 Alpine 离线运行资源': 'Instalando recursos offline do Alpine',
+    '正在解压 Alpine 离线运行资源': 'Extraindo recursos offline do Alpine',
+    '已找到可用的 Ubuntu 运行资源。': 'Arquivo verificado do Ubuntu encontrado.',
+    '正在解压 Ubuntu 运行资源': 'Extraindo recursos do Ubuntu',
+    '正在准备 Ubuntu 官方下载': 'Preparando download oficial do Ubuntu',
+    '正在获取 Ubuntu 下载信息': 'Obtendo informações de download do Ubuntu',
+    'Ubuntu 校验失败，正在重新完整下载':
+        'Falha na verificação do Ubuntu; reiniciando o download completo',
+    'Ubuntu 运行资源校验失败，请检查网络后重试。':
+        'Falha na verificação do Ubuntu. Verifique sua conexão e tente novamente.',
+    'Ubuntu 下载响应为空。': 'A resposta do download do Ubuntu estava vazia.',
+    'Ubuntu 下载内容超过清单声明大小。':
+        'O download do Ubuntu excedeu o tamanho esperado.',
+    '环境检测失败，无法确认组件状态。':
+        'Falha na verificação do ambiente; não foi possível confirmar o status dos componentes.',
+    '环境配置失败，请稍后重试。':
+        'Falha na configuração do ambiente. Tente novamente mais tarde.',
+    '正在检查基础 Agent CLI 包': 'Verificando pacotes base de CLI do Agent',
+    '基础 Agent CLI 包已就绪。': 'Pacotes base de CLI do Agent prontos.',
+    '基础 Agent CLI 包检查异常，准备重新安装。':
+        'Falha ao verificar pacotes base de CLI; reinstalando.',
+    '正在安装基础 Agent CLI 包（git、python、node 等）':
+        'Instalando pacotes base de CLI (git, python, node, etc.)',
+    '基础 Agent CLI 包安装完成。': 'Pacotes base de CLI instalados.',
+    '内嵌终端环境已初始化，但基础 Agent CLI 包安装后仍未通过校验。':
+        'Terminal integrado inicializado, mas os pacotes base de CLI falharam na verificação.',
+    '正在检查所选开发工具': 'Verificando ferramentas de desenvolvimento selecionadas',
+    '所选开发工具已就绪': 'As ferramentas selecionadas estão prontas',
+    '正在验证所选开发工具': 'Validando ferramentas de desenvolvimento selecionadas',
+    '开发环境配置完成': 'Configuração do ambiente de desenvolvimento concluída',
+    '所选组件均已安装。': 'Todos os componentes selecionados já estão instalados.',
+  };
+
+  static final List<(RegExp, _TextRewriter)> _regexPt =
+      <(RegExp, _TextRewriter)>[
+        (
+          RegExp(r'^确认卸载 `/workspace/(.+)` 吗？原始宿主目录和里面的文件都不会被删除。$'),
+          (match) =>
+              'Desmontar `/workspace/${match.group(1)!}`? O diretório original e seus arquivos não serão excluídos.',
+        ),
+        (
+          RegExp(r'^原始目录不存在或当前不可读：(.+)$'),
+          (match) =>
+              'O diretório original não existe ou não pode ser lido no momento: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^已挂载到 /workspace/(.+)$'),
+          (match) => 'Montado em /workspace/${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^已卸载 /workspace/(.+)$'),
+          (match) => 'Desmontado /workspace/${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^正在准备 (Ubuntu|Alpine)…$'),
+          (match) => 'Preparando ${match.group(1)!}…',
+        ),
+        (
+          RegExp(r'^终端系统已切换为 (Ubuntu|Alpine)$'),
+          (match) => 'Sistema do terminal alterado para ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^正在准备 (Ubuntu|Alpine) 终端环境$'),
+          (match) => 'Preparando ambiente de terminal ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^(Ubuntu|Alpine) 终端环境准备失败。$'),
+          (match) =>
+              'Falha ao preparar o ambiente de terminal ${match.group(1)!}.',
+        ),
+        (
+          RegExp(r'^正在验证 (Ubuntu|Alpine) 终端环境$'),
+          (match) => 'Verificando ambiente de terminal ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^(Ubuntu|Alpine) 终端环境验证失败：([\s\S]+)$'),
+          (match) =>
+              'Falha na verificação do ambiente ${match.group(1)!}: ${match.group(2)!}',
+        ),
+        (
+          RegExp(r'^(Ubuntu|Alpine) 终端环境已就绪。$'),
+          (match) => 'O ambiente de terminal ${match.group(1)!} está pronto.',
+        ),
+        (
+          RegExp(r'^(Ubuntu|Alpine) 系统已安装。$'),
+          (match) => 'O sistema ${match.group(1)!} já está instalado.',
+        ),
+        (
+          RegExp(r'^解压后的 (Ubuntu|Alpine) rootfs 不完整。$'),
+          (match) => 'O rootfs extraído do ${match.group(1)!} está incompleto.',
+        ),
+        (
+          RegExp(r'^正在下载 Ubuntu 运行资源 (.+) / (.+)$'),
+          (match) =>
+              'Baixando recursos do Ubuntu ${match.group(1)!} / ${match.group(2)!}',
+        ),
+        (
+          RegExp(r'^下载 Ubuntu 运行资源失败（HTTP (\d+)）。$'),
+          (match) =>
+              'Falha ao baixar recursos do Ubuntu (HTTP ${match.group(1)!}).',
+        ),
+        (
+          RegExp(r'^存储空间不足：Ubuntu 初始化至少还需要 (.+)，当前可用 (.+)。$'),
+          (match) =>
+              'Espaço insuficiente: o Ubuntu requer pelo menos ${match.group(1)!}; disponível: ${match.group(2)!}.',
+        ),
+        (
+          RegExp(r'^环境检测失败，无法确认组件状态：([\s\S]+)$'),
+          (match) =>
+              'Falha na verificação do ambiente; não foi possível confirmar o status dos componentes: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^环境配置失败：([\s\S]+)$'),
+          (match) => 'Falha na configuração do ambiente: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^检测到基础 Agent CLI 包缺失：(.+)$'),
+          (match) => 'Pacotes base de CLI do Agent ausentes: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^正在安装所选开发工具：(.+)$'),
+          (match) => 'Instalando ferramentas selecionadas: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^环境配置完成：(.+)$'),
+          (match) =>
+              'Configuração do ambiente concluída: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：([\s\S]+)$'),
+          (match) =>
+              'Terminal integrado inicializado, mas falhou ao instalar pacotes base de CLI: ${match.group(1)!}',
+        ),
+        (
+          RegExp(r'^内嵌终端环境已初始化，但基础 Agent CLI 包仍缺失：(.+)$'),
+          (match) =>
+              'Terminal integrado inicializado, mas ainda faltam pacotes base de CLI: ${match.group(1)!}',
+        ),
+      ];
 
   static void setResolvedLocale(Locale locale) {
     _activeLocale = locale;
@@ -663,12 +1009,25 @@ class LegacyTextLocalizer {
     }
   }
 
-  static bool get isEnglish => _resolvedLocale.languageCode == 'en';
+  static bool get isEnglish => _resolvedLocale.languageCode != 'zh';
 
   static String localize(String text, {Locale? locale}) {
     final targetLocale = locale ?? _resolvedLocale;
-    if (targetLocale.languageCode != 'en') {
+    final lang = targetLocale.languageCode.toLowerCase();
+    if (lang == 'zh') {
       return text;
+    }
+    if (lang == 'pt') {
+      final exactPt = _exactPt[text];
+      if (exactPt != null) {
+        return exactPt;
+      }
+      for (final (pattern, rewrite) in _regexPt) {
+        final match = pattern.firstMatch(text);
+        if (match != null) {
+          return rewrite(match);
+        }
+      }
     }
     final exact = _exactEn[text];
     if (exact != null) {

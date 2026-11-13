@@ -45,7 +45,7 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage>
   final Map<String, Set<String>> _hiddenModelIdsByProfileId = {};
   final Map<String, List<ProviderModelOption>> _remoteModelsByProfileId = {};
 
-  bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
+  bool get _isEnglish => Localizations.localeOf(context).languageCode != 'zh';
   String _text(String zh, String en) => _isEnglish ? en : zh;
 
   @override

@@ -514,7 +514,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer>
   Future<void> _invokeWebQuickAction(OmniPluginActionItem action) async {
     if (_busyWebQuickActionKey != null) return;
     final key = '${action.pluginId}/${action.id}';
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     setState(() => _busyWebQuickActionKey = key);
     _maybeCloseDrawer();
     try {
@@ -530,7 +530,7 @@ class HomeDrawerState extends ConsumerState<HomeDrawer>
   Future<void> _stopWebQuickAction(OmniPluginActionItem action) async {
     if (_busyWebQuickActionKey != null) return;
     final key = '${action.pluginId}/${action.id}';
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     setState(() => _busyWebQuickActionKey = key);
     try {
       await AgentWebActionPresenter.stop(action, english: english);

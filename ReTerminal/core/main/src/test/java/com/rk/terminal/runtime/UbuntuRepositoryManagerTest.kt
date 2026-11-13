@@ -71,12 +71,58 @@ class UbuntuRepositoryManagerTest {
         assertFalse(fixture.sources.exists())
     }
 
+    @Test
+    fun updateWithFallbackSwitchesBothMainAndSecurityWhenTsinghuaAndPortsFail() = withGuestFixture { fixture ->
+        val attemptsLog = fixture.root.resolve("apt-attempts.log")
+        fixture.bin.resolve("apt-get").apply {
+            writeText(
+                """
+                #!/bin/sh
+                uris=${'$'}(grep '^URIs:' "${fixture.sources.path}" | tr '\n' ' ')
+                printf '%s|%s\n' "${'$'}*" "${'$'}uris" >> "${attemptsLog.path}"
+                case "${'$'}uris" in
+                  *"URIs: http://mirrors.aliyun.com/ubuntu-ports URIs: http://mirrors.aliyun.com/ubuntu-ports"*)
+                    exit 0
+                    ;;
+                  *)
+                    exit 100
+                    ;;
+                esac
+                """.trimIndent()
+            )
+            setExecutable(true)
+        }
+
+        val command = UbuntuRepositoryManager.buildRepositoryUpdateWithFallbackCommand(
+            UbuntuPackageMirror.TSINGHUA
+        )
+        val process = ProcessBuilder("/bin/sh", "-c", command)
+            .redirectErrorStream(true)
+            .apply {
+                environment()["BIN"] = fixture.bin.path
+                environment()["PATH"] = "${fixture.bin.path}:${System.getenv("PATH")}"
+                environment()["TEST_NATIVE_ARCH"] = "arm64"
+                environment()["TEST_DPKG_CALLS"] = fixture.dpkgCalls.path
+            }
+            .start()
+        val output = process.inputStream.bufferedReader().use { it.readText() }
+        val exitCode = process.waitFor()
+
+        assertEquals(output, 0, exitCode)
+        val finalSources = fixture.sources.readText()
+        assertTrue(finalSources.contains("URIs: http://mirrors.aliyun.com/ubuntu-ports"))
+        assertFalse(finalSources.contains("http://ports.ubuntu.com/ubuntu-ports"))
+        assertEquals(4, attemptsLog.readLines().size)
+        assertTrue(attemptsLog.readLines().first().contains("mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"))
+        assertTrue(attemptsLog.readLines().last().contains("mirrors.aliyun.com/ubuntu-ports"))
+    }
+
     private data class ShellResult(val exitCode: Int, val output: String)
 
     private class GuestFixture(val root: File) {
         val sources = root.resolve("etc/apt/sources.list.d/ubuntu.sources")
         val dpkgCalls = root.resolve("dpkg-calls")
-        private val bin = root.resolve("runtime scripts").apply { mkdirs() }
+        val bin = root.resolve("runtime scripts").apply { mkdirs() }
 
         init {
             root.resolve("etc/os-release").apply {

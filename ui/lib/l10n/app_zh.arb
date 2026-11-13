@@ -21,6 +21,7 @@
   "languageFollowSystem": "跟随系统",
   "languageZhHans": "简体中文",
   "languageEnglish": "English",
+  "languagePortugueseBr": "Português (Brasil)",
   "settingsTitle": "设置",
   "settingsSectionModelMemory": "模型与记忆",
   "settingsSectionServiceEnvironment": "服务与环境",

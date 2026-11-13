@@ -17,6 +17,7 @@ object UbuntuRepositoryManager {
     private const val DEFAULT_CODENAME = "noble"
     private const val OFFICIAL_BASE_URL = "http://ports.ubuntu.com/ubuntu-ports"
     private const val TSINGHUA_BASE_URL = "http://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports"
+    private const val ALIYUN_BASE_URL = "http://mirrors.aliyun.com/ubuntu-ports"
 
     fun selectedBaseUrl(): String {
         return baseUrlFor(Settings.ubuntu_package_mirror)
@@ -29,6 +30,15 @@ object UbuntuRepositoryManager {
         }
     }
 
+    fun candidateBaseUrls(source: Int = Settings.ubuntu_package_mirror): List<String> {
+        return listOf(
+            baseUrlFor(source),
+            ALIYUN_BASE_URL,
+            OFFICIAL_BASE_URL,
+            TSINGHUA_BASE_URL
+        ).distinct()
+    }
+
     fun buildSelectedRepositorySetupCommand(): String {
         return buildRepositorySetupCommand(Settings.ubuntu_package_mirror)
     }
@@ -36,6 +46,31 @@ object UbuntuRepositoryManager {
     fun buildRepositorySetupCommand(source: Int): String {
         val mainBaseUrl = shellSingleQuote(baseUrlFor(source))
         return "/bin/sh \"${'$'}BIN/ubuntu-repositories\" $mainBaseUrl"
+    }
+
+    fun buildSelectedRepositoryUpdateWithFallbackCommand(): String {
+        return buildRepositoryUpdateWithFallbackCommand(Settings.ubuntu_package_mirror)
+    }
+
+    fun buildRepositoryUpdateWithFallbackCommand(source: Int): String {
+        val candidates = candidateBaseUrls(source).joinToString(" ") { shellSingleQuote(it) }
+        val official = shellSingleQuote(OFFICIAL_BASE_URL)
+        return """
+            (
+              for base in $candidates; do
+                if /bin/sh "${'$'}BIN/ubuntu-repositories" "${'$'}base" && apt-get update; then
+                  exit 0
+                fi
+                if [ "${'$'}base" != $official ]; then
+                  if /bin/sh "${'$'}BIN/ubuntu-repositories" "${'$'}base" "${'$'}base" && apt-get update; then
+                    exit 0
+                  fi
+                fi
+                printf '[!] Ubuntu mirror %s failed; trying next mirror.\n' "${'$'}base" >&2
+              done
+              exit 1
+            )
+        """.trimIndent()
     }
 
     fun applySelectedRepositoryToInstalledRootfs(): ApplyResult {

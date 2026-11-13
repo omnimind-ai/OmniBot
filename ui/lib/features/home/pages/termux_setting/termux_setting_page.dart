@@ -9,7 +9,6 @@ import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:flutter/services.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/l10n/l10n.dart';
-import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/special_permission.dart';
 import 'package:ui/services/workspace_mount_service.dart';
@@ -148,6 +147,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     with WidgetsBindingObserver, FlClashPageLoadMixin {
   bool _isOpeningSetup = false;
   bool _isDetecting = true;
+  bool _isRepairingEnvironment = false;
   bool _isDistributionLoading = true;
   bool _isDistributionSwitching = false;
   bool _isDistributionCancelling = false;
@@ -157,6 +157,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   bool _isMountsBusy = false;
   bool _hasInitializedSelection = false;
   String? _detectError;
+  String? _startupInitError;
   int _inventoryRequest = 0;
   int _distributionRequest = 0;
   String? _autoStartError;
@@ -205,36 +206,30 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       _detectError == null &&
       _selectedLostCount > 0;
 
-  bool get _isEnglish => Localizations.localeOf(context).languageCode == 'en';
   Color get _pageBackground => context.omniPalette.pageBackground;
   Color get _primaryTextColor => context.omniPalette.textPrimary;
   Color get _secondaryTextColor => context.omniPalette.textSecondary;
   Color get _tertiaryTextColor => context.omniPalette.textTertiary;
   Color get _mutedSurfaceColor => context.omniPalette.surfaceSecondary;
 
-  String get _workspaceMountSectionTitle =>
-      LegacyTextLocalizer.localize('Workspace 挂载');
+  String get _workspaceMountSectionTitle => context.trLegacy('Workspace 挂载');
   String get _workspaceMountSectionDesc =>
-      LegacyTextLocalizer.localize('把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。');
-  String get _workspaceMountAddLabel => LegacyTextLocalizer.localize('新增挂载');
-  String get _workspaceMountEmptyDesc =>
-      LegacyTextLocalizer.localize('还没有挂载任何宿主目录。');
-  String get _workspaceMountPickTitle =>
-      LegacyTextLocalizer.localize('选择宿主目录');
-  String get _workspaceMountAliasTitle => LegacyTextLocalizer.localize('挂载名称');
-  String get _workspaceMountAliasHint =>
-      LegacyTextLocalizer.localize('会显示为 `/workspace/<名称>`');
-  String get _workspaceMountAliasSave => LegacyTextLocalizer.localize('挂载');
-  String get _workspaceMountUnmountTitle =>
-      LegacyTextLocalizer.localize('卸载挂载');
+      context.trLegacy('把设备目录连接到工作区，终端和聊天可直接访问。移除挂载不会删除原文件。');
+  String get _workspaceMountAddLabel => context.trLegacy('新增挂载');
+  String get _workspaceMountEmptyDesc => context.trLegacy('还没有挂载任何宿主目录。');
+  String get _workspaceMountPickTitle => context.trLegacy('选择宿主目录');
+  String get _workspaceMountAliasTitle => context.trLegacy('挂载名称');
+  String get _workspaceMountAliasHint => context.trLegacy('会显示为 `/workspace/<名称>`');
+  String get _workspaceMountAliasSave => context.trLegacy('挂载');
+  String get _workspaceMountUnmountTitle => context.trLegacy('卸载挂载');
   String _workspaceMountUnmountMessage(String alias) =>
-      LegacyTextLocalizer.localize('确认卸载 `/workspace/$alias` 吗？原始宿主目录和里面的文件都不会被删除。');
+      context.trLegacy('确认卸载 `/workspace/$alias` 吗？原始宿主目录和里面的文件都不会被删除。');
   String _workspaceMountBrokenMessage(String sourcePath) =>
-      LegacyTextLocalizer.localize('原始目录不存在或当前不可读：$sourcePath');
+      context.trLegacy('原始目录不存在或当前不可读：$sourcePath');
   String _workspaceMountedToast(String alias) =>
-      LegacyTextLocalizer.localize('已挂载到 /workspace/$alias');
+      context.trLegacy('已挂载到 /workspace/$alias');
   String _workspaceUnmountedToast(String alias) =>
-      LegacyTextLocalizer.localize('已卸载 /workspace/$alias');
+      context.trLegacy('已卸载 /workspace/$alias');
 
   String _resolveL10nKey(String key) {
     // Returns the localized string for a given ARB key.
@@ -311,7 +306,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   void _handleTerminalInitProgress(EmbeddedTerminalInitProgress progress) {
     if (!mounted) return;
     if (!_isDistributionSwitching) {
-      if (progress.phase == 'ready') {
+      if (progress.phase == 'ready' || progress.phase == 'error') {
         unawaited(_refreshCompletedDistribution());
       }
       return;
@@ -324,7 +319,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     setState(() {
       _distributionSwitchProgress = progress.progress;
       if (progress.message.isNotEmpty) {
-        _distributionSwitchStage = progress.message;
+        _distributionSwitchStage = context.trLegacy(progress.message.trim());
       }
     });
   }
@@ -338,13 +333,26 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       if (!mounted ||
           _isDistributionSwitching ||
           request != _distributionRequest ||
-          !snapshot.completed ||
-          snapshot.success != true ||
-          snapshot.distribution == null ||
-          snapshot.distribution == _selectedDistribution) {
+          !snapshot.completed) {
         return;
       }
-      await _loadDistributionAndInventory(selectMissingByDefault: true);
+      if (snapshot.success == true) {
+        if (_startupInitError != null) {
+          setState(() {
+            _startupInitError = null;
+          });
+        }
+        await _loadDistributionAndInventory(selectMissingByDefault: true);
+      } else if (snapshot.success == false &&
+          (snapshot.distribution == null ||
+              snapshot.distribution == _selectedDistribution)) {
+        final rawError = snapshot.error?.trim();
+        setState(() {
+          _startupInitError = rawError != null && rawError.isNotEmpty
+              ? context.trLegacy(rawError)
+              : context.trLegacy('内嵌终端环境初始化失败。');
+        });
+      }
     } catch (_) {
       // An observation failure does not change the selected distribution.
     }
@@ -354,7 +362,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     if (!_isDistributionSwitching || _isDistributionCancelling) return;
     setState(() {
       _isDistributionCancelling = true;
-      _distributionSwitchStage = LegacyTextLocalizer.localize('正在取消下载…');
+      _distributionSwitchStage = context.trLegacy('正在取消下载…');
     });
     try {
       await cancelEmbeddedTerminalInit();
@@ -362,6 +370,56 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       if (mounted) {
         setState(() {
           _isDistributionCancelling = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _repairTerminalEnvironment() async {
+    if (_isRepairingEnvironment ||
+        _isDistributionSwitching ||
+        _isDistributionLoading) {
+      return;
+    }
+    setState(() {
+      _isRepairingEnvironment = true;
+    });
+    try {
+      final result = await retryEmbeddedTerminalInit();
+      if (!mounted) return;
+      final success = result['success'] == true;
+      if (!success) {
+        final rawMsg = (result['message'] as String?)?.trim();
+        final localizedMsg = rawMsg != null && rawMsg.isNotEmpty
+            ? context.trLegacy(rawMsg)
+            : context.trLegacy('修复终端环境失败');
+        setState(() {
+          _startupInitError = localizedMsg;
+        });
+        showToast(localizedMsg, type: ToastType.error);
+      } else {
+        setState(() {
+          _startupInitError = null;
+        });
+        showToast(context.trLegacy('终端环境已修复'));
+      }
+      await _loadDistributionAndInventory(selectMissingByDefault: true);
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      final rawMsg = error.message?.trim();
+      showToast(
+        rawMsg != null && rawMsg.isNotEmpty
+            ? context.trLegacy(rawMsg)
+            : context.trLegacy('修复终端环境失败'),
+        type: ToastType.error,
+      );
+    } catch (_) {
+      if (!mounted) return;
+      showToast(context.trLegacy('修复终端环境失败'), type: ToastType.error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isRepairingEnvironment = false;
         });
       }
     }
@@ -376,11 +434,28 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     ++_inventoryRequest;
     try {
       final distribution = await getEmbeddedTerminalDistribution();
+      EmbeddedTerminalInitSnapshot? initSnapshot;
+      try {
+        initSnapshot = await getEmbeddedTerminalInitSnapshot();
+      } catch (_) {
+        initSnapshot = null;
+      }
       if (!await waitForPageReady() || request != _distributionRequest) return;
       final changed = distribution != _selectedDistribution;
+      final nextStartupError =
+          initSnapshot != null &&
+              initSnapshot.completed &&
+              initSnapshot.success == false &&
+              (initSnapshot.distribution == null ||
+                  initSnapshot.distribution == distribution)
+          ? (initSnapshot.error?.trim().isNotEmpty == true
+                ? context.trLegacy(initSnapshot.error!.trim())
+                : context.trLegacy('内嵌终端环境初始化失败。'))
+          : null;
       setState(() {
         _selectedDistribution = distribution;
         _isDistributionLoading = false;
+        _startupInitError = nextStartupError;
         if (changed) {
           _hasInitializedSelection = false;
           _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
@@ -413,7 +488,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       _isDistributionCancelling = false;
       _switchingDistribution = distribution;
       _distributionSwitchProgress = null;
-      _distributionSwitchStage = LegacyTextLocalizer.localize(
+      _distributionSwitchStage = context.trLegacy(
           '正在准备 ${distribution == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}…');
       _hasInitializedSelection = false;
       _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
@@ -428,7 +503,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       });
       switched = true;
       showToast(
-        LegacyTextLocalizer.localize(
+        context.trLegacy(
             '终端系统已切换为 ${saved == EmbeddedTerminalDistribution.ubuntu ? 'Ubuntu' : 'Alpine'}'),
       );
     } on PlatformException catch (error) {
@@ -436,8 +511,11 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       setState(() {
         _selectedDistribution = previous;
       });
+      final rawMessage = error.message?.trim();
       showToast(
-        error.message ?? LegacyTextLocalizer.localize('切换终端系统失败'),
+        rawMessage != null && rawMessage.isNotEmpty
+            ? context.trLegacy(rawMessage)
+            : context.trLegacy('切换终端系统失败'),
         type: ToastType.error,
       );
     } catch (_) {
@@ -446,7 +524,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         _selectedDistribution = previous;
       });
       showToast(
-        LegacyTextLocalizer.localize('切换终端系统失败'),
+        context.trLegacy('切换终端系统失败'),
         type: ToastType.error,
       );
     } finally {
@@ -514,12 +592,15 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       if (!await waitForPageReady() || !isCurrent()) {
         return;
       }
+      final rawError = e.message?.trim();
       setState(() {
         _inventory = const <String, EmbeddedTerminalSetupInventoryItem>{};
         _selectedPackageIds = <String>{};
         _hasInitializedSelection = true;
         _isDetecting = false;
-        _detectError = e.message ?? context.l10n.alpineDetectFailed;
+        _detectError = rawError != null && rawError.isNotEmpty
+            ? context.trLegacy(rawError)
+            : context.l10n.alpineDetectFailed;
       });
     } catch (_) {
       if (!await waitForPageReady() || !isCurrent()) {
@@ -669,7 +750,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       title: _workspaceMountUnmountTitle,
       content: _workspaceMountUnmountMessage(entry.alias),
       cancelText: context.trLegacy('取消'),
-      confirmText: LegacyTextLocalizer.localize('卸载'),
+      confirmText: context.trLegacy('卸载'),
     );
     if (confirmed != true || _isMountsBusy) {
       return;
@@ -889,10 +970,16 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
       groupedItems[group]!.add(item);
     }
 
+    final visibleError = _detectError ?? _startupInitError;
     final sections = <Widget Function()>[
       _buildDistributionCard,
       _buildIntroCard,
-      if (_detectError != null) () => _buildErrorCard(_detectError!),
+      if (visibleError != null)
+        () => _buildErrorCard(
+          visibleError,
+          onRepair: _repairTerminalEnvironment,
+          repairBusy: _isRepairingEnvironment,
+        ),
       for (final entry in groupedItems.entries)
         () => OmniSettingsGroup(
           title: entry.key,
@@ -964,12 +1051,12 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
   Widget _buildDistributionCard() {
     final busy = _isDistributionLoading || _isDistributionSwitching;
     return _buildSectionCard(
-      title: LegacyTextLocalizer.localize('终端系统'),
+      title: context.trLegacy('终端系统'),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            LegacyTextLocalizer.localize('选择终端与 Agent 共用的 Linux 系统。'),
+            context.trLegacy('选择终端与 Agent 共用的 Linux 系统。'),
             style: TextStyle(
               color: _secondaryTextColor,
               fontSize: 13,
@@ -1015,7 +1102,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                   Expanded(
                     child: Text(
                       _distributionSwitchStage ??
-                          LegacyTextLocalizer.localize('正在准备终端系统…'),
+                          context.trLegacy('正在准备终端系统…'),
                       style: TextStyle(
                         color: _secondaryTextColor,
                         fontSize: 12,
@@ -1028,7 +1115,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                     onPressed: _isDistributionCancelling
                         ? null
                         : () => unawaited(_cancelDistributionSwitch()),
-                    child: Text(LegacyTextLocalizer.localize('取消下载')),
+                    child: Text(context.trLegacy('取消下载')),
                   ),
                 ],
               ),
@@ -1063,9 +1150,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                       ? context.l10n.alpineDetectingDesc
                       : _detectError != null ||
                             _items.any((item) => item.ready == null)
-                      ? (_isEnglish
-                            ? 'Detection incomplete. Refresh to confirm component status.'
-                            : '检测未完成，请重新检测以确认组件状态。')
+                      ? context.trLegacy('检测未完成，请重新检测以确认组件状态。')
                       : context.l10n.alpineReadyCount(
                           readyCount,
                           _items.length,
@@ -1080,8 +1165,10 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
             ),
           ),
           OmniCircleButton(
-            tooltip: LegacyTextLocalizer.localize('刷新'),
-            onPressed: _isDetecting || _isDistributionSwitching
+            tooltip: context.trLegacy('刷新'),
+            onPressed: _isDetecting ||
+                    _isDistributionSwitching ||
+                    _isRepairingEnvironment
                 ? null
                 : () => _refreshInventory(),
             icon: LucideIcons.refreshCw,
@@ -1155,7 +1242,11 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     );
   }
 
-  Widget _buildErrorCard(String message) {
+  Widget _buildErrorCard(
+    String message, {
+    Future<void> Function()? onRepair,
+    bool repairBusy = false,
+  }) {
     final colors = Theme.of(context).colorScheme;
     return Container(
       width: double.infinity,
@@ -1165,22 +1256,60 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
         borderRadius: BorderRadius.circular(14),
         border: Border.all(color: colors.error.withValues(alpha: 0.22)),
       ),
-      child: Text(
-        message,
-        style: TextStyle(
-          color: colors.onErrorContainer,
-          fontSize: 13,
-          fontWeight: FontWeight.w600,
-          height: 1.5,
-        ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            message,
+            style: TextStyle(
+              color: colors.onErrorContainer,
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              height: 1.5,
+            ),
+          ),
+          if (onRepair != null) ...[
+            const SizedBox(height: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: TextButton.icon(
+                key: const ValueKey('terminal-environment-repair-button'),
+                onPressed: repairBusy ? null : () => unawaited(onRepair()),
+                icon: repairBusy
+                    ? SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: colors.onErrorContainer,
+                        ),
+                      )
+                    : Icon(
+                        LucideIcons.wrench,
+                        size: 16,
+                        color: colors.onErrorContainer,
+                      ),
+                label: Text(
+                  repairBusy
+                      ? context.trLegacy('正在修复终端环境…')
+                      : context.trLegacy('修复环境'),
+                  style: TextStyle(
+                    color: colors.onErrorContainer,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
 
   Widget _buildWorkspaceMountTile(WorkspaceMountEntry entry) {
     final stateLabel = entry.isBroken
-        ? LegacyTextLocalizer.localize('异常')
-        : LegacyTextLocalizer.localize('已挂载');
+        ? context.trLegacy('异常')
+        : context.trLegacy('已挂载');
     final stateBackground = entry.isBroken
         ? const Color(0xFFFFF7ED)
         : context.omniPalette.surfaceSecondary;
@@ -1249,7 +1378,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                       ? null
                       : () => _unmountWorkspaceDirectory(entry),
                   icon: const Icon(LucideIcons.unlink, size: 18),
-                  label: Text(LegacyTextLocalizer.localize('卸载')),
+                  label: Text(context.trLegacy('卸载')),
                 ),
               ],
             ),
@@ -1372,7 +1501,9 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
                             : context.omniPalette.textSecondary,
                       ),
                       _buildLegendTag(
-                        label: task.running ? 'running' : 'idle',
+                        label: task.running
+                            ? context.trLegacy('运行中')
+                            : context.trLegacy('空闲'),
                         backgroundColor: task.running
                             ? const Color(0xFFE8F7EE)
                             : context.omniPalette.surfaceSecondary,
@@ -1480,7 +1611,7 @@ class _TermuxSettingPageState extends State<TermuxSettingPage>
     final versionText = item.version?.trim().isNotEmpty == true
         ? item.version!.trim()
         : (unknown
-              ? LegacyTextLocalizer.localize('未确认')
+              ? context.trLegacy('未确认')
               : ready
               ? context.l10n.alpineVersionDetected
               : context.l10n.alpineVersionNotFound);

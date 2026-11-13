@@ -229,7 +229,7 @@ extension _HomeDrawerHome on HomeDrawerState {
 
   bool _homeUpdateBelongsInMenu(double toolbarWidth) {
     final textScaler = MediaQuery.textScalerOf(context);
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     final switchLabel = TextPainter(
       text: TextSpan(
         text: english ? 'Switch' : '切换',
@@ -264,7 +264,7 @@ extension _HomeDrawerHome on HomeDrawerState {
           return const SizedBox.shrink();
         }
         final updateStatus = status!;
-        final english = Localizations.localeOf(context).languageCode == 'en';
+        final english = Localizations.localeOf(context).languageCode != 'zh';
         return Padding(
           padding: const EdgeInsets.only(right: 4),
           child: IconButton(
@@ -297,7 +297,7 @@ extension _HomeDrawerHome on HomeDrawerState {
   }
 
   String _homeFilterLabel(_HomeConversationFilter filter) {
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     return switch (filter.id) {
       'all' => english ? 'All' : '全部',
       'chat' => english ? 'Chat' : '纯聊天',
@@ -325,7 +325,7 @@ extension _HomeDrawerHome on HomeDrawerState {
 
   Widget _buildHomeAgentSwitcher({bool compact = false}) {
     final palette = context.omniPalette;
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final english = Localizations.localeOf(context).languageCode != 'zh';
     final menuWidth = (MediaQuery.sizeOf(context).width - 32).clamp(0.0, 340.0);
     return Align(
       alignment: AlignmentDirectional.centerStart,
@@ -531,7 +531,7 @@ extension _HomeDrawerHome on HomeDrawerState {
           final updateStatus = AppUpdateService.statusNotifier.value;
           final showUpdate =
               updateInMenu && AppUpdateService.shouldShowBanner(updateStatus);
-          final english = Localizations.localeOf(context).languageCode == 'en';
+          final english = Localizations.localeOf(context).languageCode != 'zh';
           return SizedBox(
             width: 260,
             child: SingleChildScrollView(
@@ -630,7 +630,7 @@ extension _HomeDrawerHome on HomeDrawerState {
                         AgentWebStatus.unknown,
                     surface: popupContext.omniPalette.surfacePrimary,
                     english:
-                        Localizations.localeOf(context).languageCode == 'en',
+                        Localizations.localeOf(context).languageCode != 'zh',
                   ),
               ],
             ),

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:ui/core/router/go_router_manager.dart';
+import 'package:ui/l10n/legacy_text_localizer.dart';
 import 'package:ui/services/embedded_terminal_preparation_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/widgets/omni_glass.dart';
@@ -53,8 +54,12 @@ class _StartupEnvironmentNoticeState extends State<StartupEnvironmentNotice> {
 
   @override
   Widget build(BuildContext context) {
-    final english = Localizations.localeOf(context).languageCode == 'en';
+    final locale = Localizations.localeOf(context);
     final palette = context.omniPalette;
+    final rawError = _preparation.snapshot?.error?.trim();
+    final localizedError = rawError != null && rawError.isNotEmpty
+        ? LegacyTextLocalizer.localize(rawError, locale: locale)
+        : null;
     return Stack(
       fit: StackFit.expand,
       children: [
@@ -81,22 +86,47 @@ class _StartupEnvironmentNoticeState extends State<StartupEnvironmentNotice> {
                       child: Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              english
-                                  ? 'System installation failed'
-                                  : '系统安装失败',
-                              style: TextStyle(
-                                color: palette.textPrimary,
-                                fontSize: 15,
-                                fontWeight: FontWeight.w600,
-                              ),
+                            child: Column(
+                              mainAxisSize: MainAxisSize.min,
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  LegacyTextLocalizer.localize(
+                                    '系统安装失败',
+                                    locale: locale,
+                                  ),
+                                  style: TextStyle(
+                                    color: palette.textPrimary,
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                                if (localizedError != null) ...[
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    localizedError,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      color: palette.textSecondary,
+                                      fontSize: 12,
+                                      height: 1.35,
+                                    ),
+                                  ),
+                                ],
+                              ],
                             ),
                           ),
                           const SizedBox(width: 8),
                           TextButton(
                             key: const ValueKey('startup-environment-retry'),
                             onPressed: () => unawaited(_preparation.retry()),
-                            child: Text(english ? 'Retry' : '重试安装'),
+                            child: Text(
+                              LegacyTextLocalizer.localize(
+                                '重试安装',
+                                locale: locale,
+                              ),
+                            ),
                           ),
                           IconButton(
                             key: const ValueKey('startup-environment-dismiss'),
@@ -104,7 +134,10 @@ class _StartupEnvironmentNoticeState extends State<StartupEnvironmentNotice> {
                             icon: Icon(
                               LucideIcons.x,
                               size: 18,
-                              semanticLabel: english ? 'Dismiss' : '关闭',
+                              semanticLabel: LegacyTextLocalizer.localize(
+                                '关闭',
+                                locale: locale,
+                              ),
                             ),
                           ),
                         ],

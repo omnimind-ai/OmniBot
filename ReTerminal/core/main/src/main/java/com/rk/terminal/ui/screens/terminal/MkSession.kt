@@ -18,6 +18,7 @@ import com.rk.terminal.App
 import com.rk.terminal.App.Companion.getTempDir
 import com.rk.terminal.BuildConfig
 import com.rk.terminal.runtime.AlpineRepositoryManager
+import com.rk.terminal.runtime.ProotSeccompCompatibility
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
 import com.termux.terminal.TerminalEmulator
@@ -142,13 +143,10 @@ object MkSession {
                 }
             }
 
-            env.removeAll { item ->
-                val key = item.substringBefore('=')
-                key == "PROOT_NO_SECCOMP" || key == "SECCOMP"
-            }
-            if (Settings.seccomp) {
-                env.add("SECCOMP=1")
-            }
+            ProotSeccompCompatibility.applyEnvironmentList(
+                env,
+                ProotSeccompCompatibility.isSeccompCompatEnabled(this)
+            )
 
             val args: Array<String>
 

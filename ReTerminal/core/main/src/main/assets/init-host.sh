@@ -7,9 +7,43 @@ esac
 ROOTFS_DIR=$PREFIX/local/$TERMINAL_DISTRIBUTION
 ROOTFS_ARCHIVE=$PREFIX/files/$TERMINAL_DISTRIBUTION.tar.gz
 ROOTFS_READY_MARKER=$ROOTFS_DIR/.omnibot-rootfs-ready
+ROOTFS_LOCK_DIR=$PREFIX/local/.omnibot-rootfs-lock-$TERMINAL_DISTRIBUTION
+ROOTFS_LOCK_HELD=0
 ACTIVE_CHILD_PID=
 
 [ ! -f "$ROOTFS_ARCHIVE" ] && ROOTFS_ARCHIVE=$PREFIX/files/$TERMINAL_DISTRIBUTION.tar
+
+release_rootfs_lock() {
+    if [ "$ROOTFS_LOCK_HELD" = "1" ]; then
+        rm -f "$ROOTFS_LOCK_DIR/pid" 2>/dev/null || true
+        rmdir "$ROOTFS_LOCK_DIR" 2>/dev/null || true
+        ROOTFS_LOCK_HELD=0
+    fi
+}
+
+acquire_rootfs_lock() {
+    mkdir -p "$PREFIX/local"
+    lock_attempts=0
+    while ! mkdir "$ROOTFS_LOCK_DIR" 2>/dev/null; do
+        if [ -f "$ROOTFS_LOCK_DIR/pid" ]; then
+            holder_pid=$(cat "$ROOTFS_LOCK_DIR/pid" 2>/dev/null || true)
+            if [ -n "$holder_pid" ] && ! kill -0 "$holder_pid" 2>/dev/null; then
+                rm -f "$ROOTFS_LOCK_DIR/pid" 2>/dev/null || true
+                rmdir "$ROOTFS_LOCK_DIR" 2>/dev/null || true
+                continue
+            fi
+        fi
+        lock_attempts=$((lock_attempts + 1))
+        if [ "$lock_attempts" -ge 600 ]; then
+            echo "Timed out waiting for $TERMINAL_DISTRIBUTION rootfs lock." >&2
+            return 1
+        fi
+        sleep 0.2
+    done
+    ROOTFS_LOCK_HELD=1
+    printf '%s\n' "$$" > "$ROOTFS_LOCK_DIR/pid" 2>/dev/null || true
+    return 0
+}
 
 terminate_active_child() {
     if [ -n "$ACTIVE_CHILD_PID" ]; then
@@ -23,6 +57,7 @@ terminate_active_child() {
 
 handle_termination() {
     terminate_active_child
+    release_rootfs_lock
     exit 130
 }
 
@@ -92,6 +127,10 @@ else
     mkdir -p "$ROOTFS_DIR"
 fi
 
+if [ "${SECCOMP:-0}" = "1" ] && [ -z "${PROOT_NO_SECCOMP:-}" ]; then
+    export PROOT_NO_SECCOMP=1
+fi
+
 trap handle_termination HUP INT TERM
 
 mkdir -p "$PREFIX/local/bin" "$PREFIX/local/lib"
@@ -115,47 +154,71 @@ for sofile in "$PREFIX/files/"*.so.2; do
 done
 
 if [ "${OMNIBOT_TERMINAL_NO_INSTALL:-0}" != "1" ]; then
-    if [ -f "$ROOTFS_READY_MARKER" ]; then
-        if ! rootfs_has_minimum_layout; then
+    if [ ! -f "$ROOTFS_READY_MARKER" ] || ! rootfs_has_minimum_layout; then
+        if ! acquire_rootfs_lock; then
+            exit 1
+        fi
+        if [ -f "$ROOTFS_READY_MARKER" ]; then
+            if ! rootfs_has_minimum_layout; then
+                if ! clear_incomplete_rootfs; then
+                    release_rootfs_lock
+                    echo "Failed to reset incomplete $TERMINAL_DISTRIBUTION rootfs." >&2
+                    exit 1
+                fi
+            fi
+        elif rootfs_has_legacy_layout; then
+            if ! mark_rootfs_ready; then
+                release_rootfs_lock
+                echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
+                exit 1
+            fi
+        else
             if ! clear_incomplete_rootfs; then
+                release_rootfs_lock
                 echo "Failed to reset incomplete $TERMINAL_DISTRIBUTION rootfs." >&2
                 exit 1
             fi
         fi
-    elif rootfs_has_legacy_layout; then
-        if ! mark_rootfs_ready; then
-            echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
-            exit 1
-        fi
-    else
-        if ! clear_incomplete_rootfs; then
-            echo "Failed to reset incomplete $TERMINAL_DISTRIBUTION rootfs." >&2
-            exit 1
-        fi
-    fi
 
-    if [ ! -f "$ROOTFS_READY_MARKER" ]; then
-        if [ ! -f "$ROOTFS_ARCHIVE" ]; then
-            echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
-            exit 1
+        if [ ! -f "$ROOTFS_READY_MARKER" ]; then
+            if [ ! -f "$ROOTFS_ARCHIVE" ]; then
+                release_rootfs_lock
+                echo "Missing $TERMINAL_DISTRIBUTION rootfs archive: $ROOTFS_ARCHIVE" >&2
+                exit 1
+            fi
+            # EmbeddedRuntimeInstaller extracts rootfs archives in the JVM. Keep
+            # a serialized fallback for direct host-script invocations: try host
+            # tar directly on Alpine (no hardlinks), then PRoot --link2symlink.
+            extracted_ok=0
+            if [ "$TERMINAL_DISTRIBUTION" = "alpine" ] &&
+                run_child /system/bin/tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
+                extracted_ok=1
+            else
+                clear_incomplete_rootfs || true
+                if run_child "$LINKER" "$PREFIX/local/bin/proot" --link2symlink \
+                    /system/bin/tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
+                    extracted_ok=1
+                fi
+            fi
+            if [ "$extracted_ok" != "1" ]; then
+                clear_incomplete_rootfs || true
+                release_rootfs_lock
+                echo "Failed to extract $TERMINAL_DISTRIBUTION rootfs." >&2
+                exit 1
+            fi
+            if ! rootfs_has_legacy_layout; then
+                clear_incomplete_rootfs || true
+                release_rootfs_lock
+                echo "Extracted $TERMINAL_DISTRIBUTION rootfs is incomplete." >&2
+                exit 1
+            fi
+            if ! mark_rootfs_ready; then
+                release_rootfs_lock
+                echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
+                exit 1
+            fi
         fi
-        # Android app UIDs cannot create archive hardlinks. Use the bundled
-        # PRoot's official emulation while extracting immutable rootfs members;
-        # this does not change the separate interactive/ACP launch options.
-        if ! run_child "$LINKER" "$PREFIX/local/bin/proot" --link2symlink \
-            /system/bin/tar -xf "$ROOTFS_ARCHIVE" -C "$ROOTFS_DIR"; then
-            echo "Failed to extract $TERMINAL_DISTRIBUTION rootfs." >&2
-            exit 1
-        fi
-        if ! rootfs_has_legacy_layout; then
-            clear_incomplete_rootfs
-            echo "Extracted $TERMINAL_DISTRIBUTION rootfs is incomplete." >&2
-            exit 1
-        fi
-        if ! mark_rootfs_ready; then
-            echo "Failed to record completed $TERMINAL_DISTRIBUTION rootfs installation." >&2
-            exit 1
-        fi
+        release_rootfs_lock
     fi
 fi
 

@@ -163,7 +163,7 @@ class _ConversationModelSelectorContentState
             _failedProviders.add(profile.id);
             _providerErrors[profile.id] = formatAgentRuntimeErrorForUser(
               error,
-              english: Localizations.localeOf(context).languageCode == 'en',
+              english: Localizations.localeOf(context).languageCode != 'zh',
             );
             _liveModels[profile.id] = manual;
           });

@@ -29,6 +29,7 @@ void main() {
   late Completer<void> switchHandlerDone;
   late bool switchShouldFail;
   late bool cancelCalled;
+  late bool retryInitCalled;
   late Future<Map<String, dynamic>> Function() readInventory;
   late String nativeDistribution;
   late Map<String, dynamic> initSnapshot;
@@ -49,6 +50,7 @@ void main() {
     switchHandlerDone = Completer<void>();
     switchShouldFail = false;
     cancelCalled = false;
+    retryInitCalled = false;
     pageActivity = null;
     readInventory = () async => {'packages': <String, dynamic>{}};
     nativeDistribution = 'alpine';
@@ -83,6 +85,14 @@ void main() {
         case 'cancelEmbeddedTerminalInit':
           cancelCalled = true;
           return true;
+        case 'retryEmbeddedTerminalInit':
+          retryInitCalled = true;
+          return <String, dynamic>{
+            'success': true,
+            'wrapperReady': true,
+            'sharedStorageReady': true,
+            'message': '内嵌终端环境已就绪。',
+          };
       }
       return null;
     });
@@ -100,7 +110,7 @@ void main() {
     await workspaceDirectory.delete(recursive: true);
   });
 
-  Widget buildTestApp() {
+  Widget buildTestApp({Locale locale = const Locale('zh')}) {
     Widget page = const TermuxSettingPage();
     final activity = pageActivity;
     if (activity != null) {
@@ -112,7 +122,7 @@ void main() {
       );
     }
     return MaterialApp(
-      locale: const Locale('zh'),
+      locale: locale,
       theme: AppTheme.lightTheme,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -120,13 +130,16 @@ void main() {
     );
   }
 
-  Future<void> pumpTestPage(WidgetTester tester) async {
+  Future<void> pumpTestPage(
+    WidgetTester tester, {
+    Locale locale = const Locale('zh'),
+  }) async {
     tester.view.devicePixelRatio = 1;
     tester.view.physicalSize = const Size(800, 1600);
     addTearDown(tester.view.resetDevicePixelRatio);
     addTearDown(tester.view.resetPhysicalSize);
 
-    await tester.pumpWidget(buildTestApp());
+    await tester.pumpWidget(buildTestApp(locale: locale));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 100));
   }
@@ -513,5 +526,103 @@ void main() {
     });
     await tester.pump();
     expect(inventoryCalls, 2);
+  });
+
+  testWidgets('英文环境下本地化原生终端报错并可通过修复环境按钮恢复', (tester) async {
+    readInventory = () async => throw PlatformException(
+      code: 'READ_SETUP_INVENTORY_FAILED',
+      message: '环境检测失败，无法确认组件状态：Failed to extract alpine rootfs.',
+    );
+
+    await pumpTestPage(tester, locale: const Locale('en'));
+
+    expect(
+      find.text(
+        'Environment check failed; unable to confirm component status: Failed to extract alpine rootfs.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Repair environment'), findsOneWidget);
+
+    readInventory = () async => {
+      'packages': {
+        'nodejs': {'ready': true, 'version': 'v22.14.0'},
+      },
+    };
+    await tester.tap(
+      find.byKey(const ValueKey('terminal-environment-repair-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(retryInitCalled, isTrue);
+    expect(find.text('v22.14.0'), findsOneWidget);
+    expect(find.text('Repair environment'), findsNothing);
+  });
+
+  testWidgets('pt-BR 环境下完整展示葡语界面与错误提示', (tester) async {
+    readInventory = () async => throw PlatformException(
+      code: 'READ_SETUP_INVENTORY_FAILED',
+      message: '环境检测失败，无法确认组件状态：Failed to extract alpine rootfs.',
+    );
+
+    await pumpTestPage(tester, locale: const Locale('pt', 'BR'));
+
+    expect(find.text('Ambiente de Terminal'), findsOneWidget);
+    expect(find.text('Sistema do terminal'), findsOneWidget);
+    expect(
+      find.text(
+        'Escolha o sistema Linux compartilhado pelo terminal e pelo Agent.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Configuração do ambiente'), findsOneWidget);
+    expect(
+      find.text(
+        'Falha na verificação do ambiente; não foi possível confirmar o status dos componentes: Failed to extract alpine rootfs.',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Reparar ambiente'), findsOneWidget);
+  });
+
+  testWidgets('启动基础包安装失败时即使清单探测返回 0 项也展示失败原因与修复环境入口', (tester) async {
+    initSnapshot = {
+      'completed': true,
+      'success': false,
+      'distribution': 'alpine',
+      'error': '内嵌终端环境已初始化，但基础 Agent CLI 包安装失败：403 Forbidden',
+    };
+    readInventory = () async => {'packages': <String, dynamic>{}};
+
+    await pumpTestPage(tester, locale: const Locale('en'));
+
+    expect(
+      find.text(
+        'Embedded terminal initialized, but installing base Agent CLI packages failed: 403 Forbidden',
+      ),
+      findsOneWidget,
+    );
+    expect(find.text('Repair environment'), findsOneWidget);
+
+    readInventory = () async => {
+      'packages': {
+        'nodejs': {'ready': true, 'version': 'v22.14.0'},
+      },
+    };
+    initSnapshot = {
+      'completed': true,
+      'success': true,
+      'distribution': 'alpine',
+    };
+    await tester.tap(
+      find.byKey(const ValueKey('terminal-environment-repair-button')),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(retryInitCalled, isTrue);
+    expect(find.text('Repair environment'), findsNothing);
+    expect(find.text('v22.14.0'), findsOneWidget);
   });
 }

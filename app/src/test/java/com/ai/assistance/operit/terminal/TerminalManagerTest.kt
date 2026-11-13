@@ -32,11 +32,27 @@ class TerminalManagerTest {
         val directory = Files.createTempDirectory("terminal-distribution-test").toFile()
         try {
             val files = directory.resolve("files").apply { mkdirs() }
-            listOf("proot", "libtalloc.so.2", "alpine.tar.gz").forEach {
+            listOf("proot", "libtalloc.so.2").forEach {
                 files.resolve(it).writeText("fixture")
             }
             val context = mock(Context::class.java)
             `when`(context.filesDir).thenReturn(files)
+
+            // An unextracted archive in filesDir must not be treated as a ready rootfs.
+            files.resolve("alpine.tar.gz").writeText("fixture")
+            assertFalse(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.alpine))
+
+            val alpineRootfs = directory.resolve("local/alpine")
+            listOf(
+                "bin/sh",
+                "etc/os-release",
+                EmbeddedRuntimeInstaller.ROOTFS_READY_MARKER_NAME
+            ).forEach { rel ->
+                alpineRootfs.resolve(rel).apply {
+                    parentFile?.mkdirs()
+                    writeText("fixture")
+                }
+            }
 
             assertTrue(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.alpine))
             assertFalse(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.ubuntu))
@@ -57,6 +73,19 @@ class TerminalManagerTest {
             assertEquals(listOf("checking"), progress.map { it.phase })
 
             files.resolve("ubuntu.tar.gz").writeText("fixture")
+            assertFalse(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.ubuntu))
+
+            val ubuntuRootfs = directory.resolve("local/ubuntu")
+            listOf(
+                "bin/sh",
+                "etc/os-release",
+                EmbeddedRuntimeInstaller.ROOTFS_READY_MARKER_NAME
+            ).forEach { rel ->
+                ubuntuRootfs.resolve(rel).apply {
+                    parentFile?.mkdirs()
+                    writeText("fixture")
+                }
+            }
             assertTrue(EmbeddedRuntimeInstaller.isDistributionReady(context, TerminalDistribution.ubuntu))
         } finally {
             directory.deleteRecursively()
