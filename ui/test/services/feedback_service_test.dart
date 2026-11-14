@@ -68,7 +68,7 @@ void main() {
   Future<String> submit({
     String title = ' Problem ',
     String description = ' Details ',
-    String contact = ' wechat:sample ',
+    String contact = ' reply@example.com ',
     String email = ' user@example.com ',
     List<FeedbackAttachment> files = const [],
   }) => service.submit(
@@ -92,6 +92,7 @@ void main() {
       final request = adapter.requests.single;
       expect(request.method, 'POST');
       expect(request.uri.toString(), FeedbackService.apiUrl);
+      expect(request.uri.path, '/api/feedback/v2');
       expect(
         request.headers[Headers.contentTypeHeader],
         startsWith('multipart/form-data; boundary='),
@@ -104,7 +105,7 @@ void main() {
       expect(Map.fromEntries(form.fields), {
         'title': 'Problem',
         'description': 'Details',
-        'contact': 'wechat:sample',
+        'contact': 'reply@example.com',
         'accountEmail': 'user@example.com',
         'source': 'android',
         'locale': 'en',
@@ -120,13 +121,16 @@ void main() {
     },
   );
 
-  test('signed-out users can submit without contact or email', () async {
-    await submit(contact: '', email: '');
-    expect(
-      Map.fromEntries((adapter.requests.single.data as FormData).fields),
-      isNot(contains('accountEmail')),
-    );
-  });
+  test(
+    'signed-out users submit a contact email without an account email',
+    () async {
+      await submit(contact: 'reply@example.com', email: '');
+      expect(
+        Map.fromEntries((adapter.requests.single.data as FormData).fields),
+        isNot(contains('accountEmail')),
+      );
+    },
+  );
 
   test(
     'rejects missing or excessive fields before issuing a request',
@@ -136,7 +140,11 @@ void main() {
         () => submit(description: '  '),
         () => submit(title: 'x' * 201),
         () => submit(description: 'x' * 10001),
-        () => submit(contact: 'x' * 301),
+        () => submit(contact: ''),
+        () => submit(contact: 'wechat:sample'),
+        () => submit(contact: 'a@example.com,b@example.com'),
+        () => submit(contact: 'a@example.com\r\nBcc:other@example.com'),
+        () => submit(contact: 'x' * 255),
       ]) {
         await expectLater(
           action(),
@@ -239,7 +247,7 @@ void main() {
           throw PlatformException(code: 'account_not_authenticated');
         });
     expect(await FeedbackService.loadAccountEmail(), '');
-    await submit(email: '', contact: '');
+    await submit(email: '', contact: 'reply@example.com');
     expect(adapter.requests, hasLength(1));
   });
 }
