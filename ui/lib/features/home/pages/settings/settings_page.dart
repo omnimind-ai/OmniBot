@@ -395,6 +395,14 @@ class _SettingsPageState extends State<SettingsPage> with FlClashPageLoadMixin {
             route: '/home/tools',
           ),
           _SettingItem(
+            icon: LucideIcons.globe,
+            title: isEnglish ? 'Web Search & Fetch' : '网页搜索与读取',
+            subtitle: isEnglish
+                ? 'Configure DuckDuckGo, DeepSeek, or custom web backends'
+                : '配置内置 DuckDuckGo、DeepSeek 或自定义网页服务',
+            route: '/home/web_tools_setting',
+          ),
+          _SettingItem(
             icon: LucideIcons.squareTerminal,
             title: context.l10n.settingsAlpineTitle,
             subtitle: context.l10n.settingsAlpineSubtitle,

@@ -72,6 +72,8 @@
     <string name="tool_file_edit">Editar arquivo</string>
     <string name="tool_file_list">Listar arquivos</string>
     <string name="tool_file_search">Pesquisar arquivos</string>
+    <string name="tool_web_search">Pesquisa na Web</string>
+    <string name="tool_web_fetch">Ler página da Web</string>
     <string name="tool_browser_use">Operação do navegador</string>
     <string name="tool_vlm_task">Executar operação visual</string>
     <!-- Music Playback States -->

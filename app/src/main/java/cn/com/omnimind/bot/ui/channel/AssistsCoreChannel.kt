@@ -122,6 +122,12 @@ class AssistsCoreChannel {
                 "saveSceneVoiceConfig" -> {
                     assistsCoreManager!!.saveSceneVoiceConfig(call, result)
                 }
+                "getWebToolsConfig" -> {
+                    assistsCoreManager!!.getWebToolsConfig(call, result)
+                }
+                "saveWebToolsConfig" -> {
+                    assistsCoreManager!!.saveWebToolsConfig(call, result)
+                }
                 "getSceneModelOverrides" -> {
                     assistsCoreManager!!.getSceneModelOverrides(call, result)
                 }

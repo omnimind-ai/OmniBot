@@ -25,6 +25,7 @@ import 'pages/settings/experience_misc_setting_page.dart';
 import 'pages/settings/home_setting_page.dart';
 import 'pages/settings/open_with_omnibot_setting_page.dart';
 import 'pages/settings/storage_usage_page.dart';
+import 'pages/settings/web_tools_setting_page.dart';
 import 'pages/omnibot_workspace/omnibot_artifact_preview_page.dart';
 import 'pages/omnibot_workspace/omnibot_workspace_page.dart';
 import 'pages/webview/webview_page.dart';
@@ -324,6 +325,12 @@ List<GoRoute> homeRoutes = [
     path: '/home/scene_model_setting',
     name: 'home/scene_model_setting',
     builder: (context, state) => const SceneModelSettingPage(),
+  ),
+
+  GoRoute(
+    path: '/home/web_tools_setting',
+    name: 'home/web_tools_setting',
+    builder: (context, state) => const WebToolsSettingPage(),
   ),
 
   GoRoute(

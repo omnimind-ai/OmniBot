@@ -20,6 +20,7 @@ import cn.com.omnimind.bot.agent.tool.handlers.SystemToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.TerminalToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.ToolHandler
 import cn.com.omnimind.bot.agent.tool.handlers.VlmToolHandler
+import cn.com.omnimind.bot.agent.tool.handlers.WebToolHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.serialization.json.JsonObject
 
@@ -71,6 +72,7 @@ class BuiltInAgentCapabilityModule(
         privilegedHandler,
         terminalHandler,
         BrowserToolHandler(helper, workspaceManager),
+        WebToolHandler(helper),
         ImageGenerationToolHandler(helper, workspaceManager),
         StickerToolHandler(helper, workspaceManager),
         FileToolHandler(helper, workspaceManager),

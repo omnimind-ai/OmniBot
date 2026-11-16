@@ -15,6 +15,7 @@ internal class SubagentToolCatalogView(
         "memory_search" to "memory", "memory_load" to "memory",
         "skills_list" to "skill", "skills_read" to "skill",
         "context_apps_query" to "builtin", "context_time_now" to "builtin",
+        "web_search" to "search", "web_fetch" to "browser",
         "browser_use" to "browser",
     )
     private val memoryTools = mapOf(

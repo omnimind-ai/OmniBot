@@ -550,10 +550,14 @@ class _ToolsPageState extends State<ToolsPage>
                     ? '/home/plugin_market'
                     : tool.group == 'mcp'
                     ? '/home/mcp_tools'
+                    : (tool.name == 'web_search' || tool.name == 'web_fetch')
+                    ? '/home/web_tools_setting'
                     : '/home/authorize_setting',
               ),
               child: Text(
-                tool.group == 'builtin'
+                (tool.name == 'web_search' || tool.name == 'web_fetch')
+                    ? _text('配置服务', 'Configure')
+                    : tool.group == 'builtin'
                     ? _text('权限设置', 'Permissions')
                     : _text('管理来源', 'Manage source'),
               ),

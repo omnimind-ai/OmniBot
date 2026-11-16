@@ -10,6 +10,7 @@ internal object AgentToolExecutionPolicy {
     private val parallelReads = setOf(
         "file_read", "file_list", "file_search", "file_stat",
         "skills_read", "memory_load", "context_time_now",
+        "web_search", "web_fetch",
     )
 
     fun supportsParallelRead(name: String): Boolean = name in parallelReads

@@ -2298,6 +2298,7 @@ private fun xiaowanToolKind(toolName: String, declaredToolType: String? = null):
     when (declaredToolType?.trim()?.lowercase()) {
         "terminal", "privileged" -> return ToolKind.EXECUTE
         "browser" -> return ToolKind.FETCH
+        "search" -> return ToolKind.SEARCH
     }
     return when {
         normalized.containsAny("delete", "remove", "unlink") -> ToolKind.DELETE
@@ -2327,6 +2328,8 @@ private fun xiaowanToolTitle(context: Context, toolName: String): String {
         "file_edit", "edit" -> localizedContext.getString(R.string.tool_file_edit)
         "file_list", "glob" -> localizedContext.getString(R.string.tool_file_list)
         "file_search", "grep" -> localizedContext.getString(R.string.tool_file_search)
+        "web_search" -> localizedContext.getString(R.string.tool_web_search)
+        "web_fetch" -> localizedContext.getString(R.string.tool_web_fetch)
         "browser_use", "webfetch" -> localizedContext.getString(R.string.tool_browser_use)
         "vlm_task" -> localizedContext.getString(R.string.tool_vlm_task)
         else -> toolName

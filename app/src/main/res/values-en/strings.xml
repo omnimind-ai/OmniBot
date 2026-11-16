@@ -72,6 +72,8 @@
     <string name="tool_file_edit">Edit File</string>
     <string name="tool_file_list">List Files</string>
     <string name="tool_file_search">Search Files</string>
+    <string name="tool_web_search">Web Search</string>
+    <string name="tool_web_fetch">Fetch Web Page</string>
     <string name="tool_browser_use">Browser Operation</string>
     <string name="tool_vlm_task">Execute GUI Operation</string>
     <!-- Music Playback States -->
