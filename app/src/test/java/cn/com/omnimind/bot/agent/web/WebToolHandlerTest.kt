@@ -2,7 +2,7 @@ package cn.com.omnimind.bot.agent.web
 
 import android.app.Application
 import cn.com.omnimind.baselib.llm.AssistantToolCall
-import cn.com.omnimind.baselib.llm.ToolCallFunction
+import cn.com.omnimind.baselib.llm.AssistantToolCallFunction
 import cn.com.omnimind.bot.agent.AgentCallback
 import cn.com.omnimind.bot.agent.AgentExecutionEnvironment
 import cn.com.omnimind.bot.agent.AgentResult
@@ -95,7 +95,7 @@ class WebToolHandlerTest {
         )
 
         val result = handler.execute(
-            toolCall = AssistantToolCall(id = "call-1", function = ToolCallFunction("web_search", "{}")),
+            toolCall = AssistantToolCall(id = "call-1", function = AssistantToolCallFunction("web_search", "{}")),
             args = buildJsonObject {
                 put("query", "example query")
                 put("max_results", 3)
@@ -132,7 +132,7 @@ class WebToolHandlerTest {
 
         val descriptor = AgentToolRegistry.RuntimeToolDescriptor("web_fetch", "读取网页", "browser", supportsParallel = true)
         val firstResult = handler.execute(
-            toolCall = AssistantToolCall(id = "fetch-1", function = ToolCallFunction("web_fetch", "{}")),
+            toolCall = AssistantToolCall(id = "fetch-1", function = AssistantToolCallFunction("web_fetch", "{}")),
             args = buildJsonObject {
                 put("url", server.url("/article").toString())
                 put("max_chars", 1_500)
@@ -155,7 +155,7 @@ class WebToolHandlerTest {
 
         // Second page must reuse the cached snapshot without hitting MockWebServer again.
         val secondResult = handler.execute(
-            toolCall = AssistantToolCall(id = "fetch-2", function = ToolCallFunction("web_fetch", "{}")),
+            toolCall = AssistantToolCall(id = "fetch-2", function = AssistantToolCallFunction("web_fetch", "{}")),
             args = buildJsonObject {
                 put("document_id", documentId!!)
                 put("offset_chars", nextOffset)
@@ -174,7 +174,7 @@ class WebToolHandlerTest {
 
         // Unknown document_id returns structured error.
         val expiredResult = handler.execute(
-            toolCall = AssistantToolCall(id = "fetch-3", function = ToolCallFunction("web_fetch", "{}")),
+            toolCall = AssistantToolCall(id = "fetch-3", function = AssistantToolCallFunction("web_fetch", "{}")),
             args = buildJsonObject {
                 put("document_id", "web_nonexistent")
             },
@@ -195,7 +195,7 @@ class WebToolHandlerTest {
         val descriptor = AgentToolRegistry.RuntimeToolDescriptor("web_fetch", "读取网页", "browser", supportsParallel = true)
 
         val notFound = handler.execute(
-            toolCall = AssistantToolCall(id = "fetch-404", function = ToolCallFunction("web_fetch", "{}")),
+            toolCall = AssistantToolCall(id = "fetch-404", function = AssistantToolCallFunction("web_fetch", "{}")),
             args = buildJsonObject { put("url", server.url("/missing").toString()) },
             runtimeDescriptor = descriptor,
             env = FakeEnv,
@@ -210,7 +210,7 @@ class WebToolHandlerTest {
         assertFalse(notFound.rawResultJson.contains("Not Found Secret"))
 
         val bothArgs = handler.execute(
-            toolCall = AssistantToolCall(id = "fetch-bad", function = ToolCallFunction("web_fetch", "{}")),
+            toolCall = AssistantToolCall(id = "fetch-bad", function = AssistantToolCallFunction("web_fetch", "{}")),
             args = buildJsonObject {
                 put("url", server.url("/ok").toString())
                 put("document_id", "web_1")
@@ -266,7 +266,7 @@ class WebToolHandlerTest {
         try {
             val longQuery = "DeepSeek ".repeat(20)
             val result = customHandler.execute(
-                toolCall = AssistantToolCall(id = "ds-1", function = ToolCallFunction("web_search", "{}")),
+                toolCall = AssistantToolCall(id = "ds-1", function = AssistantToolCallFunction("web_search", "{}")),
                 args = buildJsonObject {
                     put("query", longQuery)
                     put("max_results", 5)
@@ -337,7 +337,7 @@ class WebToolHandlerTest {
         try {
             val descriptor = AgentToolRegistry.RuntimeToolDescriptor("web_fetch", "读取网页", "browser", supportsParallel = true)
             val first = customHandler.execute(
-                toolCall = AssistantToolCall(id = "ds-fetch-1", function = ToolCallFunction("web_fetch", "{}")),
+                toolCall = AssistantToolCall(id = "ds-fetch-1", function = AssistantToolCallFunction("web_fetch", "{}")),
                 args = buildJsonObject {
                     put("url", server.url("/target-1").toString())
                     put("max_chars", 1_000)
@@ -358,7 +358,7 @@ class WebToolHandlerTest {
             val docId = firstPayload["document_id"]!!.jsonPrimitive.content
             val nextOffset = firstPayload["next_offset_chars"]!!.jsonPrimitive.intOrNull!!
             val page2 = customHandler.execute(
-                toolCall = AssistantToolCall(id = "ds-fetch-2", function = ToolCallFunction("web_fetch", "{}")),
+                toolCall = AssistantToolCall(id = "ds-fetch-2", function = AssistantToolCallFunction("web_fetch", "{}")),
                 args = buildJsonObject {
                     put("document_id", docId)
                     put("offset_chars", nextOffset)
@@ -374,7 +374,7 @@ class WebToolHandlerTest {
 
             // Fallback path
             val fallback = customHandler.execute(
-                toolCall = AssistantToolCall(id = "ds-fetch-3", function = ToolCallFunction("web_fetch", "{}")),
+                toolCall = AssistantToolCall(id = "ds-fetch-3", function = AssistantToolCallFunction("web_fetch", "{}")),
                 args = buildJsonObject { put("url", server.url("/target-2").toString()) },
                 runtimeDescriptor = descriptor,
                 env = FakeEnv,
@@ -435,7 +435,7 @@ class WebToolHandlerTest {
         )
         try {
             val searchResult = customHandler.execute(
-                toolCall = AssistantToolCall(id = "c-1", function = ToolCallFunction("web_search", "{}")),
+                toolCall = AssistantToolCall(id = "c-1", function = AssistantToolCallFunction("web_search", "{}")),
                 args = buildJsonObject { put("query", "test \"quotes\"") },
                 runtimeDescriptor = AgentToolRegistry.RuntimeToolDescriptor("web_search", "搜索网页", "search", supportsParallel = true),
                 env = FakeEnv,
@@ -448,7 +448,7 @@ class WebToolHandlerTest {
             assertEquals("Custom Title", searchPayload["results"]!!.jsonArray.single().jsonObject["title"]?.jsonPrimitive?.contentOrNull)
 
             val fetchResult = customHandler.execute(
-                toolCall = AssistantToolCall(id = "c-2", function = ToolCallFunction("web_fetch", "{}")),
+                toolCall = AssistantToolCall(id = "c-2", function = AssistantToolCallFunction("web_fetch", "{}")),
                 args = buildJsonObject { put("url", "https://example.org/target") },
                 runtimeDescriptor = AgentToolRegistry.RuntimeToolDescriptor("web_fetch", "读取网页", "browser", supportsParallel = true),
                 env = FakeEnv,
