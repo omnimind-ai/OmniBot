@@ -72,6 +72,8 @@
     <string name="tool_file_edit">编辑文件</string>
     <string name="tool_file_list">列出文件</string>
     <string name="tool_file_search">搜索文件</string>
+    <string name="tool_web_search">搜索网页</string>
+    <string name="tool_web_fetch">读取网页</string>
     <string name="tool_browser_use">浏览器操作</string>
     <string name="tool_vlm_task">执行界面操作</string>
     <!-- Music Playback States -->

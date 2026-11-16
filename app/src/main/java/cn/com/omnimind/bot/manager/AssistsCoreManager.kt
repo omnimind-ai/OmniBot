@@ -65,6 +65,15 @@ import cn.com.omnimind.bot.agent.AgentConversationHistorySupport
 import cn.com.omnimind.bot.agent.AgentRuntimeContextRepository
 import cn.com.omnimind.bot.agent.AgentScheduleToolBridge
 import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.agent.web.CustomWebFetchConfig
+import cn.com.omnimind.bot.agent.web.CustomWebSearchConfig
+import cn.com.omnimind.bot.agent.web.DeepSeekWebConfig
+import cn.com.omnimind.bot.agent.web.WebHttpMethod
+import cn.com.omnimind.bot.agent.web.WebToolBackend
+import cn.com.omnimind.bot.agent.web.WebToolsConfigStore
+import cn.com.omnimind.bot.agent.web.WebToolsCredentials
+import cn.com.omnimind.bot.agent.web.WebToolsSettings
+import cn.com.omnimind.bot.agent.web.WebToolsValidationException
 import cn.com.omnimind.bot.agent.runtime.AgentRuntimeManager
 import cn.com.omnimind.bot.agent.LiveAgentBrowserSessionManager
 import cn.com.omnimind.bot.agent.SkillIndexEntry
@@ -500,6 +509,8 @@ class AssistsCoreManager(private val context: Context) {
         return when (toolName) {
             "context_apps_query" -> AgentToolMeta("builtin", t("查询已安装应用", "Query Installed Apps"))
             "context_time_now" -> AgentToolMeta("builtin", t("查询当前时间", "Query Current Time"))
+            "web_search" -> AgentToolMeta("search", t("搜索网页", "Web Search"))
+            "web_fetch" -> AgentToolMeta("browser", t("读取网页", "Fetch Web Page"))
             "browser_use" -> AgentToolMeta("browser", t("浏览器操作", "Browser Action"))
             "android_privileged_action" -> AgentToolMeta("privileged", t("安卓高级动作", "Android Privileged Action"))
             "android_privileged_session_start" -> AgentToolMeta("privileged", t("启动高权限会话", "Start Privileged Session"))
@@ -1979,6 +1990,105 @@ class AssistsCoreManager(private val context: Context) {
                 OmniLog.e(TAG, "saveSceneVoiceConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {
                     result.error("SAVE_SCENE_VOICE_CONFIG_ERROR", e.message, null)
+                }
+            }
+        }
+    }
+
+    fun getWebToolsConfig(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val payload = withContext(Dispatchers.IO) {
+                    WebToolsConfigStore.toChannelMap()
+                }
+                withContext(Dispatchers.Main) {
+                    result.success(payload)
+                }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "getWebToolsConfig error: ${e.javaClass.simpleName}")
+                withContext(Dispatchers.Main) {
+                    result.error("GET_WEB_TOOLS_CONFIG_ERROR", e.message, null)
+                }
+            }
+        }
+    }
+
+    fun saveWebToolsConfig(call: MethodCall, result: MethodChannel.Result) {
+        workJob.launch {
+            try {
+                val payload = withContext(Dispatchers.IO) {
+                    val customSearchMap = call.argument<Map<*, *>>("customSearch")
+                    val customFetchMap = call.argument<Map<*, *>>("customFetch")
+                    val current = WebToolsConfigStore.getSettings()
+                    val currentCreds = runCatching { WebToolsConfigStore.getCredentials() }
+                        .getOrDefault(WebToolsCredentials())
+
+                    val nextSettings = WebToolsSettings(
+                        searchBackend = WebToolBackend.fromWire(
+                            call.argument<String>("searchBackend") ?: current.searchBackend.wireName
+                        ),
+                        fetchBackend = WebToolBackend.fromWire(
+                            call.argument<String>("fetchBackend") ?: current.fetchBackend.wireName
+                        ),
+                        deepSeek = DeepSeekWebConfig(
+                            baseUrl = call.argument<String>("deepSeekBaseUrl")
+                                ?: current.deepSeek.baseUrl
+                        ),
+                        customSearch = CustomWebSearchConfig(
+                            method = WebHttpMethod.fromWire(
+                                customSearchMap?.get("method") as? String ?: current.customSearch.method.name
+                            ),
+                            url = (customSearchMap?.get("url") as? String) ?: current.customSearch.url,
+                            headersText = (customSearchMap?.get("headersText") as? String)
+                                ?: current.customSearch.headersText,
+                            bodyTemplate = (customSearchMap?.get("bodyTemplate") as? String)
+                                ?: current.customSearch.bodyTemplate,
+                            resultsPath = (customSearchMap?.get("resultsPath") as? String)
+                                ?: current.customSearch.resultsPath,
+                            titleField = (customSearchMap?.get("titleField") as? String)
+                                ?: current.customSearch.titleField,
+                            urlField = (customSearchMap?.get("urlField") as? String)
+                                ?: current.customSearch.urlField,
+                            snippetField = (customSearchMap?.get("snippetField") as? String)
+                                ?: current.customSearch.snippetField,
+                        ),
+                        customFetch = CustomWebFetchConfig(
+                            method = WebHttpMethod.fromWire(
+                                customFetchMap?.get("method") as? String ?: current.customFetch.method.name
+                            ),
+                            url = (customFetchMap?.get("url") as? String) ?: current.customFetch.url,
+                            headersText = (customFetchMap?.get("headersText") as? String)
+                                ?: current.customFetch.headersText,
+                            bodyTemplate = (customFetchMap?.get("bodyTemplate") as? String)
+                                ?: current.customFetch.bodyTemplate,
+                            contentField = (customFetchMap?.get("contentField") as? String)
+                                ?: current.customFetch.contentField,
+                            titleField = (customFetchMap?.get("titleField") as? String)
+                                ?: current.customFetch.titleField,
+                        ),
+                    )
+                    val nextCreds = WebToolsCredentials(
+                        deepSeekApiKey = call.argument<String>("deepSeekApiKey")
+                            ?: currentCreds.deepSeekApiKey,
+                        customSearchApiKey = (customSearchMap?.get("apiKey") as? String)
+                            ?: currentCreds.customSearchApiKey,
+                        customFetchApiKey = (customFetchMap?.get("apiKey") as? String)
+                            ?: currentCreds.customFetchApiKey,
+                    )
+                    val saved = WebToolsConfigStore.save(nextSettings, nextCreds)
+                    WebToolsConfigStore.toChannelMap(settings = saved, credentials = nextCreds)
+                }
+                withContext(Dispatchers.Main) {
+                    result.success(payload)
+                }
+            } catch (e: WebToolsValidationException) {
+                withContext(Dispatchers.Main) {
+                    result.error("WEB_TOOLS_VALIDATION_ERROR", e.message, null)
+                }
+            } catch (e: Exception) {
+                OmniLog.e(TAG, "saveWebToolsConfig error: ${e.javaClass.simpleName}")
+                withContext(Dispatchers.Main) {
+                    result.error("SAVE_WEB_TOOLS_CONFIG_ERROR", e.message, null)
                 }
             }
         }

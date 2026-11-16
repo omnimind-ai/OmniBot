@@ -750,6 +750,7 @@ bool _shouldUseSearchTitle({
     'search_files',
     'file_search',
     'tool_search',
+    'web_search',
   }.contains(shortName);
 }
 

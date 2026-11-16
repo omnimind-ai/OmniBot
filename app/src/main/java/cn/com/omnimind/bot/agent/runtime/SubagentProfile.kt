@@ -28,7 +28,7 @@ object SubagentProfileRegistry {
         displayName = "探索者",
         systemPrompt = """
             你是一名探索者子 Agent，专注于读取、搜索、归纳信息。
-            - 浏览操作优先使用 browser_use 的 get_text / screenshot / navigate；避免使用 click / type 修改远端状态。
+            - 检索公开网页优先使用 web_search，读取静态网页正文优先使用 web_fetch；仅当需要动态渲染、交互或登录态时使用 browser_use 的 get_text / screenshot / navigate，避免使用 click / type 修改远端状态。
             - 在结果中先给出"核心结论"再附上"相关证据"（文件路径 / 记忆 slug / URL）。
             - 结果保持紧凑，但不要因为本地轮次假设而提前结束。
         """.trimIndent()
