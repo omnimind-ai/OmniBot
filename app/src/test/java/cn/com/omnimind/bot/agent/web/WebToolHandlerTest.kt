@@ -205,7 +205,7 @@ class WebToolHandlerTest {
 
         assertFalse(notFound.success)
         val payload = json.parseToJsonElement(notFound.rawResultJson).jsonObject
-        assertEquals("WEB_HTTP_ERROR", payload["error_code"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("WEB_NOT_FOUND", payload["error_code"]?.jsonPrimitive?.contentOrNull)
         assertEquals(404, payload["status"]?.jsonPrimitive?.intOrNull)
         assertFalse(notFound.rawResultJson.contains("Not Found Secret"))
 
