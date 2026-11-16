@@ -284,6 +284,8 @@ void main() {
       300,
       scrollable: find.byType(Scrollable).first,
     );
+    await tester.ensureVisible(find.text('杂项'));
+    await tester.pumpAndSettle();
     final sourceRect = tester.getRect(
       find.ancestor(
         of: find.text('杂项'),
