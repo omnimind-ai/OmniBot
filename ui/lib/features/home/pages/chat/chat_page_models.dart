@@ -237,8 +237,6 @@ class ChatMessageListItemNotifier extends ValueNotifier<ChatMessageModel> {
 
 class ObservableChatMessageList extends ChangeNotifier
     with ListMixin<ChatMessageModel> {
-  static const String _kAgentToolSummaryCardType = 'agent_tool_summary';
-
   final List<ChatMessageModel> _messages = <ChatMessageModel>[];
   final List<ChatMessageListItemNotifier> _messageNotifiers =
       <ChatMessageListItemNotifier>[];
@@ -554,11 +552,12 @@ class ObservableChatMessageList extends ChangeNotifier
   }
 
   bool _messageAffectsPageChrome(ChatMessageModel message) {
-    if (message.type != 2) {
-      return false;
-    }
-    return (message.cardData?['type'] ?? '').toString() ==
-        _kAgentToolSummaryCardType;
+    // Tool progress belongs to its row notifier. The runtime chrome signature
+    // already observes tool type and execution state; only user-input requests
+    // also change the composer's processing/queue controls from message data.
+    return isAgentUserInputRequestMessage(message) &&
+        message.cardData?['status'] == 'pending' &&
+        message.cardData?['requestId'] != null;
   }
 
   void _disposeMessageNotifiers(

@@ -40,6 +40,7 @@ AgentToolCallInfo normalizeAgentToolCall(
   String? fallbackToolType,
   String? fallbackTitle,
   String fallbackStatus = 'running',
+  bool includePayloadJson = true,
 }) {
   final type = canonicalAgentItemType(_firstString([itemType, raw['type']]));
   final arguments = _normalizedArguments(raw);
@@ -77,9 +78,14 @@ AgentToolCallInfo normalizeAgentToolCall(
   final commandResult = toolType == 'terminal'
       ? _asStringMap(raw['rawOutput'] ?? storedResult?['rawOutput'])
       : null;
-  final exitCode = _asInt(raw['exitCode'] ?? raw['exit_code'] ??
-      commandResult?['exitCode'] ?? commandResult?['exit_code'] ??
-      storedResult?['exitCode'] ?? storedResult?['exit_code']);
+  final exitCode = _asInt(
+    raw['exitCode'] ??
+        raw['exit_code'] ??
+        commandResult?['exitCode'] ??
+        commandResult?['exit_code'] ??
+        storedResult?['exitCode'] ??
+        storedResult?['exit_code'],
+  );
   final terminalOutput = _firstOutputString([
     raw['terminalOutput'],
     raw['aggregatedOutput'],
@@ -98,7 +104,8 @@ AgentToolCallInfo normalizeAgentToolCall(
         raw['message'],
         raw['description'],
         if (type != 'commandExecution' &&
-            !(toolType == 'terminal' && exitCode != null)) raw['status'],
+            !(toolType == 'terminal' && exitCode != null))
+          raw['status'],
       ]) ??
       (toolType == 'terminal' &&
               const {'success', 'error'}.contains(status) &&
@@ -118,13 +125,15 @@ AgentToolCallInfo normalizeAgentToolCall(
     arguments: arguments,
     // Official ACP rawInput can be an unfinished JSON string while streaming.
     // Display it losslessly; parsing is not a prerequisite for a progress update.
-    argsJson: raw['rawInput'] is String
+    argsJson: !includePayloadJson
+        ? ''
+        : raw['rawInput'] is String
         ? raw['rawInput'] as String
         : arguments.isEmpty
         ? ''
         : _safeJson(arguments),
-    resultPreviewJson: _resultPreviewJson(raw),
-    rawResultJson: _safeJson(raw),
+    resultPreviewJson: includePayloadJson ? _resultPreviewJson(raw) : '',
+    rawResultJson: includePayloadJson ? _safeJson(raw) : '',
     terminalOutput: terminalOutput ?? '',
     summary: summary,
     progress: progress,
@@ -701,9 +710,8 @@ String? _inferToolTypeFromCommand(Map<String, dynamic> arguments) {
   if (normalized.isEmpty) {
     return null;
   }
-  if (RegExp(
-    r'(^|[;&|]\s*)(git\s+grep|rg|grep|fd|find|ag|ack)\b',
-  ).hasMatch(normalized)) {
+  if (RegExp(r'(^|[;&|]\s*)(git\s+grep|rg|grep|fd|find|ag|ack)\b')
+      .hasMatch(normalized)) {
     return 'search';
   }
   return null;

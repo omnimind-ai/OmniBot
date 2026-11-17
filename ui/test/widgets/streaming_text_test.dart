@@ -37,6 +37,223 @@ void main() {
     );
   });
 
+  test(
+    'bold spans preserve marker semantics through every streamed prefix',
+    () {
+      const samples = [
+        '',
+        '普通正文😀𠮷',
+        '**加粗😀** 后缀',
+        '前缀 __粗体𠮷__ 后缀',
+        '中文__粗体__后缀',
+        'foo__bar__baz and **valid**',
+        r'\**literal** and **real**',
+        r'\\**bold** and \__literal__',
+        '**first** then __second__ then **third**',
+        '**outer __inside__ text** and __outer **inside** text__',
+        '** bad** __ bad__ **good**',
+        '**one **two**\n__three__',
+        '**tab\t** __line\n__ **valid**',
+        'before **未闭合😀',
+        'before __未闭合𠮷',
+        '**',
+        '__',
+        '**** and ____',
+        r'**one\**two** __three\__four__',
+      ];
+      const style = TextStyle(fontSize: 16, fontWeight: FontWeight.normal);
+      for (final source in samples) {
+        for (var end = 0; end <= source.length; end++) {
+          final prefix = source.substring(0, end);
+          for (final visible in <int>[
+            -1,
+            prefix.length ~/ 2,
+            prefix.length + 2,
+          ]) {
+            expect(
+              _boldRuns(omnibotBuildStreamingBoldSpan(prefix, visible, style)),
+              _referenceBoldRuns(prefix, visible),
+              reason: 'source=$source, prefix=$end, visible=$visible',
+            );
+          }
+          expect(
+            _boldRuns(omnibotBuildStreamingBoldSpan(source, end, style)),
+            _referenceBoldRuns(source, end),
+            reason: 'source=$source, visible=$end',
+          );
+        }
+      }
+    },
+  );
+
+  test('stable bold classification preserves closed and unclosed markers', () {
+    for (final source in [
+      '**first** then __second__ then **third**',
+      r'\\**bold**',
+      '中文__粗体😀__后缀',
+    ]) {
+      expect(omnibotTextCanUseStableBoldStreaming(source), isTrue);
+      expect(
+        omnibotTextCanUseStableBoldStreaming(source, allowUnclosed: false),
+        isTrue,
+      );
+    }
+    for (final source in ['before **未闭合😀', 'before __未闭合𠮷']) {
+      expect(omnibotTextCanUseStableBoldStreaming(source), isTrue);
+      expect(
+        omnibotTextCanUseStableBoldStreaming(source, allowUnclosed: false),
+        isFalse,
+      );
+    }
+    expect(omnibotTextCanUseStableBoldStreaming('foo__bar__baz'), isFalse);
+    expect(omnibotTextCanUseStableBoldStreaming(r'\**literal**'), isFalse);
+    expect(omnibotTextCanUseStableBoldStreaming('before **'), isFalse);
+  });
+
+  for (final marker in ['**', '__']) {
+    test('long $marker prose keeps every bold span and all visible text', () {
+      const count = 10000;
+      final source = List.filled(count, '正文$marker粗体内容$marker继续正文。').join();
+      final expected = List.filled(count, '正文粗体内容继续正文。').join();
+      expect(expected.length, greaterThan(100000));
+      expect(omnibotTextCanUseStableBoldStreaming(source), isTrue);
+      expect(
+        omnibotTextCanUseStableBoldStreaming(source, allowUnclosed: false),
+        isTrue,
+      );
+      final span = omnibotBuildStreamingBoldSpan(
+        source,
+        source.length,
+        const TextStyle(fontSize: 16),
+      );
+      final runs = _boldRuns(span);
+      expect(runs.where((run) => run.$2), hasLength(count));
+      expect(span.toPlainText(), expected);
+      expect(runs.last, ('继续正文。', false));
+    });
+  }
+
+  testWidgets('small reveal backlogs retain the existing typing cadence', (
+    tester,
+  ) async {
+    await tester.pumpWidget(_revealTestApp('abc', initialVisibleLength: 0));
+    await tester.pump(const Duration(milliseconds: 15));
+    expect(_revealedPlainText(tester), '');
+    await tester.pump(const Duration(milliseconds: 15));
+    expect(_revealedPlainText(tester), 'a');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), 'ab');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), 'abc');
+    expect(tester.binding.transientCallbackCount, 0);
+
+    final moderateBurst = List.filled(80, 'x').join();
+    await tester.pumpWidget(
+      _revealTestApp(moderateBurst, initialVisibleLength: 0),
+    );
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), 'xxxx');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets(
+    'a stopped reveal restarts without stale elapsed or lost credit',
+    (tester) async {
+      await tester.pumpWidget(_revealTestApp('a', initialVisibleLength: 0));
+      await tester.pump(const Duration(milliseconds: 45));
+      expect(_revealedPlainText(tester), 'a');
+      await tester.pump(const Duration(milliseconds: 16));
+      expect(tester.binding.transientCallbackCount, 0);
+
+      // The first activation earned half a character of unused typing credit.
+      await tester.pumpWidget(_revealTestApp('ab', initialVisibleLength: 0));
+      await tester.pump(const Duration(milliseconds: 15));
+      expect(_revealedPlainText(tester), 'ab');
+      expect(tester.binding.transientCallbackCount, 0);
+
+      await tester.pump(const Duration(seconds: 2));
+      await tester.pumpWidget(_revealTestApp('abc', initialVisibleLength: 0));
+      await tester.pump(const Duration(milliseconds: 30));
+      expect(_revealedPlainText(tester), 'abc');
+      expect(tester.binding.transientCallbackCount, 0);
+    },
+  );
+
+  testWidgets('large live bursts finish revealing and stop their ticker', (
+    tester,
+  ) async {
+    final text = '${List.filled(50000, '字').join()}😀尾';
+    Widget render({required bool isFinal}) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: StreamingText(
+            fullText: text,
+            isFinal: isFinal,
+            style: const TextStyle(fontSize: 14),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpWidget(render(isFinal: false));
+    await tester.pump(const Duration(milliseconds: 16));
+    var visible = _revealedPlainText(tester);
+    expect(visible.length, greaterThan(1000));
+    expect(visible.length, lessThan(text.length));
+    await tester.pumpWidget(render(isFinal: true));
+    expect(_revealedPlainText(tester), visible);
+
+    // Virtual frame time bounds reveal latency independently of host speed.
+    for (var frame = 0; frame < 180 && visible != text; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+      final next = _revealedPlainText(tester);
+      expect(text.startsWith(next), isTrue);
+      expect(next.length, greaterThanOrEqualTo(visible.length));
+      if (next.isNotEmpty) {
+        final lastUnit = next.codeUnitAt(next.length - 1);
+        expect(lastUnit >= 0xD800 && lastUnit <= 0xDBFF, isFalse);
+      }
+      visible = next;
+    }
+    expect(visible, text);
+    expect(tester.binding.transientCallbackCount, 0);
+    await tester.pump(const Duration(seconds: 1));
+    expect(_revealedPlainText(tester), text);
+    expect(tester.binding.transientCallbackCount, 0);
+  });
+
+  testWidgets('replacement clears burst catch-up and keeps emoji boundaries', (
+    tester,
+  ) async {
+    final burst = List.filled(5000, '旧').join();
+    await tester.pumpWidget(_revealTestApp(burst, initialVisibleLength: 0));
+    await tester.pump(const Duration(milliseconds: 16));
+    expect(_revealedPlainText(tester).length, greaterThan(100));
+    await tester.pumpWidget(_revealTestApp('😀中文', initialVisibleLength: 0));
+    expect(tester.takeException(), isNull);
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), '');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), '😀');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), '😀中');
+    await tester.pump(const Duration(milliseconds: 30));
+    expect(_revealedPlainText(tester), '😀中文');
+    expect(tester.binding.transientCallbackCount, 0);
+
+    await tester.pumpWidget(_revealTestApp('历史全文😀'));
+    expect(_revealedPlainText(tester), '历史全文😀');
+    expect(tester.binding.transientCallbackCount, 0);
+  });
+
+  testWidgets('default history snapshots are visible without a reveal ticker', (
+    tester,
+  ) async {
+    final history = List.filled(1000, '历史正文😀').join();
+    await tester.pumpWidget(_revealTestApp(history));
+    expect(_revealedPlainText(tester), history);
+    expect(tester.binding.transientCallbackCount, 0);
+  });
+
   testWidgets(
     'plain streamed prose keeps one layout across Markdown flush markers',
     (tester) async {
@@ -814,3 +1031,143 @@ void main() {
     },
   );
 }
+
+Widget _revealTestApp(String text, {int? initialVisibleLength}) => MaterialApp(
+  home: Scaffold(
+    body: SingleChildScrollView(
+      child: OmnibotPacedRevealText(
+        text: text,
+        initialVisibleLength: initialVisibleLength,
+        style: const TextStyle(fontSize: 14),
+      ),
+    ),
+  ),
+);
+
+String _revealedPlainText(WidgetTester tester) {
+  final richText = find.descendant(
+    of: find.byType(OmnibotPacedRevealText),
+    matching: find.byType(RichText),
+  );
+  if (richText.evaluate().isEmpty) return '';
+  return tester.widget<RichText>(richText).text.toPlainText();
+}
+
+List<(String, bool)> _boldRuns(InlineSpan span, [bool inheritedBold = false]) {
+  if (span is! TextSpan) return const [];
+  final bold = span.style?.fontWeight == null
+      ? inheritedBold
+      : span.style!.fontWeight == FontWeight.bold;
+  return [
+    if (span.text?.isNotEmpty == true) (span.text!, bold),
+    for (final child in span.children ?? const <InlineSpan>[])
+      ..._boldRuns(child, bold),
+  ];
+}
+
+// The previous scanner is a reference only for small semantic fixtures. Large
+// coverage above checks complete output without imposing host timing limits.
+List<(String, bool)> _referenceBoldRuns(String source, int requestedVisible) {
+  var visibleEnd = requestedVisible.clamp(0, source.length);
+  if (visibleEnd > 0 && visibleEnd < source.length) {
+    final current = source.codeUnitAt(visibleEnd);
+    final previous = source.codeUnitAt(visibleEnd - 1);
+    if (current >= 0xDC00 &&
+        current <= 0xDFFF &&
+        previous >= 0xD800 &&
+        previous <= 0xDBFF) {
+      visibleEnd--;
+    }
+  }
+  final runs = <(String, bool)>[];
+  final ranges =
+      <({int openStart, int openEnd, int closeStart, int closeEnd})>[];
+  var cursor = 0;
+  while (cursor + 1 < source.length) {
+    final starIndex = source.indexOf('**', cursor);
+    final underscoreIndex = source.indexOf('__', cursor);
+    final openStart = switch ((starIndex, underscoreIndex)) {
+      (-1, -1) => -1,
+      (-1, _) => underscoreIndex,
+      (_, -1) => starIndex,
+      _ => starIndex < underscoreIndex ? starIndex : underscoreIndex,
+    };
+    if (openStart < 0) break;
+    final marker = source.substring(openStart, openStart + 2);
+    final contentStart = openStart + 2;
+    if (_referenceEscapedMarker(source, openStart) ||
+        (marker == '__' &&
+            openStart > 0 &&
+            _referenceAsciiWord(source.codeUnitAt(openStart - 1))) ||
+        contentStart >= source.length ||
+        _referenceWhitespace(source.codeUnitAt(contentStart))) {
+      cursor = contentStart;
+      continue;
+    }
+    var closeStart = source.indexOf(marker, contentStart);
+    while (closeStart >= 0 &&
+        (_referenceEscapedMarker(source, closeStart) ||
+            closeStart == contentStart ||
+            _referenceWhitespace(source.codeUnitAt(closeStart - 1)) ||
+            (marker == '__' &&
+                closeStart + 2 < source.length &&
+                _referenceAsciiWord(source.codeUnitAt(closeStart + 2))))) {
+      closeStart = source.indexOf(marker, closeStart + 2);
+    }
+    ranges.add((
+      openStart: openStart,
+      openEnd: contentStart,
+      closeStart: closeStart < 0 ? source.length : closeStart,
+      closeEnd: closeStart < 0 ? source.length : closeStart + 2,
+    ));
+    cursor = closeStart < 0 ? source.length : closeStart + 2;
+  }
+
+  void append(String text, bool bold) {
+    if (text.isNotEmpty) runs.add((text, bold));
+  }
+
+  cursor = 0;
+  for (final range in ranges) {
+    if (cursor >= visibleEnd) break;
+    append(
+      source.substring(cursor, range.openStart.clamp(cursor, visibleEnd)),
+      false,
+    );
+    if (visibleEnd <= range.openEnd) {
+      cursor = visibleEnd;
+      break;
+    }
+    append(
+      source.substring(
+        range.openEnd,
+        range.closeStart.clamp(range.openEnd, visibleEnd),
+      ),
+      true,
+    );
+    cursor = range.closeEnd.clamp(0, visibleEnd);
+  }
+  if (cursor < visibleEnd) append(source.substring(cursor, visibleEnd), false);
+  return runs;
+}
+
+bool _referenceEscapedMarker(String source, int index) {
+  var slashCount = 0;
+  for (
+    var cursor = index - 1;
+    cursor >= 0 && source.codeUnitAt(cursor) == 92;
+    cursor--
+  ) {
+    slashCount++;
+  }
+  return slashCount.isOdd;
+}
+
+bool _referenceWhitespace(int unit) =>
+    unit == 9 || unit == 10 || unit == 13 || unit == 32;
+
+bool _referenceAsciiWord(int unit) =>
+    (unit >= 48 && unit <= 57) ||
+    (unit >= 65 && unit <= 90) ||
+    (unit >= 97 && unit <= 122) ||
+    unit == 95;

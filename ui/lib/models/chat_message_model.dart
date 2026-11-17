@@ -1,4 +1,22 @@
+import 'dart:collection';
+
 import 'package:ui/models/chat_link_preview.dart';
+
+// Only these model-owned collections prove that every nested map/list was
+// detached and frozen. An external unmodifiable view may still have mutable
+// children or a mutable backing collection, so it must be copied normally.
+final class _MessageSnapshotMap extends UnmodifiableMapView<String, dynamic> {
+  _MessageSnapshotMap(Map<dynamic, dynamic> source)
+    : super({
+        for (final entry in source.entries)
+          entry.key.toString(): ChatMessageModel._freeze(entry.value),
+      });
+}
+
+final class _MessageSnapshotList extends UnmodifiableListView<dynamic> {
+  _MessageSnapshotList(List<dynamic> source)
+    : super([for (final value in source) ChatMessageModel._freeze(value)]);
+}
 
 /// AI聊天消息模型
 ///
@@ -57,18 +75,15 @@ class ChatMessageModel {
        createAt = createAt ?? DateTime.now();
 
   // Immutable display data allows the channel to send only changed rows.
-  static Map<String, dynamic>? _freezeMap(Map<String, dynamic>? value) =>
-      value == null
-      ? null
-      : Map<String, dynamic>.unmodifiable(
-          value.map((key, value) => MapEntry(key, _freeze(value))),
-        );
+  static Map<String, dynamic>? _freezeMap(Map<String, dynamic>? value) {
+    if (value == null || value is _MessageSnapshotMap) return value;
+    return _MessageSnapshotMap(value);
+  }
 
   static dynamic _freeze(dynamic value) => switch (value) {
-    Map value => Map<String, dynamic>.unmodifiable(
-      value.map((key, value) => MapEntry(key.toString(), _freeze(value))),
-    ),
-    List value => List<dynamic>.unmodifiable(value.map(_freeze)),
+    _MessageSnapshotMap() || _MessageSnapshotList() => value,
+    Map value => _MessageSnapshotMap(value),
+    List value => _MessageSnapshotList(value),
     _ => value,
   };
 

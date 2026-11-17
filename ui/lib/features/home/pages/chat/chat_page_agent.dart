@@ -1319,6 +1319,9 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
 
   @override
   void _handleAgentRuntimeProjection(ChatAgentEventProjection projection) {
+    final previousThreadId = _activeAgentThreadId;
+    final previousTurnId = _activeAgentTurnId;
+    final previousCollaborationMode = _activeAgentCollaborationMode;
     final event = projection.event;
     final diagnosticMethod = _diagnosticEventMethod(event);
     _agentEventDiagnosticCounter.update(
@@ -1400,7 +1403,14 @@ mixin _ChatPageAgentMixin on _ChatPageStateBase {
         result.method != 'codex/parseError') {
       debugPrint('[Agent] unhandled ACP event: ${jsonEncode(event)}');
     }
-    if (_activeMode == ChatPageMode.agent && mounted && isVisibleConversation) {
+    // Item changes reach their row notifiers. Rebuild the page only when this
+    // projection changes session controls not covered by the runtime signature.
+    if (_activeMode == ChatPageMode.agent &&
+        mounted &&
+        isVisibleConversation &&
+        (previousThreadId != _activeAgentThreadId ||
+            previousTurnId != _activeAgentTurnId ||
+            previousCollaborationMode != _activeAgentCollaborationMode)) {
       setState(() {});
     }
   }

@@ -478,6 +478,48 @@ void main() {
       expect(lastObserved?.text, 'hi there');
     });
 
+    test('tool progress only invalidates its row, not page chrome', () {
+      list.add(ChatMessageModel.cardMessage({
+        'type': 'agent_tool_summary',
+        'toolType': 'subagent',
+        'status': 'running',
+        'progress': 'first',
+      }, id: 'tool'));
+      final notifier = list.listenableAt(0);
+      var rowUpdates = 0;
+      notifier.addListener(() => rowUpdates++);
+      final structureRevision = list.structureRevision;
+      for (var index = 0; index < 50; index++) {
+        list[0] = list[0].copyWith(content: {
+          'cardData': {...list[0].cardData!, 'progress': 'progress $index'},
+        });
+        expect(list.lastMutationAffectsPageChrome, isFalse);
+      }
+      expect(rowUpdates, 50);
+      expect(list.listenableAt(0), same(notifier));
+      expect(list.structureRevision, structureRevision);
+      expect(list.single.cardData!['progress'], 'progress 49');
+    });
+
+    test('user-input request transitions refresh composer chrome', () {
+      ChatMessageModel request(String status) => ChatMessageModel.cardMessage({
+        'type': 'agent_request',
+        'requestKind': 'user_input',
+        'requestId': 'input-1',
+        'status': status,
+      }, id: 'request');
+      list.add(request('pending'));
+      expect(list.lastMutationAffectsPageChrome, isTrue);
+      list[0] = request('answered');
+      expect(list.lastMutationAffectsPageChrome, isTrue);
+      list[0] = request('answered');
+      expect(list.lastMutationAffectsPageChrome, isFalse);
+      list[0] = request('pending');
+      expect(list.lastMutationAffectsPageChrome, isTrue);
+      list.removeAt(0);
+      expect(list.lastMutationAffectsPageChrome, isTrue);
+    });
+
     test('inserting an existing id updates its row without adding a slot', () {
       list.insert(0, ChatMessageModel.assistantMessage('old', id: 'm-1'));
       final notifier = list.listenableAt(0);
