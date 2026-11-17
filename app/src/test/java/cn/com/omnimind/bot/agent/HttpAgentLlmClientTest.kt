@@ -15,7 +15,10 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -1277,6 +1280,249 @@ class HttpAgentLlmClientTest {
             assertEquals("内部思考", turn.reasoning)
             assertEquals("最终回答", turn.message.contentText())
             assertNull(turn.message.reasoningContent)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `content burst is coalesced while first update final response and usage stay complete`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val firstUpdate = CompletableDeferred<String>()
+        val updates = mutableListOf<String>()
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, _, protocol, _ ->
+                    routeInfo(model, model, protocol ?: "openai_compatible", false)
+                },
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"first"}}]}""")
+                    assertEquals("first", withTimeout(2_000) { firstUpdate.await() })
+                    repeat(300) {
+                        listener.onEvent(source, null, "message",
+                            """{"choices":[{"delta":{"content":"追加"}}]}""")
+                    }
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{},"finish_reason":"stop"}],"usage":{"prompt_tokens":17,"completion_tokens":301,"total_tokens":318}}""")
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                json = json,
+            )
+
+            val turn = client.streamTurn(simpleRequest(), onContentUpdate = {
+                updates += it
+                firstUpdate.complete(it)
+            })
+
+            assertEquals("first", updates.first())
+            assertEquals("first" + "追加".repeat(300), updates.last())
+            assertEquals(updates.last(), turn.message.contentText())
+            assertTrue("Expected coalesced display snapshots, got ${updates.size}", updates.size < 100)
+            assertEquals(17, turn.usage?.promptTokens)
+            assertEquals(301, turn.usage?.completionTokens)
+            assertEquals(318, turn.usage?.totalTokens)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `pending content stays between its reasoning and tool input barriers`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val emissions = mutableListOf<String>()
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, _, protocol, _ ->
+                    routeInfo(model, model, protocol ?: "openai_compatible", false)
+                },
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"reasoning_content":"think first"}}]}""")
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"first"}}]}""")
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":" before reasoning"}}]}""")
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"reasoning_content":" then more"}}]}""")
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":" before tool"}}]}""")
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_barrier","type":"function","function":{"name":"file_read","arguments":"{\"path\":\"final.md\"}"}}]},"finish_reason":"tool_calls"}]}""")
+                    listener.onEvent(source, null, "message", "[DONE]")
+                    source
+                },
+                json = json,
+            )
+
+            val turn = client.streamTurn(
+                simpleRequest(),
+                onReasoningUpdate = { emissions += "reasoning:$it" },
+                onContentUpdate = { emissions += "content:$it" },
+                onToolCallInput = { emissions += "tool:${it.function.arguments}" },
+            )
+
+            val reasoning = emissions.indexOf("reasoning:think first then more")
+            val beforeReasoning = emissions.indexOf("content:first before reasoning")
+            val beforeTool = emissions.indexOf("content:first before reasoning before tool")
+            val tool = emissions.indexOf("tool:{\"path\":\"final.md\"}")
+            assertTrue("$emissions", beforeReasoning >= 0 && beforeReasoning < reasoning)
+            assertTrue("$emissions", reasoning < beforeTool && beforeTool < tool)
+            assertEquals("{\"path\":\"final.md\"}", turn.message.toolCalls?.single()?.function?.arguments)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `provider failures flush the last accepted partial content without retry`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        try {
+            for (failureKind in listOf("http", "in-band", "eof")) {
+                val updates = mutableListOf<String>()
+                var requests = 0
+                val client = HttpAgentLlmClient(
+                    scope = scope,
+                    modelOverride = testOverride(),
+                    resolveRouteInfoOp = { model, _, _, _, _, protocol, _ ->
+                        routeInfo(model, model, protocol ?: "openai_compatible", false)
+                    },
+                    streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                        requests++
+                        val source = dummyEventSource()
+                        listener.onOpen(source, okResponse())
+                        listener.onEvent(source, null, "message",
+                            """{"choices":[{"delta":{"content":"first"}}]}""")
+                        listener.onEvent(source, null, "message",
+                            """{"choices":[{"delta":{"content":" final partial"}}]}""")
+                        when (failureKind) {
+                            "http" -> listener.onFailure(source, java.io.IOException("connection reset"), null)
+                            "in-band" -> listener.onEvent(source, null, "message",
+                                """{"error":{"code":"server_error","message":"interrupted"},"status_code":503}""")
+                            else -> listener.onClosed(source)
+                        }
+                        source
+                    },
+                    transientStreamRetryDelayMs = 0L,
+                    json = json,
+                )
+
+                val error = runCatching {
+                    client.streamTurn(simpleRequest(), onContentUpdate = { updates += it })
+                }.exceptionOrNull()
+
+                assertTrue("$failureKind: $error", error is AgentStreamRequestException)
+                assertEquals(1, requests)
+                assertEquals("first final partial", updates.last())
+            }
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `request cancellation keeps accepted partial text without replay or later timer output`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val accepted = CompletableDeferred<Unit>()
+        val firstDisplayed = CompletableDeferred<Unit>()
+        val updates = mutableListOf<String>()
+        var requests = 0
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, _, protocol, _ ->
+                    routeInfo(model, model, protocol ?: "openai_compatible", false)
+                },
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    requests++
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"first"}}]}""")
+                    withTimeout(2_000) { firstDisplayed.await() }
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":" final partial"}}]}""")
+                    accepted.complete(Unit)
+                    source
+                },
+                json = json,
+            )
+            val request = async {
+                client.streamTurn(simpleRequest(), onContentUpdate = {
+                    updates += it
+                    if (it == "first") firstDisplayed.complete(Unit)
+                })
+            }
+            withTimeout(2_000) { accepted.await() }
+            request.cancelAndJoin()
+            val deliveredCount = updates.size
+            val displayedText = updates.last()
+            delay(100L)
+
+            assertTrue(request.isCancelled)
+            assertEquals(1, requests)
+            assertEquals("first", updates.first())
+            assertEquals(displayedText, updates.last())
+            assertEquals(deliveredCount, updates.size)
+        } finally {
+            scope.cancel()
+        }
+    }
+
+    @Test
+    fun `request cancellation waits for its in flight content callback to stop`() = runBlocking {
+        val scope = CoroutineScope(Job() + Dispatchers.Default)
+        val entered = CompletableDeferred<Unit>()
+        val exited = CompletableDeferred<Unit>()
+        val updates = mutableListOf<String>()
+        try {
+            val client = HttpAgentLlmClient(
+                scope = scope,
+                modelOverride = testOverride(),
+                resolveRouteInfoOp = { model, _, _, _, _, protocol, _ ->
+                    routeInfo(model, model, protocol ?: "openai_compatible", false)
+                },
+                streamRequestOp = { _, _, listener, _, _, _, _, _, _, _ ->
+                    val source = dummyEventSource()
+                    listener.onOpen(source, okResponse())
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":"first"}}]}""")
+                    listener.onEvent(source, null, "message",
+                        """{"choices":[{"delta":{"content":" pending tail"}}]}""")
+                    source
+                },
+                json = json,
+            )
+            val request = async {
+                client.streamTurn(simpleRequest(), onContentUpdate = {
+                    updates += it
+                    entered.complete(Unit)
+                    try {
+                        awaitCancellation()
+                    } finally {
+                        exited.complete(Unit)
+                    }
+                })
+            }
+            withTimeout(2_000) { entered.await() }
+            request.cancelAndJoin()
+            val deliveredCount = updates.size
+            assertTrue("Callback must stop before its request completes", exited.isCompleted)
+            delay(100L)
+
+            assertTrue(request.isCancelled)
+            assertEquals(listOf("first"), updates)
+            assertEquals(deliveredCount, updates.size)
         } finally {
             scope.cancel()
         }

@@ -312,7 +312,7 @@ private class ReportingSubagentCallback(
     }
 
     override suspend fun onThinkingUpdate(thinking: String) {
-        val summary = compactThinking(thinking)
+        val summary = compactSubagentThinkingText(thinking)
         if (summary.isBlank() || summary == lastThinkingSummary) {
             return
         }
@@ -400,16 +400,20 @@ private class ReportingSubagentCallback(
         )
     }
 
-    private fun compactThinking(text: String): String {
-        val lines = text
-            .split('\n')
-            .map { it.trim() }
-            .filter { it.isNotEmpty() }
-        val candidate = lines.lastOrNull().orEmpty()
-        return normalizeSubagentProgressText(candidate)
-    }
 }
 
+internal fun compactSubagentThinkingText(text: String): String {
+    // Thinking is cumulative. Only inspect its final nonblank line rather
+    // than allocating every earlier line again for each streamed snapshot.
+    var end = text.length
+    while (end > 0 && text[end - 1].isWhitespace()) end--
+    if (end == 0) return ""
+    val start = text.lastIndexOf('\n', startIndex = end - 1) + 1
+    return normalizeSubagentProgressText(text.substring(start, end).trim())
+}
+
+private val subagentProgressWhitespace = Regex("\\s+")
+
 internal fun normalizeSubagentProgressText(text: String): String = text
-    .replace(Regex("\\s+"), " ")
+    .replace(subagentProgressWhitespace, " ")
     .trim()

@@ -16,6 +16,7 @@ import 'package:ui/features/home/pages/chat/widgets/chat_spotlight_tour.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_widgets.dart';
 import 'package:ui/features/home/pages/chat/widgets/chat_pane_resize_handle.dart';
 import 'package:ui/features/home/pages/chat/widgets/new_conversation_mode_selector.dart';
+import 'package:ui/features/home/pages/command_overlay/widgets/cards/agent_tool_summary_card.dart';
 import 'package:ui/features/home/pages/command_overlay/widgets/chat_input_area.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/l10n/legacy_text_localizer.dart';
@@ -54,6 +55,7 @@ void main() {
   const agentChannel = MethodChannel('cn.com.omnimind.bot/AgentRuntime');
   const otherChannels = [
     'cn.com.omnimind.bot/AgentRuntimeEvents',
+    'cn.com.omnimind.bot/AgentBrowserSession',
     'cn.com.omnimind.bot/OmniLinkEvents',
     'cn.com.omnimind.bot/SpecialPermissionEvent',
     'cn.com.omnimind.bot/SpecialPermissionEvents',
@@ -73,6 +75,7 @@ void main() {
   late FilePickerPlatform originalPicker;
   Completer<void>? initializeGate;
   Completer<void>? sessionNewGate;
+  Completer<void>? serverResponseGate;
   Completer<void>? sessionLoadGate;
   Completer<void>? historyMetadataGate;
   Completer<void>? historySessionGate;
@@ -178,6 +181,7 @@ void main() {
     FilePickerPlatform.instance = picker;
     initializeGate = null;
     sessionNewGate = null;
+    serverResponseGate = null;
     sessionLoadGate = null;
     historyMetadataGate = null;
     historySessionGate = null;
@@ -422,6 +426,9 @@ void main() {
             'sessionId': arguments['sessionId'] ?? 'new-draft-session',
             'stopReason': 'end_turn',
           };
+        case 'respondToServerRequest':
+          await serverResponseGate?.future;
+          return {'ok': true};
       }
       return <String, Object?>{};
     });
@@ -1370,6 +1377,219 @@ void main() {
       await disposeChat(tester);
     });
   }
+
+  testWidgets('subagent progress updates rows without rebuilding chat chrome', (
+    tester,
+  ) async {
+    const conversationId = 805;
+    const sessionId = 'existing-session-805';
+    const turnId = 'progress-turn';
+    conversations = [
+      historyConversation(conversationId, ConversationMode.agent),
+    ];
+    historyPages[conversationId] = historyMessage(conversationId);
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.existing(
+        conversationId: conversationId,
+        mode: ConversationMode.agent,
+      ),
+    );
+    coordinator.beginAcpTurn(
+      taskId: turnId,
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    );
+    expect(
+      coordinator.bindAcpSession(
+        taskId: turnId,
+        conversationId: conversationId,
+        mode: kChatRuntimeModeAgent,
+        sessionId: sessionId,
+      ),
+      isTrue,
+    );
+
+    Future<void> progress(int index, {String status = 'in_progress'}) async {
+      await tester.runAsync(() async {
+        await messenger.handlePlatformMessage(
+          'cn.com.omnimind.bot/AgentRuntimeEvents',
+          const StandardMethodCodec().encodeSuccessEnvelope({
+            'method': 'session/update',
+            'conversationId': conversationId,
+            'agentId': 'xiaowan-acp',
+            'turnId': turnId,
+            'params': {
+              'sessionId': sessionId,
+              'update': {
+                'sessionUpdate': index == 0 ? 'tool_call' : 'tool_call_update',
+                'toolCallId': 'subagent-call',
+                'kind': 'other',
+                'title': 'subagent_dispatch',
+                'status': status,
+                'rawInput': {
+                  'toolName': 'subagent_dispatch',
+                  'toolType': 'subagent',
+                  'subagentEvents': [
+                    {
+                      'id': 'child-thinking-$index',
+                      'seq': index,
+                      'kind': 'thinking',
+                      'subagentId': 'child-1',
+                      'taskIndex': 0,
+                      'summary': 'SubAgent #1 思考：work $index',
+                      'status': 'running',
+                    },
+                  ],
+                },
+              },
+            },
+          }),
+          (_) {},
+        );
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pump(const Duration(milliseconds: 8));
+    }
+
+    await progress(0);
+    expect(find.byType(AgentToolSummaryCard), findsOneWidget);
+    final originalToolCard = tester.widget<AgentToolSummaryCard>(
+      find.byType(AgentToolSummaryCard),
+    );
+    expect(composer(tester).isProcessing, isTrue);
+    expect(composer(tester).onCancelTask, isNotNull);
+    await pumpHistoryFrames(tester);
+    final originalComposer = composer(tester);
+    final originalAppBar = tester.widget<ChatAppBar>(find.byType(ChatAppBar));
+    final originalMessages = tester.widget<ChatMessageList>(
+      find.byType(ChatMessageList),
+    );
+
+    for (var index = 1; index <= 50; index++) {
+      await progress(index);
+      expect(
+        tester.widget<ChatAppBar>(find.byType(ChatAppBar)),
+        same(originalAppBar),
+        reason: 'tool update $index must not rebuild the page header',
+      );
+      expect(
+        tester.widget<ChatMessageList>(find.byType(ChatMessageList)),
+        same(originalMessages),
+        reason: 'tool update $index must only rebuild the affected timeline row',
+      );
+      expect(composer(tester), same(originalComposer));
+    }
+    final updatedToolCard = tester.widget<AgentToolSummaryCard>(
+      find.byType(AgentToolSummaryCard),
+    );
+    expect(updatedToolCard, isNot(same(originalToolCard)));
+    expect(
+      (updatedToolCard.cardData['subagentEvents'] as List).single['summary'],
+      'SubAgent #1 思考：work 50',
+    );
+    final runtime = coordinator.runtimeFor(
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+    )!;
+    final tool = runtime.messages.singleWhere(
+      (message) => message.cardData?['toolCallId'] == 'subagent-call',
+    );
+    expect(tool.cardData!['subagentEvents'], hasLength(1));
+
+    Future<void> requestInput(String requestId) async {
+      await tester.runAsync(() async {
+        await messenger.handlePlatformMessage(
+          'cn.com.omnimind.bot/AgentRuntimeEvents',
+          const StandardMethodCodec().encodeSuccessEnvelope({
+            'method': 'elicitation/create',
+            'id': requestId,
+            'conversationId': conversationId,
+            'agentId': 'xiaowan-acp',
+            'turnId': turnId,
+            'params': {
+              'sessionId': sessionId,
+              'title': '需要输入',
+              'description': '请提供项目名称',
+            },
+          }),
+          (_) {},
+        );
+        await Future<void>.delayed(Duration.zero);
+      });
+      await tester.pump();
+    }
+
+    await requestInput('input-during-progress');
+    expect(runtime.isAiResponding, isTrue);
+    expect(composer(tester).isProcessing, isFalse);
+    composer(tester).controller.text = '项目名称';
+    composer(tester).onSendMessage();
+    await pumpHistoryFrames(tester);
+    expect(
+      agentCalls.where((call) => call.method == 'respondToServerRequest'),
+      hasLength(1),
+    );
+    expect(composer(tester).isProcessing, isTrue);
+    expect(
+      agentCalls.where((call) => call.method == 'session/prompt'),
+      isEmpty,
+    );
+
+    // Tool and prompt terminals remain separate official ACP observations.
+    await progress(51, status: 'failed');
+    expect(
+      tester.widget<AgentToolSummaryCard>(find.byType(AgentToolSummaryCard))
+          .cardData['status'],
+      'error',
+    );
+
+    await requestInput('input-before-switch');
+    serverResponseGate = Completer<void>();
+    composer(tester).controller.text = '旧会话的回复';
+    composer(tester).onSendMessage();
+    await tester.pump();
+    await pumpChat(
+      tester,
+      const ConversationThreadTarget.newConversation(
+        mode: ConversationMode.agent,
+        requestKey: 'after-subagent-progress',
+        agentId: 'xiaowan-acp',
+      ),
+    );
+    composer(tester).controller.text = '保留新会话草稿';
+    serverResponseGate!.complete();
+    await pumpHistoryFrames(tester);
+    expect(composer(tester).controller.text, '保留新会话草稿');
+    expect(
+      runtime.messages.singleWhere(
+        (message) => message.cardData?['requestId'] == 'input-before-switch',
+      ).cardData!['status'],
+      'submitted',
+    );
+
+    coordinator.applyAcpPromptResponse(
+      taskId: turnId,
+      conversationId: conversationId,
+      mode: kChatRuntimeModeAgent,
+      sessionId: sessionId,
+      turnId: turnId,
+      stopReason: 'cancelled',
+    );
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(composer(tester).isProcessing, isFalse);
+    expect(runtime.isAiResponding, isFalse);
+    expect(
+      runtime.messages.singleWhere((message) => message.id == tool.id)
+          .cardData!['status'],
+      'error',
+    );
+    expect(tester.takeException(), isNull);
+    expect(composer(tester).isProcessing, isFalse);
+    expect(find.byType(AgentToolSummaryCard), findsNothing);
+    expect(runtime.messages.any((message) => message.id == tool.id), isTrue);
+    await disposeChat(tester);
+  });
 
   for (final mode in [ConversationMode.chatOnly, ConversationMode.agent]) {
     testWidgets(

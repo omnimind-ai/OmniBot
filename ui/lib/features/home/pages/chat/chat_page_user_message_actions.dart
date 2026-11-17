@@ -220,6 +220,8 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     if (_pendingAgentInputResponseInFlight) {
       return true;
     }
+    final responseRuntime = _activeRuntime;
+    final targetGeneration = _conversationTargetRequestId;
     final questionId = (card['questionId'] ?? 'answer').toString();
     final agentId = card['agentId']?.toString().trim();
     final rawConversationId = card['conversationId'];
@@ -246,14 +248,26 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
           conversationId: conversationId,
         );
       }
-      _markPendingAgentUserInputAnswered(card, text);
-      if (mounted) {
+      if (responseRuntime != null &&
+          identical(
+            _runtimeCoordinator.runtimeFor(
+              conversationId: responseRuntime.conversationId,
+              mode: responseRuntime.mode,
+            ),
+            responseRuntime,
+          )) {
+        _markPendingAgentUserInputAnswered(responseRuntime, card, text);
+      }
+      if (mounted && targetGeneration == _conversationTargetRequestId) {
+        // The confirmed response settles the request row. Its composer controls
+        // must refresh once, independently of subsequent streaming updates.
         _messageController.clear();
         _modeState(_activeMode).draftMessage = '';
+        _handleRuntimeCoordinatorChanged();
       }
       return true;
     } catch (_) {
-      if (mounted) {
+      if (mounted && targetGeneration == _conversationTargetRequestId) {
         showToast(
           LegacyTextLocalizer.isEnglish
               ? 'Unable to submit the Agent response'
@@ -357,11 +371,10 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
   }
 
   void _markPendingAgentUserInputAnswered(
+    ChatConversationRuntimeState runtime,
     Map<String, dynamic> card,
     String answer,
   ) {
-    final runtime = _activeRuntime;
-    if (runtime == null) return;
     final requestId = card['requestId']?.toString();
     final sessionId = card['sessionId']?.toString().trim();
     final agentId = card['agentId']?.toString().trim();

@@ -699,6 +699,9 @@ class AgentEventReducer {
         final mergedItem = _mergeAgentToolUpdate(existing, itemWithIdentity);
         final toolInfo = normalizeAgentToolCall(
           mergedItem,
+          // This pass selects the card route. The upsert below serializes its
+          // persisted payload once, after filtering model replay metadata.
+          includePayloadJson: false,
           itemType: canonicalAgentItemType(
             _string(mergedItem['type']) ?? itemType,
           ),
@@ -2166,16 +2169,18 @@ class AgentEventReducer {
       ..._preservedAcpReasoningCardData(existingCardData),
       ...reasoningCardData,
     };
-    final message = ChatMessageModel(
-      id: cardId,
-      type: 2,
-      user: 3,
-      content: {'cardData': cardData, 'id': cardId},
-      streamMeta: streamMeta,
-      createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
-    );
     if (index == -1) {
-      runtime.messages.insert(0, message);
+      runtime.messages.insert(
+        0,
+        ChatMessageModel(
+          id: cardId,
+          type: 2,
+          user: 3,
+          content: {'cardData': cardData, 'id': cardId},
+          streamMeta: streamMeta,
+          createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
+        ),
+      );
     } else {
       runtime.messages[index] = existing!.copyWith(
         content: {'cardData': cardData, 'id': cardId},
@@ -2563,16 +2568,18 @@ class AgentEventReducer {
       cardId,
       existingMessage: existing,
     );
-    final message = ChatMessageModel(
-      id: cardId,
-      type: 2,
-      user: 3,
-      content: {'cardData': cardData, 'id': cardId},
-      streamMeta: streamMeta,
-      createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
-    );
     if (index == -1) {
-      runtime.messages.insert(0, message);
+      runtime.messages.insert(
+        0,
+        ChatMessageModel(
+          id: cardId,
+          type: 2,
+          user: 3,
+          content: {'cardData': cardData, 'id': cardId},
+          streamMeta: streamMeta,
+          createAt: DateTime.fromMillisecondsSinceEpoch(startTime),
+        ),
+      );
     } else {
       runtime.messages[index] = existing!.copyWith(
         content: {'cardData': cardData, 'id': cardId},
@@ -2628,14 +2635,20 @@ class AgentEventReducer {
     Iterable<Map<String, dynamic>> normalize(dynamic value) sync* {
       if (value is List) {
         for (final item in value.whereType<Map>()) {
-          yield item.map<String, dynamic>(
-            (key, nested) => MapEntry(key.toString(), nested),
-          );
+          // Existing message events are already deeply immutable. Keep those
+          // nodes intact so the next snapshot can share unchanged history.
+          yield item is Map<String, dynamic>
+              ? item
+              : item.map<String, dynamic>(
+                  (key, nested) => MapEntry(key.toString(), nested),
+                );
         }
       } else if (value is Map) {
-        yield value.map<String, dynamic>(
-          (key, nested) => MapEntry(key.toString(), nested),
-        );
+        yield value is Map<String, dynamic>
+            ? value
+            : value.map<String, dynamic>(
+                (key, nested) => MapEntry(key.toString(), nested),
+              );
       }
     }
 

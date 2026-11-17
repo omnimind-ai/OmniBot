@@ -1,0 +1,57 @@
+{
+  "baselineCommit": "91742663b1fc39d86ec97bac4a6cfb5e2506264e",
+  "scope": "Flutter Profile AOT/native debug; same shared native in both APKs",
+  "rows": [
+    {
+      "name": "累计 1000 条工具进度：reducer 同步工作",
+      "before": 1265.218,
+      "after": 311.369,
+      "unit": "ms"
+    },
+    {
+      "name": "1000 条工具进度：投影同步工作",
+      "before": 4073.438,
+      "after": 1409.895,
+      "unit": "ms"
+    },
+    {
+      "name": "1000 条工具进度：生命周期/保存结束",
+      "before": 10.403717,
+      "after": 7.885549,
+      "unit": "s"
+    },
+    {
+      "name": "1000 条工具进度：UI build P95",
+      "before": 3.441,
+      "after": 2.391,
+      "unit": "ms"
+    },
+    {
+      "name": "51400 字符流式回复：投影同步工作",
+      "before": 45.728,
+      "after": 56.28,
+      "unit": "ms"
+    },
+    {
+      "name": "51400 字符流式回复：生命周期/保存结束",
+      "before": 26.503369,
+      "after": 13.701952,
+      "unit": "s"
+    },
+    {
+      "name": "51400 字符流式回复：UI build P95",
+      "before": 321.31,
+      "after": 158.762,
+      "unit": "ms"
+    }
+  ],
+  "textSha256": "24cae999d1020365fd41ac8e233e90dbe01a4c8fff27b3e7923569c58924bc5f",
+  "nativeTests": {
+    "tests": 1649,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "flutterTests": 2290,
+  "keptSourceSnapshot": "build/performance/chat-runtime/run-20261117-final-verified"
+}

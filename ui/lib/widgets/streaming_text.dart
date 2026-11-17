@@ -589,9 +589,17 @@ InlineSpan omnibotBuildStreamingBoldSpan(
 List<_StreamingBoldRange> _streamingBoldRanges(String source) {
   final ranges = <_StreamingBoldRange>[];
   var cursor = 0;
+  var starIndex = source.indexOf('**');
+  var underscoreIndex = source.indexOf('__');
   while (cursor + 1 < source.length) {
-    final starIndex = source.indexOf('**', cursor);
-    final underscoreIndex = source.indexOf('__', cursor);
+    // Keep a future match, including an exhausted search, while the cursor
+    // advances. Rescanning an absent marker for every span is quadratic.
+    if (starIndex >= 0 && starIndex < cursor) {
+      starIndex = source.indexOf('**', cursor);
+    }
+    if (underscoreIndex >= 0 && underscoreIndex < cursor) {
+      underscoreIndex = source.indexOf('__', cursor);
+    }
     final openStart = switch ((starIndex, underscoreIndex)) {
       (-1, -1) => -1,
       (-1, _) => underscoreIndex,
@@ -860,6 +868,7 @@ const double _kSelectionMenuAnchorGap = 10.0;
 /// - 输入文本仅支持前缀增长（[text] 以旧值为前缀），非前缀变化直接跳至末态
 /// - 使用 credit 累进方式以约 30 ms/字的稳定速率逐字显示
 /// - 当积压较大（>20 字）时自动加速避免显示延迟过大
+/// - 大批文字积压按剩余长度追赶，避免回复结束后仍持续数分钟透出
 /// - 整体动画仅触发本地小区域重绘，不拉动外层 markdown 子树
 class OmnibotPacedRevealText extends StatefulWidget {
   const OmnibotPacedRevealText({
@@ -912,11 +921,15 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
   /// 最大加速倍数
   static const double _kMaxSpeedMultiplier = 4.0;
 
+  static const int _kCatchUpBacklog = 256;
+  static const int _kCatchUpIntervalUs = 180000;
+
   // ── 状态 ──
   late final Ticker _ticker;
   int _visibleLength = 0;
   Duration _lastTickTime = Duration.zero;
   double _credit = 0.0;
+  bool _isCatchingUp = false;
 
   @override
   void initState() {
@@ -926,9 +939,15 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
       widget.text.length,
     );
     _ticker = createTicker(_onTick);
-    if (_visibleLength < widget.text.length) {
-      _ticker.start();
-    }
+    _startRevealIfNeeded();
+  }
+
+  void _startRevealIfNeeded() {
+    if (_ticker.isActive || _visibleLength >= widget.text.length) return;
+    // Ticker elapsed starts over on each activation. Typing credit survives a
+    // pause, but the previous activation's clock must not delay new chunks.
+    _lastTickTime = Duration.zero;
+    _ticker.start();
   }
 
   @override
@@ -945,9 +964,7 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
     if (widget.text.length > oldWidget.text.length &&
         widget.text.startsWith(oldWidget.text)) {
       // 前缀扩展：保持当前可见长度，让 ticker 追赶新目标
-      if (!_ticker.isActive && _visibleLength < widget.text.length) {
-        _ticker.start();
-      }
+      _startRevealIfNeeded();
     } else {
       // 文本回退或整体替换：
       // 当 initialVisibleLength 显式传入了值时（如 StreamingText fast-path
@@ -956,8 +973,9 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
       _visibleLength = (widget.initialVisibleLength ?? widget.text.length)
           .clamp(0, widget.text.length);
       _credit = 0.0;
+      _isCatchingUp = false;
       if (_visibleLength < widget.text.length) {
-        _ticker.start();
+        _startRevealIfNeeded();
       } else {
         _ticker.stop();
       }
@@ -972,30 +990,45 @@ class _OmnibotPacedRevealTextState extends State<OmnibotPacedRevealText>
 
     final targetLen = widget.text.length;
     if (_visibleLength >= targetLen) {
+      _isCatchingUp = false;
       _ticker.stop();
       return;
     }
 
     final backlog = targetLen - _visibleLength;
 
-    // 积压较大时加速（最多 4×）
-    final speedMultiplier =
-        1.0 +
-        ((backlog - _kSpeedupBacklog) / _kSpeedupBacklog).clamp(
-          0.0,
-          _kMaxSpeedMultiplier - 1.0,
-        );
-    final effectiveInterval = _kBaseIntervalMs / speedMultiplier;
+    final int step;
+    if (_isCatchingUp || backlog > _kCatchUpBacklog) {
+      // Stay in catch-up until this burst is visible, including its short tail.
+      // Each frame still exposes one continuous, Unicode-safe source prefix.
+      _isCatchingUp = true;
+      step = (backlog * dt.inMicroseconds / _kCatchUpIntervalUs).ceil().clamp(
+        1,
+        backlog,
+      );
+    } else {
+      // Ordinary small chunks keep the existing typing cadence and credit.
+      final speedMultiplier =
+          1.0 +
+          ((backlog - _kSpeedupBacklog) / _kSpeedupBacklog).clamp(
+            0.0,
+            _kMaxSpeedMultiplier - 1.0,
+          );
+      final effectiveInterval = _kBaseIntervalMs / speedMultiplier;
 
-    _credit += dt.inMilliseconds / effectiveInterval;
-    final wholeChars = _credit.floor();
-    if (wholeChars <= 0) return;
-    _credit -= wholeChars.toDouble();
-
-    final step = wholeChars.clamp(1, backlog);
+      _credit += dt.inMilliseconds / effectiveInterval;
+      final wholeChars = _credit.floor();
+      if (wholeChars <= 0) return;
+      _credit -= wholeChars.toDouble();
+      step = wholeChars.clamp(1, backlog);
+    }
     setState(() {
       _visibleLength = (_visibleLength + step).clamp(0, targetLen);
     });
+    if (_visibleLength >= targetLen) {
+      _isCatchingUp = false;
+      _ticker.stop();
+    }
     widget.onRevealedLengthChanged?.call(_visibleLength);
   }
 

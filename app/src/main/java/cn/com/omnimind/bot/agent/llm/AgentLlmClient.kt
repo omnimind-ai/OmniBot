@@ -29,6 +29,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.channels.Channel
 import kotlinx.serialization.json.Json
@@ -431,10 +433,16 @@ class HttpAgentLlmClient(
         val lastStreamActivityAtMs = AtomicLong(startedAtMs)
         val emissionQueue = Channel<suspend () -> Unit>(Channel.UNLIMITED)
         val emissionLock = Any()
-        val emissionJob = scope.launch {
+        val emissionJob = scope.launch(currentCoroutineContext().job) {
             for (block in emissionQueue) {
-                runCatching { block.invoke() }
-                    .onFailure { OmniLog.w(tag, "stream emission failed: ${it.message}") }
+                currentCoroutineContext().ensureActive()
+                try {
+                    block.invoke()
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    OmniLog.w(tag, "stream emission failed: ${error.message}")
+                }
             }
         }
         fun enqueueEmission(block: suspend () -> Unit) {
@@ -442,6 +450,14 @@ class HttpAgentLlmClient(
                 return
             }
             emissionQueue.trySend(block)
+        }
+        val contentSnapshots = onContentUpdate?.let { callback ->
+            AgentContentSnapshotEmitter(
+                scope = scope,
+                lock = emissionLock,
+                enqueue = ::enqueueEmission,
+                onSnapshot = callback,
+            )
         }
 
         fun providerFailure(error: AgentProviderStreamException, rawPayload: String? = null) =
@@ -458,6 +474,7 @@ class HttpAgentLlmClient(
         fun dispatchReasoningSnapshot(reasoning: String) {
             lastReasoning = reasoning
             if (onReasoningUpdate != null) {
+                contentSnapshots?.flush()
                 enqueueEmission {
                     onReasoningUpdate.invoke(reasoning)
                 }
@@ -521,27 +538,25 @@ class HttpAgentLlmClient(
             }
         }
 
-        fun emitContent() {
+        fun emitContent(force: Boolean = false) {
             val content = accumulator.currentContent()
-            if (content.isEmpty() || content == lastContent) return
             synchronized(emissionLock) {
-                var reasoningSnapshot: String? = null
-                synchronized(reasoningLock) {
-                    if (accumulator.currentReasoningLength() > 0) {
-                        reasoningEmitJob?.cancel()
-                        reasoningEmitJob = null
-                        reasoningSnapshot = collectReasoningSnapshotLocked()
+                if (content.isNotEmpty() && content != lastContent) {
+                    var reasoningSnapshot: String? = null
+                    synchronized(reasoningLock) {
+                        if (accumulator.currentReasoningLength() > 0) {
+                            reasoningEmitJob?.cancel()
+                            reasoningEmitJob = null
+                            reasoningSnapshot = collectReasoningSnapshotLocked()
+                        }
                     }
-                }
-                if (reasoningSnapshot != null) {
-                    dispatchReasoningSnapshot(reasoningSnapshot)
-                }
-                lastContent = content
-                if (onContentUpdate != null) {
-                    enqueueEmission {
-                        onContentUpdate.invoke(content)
+                    if (reasoningSnapshot != null) {
+                        dispatchReasoningSnapshot(reasoningSnapshot)
                     }
+                    lastContent = content
+                    contentSnapshots?.offer(content)
                 }
+                if (force) contentSnapshots?.flush()
             }
         }
 
@@ -553,9 +568,12 @@ class HttpAgentLlmClient(
             if (calls.isEmpty()) return
             lastToolInputEmitAt = now
             emitReasoning(force = true)
-            calls.forEach { call ->
-                if (lastToolInputs.put(call.id, call) != call) {
-                    enqueueEmission { onToolCallInput?.invoke(call) }
+            synchronized(emissionLock) {
+                contentSnapshots?.flush()
+                calls.forEach { call ->
+                    if (lastToolInputs.put(call.id, call) != call) {
+                        enqueueEmission { onToolCallInput?.invoke(call) }
+                    }
                 }
             }
         }
@@ -568,7 +586,7 @@ class HttpAgentLlmClient(
                 )
                 enforceReasoningEchoIfRequired(turn, routeInfo)
                 emitReasoning(force = true)
-                emitContent()
+                emitContent(force = true)
                 emitToolInputs(force = true)
                 turn
             }.onSuccess { turn ->
@@ -744,6 +762,7 @@ class HttpAgentLlmClient(
             }
         }
 
+        var requestCancelled = false
         try {
             eventSource = streamRequestOp?.invoke(
                 model,
@@ -776,10 +795,22 @@ class HttpAgentLlmClient(
                     "protocol=${routeInfo.protocolType}"
             )
             return streamDone.await()
+        } catch (error: CancellationException) {
+            requestCancelled = true
+            throw error
         } finally {
             idleWatchdog?.cancel()
             reasoningEmitJob?.cancel()
             eventSource?.cancel()
+            if (requestCancelled || !currentCoroutineContext().isActive) {
+                // The request owns its emission worker. Keep already displayed
+                // partial text, but never publish a pending tail after cancellation.
+                contentSnapshots?.cancelPending()
+                emissionJob.cancel()
+            } else {
+                // Successful and failed responses retain all accepted text.
+                contentSnapshots?.close()
+            }
             emissionQueue.close()
             runCatching { emissionJob.join() }
         }
@@ -1027,6 +1058,119 @@ class HttpAgentLlmClient(
             haystack.contains("model does not exist") ||
             haystack.contains("no such model") ||
             haystack.contains("not found")
+    }
+}
+
+/** Coalesces cumulative display text before ACP projection, preserving queue barriers. */
+internal class AgentContentSnapshotEmitter(
+    private val scope: CoroutineScope,
+    private val lock: Any,
+    private val enqueue: (suspend () -> Unit) -> Unit,
+    private val onSnapshot: suspend (String) -> Unit,
+    private val intervalMs: Long = 50L,
+    private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000L },
+) {
+    private class Snapshot(var text: String)
+
+    private var lastObserved = ""
+    private var lastEmitAt = 0L
+    private var hasEmitted = false
+    private var pendingText: String? = null
+    private var queuedSnapshot: Snapshot? = null
+    private var timer: Job? = null
+    private var timerGeneration = 0L
+    private var closed = false
+    private var cancelled = false
+
+    fun offer(text: String) = synchronized(lock) {
+        if (closed || text.isEmpty() || text == lastObserved) return@synchronized
+        lastObserved = text
+        if (!hasEmitted) {
+            // The first snapshot stays immediate and cannot be overwritten
+            // while its consumer is waiting behind another queued callback.
+            hasEmitted = true
+            enqueueSnapshotLocked(text, sealed = true)
+            return@synchronized
+        }
+        queuedSnapshot?.let { snapshot ->
+            snapshot.text = text
+            return@synchronized
+        }
+        pendingText = text
+        val remaining = intervalMs - (nowMillis() - lastEmitAt)
+        if (remaining <= 0L) {
+            cancelTimerLocked()
+            enqueuePendingLocked(sealed = false)
+        } else if (timer == null) {
+            val generation = ++timerGeneration
+            timer = scope.launch {
+                delay(remaining)
+                synchronized(lock) {
+                    if (closed || timerGeneration != generation) return@synchronized
+                    timer = null
+                    enqueuePendingLocked(sealed = false)
+                }
+            }
+        }
+    }
+
+    /** Seal text before a tool callback or stream response enters the same queue. */
+    fun flush() = synchronized(lock) {
+        if (!closed) flushLocked()
+    }
+
+    fun close() = synchronized(lock) {
+        if (!closed) {
+            flushLocked()
+            closed = true
+        }
+    }
+
+    fun cancelPending() = synchronized(lock) {
+        cancelled = true
+        closed = true
+        cancelTimerLocked()
+        pendingText = null
+        queuedSnapshot = null
+    }
+
+    private fun flushLocked() {
+        cancelTimerLocked()
+        enqueuePendingLocked(sealed = true)
+        // The enqueued closure owns this snapshot now. Later offers must not
+        // overwrite text that belongs before a tool or response boundary.
+        queuedSnapshot = null
+    }
+
+    private fun cancelTimerLocked() {
+        timerGeneration++
+        timer?.cancel()
+        timer = null
+    }
+
+    private fun enqueuePendingLocked(sealed: Boolean) {
+        val text = pendingText ?: return
+        pendingText = null
+        enqueueSnapshotLocked(text, sealed)
+    }
+
+    private fun enqueueSnapshotLocked(text: String, sealed: Boolean) {
+        lastEmitAt = nowMillis()
+        val snapshot = Snapshot(text)
+        if (!sealed) queuedSnapshot = snapshot
+        enqueue {
+            val latest = synchronized(lock) {
+                if (cancelled) {
+                    null
+                } else {
+                    if (queuedSnapshot === snapshot) queuedSnapshot = null
+                    lastEmitAt = nowMillis()
+                    snapshot.text
+                }
+            } ?: return@enqueue
+            // A suspended consumer never holds the producer/timer lock.
+            onSnapshot(latest)
+        }
     }
 }
 
