@@ -121,8 +121,8 @@ class _FeedbackPageState extends State<FeedbackPage> {
 
   String _errorMessage(FeedbackFailure reason) => switch (reason) {
     FeedbackFailure.invalidFields => _text(
-      '请填写问题标题和具体描述，并检查内容长度。',
-      'Enter a title and description, and check the text lengths.',
+      '请检查问题标题、具体描述和联系邮箱，并确认内容长度。',
+      'Check the title, description, contact email, and text lengths.',
     ),
     FeedbackFailure.fileCount => _text(
       '最多添加 5 个附件。',
@@ -233,19 +233,28 @@ class _FeedbackPageState extends State<FeedbackPage> {
                               key: const ValueKey('feedback-contact'),
                               controller: _contact,
                               enabled: !_sending,
-                              maxLength: 300,
+                              maxLength: 254,
                               keyboardType: TextInputType.emailAddress,
                               decoration: omniSettingsInputDecoration(
                                 context,
                                 labelText: _text(
-                                  '联系方式（选填）',
-                                  'Contact details (optional)',
+                                  '联系邮箱（必填）',
+                                  'Contact email (required)',
                                 ),
                                 hintText: _text(
-                                  '邮箱、微信或其他联系方式',
-                                  'Email or another way to contact you',
+                                  '填写可以收到回复的邮箱',
+                                  'An email address where you can receive replies',
                                 ),
                               ),
+                              validator: (value) =>
+                                  FeedbackService.isValidContactEmail(
+                                    value ?? '',
+                                  )
+                                  ? null
+                                  : _text(
+                                      '请填写有效的联系邮箱',
+                                      'Enter a valid contact email',
+                                    ),
                             ),
                             if (_loading) ...[
                               const SizedBox(height: 8),
@@ -260,8 +269,8 @@ class _FeedbackPageState extends State<FeedbackPage> {
                               const SizedBox(height: 8),
                               Text(
                                 _text(
-                                  '反馈会附上账号邮箱 $_accountEmail，联系方式可修改。',
-                                  'Your account email $_accountEmail accompanies the feedback. Contact details are editable.',
+                                  '反馈会附上账号邮箱 $_accountEmail，联系邮箱可修改。',
+                                  'Your account email $_accountEmail accompanies the feedback. The contact email is editable.',
                                 ),
                                 style: TextStyle(
                                   color: palette.textSecondary,

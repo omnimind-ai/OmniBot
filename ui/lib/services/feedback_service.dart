@@ -47,12 +47,21 @@ class FeedbackService {
 
   static const apiUrl = String.fromEnvironment(
     'OMNIBOT_FEEDBACK_API_URL',
-    defaultValue: 'https://omnibot.omnimind.com.cn/api/feedback',
+    defaultValue: 'https://omnibot.omnimind.com.cn/api/feedback/v2',
   );
   static const maxFiles = 5;
   static const maxFileSize = 10 * 1024 * 1024;
   static const maxTotalSize = 25 * 1024 * 1024;
   final Dio _client;
+
+  static bool isValidContactEmail(String value) {
+    final address = value.trim();
+    return address.length <= 254 &&
+        RegExp(
+          r'^[^\s@<>()[\]\\,;:"]+@[^\s@<>()[\]\\,;:"]+\.[^\s@<>()[\]\\,;:"]+$',
+        ).hasMatch(address) &&
+        !RegExp(r'[\x00-\x1f\x7f]').hasMatch(address);
+  }
 
   static Future<String> loadAccountEmail() async {
     try {
@@ -115,7 +124,7 @@ class FeedbackService {
         title.length > 200 ||
         description.isEmpty ||
         description.length > 10000 ||
-        contact.length > 300) {
+        !isValidContactEmail(contact)) {
       throw const FeedbackException(FeedbackFailure.invalidFields);
     }
     validateAttachments(attachments);
