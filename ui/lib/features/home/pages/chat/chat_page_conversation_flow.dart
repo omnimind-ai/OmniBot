@@ -706,6 +706,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
   Future<void> _sendMessage({
     String? text,
     bool waitForBootstrap = true,
+    int? expectedTarget,
   }) async {
     // A Harness switch changes both the native ACP adapter and the visible
     // conversation runtime. Let a user submit queue behind that atomic
@@ -726,6 +727,7 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
     // The target request id changes whenever the page moves to another
     // conversation, allowing independent ACP sessions to send concurrently.
     final sendTargetId = _conversationTargetRequestId;
+    if (expectedTarget != null && !_canSendSpeechDraft(expectedTarget)) return;
     if (!_sendMessageInFlightTargetIds.add(sendTargetId)) return;
     try {
       // The chat surface is rendered before the asynchronous conversation
@@ -770,6 +772,9 @@ mixin _ChatPageConversationFlowMixin on _ChatPageStateBase {
       }
       if (!await _ensureNormalChatModelConfigurationForSend()) return;
       if (!_isConversationTargetRequestCurrent(sendTargetId)) return;
+      if (expectedTarget != null && !_canSendSpeechDraft(expectedTarget)) {
+        return;
+      }
 
       final attachments = inputAttachments.map((item) => item.toMap()).toList();
       await _dispatchUserMessage(

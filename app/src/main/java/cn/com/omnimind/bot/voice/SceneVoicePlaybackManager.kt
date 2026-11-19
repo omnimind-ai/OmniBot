@@ -42,6 +42,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runInterruptible
@@ -62,6 +64,7 @@ private enum class VoiceTransport {
     PLATFORM_SPEECH,
     BYOK_CHAT_AUDIO,
     CUSTOM_CURL,
+    SPEECH_PROVIDER,
 }
 
 private data class VoicePlaybackQueueItem(
@@ -72,7 +75,9 @@ private data class VoicePlaybackQueueItem(
     val cacheKey: String,
     val preferStreaming: Boolean,
     val transport: VoiceTransport,
-    val customCurlCommand: String? = null
+    val customCurlCommand: String? = null,
+    val speechProvider: SpeechSynthesisProvider? = null,
+    val speechVoiceId: String = "",
 ) {
     val isCustomCurl: Boolean get() = transport == VoiceTransport.CUSTOM_CURL
     val isPlatformSpeech: Boolean get() = transport == VoiceTransport.PLATFORM_SPEECH
@@ -96,6 +101,7 @@ class SceneVoicePlaybackManager(
         private const val CHANNEL_COUNT = 1
         private const val BYTES_PER_SAMPLE = 2
         private const val MAX_CACHE_SIZE = 48
+        private const val MAX_PROVIDER_CACHE_BYTES = 2 * 1024 * 1024
         private const val MAX_BYOK_AUDIO_BYTES = 16L * 1024L * 1024L
         private const val MAX_BYOK_JSON_BYTES = 24L * 1024L * 1024L
         private val JSON_MEDIA_TYPE = "application/json; charset=utf-8".toMediaType()
@@ -137,6 +143,7 @@ class SceneVoicePlaybackManager(
     @Volatile
     private var currentPlaybackLease: SceneVoiceForegroundLeases.Lease? = null
     private val queue = ArrayDeque<VoicePlaybackQueueItem>()
+    private val failedProviderMessages = linkedSetOf<String>()
     private val replayableKeysByMessageId = mutableMapOf<String, MutableSet<String>>()
     private val cache = object : LinkedHashMap<String, VoiceCacheEntry>(16, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, VoiceCacheEntry>?): Boolean {
@@ -197,6 +204,8 @@ class SceneVoicePlaybackManager(
             ?: return false
 
         synchronized(lock) {
+            if (enqueue && item.messageId in failedProviderMessages) return false
+            if (!enqueue) failedProviderMessages.remove(item.messageId)
             if (foregroundLease == null) {
                 try {
                     foregroundLease = SceneVoicePlaybackService.acquire(
@@ -254,11 +263,15 @@ class SceneVoicePlaybackManager(
 
     fun stop(messageId: String?): Boolean {
         val normalizedId = messageId?.trim().orEmpty()
-        synchronized(lock) {
-            if (normalizedId.isNotEmpty()) {
+        val stopped = synchronized(lock) {
+            val ids = if (normalizedId.isNotEmpty()) {
                 queue.removeAll { it.messageId == normalizedId }
+                setOf(normalizedId)
             } else {
-                queue.clear()
+                queue.mapTo(linkedSetOf()) { it.messageId }.also { ids ->
+                    currentMessageId?.let(ids::add)
+                    queue.clear()
+                }
             }
             if (normalizedId.isEmpty() || currentMessageId == normalizedId) {
                 stopCurrentPlaybackLocked()
@@ -268,10 +281,9 @@ class SceneVoicePlaybackManager(
             } else if (queue.isNotEmpty()) {
                 ensureProcessorLocked()
             }
+            ids
         }
-        if (normalizedId.isNotEmpty()) {
-            emitState(normalizedId, "idle", canReplay = hasReplayableCache(normalizedId))
-        }
+        stopped.forEach { emitState(it, "idle", canReplay = hasReplayableCache(it)) }
         return true
     }
 
@@ -286,6 +298,7 @@ class SceneVoicePlaybackManager(
             }
             cache.clear()
             replayableKeysByMessageId.clear()
+            failedProviderMessages.clear()
         }
     }
 
@@ -302,6 +315,31 @@ class SceneVoicePlaybackManager(
             throw IllegalArgumentException("text is empty")
         }
         val config = SceneVoiceConfigStore.getConfig()
+        if (config.ttsMode == SceneVoiceConfigStore.TTS_MODE_PROVIDER) {
+            val registration = SpeechProviders.find(config.speechSynthesisProviderId.orEmpty())
+            val provider = registration?.synthesis
+                ?: throw SpeechProviderException("configuration", "请先配置语音合成")
+            val voiceId = registration.voices.firstOrNull { it.id == config.speechSynthesisVoiceId }?.id
+                ?: registration.voices.firstOrNull()?.id.orEmpty()
+            return VoicePlaybackQueueItem(
+                messageId = normalizedMessageId,
+                text = normalizedText,
+                binding = null,
+                config = config,
+                cacheKey = SceneVoiceTtsProtocol.buildCacheKey(
+                    messageId = normalizedMessageId,
+                    text = normalizedText,
+                    providerProfileId = registration.id,
+                    modelId = "speech_provider",
+                    voiceId = voiceId,
+                    stylePayload = "",
+                ),
+                preferStreaming = true,
+                transport = VoiceTransport.SPEECH_PROVIDER,
+                speechProvider = provider,
+                speechVoiceId = voiceId,
+            )
+        }
         if (config.ttsMode == SceneVoiceConfigStore.TTS_MODE_CUSTOM_CURL) {
             val curl = config.customCurlCommand.trim()
             if (curl.isEmpty()) {
@@ -438,10 +476,18 @@ class SceneVoicePlaybackManager(
             } catch (t: Throwable) {
                 currentCoroutineContext().ensureActive()
                 OmniLog.e(TAG, "voice playback failed type=${t.javaClass.simpleName}")
-                val safeError = if (t is PlatformGatewayException) {
-                    t.message
-                } else {
-                    "voice playback failed (${t.javaClass.simpleName})"
+                if (item.speechProvider != null) {
+                    synchronized(lock) {
+                        queue.removeAll { it.messageId == item.messageId }
+                        failedProviderMessages.add(item.messageId)
+                        if (failedProviderMessages.size > 128) {
+                            failedProviderMessages.remove(failedProviderMessages.first())
+                        }
+                    }
+                }
+                val safeError = when (t) {
+                    is PlatformGatewayException, is SpeechProviderException -> t.message
+                    else -> "voice playback failed (${t.javaClass.simpleName})"
                 }
                 emitState(item.messageId, "error", error = safeError)
             } finally {
@@ -460,6 +506,14 @@ class SceneVoicePlaybackManager(
             resolvePlatformQueueItem(queuedItem)
         } else {
             queuedItem
+        }
+        val provider = item.speechProvider
+        if (provider != null) {
+            val cached = synchronized(lock) { cache[item.cacheKey]?.pcmBytes }
+            if (cached == null) emitState(item.messageId, "synthesizing")
+            val audio = cached?.let { flowOf(it) } ?: provider.synthesize(item.text, item.speechVoiceId)
+            playProviderAudio(item, audio, cached != null)
+            return
         }
         synchronized(lock) {
             cache[item.cacheKey]
@@ -551,6 +605,58 @@ class SceneVoicePlaybackManager(
             config = platformConfig,
             cacheKey = cacheKey,
         )
+    }
+
+    private suspend fun playProviderAudio(
+        item: VoicePlaybackQueueItem,
+        audio: Flow<ByteArray>,
+        fromCache: Boolean,
+    ) {
+        var output = if (fromCache) null else ByteArrayOutputStream()
+        var total = 0
+        var track: AudioTrack? = null
+        audio.collect { bytes ->
+            if (bytes.isEmpty() || bytes.size % BYTES_PER_SAMPLE != 0 || bytes.size > Int.MAX_VALUE - total) {
+                throw SpeechProviderException("audio_format", "语音音频格式或长度无效")
+            }
+            val player = track ?: synchronized(lock) {
+                val minimum = AudioTrack.getMinBufferSize(
+                    SAMPLE_RATE, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT,
+                )
+                createAudioTrack(minimum.coerceAtLeast(4096)).also {
+                    currentAudioTrack = it
+                    track = it
+                    it.play()
+                    emitState(item.messageId, "playing", canReplay = fromCache)
+                }
+            }
+            var offset = 0
+            while (offset < bytes.size) {
+                currentCoroutineContext().ensureActive()
+                requireCurrentPlayback()
+                val written = if (player.playState == AudioTrack.PLAYSTATE_PLAYING) {
+                    player.write(bytes, offset, bytes.size - offset, AudioTrack.WRITE_NON_BLOCKING)
+                } else {
+                    0
+                }
+                if (written < 0) throw SpeechProviderException("playback", "语音播放失败")
+                if (written == 0) delay(20) else offset += written
+            }
+            total += bytes.size
+            if (total > MAX_PROVIDER_CACHE_BYTES) output = null
+            output?.write(bytes)
+        }
+        if (total == 0) throw SpeechProviderException("invalid_response", "语音服务未返回音频")
+        waitForPcmPlayback(total)
+        currentCoroutineContext().ensureActive()
+        synchronized(lock) {
+            requireCurrentPlayback()
+            output?.let {
+                cache[item.cacheKey] = VoiceCacheEntry(item.cacheKey, STREAM_PCM_FORMAT, pcmBytes = it.toByteArray())
+                replayableKeysByMessageId.getOrPut(item.messageId) { linkedSetOf() }.add(item.cacheKey)
+            }
+            emitState(item.messageId, "completed", canReplay = fromCache || output != null)
+        }
     }
 
     private suspend fun synthesizeStreaming(item: VoicePlaybackQueueItem): VoiceCacheEntry? {

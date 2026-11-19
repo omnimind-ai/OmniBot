@@ -72,6 +72,26 @@ class SceneVoiceConfigStoreTest {
         requireNotNull(parsed)
         assertEquals(SceneVoiceConfigStore.TTS_MODE_BUILTIN, parsed.ttsMode)
         assertEquals("", parsed.customCurlCommand)
+        assertEquals(null, parsed.speechRecognitionProviderId)
+        assertEquals(null, parsed.speechSynthesisProviderId)
+    }
+
+    @Test
+    fun parse_keepsIndependentSpeechProvidersAndVoice() {
+        val parsed = requireNotNull(SceneVoiceConfigStore.parse(
+            """
+            {
+              "ttsMode": "provider",
+              "speechRecognitionProviderId": " deepseek ",
+              "speechSynthesisProviderId": " speech-test ",
+              "speechSynthesisVoiceId": " tide "
+            }
+            """.trimIndent()
+        ))
+        assertEquals(SceneVoiceConfigStore.TTS_MODE_PROVIDER, parsed.ttsMode)
+        assertEquals("deepseek", parsed.speechRecognitionProviderId)
+        assertEquals("speech-test", parsed.speechSynthesisProviderId)
+        assertEquals("tide", parsed.speechSynthesisVoiceId)
     }
 
     @Test

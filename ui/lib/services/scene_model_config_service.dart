@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:ui/services/assists_core_service.dart';
 import 'package:ui/services/model_provider_config_service.dart';
@@ -95,8 +96,68 @@ class SceneModelBindingEntry {
   }
 }
 
+typedef SpeechVoiceOption = ({String id, String label, String englishLabel});
+
+class SpeechProviderOption {
+  final String id;
+  final String label;
+  final bool ready;
+  final bool recognition;
+  final bool synthesis;
+  final List<SpeechVoiceOption> voices;
+
+  const SpeechProviderOption({
+    required this.id,
+    required this.label,
+    required this.ready,
+    required this.recognition,
+    required this.synthesis,
+    required this.voices,
+  });
+
+  factory SpeechProviderOption.fromMap(Map<dynamic, dynamic> map) {
+    return SpeechProviderOption(
+      id: map['id'] as String,
+      label: map['label'] as String,
+      ready: map['ready'] == true,
+      recognition: map['recognition'] == true,
+      synthesis: map['synthesis'] == true,
+      voices: [
+        for (final voice
+            in (map['voices'] as List? ?? const []).whereType<Map>())
+          (
+            id: voice['id'] as String,
+            label: voice['label'] as String,
+            englishLabel: voice['englishLabel'] as String,
+          ),
+      ],
+    );
+  }
+
+  @override
+  bool operator ==(Object other) =>
+      other is SpeechProviderOption &&
+      id == other.id &&
+      label == other.label &&
+      ready == other.ready &&
+      recognition == other.recognition &&
+      synthesis == other.synthesis &&
+      listEquals(voices, other.voices);
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    label,
+    ready,
+    recognition,
+    synthesis,
+    Object.hashAll(voices),
+  );
+}
+
 class SceneVoiceConfig {
   static const String ttsModeBuiltin = 'builtin';
+  static const String ttsModeProvider = 'provider';
   static const String ttsModeCustomCurl = 'custom_curl';
 
   final bool autoPlay;
@@ -106,6 +167,10 @@ class SceneVoiceConfig {
   final String ttsMode;
   final String customCurlCommand;
   final bool hasCustomCurlCommand;
+  final String speechRecognitionProviderId;
+  final String speechSynthesisProviderId;
+  final String speechSynthesisVoiceId;
+  final List<SpeechProviderOption> speechProviders;
 
   const SceneVoiceConfig({
     this.autoPlay = false,
@@ -115,7 +180,27 @@ class SceneVoiceConfig {
     this.ttsMode = ttsModeBuiltin,
     this.customCurlCommand = '',
     this.hasCustomCurlCommand = false,
+    this.speechRecognitionProviderId = '',
+    this.speechSynthesisProviderId = '',
+    this.speechSynthesisVoiceId = '',
+    this.speechProviders = const [],
   });
+
+  bool get usesSpeechProvider => ttsMode == ttsModeProvider;
+
+  SpeechProviderOption? get recognitionProvider => speechProviders
+      .where(
+        (provider) =>
+            provider.recognition && provider.id == speechRecognitionProviderId,
+      )
+      .firstOrNull;
+
+  SpeechProviderOption? get synthesisProvider => speechProviders
+      .where(
+        (provider) =>
+            provider.synthesis && provider.id == speechSynthesisProviderId,
+      )
+      .firstOrNull;
 
   bool get isCustomCurl => ttsMode == ttsModeCustomCurl;
 
@@ -130,6 +215,16 @@ class SceneVoiceConfig {
       // older native build accidentally includes it in the payload.
       customCurlCommand: '',
       hasCustomCurlCommand: map?['hasCustomCurlCommand'] == true,
+      speechRecognitionProviderId: (map?['speechRecognitionProviderId'] ?? '')
+          .toString(),
+      speechSynthesisProviderId: (map?['speechSynthesisProviderId'] ?? '')
+          .toString(),
+      speechSynthesisVoiceId: (map?['speechSynthesisVoiceId'] ?? '').toString(),
+      speechProviders: [
+        for (final provider
+            in (map?['speechProviders'] as List? ?? const []).whereType<Map>())
+          SpeechProviderOption.fromMap(provider),
+      ],
     );
   }
 
@@ -141,6 +236,9 @@ class SceneVoiceConfig {
     String? ttsMode,
     String? customCurlCommand,
     bool? hasCustomCurlCommand,
+    String? speechRecognitionProviderId,
+    String? speechSynthesisProviderId,
+    String? speechSynthesisVoiceId,
   }) {
     return SceneVoiceConfig(
       autoPlay: autoPlay ?? this.autoPlay,
@@ -150,6 +248,13 @@ class SceneVoiceConfig {
       ttsMode: ttsMode ?? this.ttsMode,
       customCurlCommand: customCurlCommand ?? this.customCurlCommand,
       hasCustomCurlCommand: hasCustomCurlCommand ?? this.hasCustomCurlCommand,
+      speechRecognitionProviderId:
+          speechRecognitionProviderId ?? this.speechRecognitionProviderId,
+      speechSynthesisProviderId:
+          speechSynthesisProviderId ?? this.speechSynthesisProviderId,
+      speechSynthesisVoiceId:
+          speechSynthesisVoiceId ?? this.speechSynthesisVoiceId,
+      speechProviders: speechProviders,
     );
   }
 
@@ -162,7 +267,11 @@ class SceneVoiceConfig {
         other.customStyle == customStyle &&
         other.ttsMode == ttsMode &&
         other.customCurlCommand == customCurlCommand &&
-        other.hasCustomCurlCommand == hasCustomCurlCommand;
+        other.hasCustomCurlCommand == hasCustomCurlCommand &&
+        other.speechRecognitionProviderId == speechRecognitionProviderId &&
+        other.speechSynthesisProviderId == speechSynthesisProviderId &&
+        other.speechSynthesisVoiceId == speechSynthesisVoiceId &&
+        listEquals(other.speechProviders, speechProviders);
   }
 
   @override
@@ -174,6 +283,10 @@ class SceneVoiceConfig {
     ttsMode,
     customCurlCommand,
     hasCustomCurlCommand,
+    speechRecognitionProviderId,
+    speechSynthesisProviderId,
+    speechSynthesisVoiceId,
+    Object.hashAll(speechProviders),
   );
 }
 
@@ -353,6 +466,9 @@ class SceneModelConfigService {
           'stylePreset': config.stylePreset,
           'customStyle': config.customStyle,
           'ttsMode': config.ttsMode,
+          'speechRecognitionProviderId': config.speechRecognitionProviderId,
+          'speechSynthesisProviderId': config.speechSynthesisProviderId,
+          'speechSynthesisVoiceId': config.speechSynthesisVoiceId,
           if (replacementCustomCurlCommand != null)
             'customCurlCommand': replacementCustomCurlCommand,
           if (replacementCustomCurlCommand != null)

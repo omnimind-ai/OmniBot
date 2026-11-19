@@ -126,6 +126,8 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
                                   ),
                                 ),
                               ),
+                            if (widget.speechInputButton != null)
+                              widget.speechInputButton!,
                             SizedBox(
                               width: 36,
                               height: 36,

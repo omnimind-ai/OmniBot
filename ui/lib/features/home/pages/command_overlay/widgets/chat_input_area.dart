@@ -147,6 +147,7 @@ class ChatInputArea extends StatefulWidget {
   final VoidCallback? onSteerMessage;
   final bool isSubmittingActiveInput;
   final Widget? pendingPrompts;
+  final Widget? speechInputButton;
   final ValueChanged<bool>? onPopupVisibilityChanged;
   final ValueChanged<double>? onInputHeightChanged;
   final bool? openClawEnabled;
@@ -195,6 +196,7 @@ class ChatInputArea extends StatefulWidget {
     this.onSteerMessage,
     this.isSubmittingActiveInput = false,
     this.pendingPrompts,
+    this.speechInputButton,
     this.onPopupVisibilityChanged,
     this.onInputHeightChanged,
     this.openClawEnabled,

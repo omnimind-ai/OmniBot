@@ -92,6 +92,7 @@ void main() {
   late bool includeOfficialProvider;
   late int providerFetchCount;
   late List<Map<String, dynamic>> sceneBindings;
+  late Map<String, dynamic> voiceConfig;
   late List<Map<String, dynamic>> providerFetchResponse;
   late List<Map<String, dynamic>> officialFetchResponse;
   late Map<String, List<Map<String, dynamic>>>
@@ -125,6 +126,7 @@ void main() {
     includeOfficialProvider = false;
     providerFetchCount = 0;
     sceneBindings = <Map<String, dynamic>>[];
+    voiceConfig = {};
     providerFetchResponse = <Map<String, dynamic>>[];
     officialFetchResponse = <Map<String, dynamic>>[];
     officialFetchResponsesByCapability = <String, List<Map<String, dynamic>>>{};
@@ -203,6 +205,13 @@ void main() {
                   'bindingProfileMissing': false,
                 },
               ];
+            case 'getSceneVoiceConfig':
+              return voiceConfig;
+            case 'saveSceneVoiceConfig':
+              voiceConfig.addAll(
+                Map<String, dynamic>.from(call.arguments as Map),
+              );
+              return voiceConfig;
             case 'getSceneModelBindings':
               return sceneBindings;
             case 'saveSceneModelBinding':
@@ -325,6 +334,54 @@ void main() {
         .setMockMethodCallHandler(agentRuntimeChannel, null);
     ModelsDevCatalogService.resetForTesting();
   });
+
+  testWidgets(
+    'DeepSeek input and synthesis settings can be selected independently',
+    (tester) async {
+      voiceConfig['speechProviders'] = [
+        {
+          'id': 'deepseek',
+          'label': 'DeepSeek',
+          'ready': true,
+          'recognition': true,
+          'synthesis': true,
+          'voices': [
+            {'id': 'stella', 'label': '海星', 'englishLabel': 'Stella'},
+            {'id': 'tide', 'label': '暗潮', 'englishLabel': 'Tide'},
+          ],
+        },
+      ];
+      await pumpSceneSettings(tester);
+      await tester.pumpAndSettle();
+
+      final recognitionSwitch = find.byKey(
+        const Key('scene-voice-recognition-switch'),
+      );
+      await tester.ensureVisible(recognitionSwitch);
+      await tester.tap(recognitionSwitch);
+      await tester.pumpAndSettle();
+      expect(voiceConfig['speechRecognitionProviderId'], 'deepseek');
+      expect(voiceConfig['ttsMode'], 'builtin');
+
+      final synth = find.byKey(const Key('scene-voice-synthesis-provider'));
+      await tester.ensureVisible(synth);
+      await tester.tap(synth);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('DeepSeek').last);
+      await tester.pumpAndSettle();
+      expect(voiceConfig['speechSynthesisProviderId'], 'deepseek');
+      expect(voiceConfig['speechSynthesisVoiceId'], 'stella');
+
+      final voice = find.byKey(const Key('scene-voice-synthesis-voice'));
+      await tester.ensureVisible(voice);
+      await tester.tap(voice);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('暗潮').last);
+      await tester.pumpAndSettle();
+      expect(voiceConfig['speechSynthesisVoiceId'], 'tide');
+      expect(voiceConfig['speechRecognitionProviderId'], 'deepseek');
+    },
+  );
 
   testWidgets(
     'title generation defaults on and can be disabled independently',

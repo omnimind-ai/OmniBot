@@ -1,4 +1,5 @@
 import 'package:ui/widgets/navigation/page_route.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -71,6 +72,7 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onRetryAgentMessage;
   final VoidCallback? onUserMessageEditTap;
   final VoidCallback? onStreamingTextLayoutChanged;
+  final bool allowSpeechProvider;
   final AppBackgroundVisualProfile visualProfile;
   final AppBackgroundConfig appearanceConfig;
 
@@ -91,6 +93,7 @@ class MessageBubble extends StatelessWidget {
     this.onRetryAgentMessage,
     this.onUserMessageEditTap,
     this.onStreamingTextLayoutChanged,
+    this.allowSpeechProvider = false,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
     this.appearanceConfig = AppBackgroundConfig.defaults,
   });
@@ -1192,6 +1195,7 @@ class MessageBubble extends StatelessWidget {
           user: message.user,
           type: message.type,
           text: text,
+          allowSpeechProvider: allowSpeechProvider,
         )) {
           return const SizedBox.shrink();
         }
@@ -1226,7 +1230,9 @@ class MessageBubble extends StatelessWidget {
                           messageId: message.id,
                           text: text,
                         ),
-                  tooltip: statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
+                  tooltip: hasError && state.error.isNotEmpty
+                      ? state.error
+                      : statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
                   visualDensity: VisualDensity.compact,
                   iconSize: 17,
                   padding: EdgeInsets.zero,

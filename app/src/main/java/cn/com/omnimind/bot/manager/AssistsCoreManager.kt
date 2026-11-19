@@ -43,6 +43,7 @@ import cn.com.omnimind.baselib.llm.SceneOperationConfig
 import cn.com.omnimind.baselib.llm.SceneOperationConfigStore
 import cn.com.omnimind.baselib.llm.SceneVoiceConfig
 import cn.com.omnimind.baselib.llm.SceneVoiceConfigStore
+import cn.com.omnimind.bot.voice.SpeechProviders
 import cn.com.omnimind.baselib.util.APPPackageUtil
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.baselib.util.RuntimeLogStore
@@ -470,6 +471,10 @@ class AssistsCoreManager(private val context: Context) {
             "stylePreset" to stylePreset,
             "customStyle" to customStyle,
             "ttsMode" to ttsMode,
+            "speechRecognitionProviderId" to speechRecognitionProviderId,
+            "speechSynthesisProviderId" to speechSynthesisProviderId,
+            "speechSynthesisVoiceId" to speechSynthesisVoiceId,
+            "speechProviders" to SpeechProviders.describe(),
             // Never expose the command itself over the Flutter bridge.
             "hasCustomCurlCommand" to customCurlCommand.isNotBlank(),
         )
@@ -1979,13 +1984,20 @@ class AssistsCoreManager(private val context: Context) {
                     customStyle = call.argument<String>("customStyle") ?: current.customStyle,
                     ttsMode = call.argument<String>("ttsMode") ?: current.ttsMode,
                     customCurlCommand = call.argument<String>("customCurlCommand") ?: current.customCurlCommand,
+                    speechRecognitionProviderId = call.argument<String>("speechRecognitionProviderId")
+                        ?: current.speechRecognitionProviderId,
+                    speechSynthesisProviderId = call.argument<String>("speechSynthesisProviderId")
+                        ?: current.speechSynthesisProviderId,
+                    speechSynthesisVoiceId = call.argument<String>("speechSynthesisVoiceId")
+                        ?: current.speechSynthesisVoiceId,
                 )
                 val saved = SceneVoiceConfigStore.saveConfig(
                     config = config,
                     replaceCustomCurlCommand = replaceCommand,
                     clearCustomCurlCommand = clearCommand,
                 )
-                withContext(Dispatchers.Main) { result.success(saved.toMap()) }
+                val payload = withContext(Dispatchers.IO) { saved.toMap() }
+                withContext(Dispatchers.Main) { result.success(payload) }
             } catch (e: Exception) {
                 OmniLog.e(TAG, "saveSceneVoiceConfig error: ${e.message}")
                 withContext(Dispatchers.Main) {

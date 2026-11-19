@@ -21,6 +21,7 @@ import cn.com.omnimind.bot.terminal.EmbeddedTerminalInstallService
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
 import cn.com.omnimind.bot.ui.channel.ChannelManager
 import cn.com.omnimind.bot.ui.channel.FileSaveChannel
+import cn.com.omnimind.bot.ui.channel.SpeechInputChannel
 import cn.com.omnimind.bot.ui.platformview.AgentBrowserPlatformViewFactory
 import cn.com.omnimind.bot.ui.platformview.EmbeddedTerminalPlatformViewFactory
 import cn.com.omnimind.bot.update.AppUpdateManager
@@ -37,6 +38,7 @@ class MainActivity : FlutterActivity() {
     }
 
     private var channelManager: ChannelManager = ChannelManager()
+    private val speechInputChannel = SpeechInputChannel(this)
     private val embeddedTerminalAutoStartManager by lazy {
         EmbeddedTerminalAutoStartManager(this)
     }
@@ -111,6 +113,7 @@ class MainActivity : FlutterActivity() {
 
         super.configureFlutterEngine(flutterEngine)
         channelManager.configureFlutterEngine(flutterEngine)
+        speechInputChannel.bind(flutterEngine)
         AgentBrowserPlatformViewFactory.registerWith(flutterEngine = flutterEngine)
         EmbeddedTerminalPlatformViewFactory.registerWith(flutterEngine = flutterEngine)
 
@@ -174,6 +177,7 @@ class MainActivity : FlutterActivity() {
 
     override fun onResume() {
         super.onResume()
+        speechInputChannel.onResume()
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.onActivityResumed(this)
         EmbeddedTerminalInstallService.refresh(applicationContext)
@@ -195,11 +199,13 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onDestroy() {
+        speechInputChannel.clear()
         TaskRuntimeSettings.detachActivity(this)
         super.onDestroy()
     }
 
     override fun onPause() {
+        speechInputChannel.onPause()
         TaskRuntimeSettings.onActivityPaused(this)
         super.onPause()
     }

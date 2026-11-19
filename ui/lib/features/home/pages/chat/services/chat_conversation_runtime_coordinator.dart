@@ -95,6 +95,19 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
 
   bool get _isEnglish => LegacyTextLocalizer.isEnglish;
 
+  Object? _speechVisibilityOwner;
+  bool Function(ChatConversationRuntimeState)? _providerSpeechVisible;
+
+  void setProviderSpeechVisibility(
+    Object owner,
+    bool Function(ChatConversationRuntimeState)? visible,
+  ) {
+    if (visible != null || identical(_speechVisibilityOwner, owner)) {
+      _speechVisibilityOwner = visible == null ? null : owner;
+      _providerSpeechVisible = visible;
+    }
+  }
+
   void _notifyRuntimeListeners() => notifyListeners();
 
   void ensureInitialized() {
@@ -924,6 +937,8 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
           messageId: assistantMessage.id,
           text: assistantText,
           isFinal: false,
+          providerSpeechVisible: () =>
+              _providerSpeechVisible?.call(runtime) == true,
         ),
       );
       return;
@@ -951,6 +966,9 @@ class ChatConversationRuntimeCoordinator extends ChangeNotifier {
       VoicePlaybackCoordinator.instance.onAssistantMessageCompleted(
         messageId: assistantMessage.id,
         text: assistantText,
+        providerSpeechVisible: () =>
+            _providerSpeechVisible?.call(runtime) == true,
+        providerSpeechFailed: method != 'turn/completed',
       ),
     );
   }

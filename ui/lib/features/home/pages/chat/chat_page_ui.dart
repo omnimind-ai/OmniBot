@@ -1400,6 +1400,7 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                           _editingUserMessageId == null &&
                           !_hasPendingAgentUserInputRequest,
                       onSendMessage: this._handleComposerSendMessage,
+                      speechInputButton: _buildSpeechInputButton(),
                       onCancelTask: _onCancelTask,
                       onQueueMessage: _canAcceptActivePromptInput
                           ? () => unawaited(_submitActivePromptInput())

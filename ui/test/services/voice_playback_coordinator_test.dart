@@ -5,7 +5,9 @@ import 'package:ui/services/voice_playback_coordinator.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  const assistCoreChannel = MethodChannel('cn.com.omnimind.bot/AssistCoreEvent');
+  const assistCoreChannel = MethodChannel(
+    'cn.com.omnimind.bot/AssistCoreEvent',
+  );
   const voiceChannel = MethodChannel('cn.com.omnimind.bot/VoicePlayback');
 
   late List<Map<String, dynamic>> sceneBindings;
@@ -87,5 +89,83 @@ void main() {
     expect(voiceCalls, hasLength(2));
     expect(voiceCalls.last.arguments['text'], '第二句');
     expect(voiceCalls.last.arguments['enqueue'], true);
+  });
+
+  test('registered speech provider uses the main chat playback path', () async {
+    sceneVoiceConfig = {
+      'autoPlay': true,
+      'ttsMode': 'provider',
+      'speechSynthesisProviderId': 'test-speech-provider',
+      'speechProviders': [
+        {
+          'id': 'test-speech-provider',
+          'label': 'Test speech',
+          'ready': true,
+          'synthesis': true,
+          'voices': [],
+        },
+      ],
+    };
+    final coordinator = VoicePlaybackCoordinator.instance;
+    await coordinator.ensureInitialized();
+    expect(coordinator.isVoiceSceneBound, isTrue);
+    expect(
+      coordinator.shouldShowVoiceButton(user: 2, type: 1, text: 'Reply'),
+      isFalse,
+    );
+    expect(
+      coordinator.shouldShowVoiceButton(
+        user: 2,
+        type: 1,
+        text: 'Reply',
+        allowSpeechProvider: true,
+      ),
+      isTrue,
+    );
+
+    var visible = true;
+    final first = coordinator.onAssistantMessageUpdated(
+      messageId: 'visible',
+      text: '第一句。',
+      isFinal: false,
+      providerSpeechVisible: () => visible,
+    );
+    final second = coordinator.onAssistantMessageUpdated(
+      messageId: 'visible',
+      text: '第一句。第二句',
+      isFinal: true,
+      providerSpeechVisible: () => visible,
+    );
+    await Future.wait([first, second]);
+    expect(voiceCalls.map((c) => c.arguments['text']), ['第一句。', '第二句']);
+    expect(voiceCalls.map((c) => c.arguments['enqueue']), [false, true]);
+
+    visible = false;
+    await coordinator.onAssistantMessageCompleted(
+      messageId: 'hidden',
+      text: '不播放。',
+      providerSpeechVisible: () => visible,
+    );
+    expect(voiceCalls, hasLength(2));
+
+    final mic = Object();
+    await coordinator.beginSpeechInput(mic);
+    await coordinator.onAssistantMessageUpdated(
+      messageId: 'during-recording',
+      text: '录音中。',
+      isFinal: false,
+      providerSpeechVisible: () => true,
+    );
+    coordinator.endSpeechInput(mic);
+    await coordinator.onAssistantMessageCompleted(
+      messageId: 'during-recording',
+      text: '录音中。结束。',
+      providerSpeechVisible: () => true,
+    );
+    expect(voiceCalls.map((c) => c.method), [
+      'speakText',
+      'speakText',
+      'stopPlayback',
+    ]);
   });
 }
