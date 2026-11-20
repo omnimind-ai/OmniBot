@@ -65,17 +65,24 @@ void main() {
     await tester.tap(button);
     await tester.pump();
     expect(calls.map((c) => c.method), ['permissionStatus', 'start']);
-    expect(find.byKey(const ValueKey('chat-speech-status-pill')), findsOneWidget);
+    final pill = find.byKey(const ValueKey('chat-speech-status-pill'));
+    expect(pill, findsOneWidget);
+    final pillRect = tester.getRect(pill);
+    final buttonRect = tester.getRect(button);
+    expect(pillRect.width, lessThan(320));
+    expect(pillRect.height, lessThan(44));
+    expect(pillRect.bottom, lessThanOrEqualTo(buttonRect.top));
+    expect((pillRect.right - buttonRect.right).abs(), lessThan(2));
 
     await tester.tap(button);
     await tester.pump();
     expect(calls.last.method, 'finish');
     expect(calls.last.arguments, calls[1].arguments);
-    expect(find.byKey(const ValueKey('chat-speech-status-pill')), findsOneWidget);
+    expect(pill, findsOneWidget);
     transcript!.complete('你好');
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(results, [(text: '你好', send: false, target: 1)]);
-    expect(find.byKey(const ValueKey('chat-speech-status-pill')), findsNothing);
+    expect(pill, findsNothing);
   });
 
   testWidgets('hold sends once only after release and transcription', (

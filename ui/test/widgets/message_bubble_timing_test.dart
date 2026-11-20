@@ -82,7 +82,7 @@ void main() {
   });
 
   testWidgets(
-    'assistant voice control renders below prose and offers stop when paused',
+    'assistant voice control renders icon-only inline with turn usage metrics',
     (tester) async {
       const voiceChannel = MethodChannel('cn.com.omnimind.bot/VoicePlayback');
       final voiceCalls = <MethodCall>[];
@@ -137,15 +137,19 @@ void main() {
       await tester.pump();
 
       final proseRect = tester.getRect(find.byType(StreamingText));
+      final endedRect = tester.getRect(find.text('13:00:10'));
       final voiceButton = find.byKey(const ValueKey('voice-playback-voice-msg'));
       final stopButton = find.byKey(
         const ValueKey('voice-playback-stop-voice-msg'),
       );
       expect(voiceButton, findsOneWidget);
       expect(stopButton, findsOneWidget);
+      expect(find.text('已暂停'), findsNothing);
+      expect(find.text('朗读'), findsNothing);
       final voiceRect = tester.getRect(voiceButton);
       expect(voiceRect.top, greaterThanOrEqualTo(proseRect.bottom));
-      expect(voiceRect.left, closeTo(proseRect.left, 2));
+      expect(voiceRect.left, greaterThan(endedRect.right));
+      expect((voiceRect.center.dy - endedRect.center.dy).abs(), lessThan(8));
 
       await tester.tap(stopButton);
       await tester.pump();
