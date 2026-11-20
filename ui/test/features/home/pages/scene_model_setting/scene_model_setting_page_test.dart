@@ -374,6 +374,9 @@ void main() {
 
       final voice = find.byKey(const Key('scene-voice-synthesis-voice'));
       await tester.ensureVisible(voice);
+      final synthRect = tester.getRect(synth);
+      final voiceRect = tester.getRect(voice);
+      expect(voiceRect.top - synthRect.bottom, greaterThanOrEqualTo(16));
       await tester.tap(voice);
       await tester.pumpAndSettle();
       await tester.tap(find.text('暗潮').last);

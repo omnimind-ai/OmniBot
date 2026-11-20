@@ -1129,11 +1129,10 @@ class MessageBubble extends StatelessWidget {
     required bool includeTurnUsageFooter,
   }) {
     final speed = _decodeTokensPerSecond;
-    final aiText = _buildAiText(
-      context,
-      text,
-      trailing: _buildVoiceAction(context, text),
-    );
+    final aiText = _buildAiText(context, text);
+    final voiceAction = message.isLoading || message.isSummarizing
+        ? null
+        : _buildVoiceAction(context, text);
     final retryingStatus = _buildAgentRetryingStatus(context);
     final errorFooter = _buildAgentErrorFooter(context, text);
     final turnUsageFooter = includeTurnUsageFooter
@@ -1167,6 +1166,7 @@ class MessageBubble extends StatelessWidget {
             const SizedBox(height: 8),
           errorFooter,
         ],
+        ?voiceAction,
         if (turnUsageFooter != null) ...[
           if (showPrimaryText ||
               speed != null ||
@@ -1179,10 +1179,8 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  /// Voice playback is an optional ACP scene capability. Keep the control in
-  /// the same message bubble as the assistant text so enabling the scene has
-  /// an immediately visible affordance (and never creates a second input
-  /// surface).
+  /// Voice playback control rendered cleanly in the message footer below the
+  /// assistant text rather than inline inside the prose.
   Widget? _buildVoiceAction(BuildContext context, String text) {
     if (message.user != 2 || message.type != 1 || text.trim().isEmpty) {
       return null;
@@ -1199,65 +1197,184 @@ class MessageBubble extends StatelessWidget {
         )) {
           return const SizedBox.shrink();
         }
+        final english =
+            Localizations.maybeLocaleOf(context)?.languageCode == 'en';
+        final palette = context.omniPalette;
+        final colorScheme = Theme.of(context).colorScheme;
         final state = coordinator.stateFor(message.id);
         final isPlaying = state.status == VoicePlaybackStatus.playing;
         final isBusy = state.status == VoicePlaybackStatus.synthesizing;
         final isPaused = state.status == VoicePlaybackStatus.paused;
         final hasError = state.status == VoicePlaybackStatus.error;
-        final statusLabel = isBusy
-            ? '语音生成中'
-            : hasError
-            ? '语音失败'
+        final showStop = isPlaying || isPaused;
+
+        final label = isBusy
+            ? (english ? 'Preparing' : '生成中')
+            : isPlaying
+            ? (english ? 'Playing' : '朗读中')
             : isPaused
-            ? '已暂停'
-            : null;
-        final statusColor = hasError
-            ? Colors.red.shade400
-            : _resolvedAiSecondaryTextColor(context);
+            ? (english ? 'Paused' : '已暂停')
+            : hasError
+            ? (english ? 'Failed · Retry' : '播放失败 · 重试')
+            : (english ? 'Listen' : '朗读');
+        final tooltip = hasError && state.error.isNotEmpty
+            ? state.error
+            : isPlaying
+            ? (english ? 'Pause speech' : '暂停朗读')
+            : isPaused
+            ? (english ? 'Resume speech' : '继续朗读')
+            : (english ? 'Read aloud' : '朗读回复');
+
+        final secondaryText = _resolvedAiSecondaryTextColor(context);
+        final useCustomSurface = !_usesThemeDrivenText();
+        final Color backgroundColor;
+        final Color borderColor;
+        final Color foregroundColor;
+        if (hasError) {
+          backgroundColor = colorScheme.error.withValues(alpha: 0.10);
+          borderColor = colorScheme.error.withValues(alpha: 0.22);
+          foregroundColor = colorScheme.error;
+        } else if (isPlaying) {
+          backgroundColor = useCustomSurface
+              ? palette.brandPrimary.withValues(alpha: 0.18)
+              : palette.brandSurface;
+          borderColor = palette.brandPrimary.withValues(alpha: 0.26);
+          foregroundColor = palette.brandPrimary;
+        } else if (isPaused) {
+          backgroundColor = useCustomSurface
+              ? _resolvedAttachmentSurfaceColor(context)
+              : palette.surfaceSecondary;
+          borderColor = useCustomSurface
+              ? _resolvedAttachmentBorderColor(context)
+              : palette.borderSubtle;
+          foregroundColor = _resolvedAiPrimaryTextColor(context);
+        } else {
+          backgroundColor = useCustomSurface
+              ? _resolvedAttachmentSurfaceColor(context)
+              : palette.surfaceSecondary.withValues(alpha: 0.78);
+          borderColor = Colors.transparent;
+          foregroundColor = secondaryText;
+        }
+
+        final animationDuration = MediaQuery.disableAnimationsOf(context)
+            ? Duration.zero
+            : const Duration(milliseconds: 180);
+
         return Padding(
-          padding: const EdgeInsets.only(left: 4),
-          child: Semantics(
-            label: statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
-            button: true,
+          padding: const EdgeInsets.only(top: 10, bottom: 2),
+          child: AnimatedContainer(
+            duration: animationDuration,
+            curve: Curves.easeOutCubic,
+            decoration: BoxDecoration(
+              color: backgroundColor,
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(color: borderColor, width: 0.8),
+            ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                IconButton(
-                  key: ValueKey('voice-playback-${message.id}'),
-                  onPressed: isBusy
-                      ? null
-                      : () => coordinator.togglePlayback(
-                          messageId: message.id,
-                          text: text,
+                Tooltip(
+                  message: tooltip,
+                  child: Semantics(
+                    label: tooltip,
+                    button: true,
+                    enabled: !isBusy,
+                    child: Material(
+                      color: Colors.transparent,
+                      child: InkWell(
+                        key: ValueKey('voice-playback-${message.id}'),
+                        borderRadius: BorderRadius.horizontal(
+                          left: const Radius.circular(999),
+                          right: Radius.circular(showStop ? 4 : 999),
                         ),
-                  tooltip: hasError && state.error.isNotEmpty
-                      ? state.error
-                      : statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
-                  visualDensity: VisualDensity.compact,
-                  iconSize: 17,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                  icon: Icon(
-                    isBusy
-                        ? Icons.hourglass_top_rounded
-                        : isPlaying
-                        ? Icons.pause_circle_outline_rounded
-                        : Icons.volume_up_outlined,
-                    color: statusColor,
-                  ),
-                ),
-                if (statusLabel != null)
-                  Text(
-                    statusLabel,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 11,
-                      height: 1.1,
+                        onTap: isBusy
+                            ? null
+                            : () => coordinator.togglePlayback(
+                                messageId: message.id,
+                                text: text,
+                              ),
+                        child: Padding(
+                          padding: EdgeInsets.fromLTRB(
+                            10,
+                            5,
+                            showStop ? 8 : 11,
+                            5,
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              if (isBusy)
+                                SizedBox(
+                                  width: 12,
+                                  height: 12,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 1.7,
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                      foregroundColor,
+                                    ),
+                                  ),
+                                )
+                              else
+                                Icon(
+                                  hasError
+                                      ? LucideIcons.circleAlert
+                                      : isPlaying
+                                      ? LucideIcons.pause
+                                      : isPaused
+                                      ? LucideIcons.play
+                                      : LucideIcons.volume2,
+                                  size: 13.5,
+                                  color: foregroundColor,
+                                ),
+                              const SizedBox(width: 5),
+                              Text(
+                                label,
+                                style: TextStyle(
+                                  color: foregroundColor,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w500,
+                                  height: 1.2,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
                     ),
                   ),
+                ),
+                if (showStop) ...[
+                  Container(
+                    width: 0.8,
+                    height: 12,
+                    color: foregroundColor.withValues(alpha: 0.22),
+                  ),
+                  Tooltip(
+                    message: english ? 'Stop' : '停止朗读',
+                    child: Semantics(
+                      label: english ? 'Stop' : '停止朗读',
+                      button: true,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          key: ValueKey('voice-playback-stop-${message.id}'),
+                          borderRadius: const BorderRadius.horizontal(
+                            right: Radius.circular(999),
+                          ),
+                          onTap: () => coordinator.stopPlayback(message.id),
+                          child: Padding(
+                            padding: const EdgeInsets.fromLTRB(7, 5, 9, 5),
+                            child: Icon(
+                              LucideIcons.x,
+                              size: 13,
+                              color: foregroundColor.withValues(alpha: 0.72),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
               ],
             ),
           ),

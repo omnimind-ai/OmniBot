@@ -781,6 +781,24 @@ void main() {
       );
     });
   }
+
+  testWidgets(
+    'speech input button preserves 50px compact height and clears collapsed editor',
+    (tester) async {
+      final fixture = _ComposerFixture(tester);
+      const speechKey = ValueKey('test-speech-button');
+      await fixture.pump(
+        speechInputButton: const SizedBox.square(
+          key: speechKey,
+          dimension: 36,
+        ),
+      );
+      expect(tester.getSize(shell).height, 50);
+      final editorRect = tester.getRect(find.byType(TextField));
+      final speechRect = tester.getRect(find.byKey(speechKey));
+      expect(editorRect.right, lessThanOrEqualTo(speechRect.left));
+    },
+  );
 }
 
 class _ComposerFixture {
@@ -809,6 +827,7 @@ class _ComposerFixture {
     Future<void> Function()? onPickAttachment,
     ValueChanged<AgentPermissionMode>? onPermission,
     Widget? runtimeConfigButton,
+    Widget? speechInputButton,
     String? selectedModelOverrideId,
     VoidCallback? onClearSelectedModelOverride,
     bool hasExternalPayload = false,
@@ -873,6 +892,7 @@ class _ComposerFixture {
                     ],
                     onAgentPermissionModeChanged: onPermission,
                     runtimeConfigButton: runtimeConfigButton,
+                    speechInputButton: speechInputButton,
                     selectedModelOverrideId: selectedModelOverrideId,
                     onClearSelectedModelOverride: onClearSelectedModelOverride,
                   ),

@@ -66,7 +66,11 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
                               curve: Curves.easeOutCubic,
                               padding: EdgeInsets.only(
                                 left: expanded ? 9 : 38,
-                                right: expanded ? 9 : 44,
+                                right: expanded
+                                    ? 9
+                                    : (widget.speechInputButton != null
+                                          ? 84
+                                          : 44),
                                 top: expanded ? 5 : 0,
                               ),
                               child: _buildCompactTextEditor(
@@ -127,7 +131,10 @@ extension _ChatInputCompactComposer on _ChatInputAreaComposerMixin {
                                 ),
                               ),
                             if (widget.speechInputButton != null)
-                              widget.speechInputButton!,
+                              Padding(
+                                padding: const EdgeInsets.only(right: 4),
+                                child: widget.speechInputButton!,
+                              ),
                             SizedBox(
                               width: 36,
                               height: 36,

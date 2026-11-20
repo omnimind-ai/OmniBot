@@ -61,17 +61,21 @@ void main() {
 
   testWidgets('tap records then returns text for the draft', (tester) async {
     await showInput(tester);
+    expect(tester.getSize(button), const Size(36, 36));
     await tester.tap(button);
     await tester.pump();
     expect(calls.map((c) => c.method), ['permissionStatus', 'start']);
+    expect(find.byKey(const ValueKey('chat-speech-status-pill')), findsOneWidget);
 
     await tester.tap(button);
     await tester.pump();
     expect(calls.last.method, 'finish');
     expect(calls.last.arguments, calls[1].arguments);
+    expect(find.byKey(const ValueKey('chat-speech-status-pill')), findsOneWidget);
     transcript!.complete('你好');
     await tester.pump();
     expect(results, [(text: '你好', send: false, target: 1)]);
+    expect(find.byKey(const ValueKey('chat-speech-status-pill')), findsNothing);
   });
 
   testWidgets('hold sends once only after release and transcription', (

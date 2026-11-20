@@ -190,22 +190,19 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     if (kIsWeb ||
         defaultTargetPlatform != TargetPlatform.android ||
         _editingUserMessageId != null ||
-        _isConversationHistoryLoading) {
+        _isConversationHistoryLoading ||
+        VoicePlaybackCoordinator
+                .instance
+                .voiceConfig
+                .recognitionProvider
+                ?.ready !=
+            true) {
       return null;
     }
-    final voice = VoicePlaybackCoordinator.instance;
-    return ListenableBuilder(
-      listenable: voice,
-      builder: (context, _) {
-        if (voice.voiceConfig.recognitionProvider?.ready != true) {
-          return const SizedBox.shrink();
-        }
-        return ChatSpeechInputButton(
-          key: _speechInputKey,
-          target: _conversationTargetRequestId,
-          onTranscript: _applySpeechTranscript,
-        );
-      },
+    return ChatSpeechInputButton(
+      key: _speechInputKey,
+      target: _conversationTargetRequestId,
+      onTranscript: _applySpeechTranscript,
     );
   }
 

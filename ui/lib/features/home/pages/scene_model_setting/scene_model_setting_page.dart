@@ -684,12 +684,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
-          Expanded(flex: 4, child: _buildSceneLabel(scene)),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 6,
-            child: _buildSceneSelectorField(scene, isSaving: isBusy),
-          ),
+          Expanded(child: _buildSceneLabel(scene)),
+          const SizedBox(width: 12),
+          _buildSceneSelectorField(scene, isSaving: isBusy),
           if (isBusy) ...[
             const SizedBox(width: 8),
             const SizedBox(
@@ -712,7 +709,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
       children: [
         _buildDefaultSceneRow(scene),
         Padding(
-          padding: const EdgeInsets.only(bottom: 16),
+          padding: const EdgeInsets.only(top: 10, bottom: 4),
           child: Row(
             children: [
               Expanded(
@@ -723,6 +720,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
                   style: TextStyle(color: _secondaryTextColor, fontSize: 13),
                 ),
               ),
+              const SizedBox(width: 12),
               OmniSettingsSwitch(
                 key: const Key('scene-title-enabled-switch'),
                 value: _titleEnabled,
@@ -760,7 +758,7 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
     }
   }
 
-  Widget _buildVoiceCard() {
+  Widget _buildVoiceSection() {
     final english = Localizations.localeOf(context).languageCode == 'en';
     final coordinator = VoicePlaybackCoordinator.instance;
     final providers = _voiceConfig.speechProviders;
@@ -795,41 +793,164 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
         final status = bound
             ? (english ? 'Connected' : '已连接')
             : (english ? 'Not connected' : '未连接');
-        return _buildCard(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              if (recognizer != null) ...[
-                _buildSpeechSettingRow(
-                  english ? 'Voice input' : '语音输入',
-                  OmniSettingsSwitch(
-                    key: const Key('scene-voice-recognition-switch'),
-                    value: _voiceConfig.recognitionProvider != null,
-                    enabled:
-                        !_savingVoice &&
-                        (_voiceConfig.recognitionProvider != null ||
-                            recognizer.ready),
-                    onToggle: (value) => _saveVoiceConfig(
-                      _voiceConfig.copyWith(
-                        speechRecognitionProviderId: value ? recognizer.id : '',
+        final synthesisNote =
+            _voiceConfig.usesSpeechProvider && synthesizer != null
+            ? (english
+                  ? 'Text is sent to ${synthesizer.label} when you play a reply or enable automatic reading.'
+                  : '播放回复或开启自动朗读时，回复文本会发送给 ${synthesizer.label}。')
+            : bound
+            ? context.trLegacy('助手回复支持手动播放和自动朗读。')
+            : context.trLegacy('在上方绑定语音合成场景的 Provider 和模型，即可播放。');
+
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (recognizer != null) ...[
+              OmniSettingsGroup(
+                dividerIndent: 54,
+                footer: Text(
+                  english
+                      ? 'Your recording is sent to ${recognizer.label} when you finish dictating.'
+                      : '结束听写后，录音会发送给 ${recognizer.label} 转写。',
+                ),
+                children: [
+                  OmniSettingsTile(
+                    icon: LucideIcons.mic,
+                    title: english ? 'Voice input' : '语音输入',
+                    subtitle: english
+                        ? 'Tap to dictate or hold to talk'
+                        : '点击听写或长按说话',
+                    translateText: false,
+                    trailing: OmniSettingsSwitch(
+                      key: const Key('scene-voice-recognition-switch'),
+                      value: _voiceConfig.recognitionProvider != null,
+                      enabled:
+                          !_savingVoice &&
+                          (_voiceConfig.recognitionProvider != null ||
+                              recognizer.ready),
+                      onToggle: (value) => _saveVoiceConfig(
+                        _voiceConfig.copyWith(
+                          speechRecognitionProviderId: value
+                              ? recognizer.id
+                              : '',
+                        ),
                       ),
                     ),
                   ),
+                  if (recognizers.length > 1 &&
+                      _voiceConfig.recognitionProvider != null)
+                    OmniSettingsTile(
+                      icon: LucideIcons.audioLines,
+                      title: english ? 'Recognition provider' : '转写服务',
+                      translateText: false,
+                      trailing: OmniSettingsDropdown<String>(
+                        value: recognizer.id,
+                        selectedLabel: recognizer.label,
+                        options: [
+                          for (final provider in recognizers.where(
+                            (provider) => provider.ready,
+                          ))
+                            OmniSettingsOption(
+                              value: provider.id,
+                              label: provider.label,
+                            ),
+                        ],
+                        onChanged: _savingVoice
+                            ? null
+                            : (id) {
+                                if (id != null) {
+                                  _saveVoiceConfig(
+                                    _voiceConfig.copyWith(
+                                      speechRecognitionProviderId: id,
+                                    ),
+                                  );
+                                }
+                              },
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 14),
+            ],
+            OmniSettingsGroup(
+              dividerIndent: 54,
+              footer: Text(synthesisNote),
+              children: [
+                OmniSettingsTile(
+                  icon: LucideIcons.volume2,
+                  title: english ? 'Speech synthesis' : '语音合成服务',
+                  translateText: false,
+                  trailing: OmniSettingsDropdown<({String mode, String id})>(
+                    dropdownKey: const Key('scene-voice-synthesis-provider'),
+                    value: synthesisChoice,
+                    selectedLabel: _voiceConfig.usesSpeechProvider
+                        ? (synthesizer?.label ?? status)
+                        : _voiceConfig.isCustomCurl
+                        ? customLabel
+                        : builtinLabel,
+                    options: [
+                      OmniSettingsOption(
+                        value: (mode: SceneVoiceConfig.ttsModeBuiltin, id: ''),
+                        label: builtinLabel,
+                      ),
+                      if (_voiceConfig.hasCustomCurlCommand)
+                        OmniSettingsOption(
+                          value: (
+                            mode: SceneVoiceConfig.ttsModeCustomCurl,
+                            id: '',
+                          ),
+                          label: customLabel,
+                        ),
+                      for (final provider in providers.where(
+                        (provider) => provider.synthesis,
+                      ))
+                        OmniSettingsOption(
+                          value: (
+                            mode: SceneVoiceConfig.ttsModeProvider,
+                            id: provider.id,
+                          ),
+                          label: provider.label,
+                        ),
+                    ],
+                    onChanged: _savingVoice
+                        ? null
+                        : (selection) {
+                            if (selection == null ||
+                                selection == synthesisChoice) {
+                              return;
+                            }
+                            final selected = providers
+                                .where(
+                                  (provider) => provider.id == selection.id,
+                                )
+                                .firstOrNull;
+                            _saveVoiceConfig(
+                              _voiceConfig.copyWith(
+                                ttsMode: selection.mode,
+                                speechSynthesisProviderId: selected?.id,
+                                speechSynthesisVoiceId:
+                                    selected?.id == synthesizer?.id
+                                    ? null
+                                    : selected?.voices.firstOrNull?.id ?? '',
+                              ),
+                            );
+                          },
+                  ),
                 ),
-                if (recognizers.length > 1 &&
-                    _voiceConfig.recognitionProvider != null)
-                  _buildSpeechSettingRow(
-                    english ? 'Recognition provider' : '转写服务',
-                    OmniSettingsDropdown<String>(
-                      value: recognizer.id,
-                      selectedLabel: recognizer.label,
+                if (voice != null)
+                  OmniSettingsTile(
+                    icon: LucideIcons.audioWaveform,
+                    title: english ? 'Voice' : '音色',
+                    translateText: false,
+                    trailing: OmniSettingsDropdown<String>(
+                      dropdownKey: const Key('scene-voice-synthesis-voice'),
+                      value: voice.id,
+                      selectedLabel: english ? voice.englishLabel : voice.label,
                       options: [
-                        for (final provider in recognizers.where(
-                          (provider) => provider.ready,
-                        ))
+                        for (final option in voices)
                           OmniSettingsOption(
-                            value: provider.id,
-                            label: provider.label,
+                            value: option.id,
+                            label: english ? option.englishLabel : option.label,
                           ),
                       ],
                       onChanged: _savingVoice
@@ -838,156 +959,60 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
                               if (id != null) {
                                 _saveVoiceConfig(
                                   _voiceConfig.copyWith(
-                                    speechRecognitionProviderId: id,
+                                    speechSynthesisVoiceId: id,
                                   ),
                                 );
                               }
                             },
                     ),
                   ),
-                Text(
-                  english
-                      ? 'Your recording is sent to ${recognizer.label} when you finish dictating.'
-                      : '结束听写后，录音会发送给 ${recognizer.label} 转写。',
-                  style: TextStyle(color: _secondaryTextColor, fontSize: 12),
-                ),
-                const Divider(height: 20),
-              ],
-              _buildSpeechSettingRow(
-                english ? 'Speech synthesis' : '语音合成服务',
-                OmniSettingsDropdown<({String mode, String id})>(
-                  dropdownKey: const Key('scene-voice-synthesis-provider'),
-                  value: synthesisChoice,
-                  selectedLabel: _voiceConfig.usesSpeechProvider
-                      ? (synthesizer?.label ?? status)
-                      : _voiceConfig.isCustomCurl
-                      ? customLabel
-                      : builtinLabel,
-                  options: [
-                    OmniSettingsOption(
-                      value: (mode: SceneVoiceConfig.ttsModeBuiltin, id: ''),
-                      label: builtinLabel,
-                    ),
-                    if (_voiceConfig.hasCustomCurlCommand)
-                      OmniSettingsOption(
-                        value: (
-                          mode: SceneVoiceConfig.ttsModeCustomCurl,
-                          id: '',
-                        ),
-                        label: customLabel,
-                      ),
-                    for (final provider in providers.where(
-                      (provider) => provider.synthesis,
-                    ))
-                      OmniSettingsOption(
-                        value: (
-                          mode: SceneVoiceConfig.ttsModeProvider,
-                          id: provider.id,
-                        ),
-                        label: provider.label,
-                      ),
-                  ],
-                  onChanged: _savingVoice
+                OmniSettingsTile(
+                  icon: LucideIcons.headphones,
+                  title: english ? 'Read replies aloud automatically' : '自动朗读回复',
+                  subtitle: bound
                       ? null
-                      : (selection) {
-                          if (selection == null ||
-                              selection == synthesisChoice) {
-                            return;
-                          }
-                          final selected = providers
-                              .where((provider) => provider.id == selection.id)
-                              .firstOrNull;
-                          _saveVoiceConfig(
-                            _voiceConfig.copyWith(
-                              ttsMode: selection.mode,
-                              speechSynthesisProviderId: selected?.id,
-                              speechSynthesisVoiceId:
-                                  selected?.id == synthesizer?.id
-                                  ? null
-                                  : selected?.voices.firstOrNull?.id ?? '',
-                            ),
-                          );
-                        },
-                ),
-              ),
-              if (voice != null)
-                _buildSpeechSettingRow(
-                  english ? 'Voice' : '音色',
-                  OmniSettingsDropdown<String>(
-                    dropdownKey: const Key('scene-voice-synthesis-voice'),
-                    value: voice.id,
-                    selectedLabel: english ? voice.englishLabel : voice.label,
-                    options: [
-                      for (final option in voices)
-                        OmniSettingsOption(
-                          value: option.id,
-                          label: english ? option.englishLabel : option.label,
-                        ),
-                    ],
-                    onChanged: _savingVoice
-                        ? null
-                        : (id) {
-                            if (id != null) {
-                              _saveVoiceConfig(
-                                _voiceConfig.copyWith(
-                                  speechSynthesisVoiceId: id,
-                                ),
-                              );
-                            }
-                          },
+                      : (english
+                            ? 'Configure a synthesis service first'
+                            : '需先配置可用的语音合成服务'),
+                  translateText: false,
+                  trailing: OmniSettingsSwitch(
+                    key: const Key('scene-voice-autoplay-switch'),
+                    value: _voiceConfig.autoPlay,
+                    enabled: bound && !_savingVoice,
+                    onToggle: (value) => _saveVoiceConfig(
+                      _voiceConfig.copyWith(autoPlay: value),
+                    ),
                   ),
                 ),
-              _buildSpeechSettingRow(
-                english ? 'Read replies aloud automatically' : '自动朗读回复',
-                OmniSettingsSwitch(
-                  key: const Key('scene-voice-autoplay-switch'),
-                  value: _voiceConfig.autoPlay,
-                  enabled: bound && !_savingVoice,
-                  onToggle: (value) =>
-                      _saveVoiceConfig(_voiceConfig.copyWith(autoPlay: value)),
-                ),
-              ),
-              Text(
-                _voiceConfig.usesSpeechProvider && synthesizer != null
-                    ? (english
-                          ? 'Text is sent to ${synthesizer.label} when you play a reply or enable automatic reading.'
-                          : '播放回复或开启自动朗读时，回复文本会发送给 ${synthesizer.label}。')
-                    : bound
-                    ? context.trLegacy('助手回复支持手动播放和自动朗读。')
-                    : context.trLegacy('在上方绑定语音合成场景的 Provider 和模型，即可播放。'),
-                style: TextStyle(color: _secondaryTextColor, fontSize: 12),
-              ),
-              if (missingKey)
-                TextButton(
-                  onPressed: () async {
-                    await context.push('/home/model_provider_setting');
-                    if (mounted) await _loadData(showLoading: false);
-                  },
-                  child: Text(
-                    english
+              ],
+            ),
+            if (missingKey) ...[
+              const SizedBox(height: 14),
+              OmniSettingsGroup(
+                dividerIndent: 54,
+                children: [
+                  OmniSettingsTile(
+                    icon: LucideIcons.keyRound,
+                    iconColor: context.omniPalette.brandPrimary,
+                    title: english
                         ? 'Set up a model provider API key'
                         : '配置模型提供商 API Key',
+                    subtitle: english
+                        ? 'Speech features reuse your configured provider key'
+                        : '语音能力复用已配置的模型提供商 API Key',
+                    translateText: false,
+                    showChevron: true,
+                    onTap: () async {
+                      await context.push('/home/model_provider_setting');
+                      if (mounted) await _loadData(showLoading: false);
+                    },
                   ),
-                ),
+                ],
+              ),
             ],
-          ),
+          ],
         );
       },
-    );
-  }
-
-  Widget _buildSpeechSettingRow(String label, Widget action) {
-    return Row(
-      children: [
-        Expanded(
-          child: Text(
-            label,
-            style: TextStyle(color: _primaryTextColor, fontSize: 15),
-          ),
-        ),
-        const SizedBox(width: 8),
-        action,
-      ],
     );
   }
 
@@ -1062,9 +1087,9 @@ class _SceneModelSettingPageState extends State<SceneModelSettingPage>
                         ],
                       ),
                     ),
-                    const SizedBox(height: 16),
+                    const SizedBox(height: 22),
                     SettingsSectionTitle(label: context.trLegacy('语音能力')),
-                    _buildVoiceCard(),
+                    _buildVoiceSection(),
                   ],
                 ),
         ),
