@@ -166,6 +166,12 @@ data class SceneVoiceConfig(
     val ttsMode: String = "builtin",
     @field:SerializedName(value = "customCurlCommand", alternate = ["f"])
     val customCurlCommand: String = "",
+    @field:SerializedName("speechRecognitionProviderId")
+    val speechRecognitionProviderId: String? = null,
+    @field:SerializedName("speechSynthesisProviderId")
+    val speechSynthesisProviderId: String? = null,
+    @field:SerializedName("speechSynthesisVoiceId")
+    val speechSynthesisVoiceId: String? = null,
 )
 
 data class SceneOperationConfig(

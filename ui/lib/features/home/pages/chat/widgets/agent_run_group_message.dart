@@ -293,6 +293,7 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
     bool forceTextFinal = false,
   }) {
     return MessageBubble(
+      allowSpeechProvider: true,
       key: ValueKey('agent-run-${widget.group.taskId}-${message.id}'),
       message: message,
       // Only the newest prose entry can still be receiving chunks. Older
@@ -454,6 +455,7 @@ class _AgentRunGroupMessageState extends State<AgentRunGroupMessage>
         message.id == firstThinkingMessageId &&
         (widget.useAcpPresentation || !widget.group.isRunning);
     return MessageBubble(
+      allowSpeechProvider: true,
       key: ValueKey('agent-run-${widget.group.taskId}-${message.id}'),
       message: message,
       forceTextFinal: !widget.group.isRunning,

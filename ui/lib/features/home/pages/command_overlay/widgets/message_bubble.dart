@@ -1,4 +1,5 @@
 import 'package:ui/widgets/navigation/page_route.dart';
+
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -71,6 +72,7 @@ class MessageBubble extends StatelessWidget {
   final VoidCallback? onRetryAgentMessage;
   final VoidCallback? onUserMessageEditTap;
   final VoidCallback? onStreamingTextLayoutChanged;
+  final bool allowSpeechProvider;
   final AppBackgroundVisualProfile visualProfile;
   final AppBackgroundConfig appearanceConfig;
 
@@ -91,6 +93,7 @@ class MessageBubble extends StatelessWidget {
     this.onRetryAgentMessage,
     this.onUserMessageEditTap,
     this.onStreamingTextLayoutChanged,
+    this.allowSpeechProvider = false,
     this.visualProfile = AppBackgroundVisualProfile.defaultProfile,
     this.appearanceConfig = AppBackgroundConfig.defaults,
   });
@@ -287,7 +290,13 @@ class MessageBubble extends StatelessWidget {
     }
 
     // AI 消息按“正文 -> 附件 -> 链接预览”顺序分块展示。
-    final turnUsageFooter = _buildTurnUsageFooter(context);
+    final hasContentAbove =
+        text.isNotEmpty || attachments.isNotEmpty || linkPreviews.isNotEmpty;
+    final turnUsageFooter = _buildTurnUsageFooter(
+      context,
+      voiceText: text,
+      topSpacing: hasContentAbove ? 8 : 0,
+    );
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -307,13 +316,7 @@ class MessageBubble extends StatelessWidget {
             isUserMessage: false,
           ),
         ],
-        if (turnUsageFooter != null) ...[
-          if (text.isNotEmpty ||
-              attachments.isNotEmpty ||
-              linkPreviews.isNotEmpty)
-            const SizedBox(height: 8),
-          turnUsageFooter,
-        ],
+        ?turnUsageFooter,
       ],
     );
   }
@@ -1126,18 +1129,23 @@ class MessageBubble extends StatelessWidget {
     required bool includeTurnUsageFooter,
   }) {
     final speed = _decodeTokensPerSecond;
-    final aiText = _buildAiText(
-      context,
-      text,
-      trailing: _buildVoiceAction(context, text),
-    );
+    final aiText = _buildAiText(context, text);
     final retryingStatus = _buildAgentRetryingStatus(context);
     final errorFooter = _buildAgentErrorFooter(context, text);
-    final turnUsageFooter = includeTurnUsageFooter
-        ? _buildTurnUsageFooter(context)
-        : null;
     final showPrimaryText =
         text.isNotEmpty || message.isLoading || message.isSummarizing;
+    final hasContentAbove =
+        showPrimaryText ||
+        speed != null ||
+        retryingStatus != null ||
+        errorFooter != null;
+    final turnUsageFooter = includeTurnUsageFooter
+        ? _buildTurnUsageFooter(
+            context,
+            voiceText: text,
+            topSpacing: hasContentAbove ? 8 : 0,
+          )
+        : null;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1164,99 +1172,170 @@ class MessageBubble extends StatelessWidget {
             const SizedBox(height: 8),
           errorFooter,
         ],
-        if (turnUsageFooter != null) ...[
-          if (showPrimaryText ||
-              speed != null ||
-              retryingStatus != null ||
-              errorFooter != null)
-            const SizedBox(height: 8),
-          turnUsageFooter,
-        ],
+        ?turnUsageFooter,
       ],
     );
   }
 
-  /// Voice playback is an optional ACP scene capability. Keep the control in
-  /// the same message bubble as the assistant text so enabling the scene has
-  /// an immediately visible affordance (and never creates a second input
-  /// surface).
-  Widget? _buildVoiceAction(BuildContext context, String text) {
-    if (message.user != 2 || message.type != 1 || text.trim().isEmpty) {
-      return null;
-    }
+  /// Icon-only voice playback control placed inline with the turn metadata row.
+  Widget _buildVoiceActionIcon(BuildContext context, String text) {
     final coordinator = VoicePlaybackCoordinator.instance;
-    return AnimatedBuilder(
-      animation: coordinator,
-      builder: (context, _) {
-        if (!coordinator.shouldShowVoiceButton(
-          user: message.user,
-          type: message.type,
-          text: text,
-        )) {
-          return const SizedBox.shrink();
-        }
-        final state = coordinator.stateFor(message.id);
-        final isPlaying = state.status == VoicePlaybackStatus.playing;
-        final isBusy = state.status == VoicePlaybackStatus.synthesizing;
-        final isPaused = state.status == VoicePlaybackStatus.paused;
-        final hasError = state.status == VoicePlaybackStatus.error;
-        final statusLabel = isBusy
-            ? '语音生成中'
-            : hasError
-            ? '语音失败'
-            : isPaused
-            ? '已暂停'
-            : null;
-        final statusColor = hasError
-            ? Colors.red.shade400
-            : _resolvedAiSecondaryTextColor(context);
-        return Padding(
-          padding: const EdgeInsets.only(left: 4),
-          child: Semantics(
-            label: statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
-            button: true,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                IconButton(
+    final english = Localizations.maybeLocaleOf(context)?.languageCode == 'en';
+    final palette = context.omniPalette;
+    final colorScheme = Theme.of(context).colorScheme;
+    final state = coordinator.stateFor(message.id);
+    final isPlaying = state.status == VoicePlaybackStatus.playing;
+    final isBusy = state.status == VoicePlaybackStatus.synthesizing;
+    final isPaused = state.status == VoicePlaybackStatus.paused;
+    final hasError = state.status == VoicePlaybackStatus.error;
+    final showStop = isPlaying || isPaused;
+
+    final tooltip = isBusy
+        ? (english ? 'Preparing speech' : '语音生成中')
+        : hasError && state.error.isNotEmpty
+        ? state.error
+        : hasError
+        ? (english ? 'Playback failed · Retry' : '播放失败 · 点击重试')
+        : isPlaying
+        ? (english ? 'Pause speech' : '暂停朗读')
+        : isPaused
+        ? (english ? 'Resume speech' : '继续朗读')
+        : (english ? 'Read aloud' : '朗读回复');
+
+    final secondaryText = _resolvedAiSecondaryTextColor(context);
+    final useCustomSurface = !_usesThemeDrivenText();
+    final Color backgroundColor;
+    final Color borderColor;
+    final Color foregroundColor;
+    if (hasError) {
+      backgroundColor = colorScheme.error.withValues(alpha: 0.10);
+      borderColor = colorScheme.error.withValues(alpha: 0.22);
+      foregroundColor = colorScheme.error;
+    } else if (isPlaying) {
+      backgroundColor = useCustomSurface
+          ? palette.brandPrimary.withValues(alpha: 0.18)
+          : palette.brandSurface;
+      borderColor = palette.brandPrimary.withValues(alpha: 0.26);
+      foregroundColor = palette.brandPrimary;
+    } else if (isPaused) {
+      backgroundColor = useCustomSurface
+          ? _resolvedAttachmentSurfaceColor(context)
+          : palette.surfaceSecondary;
+      borderColor = useCustomSurface
+          ? _resolvedAttachmentBorderColor(context)
+          : palette.borderSubtle;
+      foregroundColor = _resolvedAiPrimaryTextColor(context);
+    } else {
+      backgroundColor = Colors.transparent;
+      borderColor = Colors.transparent;
+      foregroundColor = secondaryText.withValues(alpha: 0.78);
+    }
+
+    final animationDuration = MediaQuery.disableAnimationsOf(context)
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+
+    return AnimatedContainer(
+      duration: animationDuration,
+      curve: Curves.easeOutCubic,
+      height: 24,
+      decoration: BoxDecoration(
+        color: backgroundColor,
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: borderColor, width: 0.8),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Tooltip(
+            message: tooltip,
+            child: Semantics(
+              label: tooltip,
+              button: true,
+              enabled: !isBusy,
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
                   key: ValueKey('voice-playback-${message.id}'),
-                  onPressed: isBusy
+                  borderRadius: BorderRadius.horizontal(
+                    left: const Radius.circular(999),
+                    right: Radius.circular(showStop ? 4 : 999),
+                  ),
+                  onTap: isBusy
                       ? null
                       : () => coordinator.togglePlayback(
                           messageId: message.id,
                           text: text,
                         ),
-                  tooltip: statusLabel ?? (isPlaying ? '暂停语音' : '播放语音'),
-                  visualDensity: VisualDensity.compact,
-                  iconSize: 17,
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(
-                    minWidth: 28,
-                    minHeight: 28,
-                  ),
-                  icon: Icon(
-                    isBusy
-                        ? Icons.hourglass_top_rounded
-                        : isPlaying
-                        ? Icons.pause_circle_outline_rounded
-                        : Icons.volume_up_outlined,
-                    color: statusColor,
-                  ),
-                ),
-                if (statusLabel != null)
-                  Text(
-                    statusLabel,
-                    style: TextStyle(
-                      color: statusColor,
-                      fontSize: 11,
-                      height: 1.1,
+                  child: SizedBox(
+                    width: showStop ? 24 : 26,
+                    height: 24,
+                    child: Center(
+                      child: isBusy
+                          ? SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.6,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  palette.brandPrimary,
+                                ),
+                              ),
+                            )
+                          : Icon(
+                              hasError
+                                  ? LucideIcons.circleAlert
+                                  : isPlaying
+                                  ? LucideIcons.pause
+                                  : isPaused
+                                  ? LucideIcons.play
+                                  : LucideIcons.volume2,
+                              size: showStop ? 12.5 : 14,
+                              color: foregroundColor,
+                            ),
                     ),
                   ),
-              ],
+                ),
+              ),
             ),
           ),
-        );
-      },
+          if (showStop) ...[
+            Container(
+              width: 0.8,
+              height: 11,
+              color: foregroundColor.withValues(alpha: 0.22),
+            ),
+            Tooltip(
+              message: english ? 'Stop' : '停止朗读',
+              child: Semantics(
+                label: english ? 'Stop' : '停止朗读',
+                button: true,
+                child: Material(
+                  color: Colors.transparent,
+                  child: InkWell(
+                    key: ValueKey('voice-playback-stop-${message.id}'),
+                    borderRadius: const BorderRadius.horizontal(
+                      right: Radius.circular(999),
+                    ),
+                    onTap: () => coordinator.stopPlayback(message.id),
+                    child: SizedBox(
+                      width: 24,
+                      height: 24,
+                      child: Center(
+                        child: Icon(
+                          LucideIcons.x,
+                          size: 12,
+                          color: foregroundColor.withValues(alpha: 0.72),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
     );
   }
 
@@ -1348,71 +1427,112 @@ class MessageBubble extends StatelessWidget {
     );
   }
 
-  Widget? _buildTurnUsageFooter(BuildContext context) {
+  Widget? _buildTurnUsageFooter(
+    BuildContext context, {
+    String? voiceText,
+    double topSpacing = 0,
+  }) {
     final usage = message.turnUsage;
-    if (usage == null || usage.isEmpty) return null;
-    final input = _readIntValue(usage['in']);
-    final output = _readIntValue(usage['out']);
-    final cache = _readIntValue(usage['cache']);
-    final endedAt = _readIntValue(usage['endedAt']);
-    final durationMs = _readIntValue(usage['durationMs']);
+    final input = usage == null ? null : _readIntValue(usage['in']);
+    final output = usage == null ? null : _readIntValue(usage['out']);
+    final cache = usage == null ? null : _readIntValue(usage['cache']);
+    final endedAt = usage == null ? null : _readIntValue(usage['endedAt']);
+    final durationMs = usage == null
+        ? null
+        : _readIntValue(usage['durationMs']);
     final hasUsage = input != null || output != null || cache != null;
-    if (!hasUsage && endedAt == null) return null;
-    final textColor = _resolvedAiSecondaryTextColor(context)
-        .withValues(alpha: 0.72);
-    final ended = endedAt == null
-        ? null
-        : DateTime.fromMillisecondsSinceEpoch(endedAt).toLocal();
-    String two(int value) => value.toString().padLeft(2, '0');
-    final seconds = durationMs == null ? null : durationMs ~/ 1000;
-    final duration = seconds == null
-        ? null
-        : seconds < 60
-        ? '${(durationMs! / 1000).toStringAsFixed(1)}s'
-        : '${seconds ~/ 60}m ${seconds % 60}s';
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Wrap(
-        spacing: 9,
-        runSpacing: 6,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          if (input != null)
-            _buildTurnUsageMetric(
-              icon: Icons.arrow_downward_rounded,
-              value: input,
-              color: textColor,
-            ),
-          if (output != null)
-            _buildTurnUsageMetric(
-              icon: Icons.arrow_upward_rounded,
-              value: output,
-              color: textColor,
-            ),
-          if (cache != null)
-            _buildTurnUsageMetric(
-              icon: LucideIcons.databaseZap,
-              value: cache,
-              color: textColor,
-            ),
-          if (ended != null && duration != null && durationMs! >= 0)
-            _buildTurnUsageMetric(
-              icon: LucideIcons.timer,
-              text: duration,
-              color: textColor,
-            ),
-          if (ended != null)
-            Tooltip(
-              message: ended.toString(),
-              child: _buildTurnUsageMetric(
-                icon: LucideIcons.circleCheck,
-                text:
-                    '${two(ended.hour)}:${two(ended.minute)}:${two(ended.second)}',
+    final hasUsageMetrics = hasUsage || endedAt != null;
+    final canHostVoice =
+        voiceText != null &&
+        voiceText.trim().isNotEmpty &&
+        message.user == 2 &&
+        message.type == 1 &&
+        !message.isLoading &&
+        !message.isSummarizing;
+    if (!hasUsageMetrics && !canHostVoice) return null;
+
+    Widget buildRow({Widget? voiceAction}) {
+      if (!hasUsageMetrics && voiceAction == null) {
+        return const SizedBox.shrink();
+      }
+      final textColor = _resolvedAiSecondaryTextColor(context)
+          .withValues(alpha: 0.72);
+      final ended = endedAt == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(endedAt).toLocal();
+      String two(int value) => value.toString().padLeft(2, '0');
+      final seconds = durationMs == null ? null : durationMs ~/ 1000;
+      final duration = seconds == null
+          ? null
+          : seconds < 60
+          ? '${(durationMs! / 1000).toStringAsFixed(1)}s'
+          : '${seconds ~/ 60}m ${seconds % 60}s';
+      return Padding(
+        padding: EdgeInsets.only(top: topSpacing + 4, bottom: 4),
+        child: Wrap(
+          spacing: 9,
+          runSpacing: 6,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (input != null)
+              _buildTurnUsageMetric(
+                icon: Icons.arrow_downward_rounded,
+                value: input,
                 color: textColor,
               ),
-            ),
-        ],
-      ),
+            if (output != null)
+              _buildTurnUsageMetric(
+                icon: Icons.arrow_upward_rounded,
+                value: output,
+                color: textColor,
+              ),
+            if (cache != null)
+              _buildTurnUsageMetric(
+                icon: LucideIcons.databaseZap,
+                value: cache,
+                color: textColor,
+              ),
+            if (ended != null && duration != null && durationMs! >= 0)
+              _buildTurnUsageMetric(
+                icon: LucideIcons.timer,
+                text: duration,
+                color: textColor,
+              ),
+            if (ended != null)
+              Tooltip(
+                message: ended.toString(),
+                child: _buildTurnUsageMetric(
+                  icon: LucideIcons.circleCheck,
+                  text:
+                      '${two(ended.hour)}:${two(ended.minute)}:${two(ended.second)}',
+                  color: textColor,
+                ),
+              ),
+            ?voiceAction,
+          ],
+        ),
+      );
+    }
+
+    if (!canHostVoice) {
+      return buildRow();
+    }
+    final coordinator = VoicePlaybackCoordinator.instance;
+    return AnimatedBuilder(
+      animation: coordinator,
+      builder: (context, _) {
+        final showVoice = coordinator.shouldShowVoiceButton(
+          user: message.user,
+          type: message.type,
+          text: voiceText,
+          allowSpeechProvider: allowSpeechProvider,
+        );
+        return buildRow(
+          voiceAction: showVoice
+              ? _buildVoiceActionIcon(context, voiceText)
+              : null,
+        );
+      },
     );
   }
 

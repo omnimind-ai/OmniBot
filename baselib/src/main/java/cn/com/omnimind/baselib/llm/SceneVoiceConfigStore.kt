@@ -26,6 +26,7 @@ object SceneVoiceConfigStore {
     const val STYLE_SING = "唱歌"
 
     const val TTS_MODE_BUILTIN = "builtin"
+    const val TTS_MODE_PROVIDER = "provider"
     const val TTS_MODE_CUSTOM_CURL = "custom_curl"
     const val TEXT_PLACEHOLDER = "{{text}}"
 
@@ -47,6 +48,7 @@ object SceneVoiceConfigStore {
     )
     private val allowedTtsModes = setOf(
         TTS_MODE_BUILTIN,
+        TTS_MODE_PROVIDER,
         TTS_MODE_CUSTOM_CURL
     )
 
@@ -159,7 +161,10 @@ object SceneVoiceConfigStore {
             stylePreset = normalizedStylePreset,
             customStyle = config.customStyle.trim(),
             ttsMode = normalizedTtsMode,
-            customCurlCommand = config.customCurlCommand.trim()
+            customCurlCommand = config.customCurlCommand.trim(),
+            speechRecognitionProviderId = config.speechRecognitionProviderId?.trim()?.takeIf(String::isNotEmpty),
+            speechSynthesisProviderId = config.speechSynthesisProviderId?.trim()?.takeIf(String::isNotEmpty),
+            speechSynthesisVoiceId = config.speechSynthesisVoiceId?.trim()?.takeIf(String::isNotEmpty),
         )
     }
 

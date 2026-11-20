@@ -1062,6 +1062,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
   @override
   void didPopNext() {
     unawaited(_handleDidPopNext());
+    unawaited(VoicePlaybackCoordinator.instance.refreshConfiguration());
     unawaited(_syncVisibleChatConversation());
     unawaited(_refreshAgentRuntimeStatus());
     unawaited(_refreshVisibleNaHistory());
@@ -1074,11 +1075,13 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
 
   @override
   void didPop() {
+    _speechInputKey.currentState?.cancel();
     unawaited(_clearVisibleChatConversation());
   }
 
   @override
   void didPushNext() {
+    _speechInputKey.currentState?.cancel();
     _dismissChatInputFocus();
     unawaited(_clearVisibleChatConversation());
   }
@@ -1297,6 +1300,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       return;
     }
 
+    _speechInputKey.currentState?.cancel();
     _storeDraftForActiveConversationMode();
     await _persistVisibleThreadTargetIfNeeded();
     if (isStaleRequest()) return;
@@ -1463,6 +1467,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       });
     }
     if (state == AppLifecycleState.resumed) {
+      unawaited(VoicePlaybackCoordinator.instance.refreshConfiguration());
       unawaited(_refreshVisibleNaHistory());
       unawaited(_syncVisibleChatConversation());
       unawaited(AppUpdateService.refreshIfNeeded());
@@ -1472,6 +1477,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     if (state == AppLifecycleState.inactive ||
         state == AppLifecycleState.paused ||
         state == AppLifecycleState.detached) {
+      _speechInputKey.currentState?.cancel();
       unawaited(_clearVisibleChatConversation());
       unawaited(_runtimeCoordinator.flushAllPendingPersistence());
       unawaited(_persistVisibleThreadTargetIfNeeded());
@@ -1483,6 +1489,7 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     }
   }
 
+  @override
   Future<void> _syncVisibleChatConversation() async {
     if (!mounted) return;
     final route = ModalRoute.of(context);
@@ -1490,6 +1497,14 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
       await _clearVisibleChatConversation();
       return;
     }
+    _runtimeCoordinator.setProviderSpeechVisibility(
+      this,
+      (runtime) =>
+          mounted &&
+          _activeSurfaceMode == ChatSurfaceMode.normal &&
+          identical(runtime, _activeRuntime) &&
+          ModalRoute.of(context)?.isCurrent == true,
+    );
     final target = _visibleThreadTarget;
     if (target == null || target.isNewConversation) {
       await AssistsMessageService.setVisibleChatConversation(
@@ -1503,7 +1518,9 @@ mixin _ChatPageLifecycleMixin on _ChatPageStateBase {
     );
   }
 
+  @override
   Future<void> _clearVisibleChatConversation() {
+    _runtimeCoordinator.setProviderSpeechVisibility(this, null);
     return AssistsMessageService.setVisibleChatConversation(visible: false);
   }
 }

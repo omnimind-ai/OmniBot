@@ -33,6 +33,8 @@ class _VoiceStreamingTracker {
   String lastText = '';
   int nextIndex = 0;
   bool hasQueuedAny = false;
+  bool interrupted = false;
+  Future<void> pending = Future<void>.value();
 
   void reset() {
     lastText = '';
@@ -51,6 +53,8 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
   bool _initialized = false;
   bool _isVoiceSceneBound = false;
   SceneVoiceConfig _voiceConfig = const SceneVoiceConfig();
+  Object? _speechInputOwner;
+  final Set<String> _finishedProviderMessages = <String>{};
   final Map<String, VoiceMessagePlaybackState> _messageStates =
       <String, VoiceMessagePlaybackState>{};
   final Map<String, _VoiceStreamingTracker> _trackers =
@@ -92,84 +96,129 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     required int user,
     required int type,
     required String text,
+    bool allowSpeechProvider = false,
   }) {
     unawaited(ensureInitialized());
     return _isVoiceSceneBound &&
+        (!_voiceConfig.usesSpeechProvider || allowSpeechProvider) &&
         user == 2 &&
         type == 1 &&
         text.trim().isNotEmpty;
+  }
+
+  Future<void> beginSpeechInput(Object owner) async {
+    _speechInputOwner = owner;
+    for (final tracker in _trackers.values) {
+      tracker.interrupted = true;
+    }
+    await VoicePlaybackChannelService.stopPlayback('');
+  }
+
+  void endSpeechInput(Object owner) {
+    if (identical(owner, _speechInputOwner)) _speechInputOwner = null;
   }
 
   Future<void> onAssistantMessageUpdated({
     required String messageId,
     required String text,
     required bool isFinal,
+    bool Function()? providerSpeechVisible,
+    bool providerSpeechFailed = false,
   }) async {
     await ensureInitialized();
     if (!_isVoiceSceneBound || !_voiceConfig.autoPlay) {
-      if (isFinal) {
-        _trackers.remove(messageId);
-      }
+      if (isFinal) _trackers.remove(messageId);
       return;
     }
+    final usesProvider = _voiceConfig.usesSpeechProvider;
+    if (usesProvider && _finishedProviderMessages.contains(messageId)) return;
     final normalizedText = text.trimRight();
-    if (normalizedText.isEmpty) {
-      return;
-    }
+    if (normalizedText.isEmpty) return;
+
     final tracker = _trackers.putIfAbsent(
       messageId,
       _VoiceStreamingTracker.new,
     );
-    if (tracker.lastText.isNotEmpty &&
-        normalizedText.length < tracker.lastText.length &&
-        tracker.lastText.startsWith(normalizedText)) {
-      return;
+    if (_speechInputOwner != null || (usesProvider && providerSpeechFailed)) {
+      tracker.interrupted = true;
     }
-    if (tracker.lastText.isNotEmpty &&
-        !normalizedText.startsWith(tracker.lastText)) {
-      tracker.reset();
-    }
-    final extraction = SceneVoiceTextProcessing.extractSealedSegments(
-      fullText: normalizedText,
-      fromIndex: tracker.nextIndex,
-      isFinal: isFinal,
-    );
-    tracker.lastText = normalizedText;
-    tracker.nextIndex = extraction.nextIndex;
-    for (final segment in extraction.segments) {
-      final queued = tracker.hasQueuedAny;
-      final accepted = await VoicePlaybackChannelService.speakText(
-        messageId: messageId,
-        text: segment,
-        enqueue: queued,
-        preferStreaming: true,
-      );
-      if (accepted) {
-        tracker.hasQueuedAny = true;
+    tracker.pending = tracker.pending.then((_) async {
+      try {
+        if (!identical(_trackers[messageId], tracker) || tracker.interrupted) {
+          return;
+        }
+        if (tracker.lastText.isNotEmpty &&
+            normalizedText.length < tracker.lastText.length &&
+            tracker.lastText.startsWith(normalizedText)) {
+          return;
+        }
+        if (tracker.lastText.isNotEmpty &&
+            !normalizedText.startsWith(tracker.lastText)) {
+          if (usesProvider && tracker.hasQueuedAny) {
+            tracker.interrupted = true;
+            return;
+          }
+          tracker.reset();
+        }
+        final extraction = SceneVoiceTextProcessing.extractSealedSegments(
+          fullText: normalizedText,
+          fromIndex: tracker.nextIndex,
+          isFinal: isFinal,
+        );
+        tracker.lastText = normalizedText;
+        tracker.nextIndex = extraction.nextIndex;
+        for (final segment in extraction.segments) {
+          if (!identical(_trackers[messageId], tracker) ||
+              tracker.interrupted) {
+            break;
+          }
+          if (usesProvider && providerSpeechVisible?.call() != true) continue;
+          final accepted = await VoicePlaybackChannelService.speakText(
+            messageId: messageId,
+            text: segment,
+            enqueue: tracker.hasQueuedAny,
+            preferStreaming: true,
+          );
+          if (accepted) {
+            tracker.hasQueuedAny = true;
+          } else if (usesProvider) {
+            tracker.interrupted = true;
+          }
+        }
+      } finally {
+        if (isFinal && identical(_trackers[messageId], tracker)) {
+          _trackers.remove(messageId);
+          if (usesProvider) {
+            _finishedProviderMessages.add(messageId);
+            if (_finishedProviderMessages.length > 128) {
+              _finishedProviderMessages.remove(_finishedProviderMessages.first);
+            }
+          }
+        }
       }
-    }
-    if (isFinal) {
-      _trackers.remove(messageId);
-    }
+    });
+    await tracker.pending;
   }
 
   Future<void> onAssistantMessageCompleted({
     required String messageId,
     required String text,
-  }) async {
-    await onAssistantMessageUpdated(
-      messageId: messageId,
-      text: text,
-      isFinal: true,
-    );
-  }
+    bool Function()? providerSpeechVisible,
+    bool providerSpeechFailed = false,
+  }) => onAssistantMessageUpdated(
+    messageId: messageId,
+    text: text,
+    isFinal: true,
+    providerSpeechVisible: providerSpeechVisible,
+    providerSpeechFailed: providerSpeechFailed,
+  );
 
   Future<void> togglePlayback({
     required String messageId,
     required String text,
   }) async {
     await ensureInitialized();
-    if (!_isVoiceSceneBound) {
+    if (!_isVoiceSceneBound || _speechInputOwner != null) {
       return;
     }
     final currentState = stateFor(messageId);
@@ -214,7 +263,9 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     // 自定义 curl 模式无需绑定 Provider：只要命令非空即视为可用。
     final customCurlReady =
         voiceConfig.isCustomCurl && voiceConfig.hasCustomCurlCommand;
-    final nextAvailable = nextBound || customCurlReady;
+    final nextAvailable = voiceConfig.usesSpeechProvider
+        ? voiceConfig.synthesisProvider?.ready == true
+        : nextBound || customCurlReady;
     var shouldNotify = false;
     if (_isVoiceSceneBound != nextAvailable) {
       _isVoiceSceneBound = nextAvailable;
@@ -236,6 +287,10 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     if (event.messageId.trim().isEmpty) {
       return;
     }
+    if (_voiceConfig.usesSpeechProvider &&
+        event.status == VoicePlaybackStatus.error) {
+      _trackers[event.messageId]?.interrupted = true;
+    }
     _messageStates[event.messageId] = VoiceMessagePlaybackState(
       status: event.status,
       error: event.error,
@@ -251,6 +306,8 @@ class VoicePlaybackCoordinator extends ChangeNotifier {
     _initialized = false;
     _isVoiceSceneBound = false;
     _voiceConfig = const SceneVoiceConfig();
+    _speechInputOwner = null;
+    _finishedProviderMessages.clear();
     _messageStates.clear();
     _trackers.clear();
     notifyListeners();

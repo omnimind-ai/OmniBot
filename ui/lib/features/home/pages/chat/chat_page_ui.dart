@@ -1389,17 +1389,20 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                   ),
                   child: Container(
                     key: _inputAreaKey,
-                    child: ChatInputWrapper(
-                      unavailableMessage: _activeAgentUnavailableMessage,
-                      inputAreaKey: _chatInputAreaKey,
-                      controller: _messageController,
-                      focusNode: _inputFocusNode,
-                      onRequestFocus: _armComposerLiftIntent,
-                      isProcessing:
-                          _isAiResponding &&
-                          _editingUserMessageId == null &&
-                          !_hasPendingAgentUserInputRequest,
-                      onSendMessage: this._handleComposerSendMessage,
+                    child: ListenableBuilder(
+                      listenable: VoicePlaybackCoordinator.instance,
+                      builder: (context, _) => ChatInputWrapper(
+                        unavailableMessage: _activeAgentUnavailableMessage,
+                        inputAreaKey: _chatInputAreaKey,
+                        controller: _messageController,
+                        focusNode: _inputFocusNode,
+                        onRequestFocus: _armComposerLiftIntent,
+                        isProcessing:
+                            _isAiResponding &&
+                            _editingUserMessageId == null &&
+                            !_hasPendingAgentUserInputRequest,
+                        onSendMessage: this._handleComposerSendMessage,
+                        speechInputButton: _buildSpeechInputButton(),
                       onCancelTask: _onCancelTask,
                       onQueueMessage: _canAcceptActivePromptInput
                           ? () => unawaited(_submitActivePromptInput())
@@ -1499,7 +1502,8 @@ mixin _ChatPageUiMixin on _ChatPageStateBase {
                               unawaited(_clearConversationModelOverride());
                             }
                           : null,
-                      translucent: backgroundActive,
+                        translucent: backgroundActive,
+                      ),
                     ),
                   ),
                 ),

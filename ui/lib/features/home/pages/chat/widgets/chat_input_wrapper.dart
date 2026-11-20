@@ -30,6 +30,7 @@ class ChatInputWrapper extends StatelessWidget {
   final ValueChanged<String>? onRemoveAttachment;
   final VoidCallback? onTriggerSlashCommand;
   final Widget? topBanner;
+  final Widget? speechInputButton;
   final String? selectedModelOverrideId;
   final VoidCallback? onClearSelectedModelOverride;
   final double? contextUsageRatio;
@@ -78,6 +79,7 @@ class ChatInputWrapper extends StatelessWidget {
     this.onRemoveAttachment,
     this.onTriggerSlashCommand,
     this.topBanner,
+    this.speechInputButton,
     this.selectedModelOverrideId,
     this.onClearSelectedModelOverride,
     this.contextUsageRatio,
@@ -135,6 +137,7 @@ class ChatInputWrapper extends StatelessWidget {
             useFrostedGlass: translucent,
             useLargeComposerStyle: useLargeComposerStyle,
             minimalComposer: true,
+            speechInputButton: speechInputButton,
             useAttachmentPickerForPlus: useAttachmentPickerForPlus,
             onPickAttachment: onPickAttachment,
             onPickImages: onPickImages,

@@ -15,6 +15,7 @@ import 'package:ui/widgets/omni_adaptive_layout.dart';
 import 'package:ui/widgets/omni_header_body.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../models/conversation_model.dart';
@@ -58,6 +59,7 @@ import 'package:ui/services/link_preview_service.dart';
 import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/omnibot_resource_service.dart';
 import 'package:ui/services/scene_model_config_service.dart';
+import 'package:ui/services/voice_playback_coordinator.dart';
 import 'package:ui/services/shared_open_draft_service.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/services/special_permission.dart';
@@ -83,6 +85,7 @@ import 'mixins/conversation_manager.dart';
 // 导入 Widgets
 import 'chat_page_models.dart';
 import 'widgets/chat_widgets.dart';
+import 'widgets/chat_speech_input_button.dart';
 import 'widgets/context_threshold_sheet.dart';
 import 'widgets/chat_keyboard_layout.dart';
 import 'widgets/chat_pane_resize_handle.dart';
@@ -200,6 +203,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   SharedOpenDraftPayload? _stagedSharedOpenDraft;
   int? _stagedSharedOpenDraftExpiresAt;
   int _conversationTargetRequestId = 0;
+  final _speechInputKey = GlobalKey<ChatSpeechInputButtonState>();
   // Presentation only: target resolution/history hydration is distinct from
   // an empty new conversation and from the ACP prompt lifecycle.
   bool _isConversationHistoryLoading = false;
@@ -596,6 +600,7 @@ abstract class _ChatPageStateBase extends State<ChatPage>
   ChatConversationRuntimeState? get _activeRuntime =>
       _runtimeForMode(_activeMode);
   int _beginConversationTargetRequest({bool isHistoryLoading = false}) {
+    _speechInputKey.currentState?.cancel();
     final requestId = ++_conversationTargetRequestId;
     setState(() => _isConversationHistoryLoading = isHistoryLoading);
     return requestId;
@@ -2086,7 +2091,11 @@ abstract class _ChatPageStateBase extends State<ChatPage>
 
   Future<void> _startManualRecordingCommand(String messageText);
 
-  Future<void> _sendMessage({String? text, bool waitForBootstrap = true});
+  Future<void> _sendMessage({
+    String? text,
+    bool waitForBootstrap = true,
+    int? expectedTarget,
+  });
 
   bool get _showNewConversationModeSelector;
 

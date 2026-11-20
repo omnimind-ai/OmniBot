@@ -941,6 +941,7 @@ class _ChatTimelineListRow extends StatelessWidget {
     final isLatestUserMessage =
         currentMessage.user == 1 && currentMessage.id == latestUserMessageId;
     final bubble = MessageBubble(
+      allowSpeechProvider: true,
       message: currentMessage,
       key: ValueKey(
         currentMessage.dbId ?? currentMessage.contentId ?? currentMessage.id,

@@ -186,7 +186,72 @@ extension _ChatPageUserMessageActions on _ChatPageStateBase {
     return message != null && _extractRetryAttachments(message).isNotEmpty;
   }
 
-  Future<void> _handleComposerSendMessage({String? text}) async {
+  Widget? _buildSpeechInputButton() {
+    if (kIsWeb ||
+        defaultTargetPlatform != TargetPlatform.android ||
+        _editingUserMessageId != null ||
+        _isConversationHistoryLoading ||
+        VoicePlaybackCoordinator
+                .instance
+                .voiceConfig
+                .recognitionProvider
+                ?.ready !=
+            true) {
+      return null;
+    }
+    return ChatSpeechInputButton(
+      key: _speechInputKey,
+      target: _conversationTargetRequestId,
+      onTranscript: _applySpeechTranscript,
+    );
+  }
+
+  void _applySpeechTranscript(
+    String text, {
+    required bool send,
+    required int target,
+  }) {
+    if (!_isConversationTargetRequestCurrent(target) ||
+        ModalRoute.of(context)?.isCurrent != true ||
+        _activeSurfaceMode != ChatSurfaceMode.normal ||
+        _editingUserMessageId != null) {
+      return;
+    }
+    final current = _messageController.value;
+    final selection = current.selection;
+    final start = selection.isValid && selection.end <= current.text.length
+        ? selection.start
+        : current.text.length;
+    final end = selection.isValid && selection.end <= current.text.length
+        ? selection.end
+        : current.text.length;
+    final transcript = text.trim();
+    _messageController.value = TextEditingValue(
+      text: current.text.replaceRange(start, end, transcript),
+      selection: TextSelection.collapsed(offset: start + transcript.length),
+    );
+    if (send) unawaited(_handleComposerSendMessage(expectedTarget: target));
+  }
+
+  bool _canSendSpeechDraft(int target) =>
+      _isConversationTargetRequestCurrent(target) &&
+      ModalRoute.of(context)?.isCurrent == true &&
+      _activeSurfaceMode == ChatSurfaceMode.normal &&
+      _editingUserMessageId == null &&
+      !_isAiResponding &&
+      !_isExecutingTask &&
+      !_hasPendingAgentUserInputRequest &&
+      !_canAcceptActivePromptInput;
+
+  Future<void> _handleComposerSendMessage({
+    String? text,
+    int? expectedTarget,
+  }) async {
+    if (expectedTarget != null) {
+      if (!_canSendSpeechDraft(expectedTarget)) return;
+      await _sendMessage(text: text, expectedTarget: expectedTarget);
+      return;
+    }
     if (_editingUserMessageId != null) {
       final message = _currentEditingUserMessage();
       if (message == null) {
