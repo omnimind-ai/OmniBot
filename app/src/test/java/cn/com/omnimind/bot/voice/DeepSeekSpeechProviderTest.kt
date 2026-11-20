@@ -1,8 +1,10 @@
 package cn.com.omnimind.bot.voice
 
 import com.google.gson.JsonParser
+import java.io.IOException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -12,6 +14,8 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import okhttp3.Call
+import okhttp3.EventListener
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -133,12 +137,20 @@ class DeepSeekSpeechProviderTest {
                     .setBody(Buffer().write(ByteArray(256 * 1024)))
                     .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
             )
-            var bytes = 0
+            val firstAudio = CountDownLatch(1)
+            val listener = object : EventListener() {
+                override fun responseFailed(call: Call, ioe: IOException) {
+                    // Let the collector receive audio before the upstream failure cancels the flow.
+                    assertTrue("No audio collected before the disconnect", firstAudio.await(5, TimeUnit.SECONDS))
+                }
+            }
             val failure = failureCode {
-                provider(server).synthesize("你好", "stella").collect { bytes += it.size }
+                provider(server, listener).synthesize("你好", "stella").collect { audio ->
+                    if (audio.isNotEmpty()) firstAudio.countDown()
+                }
             }
             assertEquals("network", failure)
-            assertTrue(bytes > 0)
+            assertEquals(0L, firstAudio.count)
             assertEquals(1, server.requestCount)
         }
     }
@@ -165,8 +177,15 @@ class DeepSeekSpeechProviderTest {
         }
     }
 
-    private fun provider(server: MockWebServer, key: () -> String? = { "test-key" }): DeepSeekSpeechProvider {
-        val client = OkHttpClient.Builder().retryOnConnectionFailure(false).build()
+    private fun provider(
+        server: MockWebServer,
+        eventListener: EventListener = EventListener.NONE,
+        key: () -> String? = { "test-key" },
+    ): DeepSeekSpeechProvider {
+        val client = OkHttpClient.Builder()
+            .retryOnConnectionFailure(false)
+            .eventListener(eventListener)
+            .build()
         return DeepSeekSpeechProvider(key) { request ->
             assertEquals("api.deepseek.com", request.url.host)
             client.newCall(request.newBuilder().url(server.url(request.url.encodedPath)).build())
