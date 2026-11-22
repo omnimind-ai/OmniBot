@@ -114,13 +114,15 @@ class TerminalManager private constructor(
         // installer (which may be preparing OmniFlow or another terminal
         // session concurrently).
         if (EmbeddedRuntimeInstaller.isDistributionReady(context, distribution)) {
-            return runCatching {
+            val ready = runCatching {
                 ensureShellScripts()
                 true
             }.getOrElse {
                 Log.e(TAG, "Failed to prepare shell scripts", it)
                 false
             }
+            if (ready) ProotSeccompCompatibility.probeAndConfigureIfNeeded(context, distribution)
+            return ready
         }
         val status = EmbeddedRuntimeInstaller.ensureRuntimeInstalled(
             context = context,
@@ -282,6 +284,7 @@ class TerminalManager private constructor(
                 initializeEnvironment(distribution = distribution)
             } else if (EmbeddedRuntimeInstaller.isDistributionInstalled(context, distribution)) {
                 ensureShellScripts()
+                ProotSeccompCompatibility.probeAndConfigureIfNeeded(context, distribution)
                 true
             } else false
         } ?: false
@@ -294,7 +297,7 @@ class TerminalManager private constructor(
             )
         }
 
-        val firstAttempt = executeHiddenCommandOnce(
+        return runHiddenCommand(
             command = command,
             executorKey = executorKey,
             timeoutMs = timeoutMs,
@@ -303,31 +306,9 @@ class TerminalManager private constructor(
             installIfMissing = installIfMissing,
             onOutputChunk = onOutputChunk
         )
-        if (
-            firstAttempt.state == HiddenExecResult.State.OK &&
-            firstAttempt.exitCode != 0 &&
-            !ProotSeccompCompatibility.isSeccompCompatEnabled(context) &&
-            ProotSeccompCompatibility.isProotSeccompExecveFailure(firstAttempt.output)
-        ) {
-            Log.w(
-                TAG,
-                "PRoot seccomp execve failure detected; enabling PROOT_NO_SECCOMP=1 and retrying once."
-            )
-            ProotSeccompCompatibility.enableAutoFallback(context)
-            return executeHiddenCommandOnce(
-                command = command,
-                executorKey = executorKey,
-                timeoutMs = timeoutMs,
-                distribution = distribution,
-                onProcessStarted = onProcessStarted,
-                installIfMissing = installIfMissing,
-                onOutputChunk = onOutputChunk
-            )
-        }
-        return firstAttempt
     }
 
-    private suspend fun executeHiddenCommandOnce(
+    private suspend fun runHiddenCommand(
         command: String,
         executorKey: String,
         timeoutMs: Long?,
@@ -565,7 +546,7 @@ class TerminalManager private constructor(
         env.putAll(OmnibotTerminalEnvironment.buildTerminalEnvironment(context))
         ProotSeccompCompatibility.applyEnvironment(
             env,
-            ProotSeccompCompatibility.isSeccompCompatEnabled(context)
+            ProotSeccompCompatibility.isSeccompCompatEnabled(context, distribution)
         )
         return env
     }

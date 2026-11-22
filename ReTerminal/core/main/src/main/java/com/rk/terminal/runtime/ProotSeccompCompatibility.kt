@@ -6,8 +6,11 @@ import android.util.Log
 import androidx.annotation.VisibleForTesting
 import com.rk.libcommons.localBinDir
 import com.rk.libcommons.localLibDir
-import com.rk.settings.Settings
 import com.rk.terminal.App
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.TimeUnit
 
@@ -23,43 +26,38 @@ import java.util.concurrent.TimeUnit
 object ProotSeccompCompatibility {
     private const val TAG = "ProotSeccompCompat"
     private const val PREFS_NAME = "embedded_terminal_proot_compat"
-    private const val KEY_AUTO_NO_SECCOMP = "auto_proot_no_seccomp"
-    private const val KEY_PROBED_FINGERPRINT = "probed_build_fingerprint"
+    private const val KEY_MODE = "proot_seccomp_mode"
     private const val PROBE_TIMEOUT_SECONDS = 5L
+    private val probeMutex = Mutex()
 
-    @Volatile
-    private var autoNoSeccompCached: Boolean? = null
+    enum class Mode { AUTOMATIC, DEFAULT, COMPATIBILITY }
 
-    fun isSeccompCompatEnabled(context: Context): Boolean {
-        val manualSetting = runCatching { Settings.seccomp }.getOrDefault(false)
-        if (manualSetting) {
-            return true
-        }
-        return isAutoFallbackEnabled(context)
+    fun getMode(context: Context): Mode {
+        val stored = prefs(context).getString(KEY_MODE, null)
+        // The old switch could be set by a failed probe or carried over from
+        // a release where it had no effect. Re-evaluate those devices in Auto.
+        return Mode.entries.firstOrNull { it.name == stored } ?: Mode.AUTOMATIC
     }
 
-    fun isAutoFallbackEnabled(context: Context): Boolean {
-        autoNoSeccompCached?.let { return it }
-        val stored = runCatching {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .getBoolean(KEY_AUTO_NO_SECCOMP, false)
-        }.getOrDefault(false)
-        autoNoSeccompCached = stored
-        return stored
+    fun setMode(context: Context, mode: Mode) {
+        prefs(context).edit().putString(KEY_MODE, mode.name).apply()
     }
 
-    fun enableAutoFallback(context: Context) {
-        autoNoSeccompCached = true
-        runCatching {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-                .edit()
-                .putBoolean(KEY_AUTO_NO_SECCOMP, true)
-                .putString(KEY_PROBED_FINGERPRINT, Build.FINGERPRINT.orEmpty())
-                .apply()
+    fun isSeccompCompatEnabled(context: Context, distribution: TerminalDistribution.Spec): Boolean =
+        when (getMode(context)) {
+            Mode.COMPATIBILITY -> true
+            Mode.DEFAULT -> false
+            Mode.AUTOMATIC -> readProbeMode(context, distribution) == Mode.COMPATIBILITY
         }
-        runCatching {
-            Settings.seccomp = true
-        }
+
+    private fun prefs(context: Context) = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    private fun probeKey(distribution: TerminalDistribution.Spec) = "validated_seccomp_${distribution.id}"
+
+    private fun readProbeMode(context: Context, distribution: TerminalDistribution.Spec): Mode? {
+        val result = prefs(context).getString(probeKey(distribution), null) ?: return null
+        if (result.substringAfter(':') != Build.FINGERPRINT.orEmpty()) return null
+        return Mode.entries.firstOrNull { it.name == result.substringBefore(':') }
     }
 
     @VisibleForTesting
@@ -122,29 +120,33 @@ object ProotSeccompCompatibility {
             "operation not permitted" in lower
     }
 
-    internal fun probeAndConfigureIfNeeded(
+    suspend fun probeAndConfigureIfNeeded(
         context: Context,
         distribution: TerminalDistribution.Spec
     ) {
-        if (isSeccompCompatEnabled(context)) {
-            return
+        if (getMode(context) != Mode.AUTOMATIC || readProbeMode(context, distribution) != null) return
+        withContext(Dispatchers.IO) {
+            probeMutex.withLock {
+                if (getMode(context) != Mode.AUTOMATIC || readProbeMode(context, distribution) != null) {
+                    return@withLock
+                }
+                val mode = probe(context, distribution) ?: return@withLock
+                prefs(context).edit()
+                    .putString(probeKey(distribution), "${mode.name}:${Build.FINGERPRINT.orEmpty()}")
+                    .apply()
+            }
         }
-        val fingerprint = Build.FINGERPRINT.orEmpty()
-        val prefs = runCatching {
-            context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        }.getOrNull() ?: return
-        if (fingerprint.isNotEmpty() && prefs.getString(KEY_PROBED_FINGERPRINT, null) == fingerprint) {
-            return
-        }
+    }
 
+    private fun probe(context: Context, distribution: TerminalDistribution.Spec): Mode? {
         val linker = File("/system/bin/linker64").takeIf { it.canExecute() }
             ?: File("/system/bin/linker").takeIf { it.canExecute() }
-            ?: return
-        val parent = context.filesDir.parentFile ?: return
+            ?: return null
+        val parent = context.filesDir.parentFile ?: return null
         val rootfs = File(File(parent, "local"), distribution.rootfsDirectoryName)
-        val prootBin = runCatching { File(localBinDir(), "proot") }.getOrNull() ?: return
+        val prootBin = runCatching { File(localBinDir(), "proot") }.getOrNull() ?: return null
         if (!prootBin.isFile || !rootfs.isDirectory) {
-            return
+            return null
         }
 
         val probeTmpDir = runCatching {
@@ -173,31 +175,31 @@ object ProotSeccompCompatibility {
                 "-0",
                 "/bin/sh",
                 "-c",
-                ":"
+                """cd /root && /bin/pwd >/dev/null && dir=${'$'}(mktemp -d /tmp/omni-proot.XXXXXX) && rmdir "${'$'}dir""""
             )
         )
 
-        val result = runProbeProcess(context, command, probeTmpDir) ?: return
-        if (result.first == 0) {
-            if (fingerprint.isNotEmpty()) {
-                prefs.edit().putString(KEY_PROBED_FINGERPRINT, fingerprint).apply()
+        return selectAutomaticMode { compatibility ->
+            runProbeProcess(context, command, probeTmpDir, compatibility)
+        }.also { mode ->
+            if (mode == Mode.COMPATIBILITY) {
+                Log.i(TAG, "PRoot compatibility probe passed for ${distribution.id} with seccomp acceleration disabled.")
             }
-            return
         }
+    }
 
-        if (isProotSeccompExecveFailure(result.second)) {
-            Log.w(
-                TAG,
-                "PRoot seccomp filter failed during preflight probe; enabling PROOT_NO_SECCOMP=1 fallback."
-            )
-            enableAutoFallback(context)
-        }
+    internal fun selectAutomaticMode(runProbe: (compatibility: Boolean) -> Pair<Int, String>?): Mode? {
+        val result = runProbe(false) ?: return null
+        if (result.first == 0) return Mode.DEFAULT
+        if (!isProotSeccompExecveFailure(result.second)) return null
+        return if (runProbe(true)?.first == 0) Mode.COMPATIBILITY else null
     }
 
     private fun runProbeProcess(
         context: Context,
         command: List<String>,
-        probeTmpDir: File
+        probeTmpDir: File,
+        compatibility: Boolean
     ): Pair<Int, String>? {
         val process = runCatching {
             ProcessBuilder(command).apply {
@@ -205,6 +207,8 @@ object ProotSeccompCompatibility {
                 val env = environment()
                 env.remove("PROOT_NO_SECCOMP")
                 env.remove("SECCOMP")
+                if (compatibility) env["PROOT_NO_SECCOMP"] = "1"
+                env["PATH"] = "/usr/bin:/bin"
                 runCatching { localLibDir().absolutePath }.getOrNull()?.let { libPath ->
                     env["LD_LIBRARY_PATH"] = libPath
                 }

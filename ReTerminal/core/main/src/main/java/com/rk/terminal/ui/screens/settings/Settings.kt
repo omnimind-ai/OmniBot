@@ -36,6 +36,7 @@ import com.rk.terminal.ui.components.SettingsToggle
 import com.rk.terminal.ui.routes.MainActivityRoutes
 import androidx.core.net.toUri
 import com.rk.terminal.runtime.AlpineRepositoryManager
+import com.rk.terminal.runtime.ProotSeccompCompatibility
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.terminal.runtime.UbuntuRepositoryManager
 import kotlinx.coroutines.Dispatchers
@@ -95,6 +96,7 @@ fun Settings(modifier: Modifier = Modifier,navController: NavHostController,main
     var selectedInputMode by remember { mutableIntStateOf(Settings.input_mode) }
     var selectedAlpineMirror by remember { mutableIntStateOf(Settings.alpine_package_mirror) }
     var selectedUbuntuMirror by remember { mutableIntStateOf(Settings.ubuntu_package_mirror) }
+    var prootMode by remember { mutableStateOf(ProotSeccompCompatibility.getMode(context)) }
 
     fun selectAlpineMirror(source: Int) {
         selectedAlpineMirror = source
@@ -347,16 +349,34 @@ fun Settings(modifier: Modifier = Modifier,navController: NavHostController,main
             })
         }
 
-        PreferenceGroup {
-            SettingsToggle(
-                label = stringResource(strings.seccomp),
-                description = stringResource(strings.seccomp_desc),
-                showSwitch = true,
-                default = Settings.seccomp,
-                sideEffect = {
-                    Settings.seccomp = it
-                })
+        PreferenceGroup(heading = stringResource(strings.proot_mode)) {
+            for (mode in ProotSeccompCompatibility.Mode.entries) {
+                val label = stringResource(
+                    when (mode) {
+                        ProotSeccompCompatibility.Mode.AUTOMATIC -> strings.proot_mode_auto
+                        ProotSeccompCompatibility.Mode.DEFAULT -> strings.proot_mode_default
+                        ProotSeccompCompatibility.Mode.COMPATIBILITY -> strings.proot_mode_compatibility
+                    }
+                )
+                val selectMode = {
+                    ProotSeccompCompatibility.setMode(context, mode)
+                    prootMode = mode
+                }
+                SettingsCard(
+                    title = { Text(label) },
+                    startWidget = {
+                        RadioButton(
+                            modifier = Modifier.padding(start = 8.dp),
+                            selected = prootMode == mode,
+                            onClick = selectMode,
+                        )
+                    },
+                    onClick = selectMode,
+                )
+            }
+        }
 
+        PreferenceGroup {
             SettingsToggle(
                 label = stringResource(strings.all_file_access),
                 description = stringResource(strings.all_file_access_desc),

@@ -8,8 +8,10 @@
     <string name="ubuntu_desc">Ubuntu Linux</string>
     <string name="android_desc">ReTerminal Android Shell</string>
     <string name="customizations">自定义</string>
-    <string name="seccomp">SECCOMP</string>
-    <string name="seccomp_desc">修复"操作不被允许"错误</string>
+    <string name="proot_mode">PRoot 运行模式</string>
+    <string name="proot_mode_auto">自动检测</string>
+    <string name="proot_mode_default">默认模式（开启 seccomp 加速）</string>
+    <string name="proot_mode_compatibility">兼容模式（关闭 seccomp 加速）</string>
     <string name="all_file_access">完整文件访问</string>
     <string name="all_file_access_desc">启用对 /sdcard 和 /storage 的访问</string>
     <string name="text_size">文字大小</string>
