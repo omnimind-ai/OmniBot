@@ -196,16 +196,32 @@ class _ModelProviderSettingPageState extends State<ModelProviderSettingPage>
     ModelProviderProfileSummary profile, {
     ProviderDetailTab? initialTab,
   }) async {
+    var editorProfile = profile;
     try {
-      await ModelProviderConfigService.setEditingProfile(profile.id);
+      final selected = await ModelProviderConfigService.setEditingProfile(
+        profile.id,
+      );
+      if (selected.id == profile.id) editorProfile = selected;
     } catch (_) {
-      // Non-fatal: detail page still works with the selected profile.
+      // A provider without stored headers can still open from its summary.
     }
     if (!mounted) return;
+    if (!editorProfile.readOnly &&
+        editorProfile.hasCustomHeaders &&
+        editorProfile.customHeaders.isEmpty) {
+      showToast(
+        _text(
+          '无法读取已保存的请求头，请重试',
+          'Could not load saved headers. Try again.',
+        ),
+        type: ToastType.error,
+      );
+      return;
+    }
     await Navigator.of(context).push<void>(
       OmniPageRoute<void>(
         builder: (_) => ModelProviderDetailPage(
-          initialProfile: profile,
+          initialProfile: editorProfile,
           isNew: false,
           initialTab: initialTab,
           initialRemoteModels:

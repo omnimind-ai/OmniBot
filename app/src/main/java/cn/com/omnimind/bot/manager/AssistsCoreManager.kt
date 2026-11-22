@@ -372,14 +372,16 @@ class AssistsCoreManager(private val context: Context) {
         )
     }
 
-    private fun ModelProviderProfile.toMap(): Map<String, Any?> {
+    private fun ModelProviderProfile.toMap(includeEditableHeaders: Boolean = false): Map<String, Any?> {
         val official = OmniOfficialProvider.isOfficialProfile(id)
         return mapOf(
             "id" to id,
             "name" to name,
             "baseUrl" to if (official) "" else baseUrl,
             "apiKey" to if (official) "" else apiKey,
-            "customHeaders" to emptyMap<String, String>(),
+            "customHeaders" to if (includeEditableHeaders && !official && !readOnly) {
+                customHeaders
+            } else emptyMap<String, String>(),
             "hasApiKey" to (!official && apiKey.isNotBlank()),
             "hasCustomHeaders" to (!official && customHeaders.isNotEmpty()),
             "sourceType" to sourceType,
@@ -1551,7 +1553,7 @@ class AssistsCoreManager(private val context: Context) {
             try {
                 val selected = ModelProviderConfigStore.setEditingProfile(profileId)
                 withContext(Dispatchers.Main) {
-                    result.success(selected.toMap())
+                    result.success(selected.toMap(includeEditableHeaders = true))
                 }
             } catch (e: Exception) {
                 OmniLog.e(TAG, "setEditingModelProviderProfile error: ${e.message}")

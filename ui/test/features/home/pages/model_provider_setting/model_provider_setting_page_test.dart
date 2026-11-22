@@ -1229,6 +1229,118 @@ void main() {
     expect(savedArgs?['apiKey'], 'sk-updated');
   });
 
+  testWidgets('saved headers reopen from the editor and can all be removed', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1080, 2200);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    const headerName = 'User-Agent';
+    const headerValue = 'example-cli/2.0.76 (external, cli)';
+    var savedHeaders = <String, String>{};
+    var writes = 0;
+    var editorReads = 0;
+    final allowFirstSave = Completer<void>();
+    final allowSecondSave = Completer<void>();
+
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(assistCoreChannel, (call) async {
+      final payload = profilePayload();
+      final profile = (payload['profiles'] as List).single as Map;
+      profile['hasCustomHeaders'] = savedHeaders.isNotEmpty;
+      switch (call.method) {
+        case 'listModelProviderProfiles':
+          return payload;
+        case 'setEditingModelProviderProfile':
+          editorReads++;
+          return {...profile, 'customHeaders': savedHeaders};
+        case 'saveModelProviderProfile':
+          final args = call.arguments as Map;
+          expect(args['replaceCustomHeaders'], isTrue);
+          if (++writes == 1) await allowFirstSave.future;
+          if (writes == 2) await allowSecondSave.future;
+          savedHeaders = Map<String, String>.from(args['customHeaders'] as Map);
+          return {...profile, 'hasCustomHeaders': savedHeaders.isNotEmpty};
+        case 'fetchProviderModels':
+          return [];
+      }
+      return null;
+    });
+
+    Future<void> expandAdvancedSettings() async {
+      await switchToConnectionTab(tester);
+      await tester.tap(
+        find.byKey(const Key('provider-advanced-settings-toggle')),
+      );
+      await tester.pumpAndSettle();
+    }
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: AppTheme.lightTheme,
+        home: const ModelProviderSettingPage(),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openFirstProviderDetail(tester);
+    await expandAdvancedSettings();
+    await tester.tap(find.byKey(const Key('provider-add-custom-header-button')));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.widgetWithText(TextField, 'Header Name'),
+      headerName,
+    );
+    final valueField = find.widgetWithText(TextField, 'Header Value');
+    await tester.enterText(valueField, headerValue);
+
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(writes, 1);
+    await tester.tap(
+      find.byKey(const ValueKey('provider-list-item-provider-1')),
+    );
+    await tester.pumpAndSettle();
+    expect(editorReads, 1);
+
+    allowFirstSave.complete();
+    await tester.pumpAndSettle();
+    await expandAdvancedSettings();
+    expect(savedHeaders, {headerName: headerValue});
+    expect(find.widgetWithText(TextField, headerName), findsOneWidget);
+    expect(find.widgetWithText(TextField, headerValue), findsOneWidget);
+
+    await tester.enterText(valueField, 'intermediate');
+    await tester.testTextInput.receiveAction(TextInputAction.done);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(writes, 2);
+    await tester.enterText(valueField, 'latest');
+    await tester.pump();
+    await tester.pageBack();
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(valueField, findsOneWidget);
+
+    allowSecondSave.complete();
+    await tester.pumpAndSettle();
+    expect(writes, 3);
+    expect(savedHeaders, {headerName: 'latest'});
+    await openFirstProviderDetail(tester);
+    await expandAdvancedSettings();
+    expect(find.widgetWithText(TextField, 'latest'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Remove Header'));
+    await tester.pageBack();
+    await tester.pumpAndSettle();
+    expect(writes, 4);
+    expect(savedHeaders, isEmpty);
+    await openFirstProviderDetail(tester);
+    await expandAdvancedSettings();
+    expect(find.text('No custom headers configured'), findsOneWidget);
+  });
+
   testWidgets(
     'single model group avoids redundant vendor header while multi-group shows collapsible headers',
     (tester) async {
