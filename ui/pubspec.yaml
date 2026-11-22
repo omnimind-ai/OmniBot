@@ -19,7 +19,7 @@ version: 1.0.0+1
 
 environment:
   sdk: ^3.13.0
-  flutter: ">=3.47.2"
+  flutter: ">=3.50.1"
 
 dependencies:
   flutter:
@@ -46,14 +46,14 @@ dependencies:
   flutter_cache_manager: ^3.4.2
   dio: ^5.11.0
   path_provider: ^2.1.6
-  file_picker: ^12.2.0
-  android_file_picker: ^1.1.0
+  file_picker: ^13.4.1
+  android_file_picker: ^2.2.1
   just_audio: ^0.10.6
   archive: ^4.2.0
   markdown: ^7.3.1
   flutter_math_fork: ^0.7.4
   video_player: ^2.14.0
-  mobile_scanner: ^7.4.0
+  mobile_scanner: ^7.5.0
   lucide_icons_flutter: ^3.1.17
 
 dev_dependencies:

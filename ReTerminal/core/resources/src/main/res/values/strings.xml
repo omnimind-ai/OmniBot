@@ -8,8 +8,10 @@
     <string name="ubuntu_desc">Ubuntu Linux</string>
     <string name="android_desc">ReTerminal Android shell</string>
     <string name="customizations">Customizations</string>
-    <string name="seccomp">SECCOMP</string>
-    <string name="seccomp_desc">fix operation not permitted error</string>
+    <string name="proot_mode">PRoot mode</string>
+    <string name="proot_mode_auto">Automatic</string>
+    <string name="proot_mode_default">Default (seccomp acceleration)</string>
+    <string name="proot_mode_compatibility">Compatibility (no seccomp acceleration)</string>
     <string name="all_file_access">All file access</string>
     <string name="all_file_access_desc">enable access to /sdcard and /storage</string>
     <string name="text_size">Text Size</string>

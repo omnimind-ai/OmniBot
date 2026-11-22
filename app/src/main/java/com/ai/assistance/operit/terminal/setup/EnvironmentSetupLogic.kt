@@ -506,7 +506,7 @@ object EnvironmentSetupLogic {
 
     private fun buildCoreHealthProbeSnippet(): String {
         return """
-            if ! (cd /root >/dev/null 2>&1 && /bin/pwd >/dev/null 2>&1); then
+            if ! (cd /root && /bin/pwd >/dev/null); then
               printf '__OMNI_ENV__\t%s\tBROKEN\t%s\n' 'core' 'cwd syscall failed'
               exit 38
             fi

@@ -130,14 +130,19 @@ class ModelProviderProfileSummary {
     this.wireApi = 'chat_completions',
   });
 
-  factory ModelProviderProfileSummary.fromMap(Map<dynamic, dynamic>? map) {
+  factory ModelProviderProfileSummary.fromMap(
+    Map<dynamic, dynamic>? map, {
+    bool includeEditableHeaders = false,
+  }) {
     final apiKey = (map?['apiKey'] ?? '').toString();
     return ModelProviderProfileSummary(
       id: (map?['id'] ?? '').toString(),
       name: (map?['name'] ?? '').toString(),
       baseUrl: (map?['baseUrl'] ?? '').toString(),
       apiKey: apiKey,
-      customHeaders: const <String, String>{},
+      customHeaders: includeEditableHeaders
+          ? Map<String, String>.from(map?['customHeaders'] as Map? ?? const {})
+          : const <String, String>{},
       hasApiKey: map?['hasApiKey'] == true || apiKey.isNotEmpty,
       hasCustomHeaders: map?['hasCustomHeaders'] == true,
       sourceType: (map?['sourceType'] ?? 'custom').toString(),
@@ -466,6 +471,7 @@ class ModelAvailabilityCheckResult {
 }
 
 class ModelProviderConfigService {
+  static final _pendingProfileSaves = <String, Future<Map<dynamic, dynamic>?>>{};
   static const String _kOfficialProfileId = 'omnibot-official-ai';
   static const String _kOfficialSourceType = 'omnibot_official';
   static const String _kOfficialProfileName = 'OmniBot 官方 AI';
@@ -576,27 +582,30 @@ class ModelProviderConfigService {
     final normalizedCustomHeaders = customHeaders == null
         ? null
         : normalizeCustomHeaders(customHeaders);
-    final result = await AssistsMessageService.assistCore
+    final profileId = id?.trim() ?? '';
+    final write = AssistsMessageService.assistCore
         .invokeMethod<Map<dynamic, dynamic>>('saveModelProviderProfile', {
-          if (id != null && id.trim().isNotEmpty) 'id': id.trim(),
+          if (profileId.isNotEmpty) 'id': profileId,
           'name': name,
           'baseUrl': baseUrl,
-          if (apiKey != null) 'apiKey': apiKey,
+          'apiKey': ?apiKey,
           if (apiKey != null) 'replaceApiKey': true,
           if (clearApiKey) 'clearApiKey': true,
-          if (normalizedCustomHeaders != null)
-            'customHeaders': normalizedCustomHeaders,
+          'customHeaders': ?normalizedCustomHeaders,
           if (normalizedCustomHeaders != null) 'replaceCustomHeaders': true,
           if (clearCustomHeaders) 'clearCustomHeaders': true,
           'sourceType': sourceType,
           'protocolType': protocolType,
           'wireApi': resolvedWireApi,
         });
-    final saved = ModelProviderProfileSummary.fromMap(result);
-    // Provider credentials/endpoint changes invalidate the previously
-    // verified catalog. The next explicit refresh repopulates the same
-    // persisted Provider document with the new profile revision.
-    return saved;
+    if (profileId.isNotEmpty) _pendingProfileSaves[profileId] = write;
+    try {
+      return ModelProviderProfileSummary.fromMap(await write);
+    } finally {
+      if (identical(_pendingProfileSaves[profileId], write)) {
+        _pendingProfileSaves.remove(profileId);
+      }
+    }
   }
 
   static Future<ModelProviderProfilesPayload> deleteProfile(
@@ -612,11 +621,23 @@ class ModelProviderConfigService {
   static Future<ModelProviderProfileSummary> setEditingProfile(
     String profileId,
   ) async {
+    // Returning from the editor can start an autosave while the route pops.
+    final pending = _pendingProfileSaves[profileId.trim()];
+    if (pending != null) {
+      try {
+        await pending;
+      } catch (_) {
+        // Reopen with the last committed configuration after a failed write.
+      }
+    }
     final result = await AssistsMessageService.assistCore
         .invokeMethod<Map<dynamic, dynamic>>('setEditingModelProviderProfile', {
           'profileId': profileId,
         });
-    return ModelProviderProfileSummary.fromMap(result);
+    return ModelProviderProfileSummary.fromMap(
+      result,
+      includeEditableHeaders: true,
+    );
   }
 
   static Future<ModelProviderConfig> saveConfig({

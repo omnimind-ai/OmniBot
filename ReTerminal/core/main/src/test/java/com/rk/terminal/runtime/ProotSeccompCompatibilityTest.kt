@@ -80,4 +80,34 @@ class ProotSeccompCompatibilityTest {
         assertFalse(ProotSeccompCompatibility.isProotSeccompExecveFailure("sh: 1: git: not found"))
         assertFalse(ProotSeccompCompatibility.isProotSeccompExecveFailure(""))
     }
+
+    @Test
+    fun automaticModeKeepsDefaultWhenDirectoryOperationsWork() {
+        val mode = ProotSeccompCompatibility.selectAutomaticMode { compatibility ->
+            assertFalse(compatibility)
+            0 to ""
+        }
+        assertEquals(ProotSeccompCompatibility.Mode.DEFAULT, mode)
+    }
+
+    @Test
+    fun automaticModeRequiresCompatibilityProbeToPassBeforeSavingFallback() {
+        val defaultFailure = 1 to "proot error: execve(\"/bin/sh\"): Operation not permitted"
+        val works = ProotSeccompCompatibility.selectAutomaticMode { compatibility ->
+            if (compatibility) 0 to "" else defaultFailure
+        }
+        val broken = ProotSeccompCompatibility.selectAutomaticMode { compatibility ->
+            if (compatibility) 1 to "pwd: error retrieving current directory" else defaultFailure
+        }
+        assertEquals(ProotSeccompCompatibility.Mode.COMPATIBILITY, works)
+        assertNull(broken)
+    }
+
+    @Test
+    fun automaticModeDoesNotSwitchForUnrelatedFailure() {
+        assertNull(ProotSeccompCompatibility.selectAutomaticMode { compatibility ->
+            assertFalse(compatibility)
+            1 to "cd: can't cd to /root"
+        })
+    }
 }

@@ -10,6 +10,7 @@ import 'package:ui/services/model_provider_config_service.dart';
 import 'package:ui/services/model_vendor_catalog.dart';
 import 'package:ui/services/scene_model_config_service.dart';
 import 'package:ui/theme/app_colors.dart';
+import 'package:ui/theme/omni_theme_palette.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/common_app_bar.dart';
@@ -87,6 +88,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   final ScrollController _modelsScrollController = ScrollController();
 
   Timer? _autoSaveTimer;
+  Future<bool>? _profileSave;
 
   ModelProviderProfileSummary? _profile;
   late bool _isNew = widget.isNew;
@@ -105,6 +107,8 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   bool _isDisposing = false;
   bool _cachedIsEnglish = false;
   int _draftMutationRevision = 0;
+  int _savingDraftRevision = 0;
+  bool _waitingToPop = false;
 
   String _selectedPresetValue = 'openai_compatible';
   String _selectedSourceType = BuiltinOfficialProviderCatalog.customKey;
@@ -125,6 +129,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
 
   final List<EditableHeaderEntry> _customHeaderEntries =
       <EditableHeaderEntry>[];
+  Map<String, String> _savedCustomHeaders = const {};
   int _nextCustomHeaderEntryId = 0;
   String? _customHeadersErrorText;
 
@@ -396,12 +401,15 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   }
 
   void _onCustomHeadersChanged() {
-    if (_isSyncingControllers || _isLoading) return;
+    if (_isSyncingControllers) return;
+    _draftMutationRevision++;
     _customHeadersDirty = true;
     _updateCustomHeadersError();
-    if (mounted && _saveState != ProviderSaveState.saving) {
+    if (mounted) {
       setState(() {
-        _saveState = ProviderSaveState.dirty;
+        if (_saveState != ProviderSaveState.saving) {
+          _saveState = ProviderSaveState.dirty;
+        }
       });
     }
     if (_hasAnyProfileFieldFocus) {
@@ -436,12 +444,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     final hasCustomHeaderChanges =
         _customHeadersDirty &&
         nextCustomHeaders != null &&
-        !_stringMapsEqual(
-          nextCustomHeaders,
-          ModelProviderConfigService.normalizeCustomHeaders(
-            current.customHeaders,
-          ),
-        );
+        !_stringMapsEqual(nextCustomHeaders, _savedCustomHeaders);
     return _nameController.text.trim() != current.name ||
         nextBaseUrl != currentBaseUrl ||
         _apiKeyDirty ||
@@ -460,13 +463,16 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   }
 
   void _replaceCustomHeaderEntries(Map<String, String> headers) {
+    _savedCustomHeaders = ModelProviderConfigService.normalizeCustomHeaders(
+      headers,
+    );
     for (final entry in _customHeaderEntries) {
       entry.dispose();
     }
     _customHeaderEntries
       ..clear()
       ..addAll(
-        ModelProviderConfigService.normalizeCustomHeaders(headers).entries.map(
+        _savedCustomHeaders.entries.map(
           (entry) => _createHeaderEntry(name: entry.key, value: entry.value),
         ),
       );
@@ -504,6 +510,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     setState(() {
       final entry = _customHeaderEntries.removeAt(index);
       entry.dispose();
+      _draftMutationRevision++;
       _customHeadersDirty = true;
       _customHeadersErrorText = _computeCustomHeadersValidationError();
     });
@@ -585,6 +592,25 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
   Future<bool> _persistProfileDraft({
     bool silentToast = true,
     bool createIfNew = false,
+  }) {
+    final activeSave = _profileSave;
+    if (activeSave != null) {
+      _saveQueued = true;
+      return activeSave;
+    }
+    final save = _writeProfileDraft(
+      silentToast: silentToast,
+      createIfNew: createIfNew,
+    ).whenComplete(() {
+      _profileSave = null;
+    });
+    _profileSave = save;
+    return save;
+  }
+
+  Future<bool> _writeProfileDraft({
+    bool silentToast = true,
+    bool createIfNew = false,
   }) async {
     if (_isSelectingPreset || _readOnly) return !_readOnly;
     // New providers remain local drafts until a Save action admits creation.
@@ -601,11 +627,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     _autoSaveTimer?.cancel();
     _autoSaveTimer = null;
 
-    if (_isSavingProfile) {
-      _saveQueued = true;
-      return false;
-    }
-
+    final onProfileChanged = widget.onProfileChanged;
     do {
       _saveQueued = false;
       final current = _profile;
@@ -665,10 +687,11 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
 
       final nextApiKey = _apiKeyController.text.trim();
       final nextCustomHeaders =
-          _validatedCustomHeadersDraft() ??
-          ModelProviderConfigService.normalizeCustomHeaders(
-            current?.customHeaders ?? const <String, String>{},
-          );
+          _validatedCustomHeadersDraft() ?? _savedCustomHeaders;
+      final replaceHeaders = !_isChatGptProvider &&
+          (_isNew ||
+              (_customHeadersDirty &&
+                  !_stringMapsEqual(nextCustomHeaders, _savedCustomHeaders)));
       final currentBaseUrl = current == null
           ? ''
           : (ModelProviderConfigService.normalizeApiBase(current.baseUrl) ??
@@ -679,7 +702,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
           nextName == current.name &&
           nextBaseUrl == currentBaseUrl &&
           !_apiKeyDirty &&
-          !_customHeadersDirty &&
+          !replaceHeaders &&
           _selectedSourceType == current.sourceType &&
           _selectedProtocolType == current.protocolType &&
           _selectedWireApi == current.wireApi) {
@@ -693,6 +716,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
       }
 
       final targetId = current?.id ?? widget.reusePlaceholderProfileId;
+      _savingDraftRevision = _draftMutationRevision;
       if (_canUpdateUi) {
         setState(() {
           _isSavingProfile = true;
@@ -713,21 +737,28 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
               : null,
           clearApiKey: _isChatGptProvider,
           clearCustomHeaders: _isChatGptProvider,
-          customHeaders: !_isChatGptProvider && (_customHeadersDirty || _isNew)
-              ? nextCustomHeaders
-              : null,
+          customHeaders: replaceHeaders ? nextCustomHeaders : null,
           sourceType: _selectedSourceType,
           protocolType: _selectedProtocolType,
           wireApi: _selectedWireApi,
         );
         _profile = saved;
         _isNew = false;
-        _apiKeyDirty = false;
-        _customHeadersDirty = false;
-        widget.onProfileChanged?.call(saved);
+        if (replaceHeaders) _savedCustomHeaders = nextCustomHeaders;
+        if (_canUpdateUi) {
+          _apiKeyDirty =
+              _apiKeyDirty && _apiKeyController.text.trim() != nextApiKey;
+          final headers = _validatedCustomHeadersDraft();
+          _customHeadersDirty =
+              _customHeadersDirty &&
+              (headers == null || !_stringMapsEqual(headers, _savedCustomHeaders));
+        }
+        onProfileChanged?.call(saved);
         if (!_canUpdateUi) return true;
         setState(() {
-          _saveState = ProviderSaveState.saved;
+          _saveState = _shouldAutoSaveDraft
+              ? ProviderSaveState.dirty
+              : ProviderSaveState.saved;
           _saveErrorDiagnosis = null;
         });
         if (!silentToast) {
@@ -853,6 +884,9 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
 
     final current = _profile;
     final targetId = current?.id ?? widget.reusePlaceholderProfileId;
+    final nextCustomHeaders = !isChatGptSelection && _customHeadersDirty
+        ? _validatedCustomHeadersDraft()
+        : null;
     try {
       final saved = await ModelProviderConfigService.saveProfile(
         id: targetId,
@@ -865,9 +899,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
             : null,
         clearApiKey: isChatGptSelection,
         clearCustomHeaders: isChatGptSelection,
-        customHeaders: !isChatGptSelection && _customHeadersDirty
-            ? (_validatedCustomHeadersDraft() ?? const <String, String>{})
-            : null,
+        customHeaders: nextCustomHeaders,
         sourceType: selected.sourceType,
         protocolType: nextProtocolType,
         wireApi: nextWireApi,
@@ -892,6 +924,8 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
           _remoteModels = const [];
           _modelFetchErrorDiagnosis = null;
         });
+      } else if (nextCustomHeaders != null) {
+        _savedCustomHeaders = nextCustomHeaders;
       }
       _apiKeyDirty = false;
       _customHeadersDirty = false;
@@ -1675,6 +1709,7 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     );
     if (deleted && mounted) {
       widget.onProfileDeleted?.call(current.id);
+      _profile = null;
       Navigator.of(context).maybePop();
     }
   }
@@ -1741,6 +1776,25 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
     });
   }
 
+  bool get _hasNewerDraftDuringSave =>
+      _isSavingProfile &&
+      _savingDraftRevision != _draftMutationRevision &&
+      _shouldAutoSaveDraft;
+
+  Future<void> _saveNewerDraftAndPop() async {
+    if (_waitingToPop) return;
+    _waitingToPop = true;
+    final route = ModalRoute.of(context);
+    try {
+      final saved = await _persistProfileDraft(silentToast: true);
+      if (saved && mounted && route?.isCurrent == true) {
+        Navigator.of(context).pop();
+      }
+    } finally {
+      _waitingToPop = false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final palette = context.omniPalette;
@@ -1749,6 +1803,20 @@ class _ModelProviderDetailPageState extends State<ModelProviderDetailPage>
         ? _text('模型 ($modelCount)', 'Models ($modelCount)')
         : _text('模型', 'Models');
 
+    return PopScope<void>(
+      canPop: !_hasNewerDraftDuringSave,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop && _shouldAutoSaveDraft) {
+          unawaited(_persistProfileDraft(silentToast: true));
+        } else if (!didPop && _hasNewerDraftDuringSave) {
+          unawaited(_saveNewerDraftAndPop());
+        }
+      },
+      child: _buildScaffold(palette, modelsTabLabel),
+    );
+  }
+
+  Widget _buildScaffold(OmniThemePalette palette, String modelsTabLabel) {
     return Scaffold(
       backgroundColor: palette.pageBackground,
       appBar: CommonAppBar(

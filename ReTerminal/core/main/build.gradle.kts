@@ -2,11 +2,9 @@ import java.math.BigInteger
 import java.net.URI
 import java.io.RandomAccessFile
 import java.security.MessageDigest
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -39,7 +37,6 @@ fun buildConfigString(value: String): String = "\"${value.replace("\\", "\\\\").
 
 android {
     namespace = "com.rk.terminal"
-    android.buildFeatures.buildConfig = true
     compileSdk = 37
 
     defaultConfig {
@@ -55,8 +52,8 @@ android {
 
     sourceSets {
         getByName("main") {
-            jniLibs.srcDir(layout.buildDirectory.dir("generated/jniLibs/embeddedTerminalRuntime").get().asFile)
-            assets.srcDir(layout.buildDirectory.dir("generated/assets/embeddedTerminalRuntime").get().asFile)
+            jniLibs.directories.add(layout.buildDirectory.dir("generated/jniLibs/embeddedTerminalRuntime").get().asFile.path)
+            assets.directories.add(layout.buildDirectory.dir("generated/assets/embeddedTerminalRuntime").get().asFile.path)
         }
     }
 
@@ -86,6 +83,7 @@ android {
     }
 
     buildFeatures {
+        buildConfig = true
         viewBinding = true
         compose = true
     }
@@ -95,12 +93,6 @@ android {
     }
 
 
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
-    }
 }
 
 fun sha256(file: File): String {
@@ -222,7 +214,7 @@ fun copyRuntimeFile(source: File, target: File, executable: Boolean) {
     }
 }
 
-val prepareEmbeddedTerminalRuntime by tasks.registering {
+val prepareEmbeddedTerminalRuntime = tasks.register("prepareEmbeddedTerminalRuntime") {
     val outputDir = layout.buildDirectory.dir("generated/assets/embeddedTerminalRuntime/embedded-terminal-runtime")
     val jniOutputDir = layout.buildDirectory.dir("generated/jniLibs/embeddedTerminalRuntime")
     inputs.file(prootDebFile).withPropertyName("prootDebFile")

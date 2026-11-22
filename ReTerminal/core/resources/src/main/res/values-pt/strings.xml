@@ -8,8 +8,10 @@
     <string name="ubuntu_desc">Ubuntu Linux</string>
     <string name="android_desc">Shell Android do ReTerminal</string>
     <string name="customizations">Personalizações</string>
-    <string name="seccomp">SECCOMP</string>
-    <string name="seccomp_desc">Corrigir erros de permissão/syscall do PRoot</string>
+    <string name="proot_mode">Modo do PRoot</string>
+    <string name="proot_mode_auto">Automático</string>
+    <string name="proot_mode_default">Padrão (com aceleração seccomp)</string>
+    <string name="proot_mode_compatibility">Compatibilidade (sem aceleração seccomp)</string>
     <string name="all_file_access">Acesso total a arquivos</string>
     <string name="all_file_access_desc">Habilitar acesso a /sdcard e /storage</string>
     <string name="text_size">Tamanho do texto</string>

@@ -148,7 +148,7 @@ npx @thuocean/codex-bridge
 
 ### 环境要求
 
-- Flutter SDK `3.47.2+`
+- Flutter SDK `3.50.1+`
 - JDK `17+`
 - Node.js `20.19+` 或 `22.12+`、pnpm `10.28.0`（用于 WebUI 开发）
 

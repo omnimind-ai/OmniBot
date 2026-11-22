@@ -5,6 +5,7 @@ import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.termux.TermuxCommandRunner
 import cn.com.omnimind.bot.termux.TermuxLiveEnvironmentResult
 import com.ai.assistance.operit.terminal.TerminalManager
+import com.ai.assistance.operit.terminal.setup.EnvironmentSetupLogic
 import com.rk.terminal.runtime.TerminalDistribution
 import com.rk.settings.Settings
 import kotlinx.coroutines.CompletableDeferred
@@ -327,14 +328,15 @@ object EmbeddedTerminalInitCoordinator {
             explicitProgress = 0.98
         )
         val probe = manager.executeHiddenCommand(
-            command = "true",
+            command = EnvironmentSetupLogic.buildInventoryProbeCommand(emptyList()),
             executorKey = "distribution-switch-${distribution.id}",
             timeoutMs = 60_000L,
             distribution = distribution
         )
         if (!probe.isOk || probe.exitCode != 0) {
             val details = probe.error.ifBlank {
-                probe.output.trim().takeLast(800).ifBlank { "运行时验证未通过。" }
+                EmbeddedTerminalRuntime.sanitizeTerminalNoise(probe.output).trim().takeLast(800)
+                    .ifBlank { "运行时验证未通过（退出码 ${probe.exitCode}）。" }
             }
             return failure("${distribution.displayName} 终端环境验证失败：$details")
         }

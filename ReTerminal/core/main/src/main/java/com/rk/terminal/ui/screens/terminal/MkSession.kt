@@ -145,7 +145,7 @@ object MkSession {
 
             ProotSeccompCompatibility.applyEnvironmentList(
                 env,
-                ProotSeccompCompatibility.isSeccompCompatEnabled(this)
+                ProotSeccompCompatibility.isSeccompCompatEnabled(this, distribution)
             )
 
             val args: Array<String>
