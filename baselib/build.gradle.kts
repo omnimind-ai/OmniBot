@@ -1,10 +1,7 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
     alias(libs.plugins.android.library)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.serialization)
-    id("kotlin-kapt") // 添加kapt插件以支持注解处理
+    alias(libs.plugins.android.legacy.kapt)
 }
 
 android {
@@ -36,12 +33,6 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_11)
     }
 }
 

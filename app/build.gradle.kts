@@ -1,10 +1,8 @@
 import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
 }
@@ -83,7 +81,7 @@ fun webChatPnpmCommand(arguments: String): List<String> = when {
     else -> listOf("pnpm") + arguments.split(" ")
 }
 
-val installWebChatDependencies by tasks.registering(Exec::class) {
+val installWebChatDependencies = tasks.register<Exec>("installWebChatDependencies") {
     group = "web chat"
     description = "Install the locked React WebChat build dependencies."
     workingDir(webChatSourceDir)
@@ -92,7 +90,7 @@ val installWebChatDependencies by tasks.registering(Exec::class) {
     outputs.file(webChatInstallMarker)
 }
 
-val buildWebChatBundle by tasks.registering(Exec::class) {
+val buildWebChatBundle = tasks.register<Exec>("buildWebChatBundle") {
     group = "web chat"
     description = "Build the React WebChat into a static Vite bundle."
     dependsOn(installWebChatDependencies)
@@ -110,7 +108,7 @@ val buildWebChatBundle by tasks.registering(Exec::class) {
     outputs.dir(webChatDistDir)
 }
 
-val syncWebChatBundle by tasks.registering(Copy::class) {
+val syncWebChatBundle = tasks.register<Copy>("syncWebChatBundle") {
     group = "web chat"
     description = "Copy only the built React WebChat static files into Android assets."
     dependsOn(buildWebChatBundle)
@@ -130,7 +128,7 @@ fun piAcpNpmCommand(arguments: String): List<String> = when {
     hostOs.contains("mac") -> listOf("zsh", "-lc", "npm $arguments")
     else -> listOf("npm") + arguments.split(" ")
 }
-val installPiAcpDependencies by tasks.registering(Exec::class) {
+val installPiAcpDependencies = tasks.register<Exec>("installPiAcpDependencies") {
     group = "agent runtime"
     description = "Install locked Pi adapter build dependencies without lifecycle scripts."
     workingDir(piAcpSourceDir)
@@ -138,7 +136,7 @@ val installPiAcpDependencies by tasks.registering(Exec::class) {
     inputs.files(File(piAcpSourceDir, "package.json"), File(piAcpSourceDir, "package-lock.json"))
     outputs.file(File(piAcpSourceDir, "node_modules/.package-lock.json"))
 }
-val verifyPiAcpBundle by tasks.registering(Exec::class) {
+val verifyPiAcpBundle = tasks.register<Exec>("verifyPiAcpBundle") {
     group = "agent runtime"
     description = "Reject an APK whose bundled Pi adapter differs from its source or lockfile."
     dependsOn(installPiAcpDependencies)
@@ -157,7 +155,7 @@ val verifyPiAcpBundle by tasks.registering(Exec::class) {
     doLast { marker.parentFile.mkdirs(); marker.writeText("verified\n") }
 }
 
-val syncPluginAssets by tasks.registering(Sync::class) {
+val syncPluginAssets = tasks.register<Sync>("syncPluginAssets") {
     group = "plugin packaging"
     description = "Generate the packaged plugin catalog for the selected build profile."
     inputs.file(pluginCatalogFile)
@@ -375,11 +373,8 @@ android {
 
     sourceSets {
         getByName("main") {
-            assets.srcDirs(
-                "src/main/assets",
-                "../skills",
-                pluginAssetsRootDir,
-                webChatAssetsRootDir
+            assets.directories.addAll(
+                listOf("../skills", pluginAssetsRootDir.path, webChatAssetsRootDir.path)
             )
         }
     }
@@ -389,12 +384,6 @@ android {
         lintConfig = file("../lint.xml")
         // 将错误视为警告继续构建
         abortOnError = false
-    }
-}
-
-kotlin {
-    compilerOptions {
-        jvmTarget.set(JvmTarget.JVM_17)
     }
 }
 

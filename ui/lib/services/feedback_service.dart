@@ -83,7 +83,8 @@ class FeedbackService {
         files.map(
           (file) async => FeedbackAttachment(
             name: file.name,
-            size: await file.length(),
+            size: await file.length() ??
+                (throw const FeedbackException(FeedbackFailure.unreadableFile)),
             identifier: file.uri.toString(),
             readBytes: file.readAsByteStream,
           ),
