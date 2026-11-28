@@ -47,3 +47,37 @@ reports/
 
 # Optional local on-device model checkout is not part of the host app.
 /third_party/omniinfer/
+
+# Local T3 orchestration scratchpad
+/.t3/
+
+# Dart / Flutter package artifacts (including packages/* on feature branches)
+.dart_tool/
+build/
+/packages/*/pubspec.lock
+
+# Node / TypeScript / Electron build & runtime artifacts (e.g. apps/, services/)
+dist/
+dist-exe/
+dist-packages/
+dist-electron/
+.electron-runtime/
+.tanstack/
+.turbo/
+.bun/
+.vite/
+.vite-temp/
+.vitest-*
+*.tsbuildinfo
+/apps/desktop/native/**/target/
+/apps/desktop/**/.playwright/
+/apps/desktop/**/playwright-report/
+/apps/desktop/**/__screenshots__/
+/apps/desktop/**/release/
+/apps/desktop/**/release-mock/
+/apps/desktop/**/.logs/
+/apps/desktop/**/*.log
+/apps/desktop/**/.env
+/apps/desktop/**/.env.*
+!/apps/desktop/**/.env.example
+/apps/desktop/packages/ssh/.ssh-launcher-test-*/
