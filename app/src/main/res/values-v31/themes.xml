@@ -1,12 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-   <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.Light.NoActionBar">
+   <style name="Theme.OmnibotApp.Splash.Light" parent="android:Theme.Material.Light.NoActionBar">
        <!-- Android 12+ Splash Screen API 配置 -->
        <item name="android:windowSplashScreenBackground">#F4F7FB</item>
        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_animated</item>
        <item name="android:windowSplashScreenIconBackgroundColor">#F4F7FB</item>
        <item name="android:windowSplashScreenAnimationDuration">900</item>
-      
+
        <!-- 主窗口：使用与低版本相同的背景 -->
        <item name="android:windowBackground">@drawable/splash_background</item>
        <item name="android:statusBarColor">#F4F7FB</item>
@@ -29,5 +29,55 @@
        <item name="android:windowLightStatusBar">false</item>
        <item name="android:windowLightNavigationBar">false</item>
        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Dot.Light" parent="Theme.OmnibotApp.Splash.Light">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_dot_animated</item>
+       <item name="android:windowBackground">@drawable/splash_background_dot</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Dot.Dark" parent="Theme.OmnibotApp.Splash.Dark">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_dot_animated_dark</item>
+       <item name="android:windowBackground">@drawable/splash_background_dot_dark</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Cursor.Light" parent="Theme.OmnibotApp.Splash.Light">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_cursor_animated</item>
+       <item name="android:windowBackground">@drawable/splash_background_cursor</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Cursor.Dark" parent="Theme.OmnibotApp.Splash.Dark">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_cursor_animated_dark</item>
+       <item name="android:windowBackground">@drawable/splash_background_cursor_dark</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Wave.Light" parent="Theme.OmnibotApp.Splash.Light">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_wave_animated</item>
+       <item name="android:windowBackground">@drawable/splash_background_wave</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Wave.Dark" parent="Theme.OmnibotApp.Splash.Dark">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_wave_animated_dark</item>
+       <item name="android:windowBackground">@drawable/splash_background_wave_dark</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Open.Light" parent="Theme.OmnibotApp.Splash.Light">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_open_animated</item>
+       <item name="android:windowBackground">@drawable/splash_background_open</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Open.Dark" parent="Theme.OmnibotApp.Splash.Dark">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_open_animated_dark</item>
+       <item name="android:windowBackground">@drawable/splash_background_open_dark</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Classic.Light" parent="Theme.OmnibotApp.Splash.Light">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_classic_animated</item>
+       <item name="android:windowBackground">@drawable/splash_background_classic</item>
+   </style>
+
+   <style name="Theme.OmnibotApp.Splash.Classic.Dark" parent="Theme.OmnibotApp.Splash.Dark">
+       <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_logo_classic_animated_dark</item>
+       <item name="android:windowBackground">@drawable/splash_background_classic_dark</item>
    </style>
 </resources>

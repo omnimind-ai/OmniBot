@@ -82,6 +82,7 @@ class MainActivity : FlutterActivity() {
             splashScreen.setOnExitAnimationListener { splashView -> splashView.remove() }
         }
         applyEdgeToEdgeWindow()
+        AppIconManager.applyTaskDescription(this)
         TaskRuntimeSettings.attachActivity(this)
         TaskRuntimeSettings.consumeTaskCompletionNotificationIntent(this, intent)
 

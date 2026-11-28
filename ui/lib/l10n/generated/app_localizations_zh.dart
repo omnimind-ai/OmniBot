@@ -247,6 +247,36 @@ class AppLocalizationsZh extends AppLocalizations {
   String get appearanceTitle => '外观设置';
 
   @override
+  String get appearanceAppIconTitle => '应用图标';
+
+  @override
+  String get appearanceAppIconSubtitle => '同步更换桌面图标、开屏动画和应用内图标。';
+
+  @override
+  String get appearanceAppIconSparkle => '灵光星芒';
+
+  @override
+  String get appearanceAppIconDot => '在线圆点';
+
+  @override
+  String get appearanceAppIconCursor => '终端光标';
+
+  @override
+  String get appearanceAppIconWave => '倾听声波';
+
+  @override
+  String get appearanceAppIconOpen => '纯净断口';
+
+  @override
+  String get appearanceAppIconClassic => '经典侧耳';
+
+  @override
+  String get appearanceAppIconDefault => '默认';
+
+  @override
+  String get appearanceAppIconUpdateFailed => '无法更换应用图标，请重试。';
+
+  @override
   String get appearanceAutoSaving => '正在自动保存…';
 
   @override

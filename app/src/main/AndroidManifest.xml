@@ -122,10 +122,13 @@
                 <action android:name="android.service.notification.NotificationListenerService" />
             </intent-filter>
         </service>
-        <!-- 启动页 Activity -->
+        <!-- 启动页 Activity（官方默认：方案 C 灵光星芒） -->
         <activity
             android:name=".activity.LauncherActivity"
+            android:enabled="true"
             android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:roundIcon="@mipmap/ic_launcher_round"
             android:resizeableActivity="true"
             android:theme="@style/Theme.OmnibotApp.Splash">
             <intent-filter>
@@ -134,6 +137,76 @@
             </intent-filter>
         </activity>
 
+        <!-- 可选桌面图标与开屏动画入口 -->
+        <activity
+            android:name=".activity.LauncherDotActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_dot"
+            android:roundIcon="@mipmap/ic_launcher_dot_round"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.OmnibotApp.Splash.Dot">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".activity.LauncherCursorActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_cursor"
+            android:roundIcon="@mipmap/ic_launcher_cursor_round"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.OmnibotApp.Splash.Cursor">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".activity.LauncherWaveActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_wave"
+            android:roundIcon="@mipmap/ic_launcher_wave_round"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.OmnibotApp.Splash.Wave">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".activity.LauncherOpenActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_open"
+            android:roundIcon="@mipmap/ic_launcher_open_round"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.OmnibotApp.Splash.Open">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".activity.LauncherClassicActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_classic"
+            android:roundIcon="@mipmap/ic_launcher_classic_round"
+            android:resizeableActivity="true"
+            android:theme="@style/Theme.OmnibotApp.Splash.Classic">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
 
         <activity
             android:name=".activity.MainActivity"

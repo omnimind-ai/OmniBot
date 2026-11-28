@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from docs/design/app-icons/cursor.svg. Run scripts/generate_splash_animation.py to update. -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#F4F7FB" />
+        </shape>
+    </item>
+    <item android:width="@dimen/splash_logo_static_size" android:height="@dimen/splash_logo_static_size" android:gravity="center" android:drawable="@drawable/splash_logo_cursor_static" />
+</layer-list>

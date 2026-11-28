@@ -265,6 +265,38 @@ class AppLocalizationsEn extends AppLocalizations {
   String get appearanceTitle => 'Appearance';
 
   @override
+  String get appearanceAppIconTitle => 'App Icon';
+
+  @override
+  String get appearanceAppIconSubtitle =>
+      'Change the launcher icon, splash animation, and in-app icon together.';
+
+  @override
+  String get appearanceAppIconSparkle => 'AI Sparkle';
+
+  @override
+  String get appearanceAppIconDot => 'Live Dot';
+
+  @override
+  String get appearanceAppIconCursor => 'Terminal Cursor';
+
+  @override
+  String get appearanceAppIconWave => 'Listening Wave';
+
+  @override
+  String get appearanceAppIconOpen => 'Open Ring';
+
+  @override
+  String get appearanceAppIconClassic => 'Classic Ear';
+
+  @override
+  String get appearanceAppIconDefault => 'Default';
+
+  @override
+  String get appearanceAppIconUpdateFailed =>
+      'Couldn’t change the app icon. Try again.';
+
+  @override
   String get appearanceAutoSaving => 'Saving changes…';
 
   @override

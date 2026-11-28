@@ -7,8 +7,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/features/home/pages/settings/background_setting_page.dart';
+import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/theme/app_icon_controller.dart';
+import 'package:ui/theme/app_icon_variant.dart';
 import 'package:ui/theme/app_theme.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
@@ -29,11 +32,13 @@ class _SvgTestAssetBundle extends CachingAssetBundle {
 
   @override
   Future<ByteData> load(String key) async {
+    if (!key.endsWith('.svg')) return rootBundle.load(key);
     return ByteData.view(_svgBytes.buffer);
   }
 
   @override
   Future<String> loadString(String key, {bool cache = true}) async {
+    if (!key.endsWith('.svg')) return rootBundle.loadString(key, cache: cache);
     return utf8.decode(_svgBytes);
   }
 }
@@ -44,6 +49,7 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
     await StorageService.init();
+    AppIconController.syncFromStorage();
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
   });
 
@@ -51,11 +57,16 @@ void main() {
     AppBackgroundService.notifier.value = AppBackgroundConfig.defaults;
   });
 
-  Widget buildTestApp(Widget child) {
+  Widget buildTestApp(Widget child, {Locale? locale}) {
     return ProviderScope(
       child: Consumer(
         builder: (context, ref, _) {
           return MaterialApp(
+            locale: locale,
+            localizationsDelegates: locale == null
+                ? null
+                : AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
             theme: AppTheme.lightTheme,
             darkTheme: AppTheme.darkTheme,
             themeMode: ref.watch(appThemeModeProvider).materialThemeMode,
@@ -68,6 +79,105 @@ void main() {
       ),
     );
   }
+
+  Finder iconChoice(AppIconVariant variant) =>
+      find.byKey(ValueKey('appearance-app-icon-${variant.storageValue}'));
+
+  testWidgets('shows six icons and persists an Android launcher change', (
+    tester,
+  ) async {
+    const channel = MethodChannel('cn.com.omnimind.bot/app_state');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final calls = <MethodCall>[];
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      calls.add(call);
+      return 'wave';
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    await tester.pumpWidget(
+      buildTestApp(const BackgroundSettingPage(), locale: const Locale('en')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('App Icon'), findsOneWidget);
+    expect(find.text('Default'), findsOneWidget);
+    const labels = [
+      'AI Sparkle',
+      'Live Dot',
+      'Terminal Cursor',
+      'Listening Wave',
+      'Open Ring',
+      'Classic Ear',
+    ];
+    for (final (index, variant) in AppIconVariant.values.indexed) {
+      final choice = iconChoice(variant);
+      expect(
+        tester.widget<Semantics>(choice).properties.selected,
+        variant.isDefault,
+      );
+      expect(
+        find.descendant(of: choice, matching: find.text(labels[index])),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: choice,
+          matching: find.image(AssetImage(variant.assetPath)),
+        ),
+        findsOneWidget,
+      );
+    }
+    expect(StorageService.getAppIconVariant(), AppIconVariant.sparkle);
+
+    final wave = iconChoice(AppIconVariant.wave);
+    await tester.ensureVisible(wave);
+    await tester.pumpAndSettle();
+    await tester.tap(wave);
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<Semantics>(wave).properties.selected, isTrue);
+    expect(
+      tester
+          .widget<Semantics>(iconChoice(AppIconVariant.sparkle))
+          .properties
+          .selected,
+      isFalse,
+    );
+    expect(StorageService.getString(StorageService.kAppIconVariantKey), 'wave');
+    expect(calls.single.method, 'setAppIconVariant');
+    expect(calls.single.arguments, {'variant': 'wave'});
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('keeps the previous selection when Android rejects a change', (
+    tester,
+  ) async {
+    const channel = MethodChannel('cn.com.omnimind.bot/app_state');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    var attempts = 0;
+    messenger.setMockMethodCallHandler(channel, (_) async {
+      attempts++;
+      throw PlatformException(code: 'APP_ICON_UPDATE_FAILED');
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+    await tester.pumpWidget(buildTestApp(const BackgroundSettingPage()));
+    await tester.pumpAndSettle();
+
+    final dot = iconChoice(AppIconVariant.dot);
+    await tester.ensureVisible(dot);
+    await tester.pumpAndSettle();
+    await tester.tap(dot);
+    await tester.pumpAndSettle();
+
+    expect(attempts, 1);
+    expect(find.text('无法更换应用图标，请重试。'), findsOneWidget);
+    expect(tester.widget<Semantics>(dot).properties.selected, isFalse);
+    expect(StorageService.getAppIconVariant(), AppIconVariant.sparkle);
+    expect(AppIconController.currentNotifier.value, AppIconVariant.sparkle);
+  });
 
   Future<void> scrollTo(
     WidgetTester tester,
@@ -146,6 +256,7 @@ void main() {
             ),
             child: BackgroundSettingPage(),
           ),
+          locale: const Locale('pt'),
         ),
       );
       await tester.pumpAndSettle();
@@ -164,6 +275,15 @@ void main() {
       await tester.ensureVisible(quality);
       await tester.pumpAndSettle();
       expect(quality.hitTestable(), findsOneWidget);
+      expect(find.text('Ícone do app'), findsOneWidget);
+      expect(find.text('Padrão'), findsOneWidget);
+      expect(find.text('Onda Sonora'), findsOneWidget);
+      for (final variant in AppIconVariant.values) {
+        final choice = iconChoice(variant);
+        await tester.ensureVisible(choice);
+        await tester.pumpAndSettle();
+        expect(choice.hitTestable(), findsOneWidget);
+      }
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     },

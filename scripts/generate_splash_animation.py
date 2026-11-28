@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Export the splash SVG's paths and timeline to Android splash vectors.
+"""Export the splash SVGs' paths and timeline to Android splash vectors.
 
 Run from any directory with Python 3 (standard library only). Keep geometry and
-keyframes in docs/design/splash-logo.svg. Logo fills use the global Android brand
-tokens; the ear cutout keeps the startup background color in each variant.
+keyframes in docs/design/splash-logo.svg (default variant) and
+docs/design/app-icons/<variant>.svg. Logo fills/strokes use the global Android
+brand tokens; background cutouts keep the startup background color in each
+variant.
 """
 
 from pathlib import Path
@@ -13,23 +15,35 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 RES = ROOT / "app/src/main/res"
+DESIGN = ROOT / "docs/design"
 ANDROID = "http://schemas.android.com/apk/res/android"
 AAPT = "http://schemas.android.com/aapt"
 SVG = "{http://www.w3.org/2000/svg}"
 ET.register_namespace("android", ANDROID)
 ET.register_namespace("aapt", AAPT)
 
+# (variant_id, svg_relative_path, resource_infix)
+# The official default variant ("sparkle") owns the unsuffixed splash resources.
+VARIANTS = [
+    ("sparkle", DESIGN / "splash-logo.svg", ""),
+    ("dot", DESIGN / "app-icons/dot.svg", "_dot"),
+    ("cursor", DESIGN / "app-icons/cursor.svg", "_cursor"),
+    ("wave", DESIGN / "app-icons/wave.svg", "_wave"),
+    ("open", DESIGN / "app-icons/open.svg", "_open"),
+    ("classic", DESIGN / "app-icons/classic.svg", "_classic"),
+]
+
 
 def attrs(**values):
     return {f"{{{ANDROID}}}{key}": str(value) for key, value in values.items()}
 
 
-def write_xml(path, element):
+def write_xml(path, element, source_note="docs/design/splash-logo.svg"):
     ET.indent(element, space="    ")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         '<?xml version="1.0" encoding="utf-8"?>\n'
-        '<!-- Generated from docs/design/splash-logo.svg. '
+        f'<!-- Generated from {source_note}. '
         'Run scripts/generate_splash_animation.py to update. -->\n'
         + ET.tostring(element, encoding="unicode") + "\n"
     )
@@ -81,23 +95,61 @@ def export_group(source, target, palette):
             group = ET.SubElement(target, "group", attrs(**properties))
             export_group(child, group, palette)
         elif child.tag == f"{SVG}path":
-            ET.SubElement(target, "path", attrs(
-                fillColor=palette.get(child.get("fill"), child.get("fill")),
-                pathData=child.get("d"),
-            ))
+            path_attrs = {"pathData": child.get("d")}
+            fill = child.get("fill")
+            if fill and fill != "none":
+                path_attrs["fillColor"] = palette.get(fill, fill)
+            stroke = child.get("stroke")
+            if stroke and stroke != "none":
+                path_attrs["strokeColor"] = palette.get(stroke, stroke)
+            if child.get("stroke-width"):
+                path_attrs["strokeWidth"] = child.get("stroke-width")
+            if child.get("stroke-linecap"):
+                path_attrs["strokeLineCap"] = child.get("stroke-linecap")
+            if child.get("stroke-linejoin"):
+                path_attrs["strokeLineJoin"] = child.get("stroke-linejoin")
+            ET.SubElement(target, "path", attrs(**path_attrs))
 
 
-def main():
-    source = ET.parse(ROOT / "docs/design/splash-logo.svg").getroot()
-    targets = {
-        group.get("id"): export_animation(group)
-        for group in source.iter(f"{SVG}g")
-        if group.find(f"{SVG}animateTransform") is not None
-    }
+def export_splash_background(infix, dark, source_note):
+    layer = ET.Element("layer-list")
+    bg_item = ET.SubElement(layer, "item")
+    shape = ET.SubElement(bg_item, "shape", attrs(shape="rectangle"))
+    ET.SubElement(shape, "solid", attrs(color="#151617" if dark else "#F4F7FB"))
+    suffix = "_dark" if dark else ""
+    ET.SubElement(
+        layer,
+        "item",
+        attrs(
+            width="@dimen/splash_logo_static_size",
+            height="@dimen/splash_logo_static_size",
+            gravity="center",
+            drawable=f"@drawable/splash_logo{infix}_static{suffix}",
+        ),
+    )
+    write_xml(
+        RES / "drawable" / f"splash_background{infix}{suffix}.xml",
+        layer,
+        source_note=source_note,
+    )
+
+
+def export_variant(svg_path, infix, export_animators=False):
+    source = ET.parse(svg_path).getroot()
+    source_note = svg_path.relative_to(ROOT).as_posix()
+    targets = {}
+    for group in source.iter(f"{SVG}g"):
+        if group.find(f"{SVG}animateTransform") is not None:
+            group_id = group.get("id")
+            if export_animators:
+                targets[group_id] = export_animation(group)
+            else:
+                targets[group_id] = f"splash_{group_id}"
+
     min_x, min_y, width, height = source.get("viewBox").split()
-    for suffix, palette in [
-        ("", {"#2C7FEB": "@color/omni_brand_primary_light"}),
-        ("_dark", {
+    for suffix, dark, palette in [
+        ("", False, {"#2C7FEB": "@color/omni_brand_primary_light"}),
+        ("_dark", True, {
             "#2C7FEB": "@color/omni_brand_primary_dark",
             "#F4F7FB": "#151617",
         }),
@@ -117,7 +169,11 @@ def main():
         export_group(source, content, palette)
         for name, animation in targets.items():
             ET.SubElement(drawable, "target", attrs(name=name, animation=f"@animator/{animation}"))
-        write_xml(RES / "drawable" / f"splash_logo_animated{suffix}.xml", drawable)
+        write_xml(
+            RES / "drawable" / f"splash_logo{infix}_animated{suffix}.xml",
+            drawable,
+            source_note=source_note,
+        )
 
         # The legacy PNGs use the complete 1152px canvas at xxxhdpi (288dp).
         # Undo the animated SVG's inset without changing the static layer's
@@ -131,7 +187,17 @@ def main():
             viewportHeight=f"{static_height:g}",
         ))
         export_group(source, static, palette)
-        write_xml(RES / "drawable" / f"splash_logo_static{suffix}.xml", static)
+        write_xml(
+            RES / "drawable" / f"splash_logo{infix}_static{suffix}.xml",
+            static,
+            source_note=source_note,
+        )
+        export_splash_background(infix, dark, source_note)
+
+
+def main():
+    for index, (_variant_id, svg_path, infix) in enumerate(VARIANTS):
+        export_variant(svg_path, infix, export_animators=(index == 0))
 
 
 if __name__ == "__main__":

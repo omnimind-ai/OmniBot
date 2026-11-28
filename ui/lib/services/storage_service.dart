@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/l10n/app_language_mode.dart';
 import 'package:ui/models/chat_startup_behavior.dart';
 import 'package:ui/models/habitual_hand.dart';
+import 'package:ui/theme/app_icon_variant.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 
 /// SharedPreferences 统一管理类。
@@ -163,6 +164,7 @@ class StorageService {
   static const String kChatStartupBehaviorKey = 'chat_startup_behavior';
   static const String kHabitualHandKey = 'habitual_hand';
   static const String kThemeOptionKey = 'theme_option';
+  static const String kAppIconVariantKey = 'app_icon_variant';
   static const String kLanguageOptionKey = 'language_option';
   static const String kMcpLocalServiceEnabledKey = 'mcp_local_service_enabled';
   static const String kWorkspaceMemoryConfiguredKey =
@@ -310,6 +312,15 @@ class StorageService {
 
   static Future<void> setThemeMode(AppThemeMode mode) async {
     await setString(kThemeOptionKey, mode.storageValue);
+  }
+
+  static AppIconVariant getAppIconVariant() {
+    final value = _prefs?.get(kAppIconVariantKey);
+    return AppIconVariant.fromStorageValue(value is String ? value : null);
+  }
+
+  static Future<bool> setAppIconVariant(AppIconVariant variant) {
+    return setString(kAppIconVariantKey, variant.storageValue);
   }
 
   static AppLanguageMode getLanguageMode() {

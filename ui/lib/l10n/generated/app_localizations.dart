@@ -562,6 +562,66 @@ abstract class AppLocalizations {
   /// **'外观设置'**
   String get appearanceTitle;
 
+  /// No description provided for @appearanceAppIconTitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'应用图标'**
+  String get appearanceAppIconTitle;
+
+  /// No description provided for @appearanceAppIconSubtitle.
+  ///
+  /// In zh, this message translates to:
+  /// **'同步更换桌面图标、开屏动画和应用内图标。'**
+  String get appearanceAppIconSubtitle;
+
+  /// No description provided for @appearanceAppIconSparkle.
+  ///
+  /// In zh, this message translates to:
+  /// **'灵光星芒'**
+  String get appearanceAppIconSparkle;
+
+  /// No description provided for @appearanceAppIconDot.
+  ///
+  /// In zh, this message translates to:
+  /// **'在线圆点'**
+  String get appearanceAppIconDot;
+
+  /// No description provided for @appearanceAppIconCursor.
+  ///
+  /// In zh, this message translates to:
+  /// **'终端光标'**
+  String get appearanceAppIconCursor;
+
+  /// No description provided for @appearanceAppIconWave.
+  ///
+  /// In zh, this message translates to:
+  /// **'倾听声波'**
+  String get appearanceAppIconWave;
+
+  /// No description provided for @appearanceAppIconOpen.
+  ///
+  /// In zh, this message translates to:
+  /// **'纯净断口'**
+  String get appearanceAppIconOpen;
+
+  /// No description provided for @appearanceAppIconClassic.
+  ///
+  /// In zh, this message translates to:
+  /// **'经典侧耳'**
+  String get appearanceAppIconClassic;
+
+  /// No description provided for @appearanceAppIconDefault.
+  ///
+  /// In zh, this message translates to:
+  /// **'默认'**
+  String get appearanceAppIconDefault;
+
+  /// No description provided for @appearanceAppIconUpdateFailed.
+  ///
+  /// In zh, this message translates to:
+  /// **'无法更换应用图标，请重试。'**
+  String get appearanceAppIconUpdateFailed;
+
   /// No description provided for @appearanceAutoSaving.
   ///
   /// In zh, this message translates to:

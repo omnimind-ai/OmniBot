@@ -8,7 +8,6 @@ import android.os.SystemClock
 import androidx.appcompat.app.AppCompatDelegate
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.BuildConfig
-import cn.com.omnimind.bot.R
 
 object StartupThemeResolver {
     private const val FLUTTER_SHARED_PREFS_NAME = "FlutterSharedPreferences"
@@ -32,11 +31,14 @@ object StartupThemeResolver {
             StartupThemeMode.LIGHT -> false
             StartupThemeMode.SYSTEM -> isSystemDark(context)
         }
+        return resolveSplashTheme(AppIconManager.getActiveVariant(context), useDark)
+    }
 
+    fun resolveSplashTheme(variant: AppIconVariant, useDark: Boolean): Int {
         return if (useDark) {
-            R.style.Theme_OmnibotApp_Splash_Dark
+            variant.darkSplashThemeRes
         } else {
-            R.style.Theme_OmnibotApp_Splash
+            variant.lightSplashThemeRes
         }
     }
 

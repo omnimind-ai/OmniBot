@@ -1,10 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:ui/app_bootstrap.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/theme/app_icon_controller.dart';
+import 'package:ui/theme/app_icon_variant.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 
 void main() {
@@ -20,6 +23,28 @@ void main() {
   });
 
   tearDown(() => debugPrint = originalDebugPrint);
+
+  test('startup reconciles a saved app icon before the first frame', () async {
+    SharedPreferences.setMockInitialValues({
+      StorageService.kAppIconVariantKey: 'cursor',
+    });
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    const channel = MethodChannel('cn.com.omnimind.bot/app_state');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      expect(call.method, 'getAppIconVariant');
+      expect(AppIconController.currentNotifier.value, AppIconVariant.cursor);
+      return 'open';
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    await initializeMainStartupPrerequisites(configureSystemUi: () async {});
+
+    expect(AppIconController.currentNotifier.value, AppIconVariant.open);
+    expect(StorageService.getAppIconVariant(), AppIconVariant.open);
+  });
 
   for (final systemUiFirst in [true, false]) {
     test(

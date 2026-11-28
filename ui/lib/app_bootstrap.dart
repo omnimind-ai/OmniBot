@@ -12,6 +12,7 @@ import 'package:ui/services/models_dev_catalog_service.dart';
 import 'package:ui/services/app_background_service.dart';
 import 'package:ui/services/scheduled_task_scheduler_service.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/theme/app_icon_controller.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 import 'package:ui/theme/app_theme.dart';
@@ -97,7 +98,12 @@ Future<void> initializeMainStartupPrerequisites({
     ),
     _runStartupStep(
       'StorageService.init',
-      initializeStorage ?? StorageService.init,
+      initializeStorage ??
+          () async {
+            await StorageService.init();
+            AppIconController.syncFromStorage();
+            await AppIconController.syncFromNative();
+          },
     ),
   ]);
 }

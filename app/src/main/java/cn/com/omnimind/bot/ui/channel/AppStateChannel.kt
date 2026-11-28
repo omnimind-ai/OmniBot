@@ -1,10 +1,13 @@
 package cn.com.omnimind.bot.ui.channel
 
+import android.app.Activity
 import android.content.Context
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
-import cn.com.omnimind.bot.agent.AgentWorkspaceManager
+import cn.com.omnimind.bot.activity.AppIconManager
+import cn.com.omnimind.bot.activity.AppIconVariant
 import cn.com.omnimind.bot.activity.StartupThemeResolver
+import cn.com.omnimind.bot.agent.AgentWorkspaceManager
 import cn.com.omnimind.bot.quicklog.QuickLogWidgetUpdater
 import cn.com.omnimind.bot.share.SharedOpenDraftStore
 import cn.com.omnimind.bot.share.SharedOpenPreferenceStore
@@ -117,6 +120,39 @@ class AppStateChannel {
                 }
                 StartupThemeResolver.applyApplicationNightMode(appContext, mode)
                 result.success(true)
+            }
+            "getAppIconVariant" -> {
+                val appContext = context?.applicationContext
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                result.success(AppIconManager.getActiveVariant(appContext).storageValue)
+            }
+            "setAppIconVariant" -> {
+                val hostContext = context
+                val appContext = hostContext?.applicationContext
+                if (appContext == null) {
+                    result.error("INVALID_CONTEXT", "Context is null", null)
+                    return
+                }
+                val rawVariant = (call.arguments as? Map<*, *>)?.get("variant") as? String
+                val variant = AppIconVariant.parseStorageValue(rawVariant)
+                if (variant == null) {
+                    result.error("INVALID_ARGUMENT", "Unknown app icon variant", null)
+                    return
+                }
+                val applied = try {
+                    AppIconManager.applyVariant(appContext, variant)
+                } catch (error: RuntimeException) {
+                    OmniLog.e(TAG, "Failed to change app icon variant", error)
+                    result.error("APP_ICON_UPDATE_FAILED", "Could not change the launcher icon", null)
+                    return
+                }
+                if (hostContext is Activity) {
+                    AppIconManager.applyTaskDescription(hostContext, applied)
+                }
+                result.success(applied.storageValue)
             }
             else -> {
                 result.notImplemented()

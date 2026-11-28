@@ -12,7 +12,7 @@ import android.widget.RemoteViews
 import cn.com.omnimind.baselib.i18n.AppLocaleManager
 import cn.com.omnimind.baselib.util.OmniLog
 import cn.com.omnimind.bot.R
-import cn.com.omnimind.bot.activity.LauncherActivity
+import cn.com.omnimind.bot.activity.AppIconManager
 import cn.com.omnimind.bot.activity.QuickLogEntryActivity
 import cn.com.omnimind.bot.activity.QuickLogWidgetSettingsActivity
 
@@ -72,7 +72,7 @@ class QuickLogWidgetProvider : AppWidgetProvider() {
             ACTION_OPEN_SHORT_MEMORIES -> {
                 OmniLog.d(TAG, "Received widget open memories action")
                 context.startActivity(
-                    Intent(context, LauncherActivity::class.java).apply {
+                    AppIconManager.createLauncherIntent(context).apply {
                         action = ACTION_OPEN_SHORT_MEMORIES
                         putExtra("route", "/memory/memory_center_page")
                         putExtra("needClear", false)
@@ -243,7 +243,7 @@ class QuickLogWidgetProvider : AppWidgetProvider() {
         }
 
         private fun buildOpenShortMemoriesPendingIntent(context: Context): PendingIntent {
-            val intent = Intent(context, LauncherActivity::class.java).apply {
+            val intent = AppIconManager.createLauncherIntent(context).apply {
                 action = ACTION_OPEN_SHORT_MEMORIES
                 putExtra("route", "/memory/memory_center_page")
                 putExtra("needClear", false)

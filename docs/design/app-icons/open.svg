@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="432" height="432" viewBox="96 96 960 960" role="img" aria-labelledby="title desc">
+  <title id="title">小万开屏眨眼动画 - 纯净断口</title>
+  <desc id="desc">小万开屏眨眼动画（open），900 毫秒单次眨眼并轻微回弹。Android 资源由 scripts/generate_splash_animation.py 生成。</desc>
+  <g transform="translate(576 583)">
+    <g id="logo_motion">
+      <animateTransform attributeName="transform" type="rotate" values="0;-1;-3;-3;1;0;0" keyTimes="0;0.16;0.3;0.36;0.65;0.83;1" calcMode="spline" keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1" dur="900ms" repeatCount="1" fill="freeze" additive="sum"/>
+      <animateTransform attributeName="transform" type="scale" values="1 1;1 1;0.97 0.97;0.97 0.97;1.025 1.025;1 1;1 1" keyTimes="0;0.16;0.3;0.36;0.65;0.83;1" calcMode="spline" keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1" dur="900ms" repeatCount="1" fill="freeze" additive="sum"/>
+      <g transform="translate(-576 -583)">
+        <path fill="none" stroke="#2C7FEB" stroke-width="42.71" stroke-linecap="round" d="M 756.35 583.00 A 180.35 180.35 0 1 1 671.57 430.05"/>
+        <path fill="none" stroke="#2C7FEB" stroke-width="35.60" stroke-linecap="round" d="M 605.66 628.09 Q 637.70 651.82 669.73 625.71"/>
+        <g transform="translate(541.6 579.4)">
+          <g id="left_eye_blink">
+            <animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.48;1 0.48;1 1.04;1 1;1 1" keyTimes="0;0.16;0.3;0.36;0.65;0.83;1" calcMode="spline" keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1" dur="900ms" repeatCount="1" fill="freeze" additive="sum"/>
+            <g transform="translate(-541.6 -579.4)">
+              <path fill="none" stroke="#2C7FEB" stroke-width="39.15" stroke-linecap="round" stroke-linejoin="round" d="M 513.11 536.73 L 570.07 579.44 L 513.11 622.15"/>
+            </g>
+          </g>
+        </g>
+        <g transform="translate(647.2 565.2)">
+          <g id="right_eye_blink">
+            <animateTransform attributeName="transform" type="scale" values="1 1;1 1;1 0.13;1 0.13;1 1.08;1 1;1 1" keyTimes="0;0.16;0.3;0.36;0.65;0.83;1" calcMode="spline" keySplines="0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1;0.4 0 0.2 1" dur="900ms" repeatCount="1" fill="freeze" additive="sum"/>
+            <g transform="translate(-647.2 -565.2)">
+              <path fill="#2C7FEB" d="M 627.02 565.20 A 20.17 20.17 0 1 0 667.36 565.20 A 20.17 20.17 0 1 0 627.02 565.20 Z"/>
+            </g>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

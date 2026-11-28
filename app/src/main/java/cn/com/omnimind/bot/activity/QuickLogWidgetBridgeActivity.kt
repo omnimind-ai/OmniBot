@@ -41,7 +41,7 @@ class QuickLogWidgetBridgeActivity : AppCompatActivity() {
             }
             sourceIntent.action == QuickLogWidgetProvider.ACTION_OPEN_SHORT_MEMORIES -> {
                 startActivity(
-                    Intent(this, LauncherActivity::class.java).apply {
+                    AppIconManager.createLauncherIntent(this).apply {
                         action = QuickLogWidgetProvider.ACTION_OPEN_SHORT_MEMORIES
                         putExtra("route", "/memory/memory_center_page")
                         putExtra("needClear", false)

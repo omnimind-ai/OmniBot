@@ -33,6 +33,8 @@ import 'package:ui/widgets/settings_ui.dart';
 import 'package:ui/theme/app_theme_controller.dart';
 import 'package:ui/theme/app_theme_mode.dart';
 
+import 'app_icon_setting.dart';
+
 const bool _showPetAppearanceSettings = true;
 
 class _AppearanceTextColorPreset {
@@ -651,6 +653,7 @@ class _BackgroundSettingPageState extends State<BackgroundSettingPage>
                     : null,
               ),
             ),
+            const AppIconSetting(),
           ],
         );
       },

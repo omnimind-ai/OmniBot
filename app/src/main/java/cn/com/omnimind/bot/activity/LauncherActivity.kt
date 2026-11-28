@@ -12,7 +12,7 @@ import cn.com.omnimind.bot.quicklog.QuickLogWidgetActionRouter
  *
  * OSS 版本：直接进入 MainActivity，不再依赖账号与在线协议流程。
  */
-class LauncherActivity : ComponentActivity() {
+open class LauncherActivity : ComponentActivity() {
 
     companion object {
         private const val TAG = "LauncherActivity"

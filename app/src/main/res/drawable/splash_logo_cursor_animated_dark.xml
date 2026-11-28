@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from docs/design/app-icons/cursor.svg. Run scripts/generate_splash_animation.py to update. -->
+<animated-vector xmlns:aapt="http://schemas.android.com/aapt" xmlns:android="http://schemas.android.com/apk/res/android">
+    <aapt:attr name="android:drawable">
+        <vector android:width="432dp" android:height="432dp" android:viewportWidth="960" android:viewportHeight="960">
+            <group android:translateX="-96" android:translateY="-96">
+                <group android:translateX="576" android:translateY="583">
+                    <group android:name="logo_motion">
+                        <group android:translateX="-576" android:translateY="-583">
+                            <path android:pathData="M 753.04 617.41 A 180.35 180.35 0 1 1 660.67 423.76" android:strokeColor="@color/omni_brand_primary_dark" android:strokeWidth="42.71" android:strokeLineCap="round" />
+                            <path android:pathData="M 735.67 474.93 L 747.54 474.93 A 11.87 11.87 0 0 1 759.40 486.79 L 759.40 524.76 A 11.87 11.87 0 0 1 747.54 536.63 L 735.67 536.63 A 11.87 11.87 0 0 1 723.81 524.76 L 723.81 486.79 A 11.87 11.87 0 0 1 735.67 474.93 Z" android:fillColor="@color/omni_brand_primary_dark" />
+                            <path android:pathData="M 604.48 628.09 Q 636.51 651.82 668.55 625.71" android:strokeColor="@color/omni_brand_primary_dark" android:strokeWidth="35.60" android:strokeLineCap="round" />
+                            <group android:translateX="540.4" android:translateY="579.4">
+                                <group android:name="left_eye_blink">
+                                    <group android:translateX="-540.4" android:translateY="-579.4">
+                                        <path android:pathData="M 511.93 536.73 L 568.88 579.44 L 511.93 622.15" android:strokeColor="@color/omni_brand_primary_dark" android:strokeWidth="39.15" android:strokeLineCap="round" android:strokeLineJoin="round" />
+                                    </group>
+                                </group>
+                            </group>
+                            <group android:translateX="646.0" android:translateY="565.2">
+                                <group android:name="right_eye_blink">
+                                    <group android:translateX="-646.0" android:translateY="-565.2">
+                                        <path android:pathData="M 625.83 565.20 A 20.17 20.17 0 1 0 666.17 565.20 A 20.17 20.17 0 1 0 625.83 565.20 Z" android:fillColor="@color/omni_brand_primary_dark" />
+                                    </group>
+                                </group>
+                            </group>
+                        </group>
+                    </group>
+                </group>
+            </group>
+        </vector>
+    </aapt:attr>
+    <target android:name="logo_motion" android:animation="@animator/splash_logo_motion" />
+    <target android:name="left_eye_blink" android:animation="@animator/splash_left_eye_blink" />
+    <target android:name="right_eye_blink" android:animation="@animator/splash_right_eye_blink" />
+</animated-vector>

@@ -267,6 +267,38 @@ class AppLocalizationsPt extends AppLocalizations {
   String get appearanceTitle => 'Aparência';
 
   @override
+  String get appearanceAppIconTitle => 'Ícone do app';
+
+  @override
+  String get appearanceAppIconSubtitle =>
+      'Altere de uma vez o ícone na tela inicial, a animação de abertura e o ícone dentro do app.';
+
+  @override
+  String get appearanceAppIconSparkle => 'Brilho IA';
+
+  @override
+  String get appearanceAppIconDot => 'Ponto Ativo';
+
+  @override
+  String get appearanceAppIconCursor => 'Cursor';
+
+  @override
+  String get appearanceAppIconWave => 'Onda Sonora';
+
+  @override
+  String get appearanceAppIconOpen => 'Anel Aberto';
+
+  @override
+  String get appearanceAppIconClassic => 'Clássico';
+
+  @override
+  String get appearanceAppIconDefault => 'Padrão';
+
+  @override
+  String get appearanceAppIconUpdateFailed =>
+      'Não foi possível alterar o ícone do app. Tente novamente.';
+
+  @override
   String get appearanceAutoSaving => 'Salvando alterações…';
 
   @override

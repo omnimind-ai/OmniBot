@@ -13,6 +13,9 @@ import 'package:ui/features/my/router_config.dart';
 import 'package:ui/l10n/generated/app_localizations.dart';
 import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/storage_service.dart';
+import 'package:ui/theme/app_icon_controller.dart';
+import 'package:ui/theme/app_icon_variant.dart';
+import 'package:ui/widgets/agent_avatar.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -24,6 +27,50 @@ void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     await StorageService.init();
+    AppIconController.syncFromStorage();
+  });
+
+  testWidgets('About and the default Agent avatar follow the same app icon', (
+    tester,
+  ) async {
+    const appStateChannel = MethodChannel('cn.com.omnimind.bot/app_state');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    messenger.setMockMethodCallHandler(appStateChannel, (_) async {
+      throw MissingPluginException();
+    });
+    addTearDown(() => messenger.setMockMethodCallHandler(appStateChannel, null));
+    final controller = AppIconController();
+    addTearDown(controller.dispose);
+    const tint = Color(0xFFDBB9C7);
+    const avatarKey = ValueKey('default-agent-avatar');
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: Column(
+          children: [
+            AgentAvatarCircle(key: avatarKey, backgroundColor: tint),
+            Expanded(child: AboutPage()),
+          ],
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final sparkle = find.image(AssetImage(AppIconVariant.sparkle.assetPath));
+    expect(sparkle, findsNWidgets(2));
+
+    expect(await controller.setVariant(AppIconVariant.classic), isTrue);
+    await tester.pumpAndSettle();
+
+    final classic = find.image(AssetImage(AppIconVariant.classic.assetPath));
+    expect(sparkle, findsNothing);
+    expect(classic, findsNWidgets(2));
+    final avatar = tester.widget<Image>(
+      find.descendant(of: find.byKey(avatarKey), matching: classic),
+    );
+    expect(avatar.color, tint);
+    expect(avatar.colorBlendMode, BlendMode.modulate);
+    expect(tester.takeException(), isNull);
   });
 
   tearDown(() async {

@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:ui/widgets/omni_glass.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:ui/services/agent_avatar_service.dart';
+import 'package:ui/theme/app_icon_controller.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 
@@ -221,33 +222,36 @@ class _AvatarImage extends StatelessWidget {
     final palette = context.omniPalette;
     final presetAsset = AgentAvatarService.assetForIndex(presetIndex);
 
+    Image assetImage(String asset, {Color? color}) => Image.asset(
+      asset,
+      width: size,
+      height: size,
+      fit: BoxFit.cover,
+      color: color,
+      colorBlendMode: BlendMode.modulate,
+      gaplessPlayback: presetAsset == AgentAvatarService.defaultAvatarAsset,
+      errorBuilder: (_, _, _) => ColoredBox(
+        color: palette.surfaceElevated,
+        child: Icon(
+          Icons.smart_toy_outlined,
+          size: size * 0.54,
+          color: palette.textSecondary,
+        ),
+      ),
+    );
+
     Widget fallback() {
-      final image = Image.asset(
-        presetAsset,
-        width: size,
-        height: size,
-        fit: BoxFit.cover,
-        color: presetAsset == AgentAvatarService.defaultAvatarAsset
-            ? backgroundColor
-            : null,
-        colorBlendMode: BlendMode.modulate,
-        errorBuilder: (_, _, _) {
-          return ColoredBox(
-            color: palette.surfaceElevated,
-            child: Icon(
-              Icons.smart_toy_outlined,
-              size: size * 0.54,
-              color: palette.textSecondary,
-            ),
-          );
-        },
-      );
-      if (presetAsset == AgentAvatarService.defaultAvatarAsset) {
-        // The adaptive launcher foreground includes an 82px transparent inset
-        // on its 432px canvas. Fill the existing avatar clip with its 268px mark.
-        return Transform.scale(scale: 432 / 268, child: image);
+      if (presetAsset != AgentAvatarService.defaultAvatarAsset) {
+        return assetImage(presetAsset);
       }
-      return image;
+      return ValueListenableBuilder(
+        valueListenable: AppIconController.currentNotifier,
+        // Fill the avatar clip with the 268px mark inside the 432px canvas.
+        builder: (context, variant, _) => Transform.scale(
+          scale: 432 / 268,
+          child: assetImage(variant.assetPath, color: backgroundColor),
+        ),
+      );
     }
 
     if (customImagePath.trim().isEmpty) {

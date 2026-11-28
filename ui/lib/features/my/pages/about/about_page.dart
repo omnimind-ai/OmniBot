@@ -5,6 +5,7 @@ import 'package:ui/core/router/go_router_manager.dart';
 import 'package:ui/l10n/l10n.dart';
 import 'package:ui/services/app_update_service.dart';
 import 'package:ui/services/device_service.dart';
+import 'package:ui/theme/app_icon_controller.dart';
 import 'package:ui/theme/theme_context.dart';
 import 'package:ui/utils/ui.dart';
 import 'package:ui/widgets/app_update_dialog.dart';
@@ -261,16 +262,20 @@ class _AboutPageState extends State<AboutPage> {
         SizedBox(
           width: compact ? 72 : 88,
           height: compact ? 72 : 88,
-          child: Image.asset(
-            'assets/common/omnibot_launcher.png',
-            fit: BoxFit.contain,
-            errorBuilder: (context, error, stackTrace) {
-              return Icon(
-                LucideIcons.bot,
-                size: 56,
-                color: palette.accentPrimary,
-              );
-            },
+          child: ValueListenableBuilder(
+            valueListenable: AppIconController.currentNotifier,
+            builder: (context, variant, _) => Image.asset(
+              variant.assetPath,
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+              errorBuilder: (context, error, stackTrace) {
+                return Icon(
+                  LucideIcons.bot,
+                  size: 56,
+                  color: palette.accentPrimary,
+                );
+              },
+            ),
           ),
         ),
         SizedBox(height: compact ? 8 : 12),

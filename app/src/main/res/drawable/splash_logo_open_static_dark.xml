@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from docs/design/app-icons/open.svg. Run scripts/generate_splash_animation.py to update. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="288dp" android:height="288dp" android:viewportWidth="1152" android:viewportHeight="1152">
+    <group android:translateX="576" android:translateY="583">
+        <group android:name="logo_motion">
+            <group android:translateX="-576" android:translateY="-583">
+                <path android:pathData="M 756.35 583.00 A 180.35 180.35 0 1 1 671.57 430.05" android:strokeColor="@color/omni_brand_primary_dark" android:strokeWidth="42.71" android:strokeLineCap="round" />
+                <path android:pathData="M 605.66 628.09 Q 637.70 651.82 669.73 625.71" android:strokeColor="@color/omni_brand_primary_dark" android:strokeWidth="35.60" android:strokeLineCap="round" />
+                <group android:translateX="541.6" android:translateY="579.4">
+                    <group android:name="left_eye_blink">
+                        <group android:translateX="-541.6" android:translateY="-579.4">
+                            <path android:pathData="M 513.11 536.73 L 570.07 579.44 L 513.11 622.15" android:strokeColor="@color/omni_brand_primary_dark" android:strokeWidth="39.15" android:strokeLineCap="round" android:strokeLineJoin="round" />
+                        </group>
+                    </group>
+                </group>
+                <group android:translateX="647.2" android:translateY="565.2">
+                    <group android:name="right_eye_blink">
+                        <group android:translateX="-647.2" android:translateY="-565.2">
+                            <path android:pathData="M 627.02 565.20 A 20.17 20.17 0 1 0 667.36 565.20 A 20.17 20.17 0 1 0 627.02 565.20 Z" android:fillColor="@color/omni_brand_primary_dark" />
+                        </group>
+                    </group>
+                </group>
+            </group>
+        </group>
+    </group>
+</vector>

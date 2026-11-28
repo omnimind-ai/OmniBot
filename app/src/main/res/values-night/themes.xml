@@ -6,13 +6,11 @@
         <item name="android:enforceNavigationBarContrast">false</item>
     </style>
 
-    <style name="Theme.OmnibotApp.Splash" parent="android:Theme.Material.NoActionBar">
-        <item name="android:windowBackground">@drawable/splash_background_dark</item>
-        <item name="android:statusBarColor">#151617</item>
-        <item name="android:navigationBarColor">@android:color/transparent</item>
-        <item name="android:enforceNavigationBarContrast">false</item>
-        <item name="android:windowLightStatusBar">false</item>
-        <item name="android:windowLightNavigationBar">false</item>
-    </style>
+    <style name="Theme.OmnibotApp.Splash" parent="Theme.OmnibotApp.Splash.Dark" />
+    <style name="Theme.OmnibotApp.Splash.Dot" parent="Theme.OmnibotApp.Splash.Dot.Dark" />
+    <style name="Theme.OmnibotApp.Splash.Cursor" parent="Theme.OmnibotApp.Splash.Cursor.Dark" />
+    <style name="Theme.OmnibotApp.Splash.Wave" parent="Theme.OmnibotApp.Splash.Wave.Dark" />
+    <style name="Theme.OmnibotApp.Splash.Open" parent="Theme.OmnibotApp.Splash.Open.Dark" />
+    <style name="Theme.OmnibotApp.Splash.Classic" parent="Theme.OmnibotApp.Splash.Classic.Dark" />
 
 </resources>
